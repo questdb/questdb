@@ -1,0 +1,162 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > DateFormatFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.datetime.millitime</a>
+</div>
+
+<h1>Coverage Summary for Class: DateFormatFactory (io.questdb.std.datetime.millitime)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">DateFormatFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.datetime.millitime;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.ConcurrentHashMap;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.datetime.DateFormat;
+<i class="no-highlight">30</i>&nbsp;
+<i class="no-highlight">31</i>&nbsp;import java.util.function.Function;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;
+<b class="fc"><i class="no-highlight">34</i>&nbsp;public class DateFormatFactory {</b>
+<b class="fc"><i class="no-highlight">35</i>&nbsp;    private final static ThreadLocal&lt;DateFormatCompiler&gt; tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);</b>
+<b class="fc"><i class="no-highlight">36</i>&nbsp;    private static final Function&lt;CharSequence, DateFormat&gt; mapper = DateFormatFactory::map;</b>
+<b class="fc"><i class="no-highlight">37</i>&nbsp;    private final ConcurrentHashMap&lt;DateFormat&gt; cache = new ConcurrentHashMap&lt;&gt;();</b>
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;    /**
+<i class="no-highlight">40</i>&nbsp;     * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
+<i class="no-highlight">41</i>&nbsp;     * backed by ConcurrentHashMap, making method calls thread-safe and largely non-blocking.
+<i class="no-highlight">42</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">43</i>&nbsp;     * Input pattern does not have to be a string, but it does have to implement hashCode/equals methods
+<i class="no-highlight">44</i>&nbsp;     * correctly. No new objects created when pattern already exists.
+<i class="no-highlight">45</i>&nbsp;     *
+<i class="no-highlight">46</i>&nbsp;     * @param pattern can be mutable and is not stored if same pattern already in cache.
+<i class="no-highlight">47</i>&nbsp;     * @return compiled implementation of DateFormat
+<i class="no-highlight">48</i>&nbsp;     */
+<i class="no-highlight">49</i>&nbsp;    public DateFormat get(CharSequence pattern) {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;        return cache.computeIfAbsent(pattern, mapper);</b>
+<i class="no-highlight">51</i>&nbsp;    }
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    private static DateFormat map(CharSequence value) {
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        return tlCompiler.get().compile(value);</b>
+<i class="no-highlight">55</i>&nbsp;    }
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

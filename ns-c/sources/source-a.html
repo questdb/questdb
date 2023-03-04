@@ -1,0 +1,215 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > WalEventReader</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.wal</a>
+</div>
+
+<h1>Coverage Summary for Class: WalEventReader (io.questdb.cairo.wal)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">WalEventReader</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    78.8%
+  </span>
+  <span class="absValue">
+    (26/33)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.wal;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.api.MemoryMR;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.FilesFacade;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.MemoryTag;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;import static io.questdb.cairo.TableUtils.*;
+<i class="no-highlight">41</i>&nbsp;import static io.questdb.cairo.wal.WalUtils.*;
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;public class WalEventReader implements Closeable {
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    private final Log LOG = LogFactory.getLog(WalEventReader.class);</b>
+<i class="no-highlight">45</i>&nbsp;    private final WalEventCursor eventCursor;
+<i class="no-highlight">46</i>&nbsp;    private final MemoryMR eventMem;
+<i class="no-highlight">47</i>&nbsp;    private final FilesFacade ff;
+<i class="no-highlight">48</i>&nbsp;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    public WalEventReader(FilesFacade ff) {</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;        this.ff = ff;</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        eventMem = Vm.getMRInstance();</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        eventCursor = new WalEventCursor(eventMem);</b>
+<i class="no-highlight">53</i>&nbsp;    }
+<i class="no-highlight">54</i>&nbsp;
+<i class="no-highlight">55</i>&nbsp;    @Override
+<i class="no-highlight">56</i>&nbsp;    public void close() {
+<i class="no-highlight">57</i>&nbsp;        // WalEventReader is re-usable after close, don&#39;t assign nulls
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        Misc.free(eventMem);</b>
+<i class="no-highlight">59</i>&nbsp;    }
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;    public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        int trimTo = path.length();</b>
+<i class="no-highlight">63</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">64</i>&nbsp;            final int pathLen = path.length();</b>
+<i class="no-highlight">65</i>&nbsp;
+<b class="fc"><i class="no-highlight">66</i>&nbsp;            path.concat(EVENT_FILE_NAME).$();</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;            eventMem.of(</b>
+<i class="no-highlight">68</i>&nbsp;                    ff,
+<i class="no-highlight">69</i>&nbsp;                    path,
+<b class="fc"><i class="no-highlight">70</i>&nbsp;                    ff.getPageSize(),</b>
+<i class="no-highlight">71</i>&nbsp;                    WALE_HEADER_SIZE + Integer.BYTES,
+<i class="no-highlight">72</i>&nbsp;                    MemoryTag.MMAP_TABLE_WAL_READER,
+<i class="no-highlight">73</i>&nbsp;                    CairoConfiguration.O_NONE,
+<i class="no-highlight">74</i>&nbsp;                    -1
+<i class="no-highlight">75</i>&nbsp;            );
+<i class="no-highlight">76</i>&nbsp;
+<b class="fc"><i class="no-highlight">77</i>&nbsp;            if (segmentTxn &gt; -1) {</b>
+<i class="no-highlight">78</i>&nbsp;                // Read record offset and size
+<b class="fc"><i class="no-highlight">79</i>&nbsp;                int fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);</b>
+<i class="no-highlight">80</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;                    int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;                    long offset = ff.readNonNegativeLong(fdi, segmentTxn &lt;&lt; 3);</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;                    long size = ff.readNonNegativeLong(fdi, (maxTxn + 1L) &lt;&lt; 3);</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;                    if (offset &lt; 0 || size &lt; WALE_HEADER_SIZE + Integer.BYTES || offset &gt;= size) {</b>
+<b class="nc"><i class="no-highlight">85</i>&nbsp;                        int errno = offset &lt; 0 || size &lt; 0 ? ff.errno() : 0;</b>
+<b class="nc"><i class="no-highlight">86</i>&nbsp;                        throw CairoException.critical(errno).put(&quot;segment &quot;)</b>
+<b class="nc"><i class="no-highlight">87</i>&nbsp;                                .put(path).put(&quot; does not have txn with id &quot;).put(segmentTxn);</b>
+<i class="no-highlight">88</i>&nbsp;                    }
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;                    // WAL-E file has record indicator for the next record always present 
+<i class="no-highlight">91</i>&nbsp;                    // so file size is the size read + 4 bytes
+<b class="fc"><i class="no-highlight">92</i>&nbsp;                    eventMem.extend(size + Integer.BYTES);</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;                    eventCursor.openOffset(offset);</b>
+<i class="no-highlight">94</i>&nbsp;                } finally {
+<b class="fc"><i class="no-highlight">95</i>&nbsp;                    ff.close(fdi);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;                eventCursor.openOffset(-1);</b>
+<i class="no-highlight">99</i>&nbsp;            }
+<i class="no-highlight">100</i>&nbsp;
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            validateMetaVersion(eventMem, WAL_FORMAT_OFFSET_32, expectedVersion);</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            return eventCursor;</b>
+<b class="nc"><i class="no-highlight">103</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="nc"><i class="no-highlight">104</i>&nbsp;            close();</b>
+<b class="nc"><i class="no-highlight">105</i>&nbsp;            throw e;</b>
+<i class="no-highlight">106</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            path.trimTo(trimTo);</b>
+<b class="nc"><i class="no-highlight">108</i>&nbsp;        }</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

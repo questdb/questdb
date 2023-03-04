@@ -1,0 +1,1187 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > BindVariableServiceImpl</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.functions.bind</a>
+</div>
+
+<h1>Coverage Summary for Class: BindVariableServiceImpl (io.questdb.griffin.engine.functions.bind)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">BindVariableServiceImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (69/69)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.3%
+  </span>
+  <span class="absValue">
+    (510/519)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.functions.bind;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.GeoHashes;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.BindVariableService;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.SqlKeywords;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.SqlUtil;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">36</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">37</i>&nbsp;
+<b class="fc"><i class="no-highlight">38</i>&nbsp;public class BindVariableServiceImpl implements BindVariableService {</b>
+<i class="no-highlight">39</i>&nbsp;    private final ObjectPool&lt;BooleanBindVariable&gt; booleanVarPool;
+<i class="no-highlight">40</i>&nbsp;    private final ObjectPool&lt;ByteBindVariable&gt; byteVarPool;
+<i class="no-highlight">41</i>&nbsp;    private final ObjectPool&lt;CharBindVariable&gt; charVarPool;
+<i class="no-highlight">42</i>&nbsp;    private final ObjectPool&lt;DateBindVariable&gt; dateVarPool;
+<i class="no-highlight">43</i>&nbsp;    private final ObjectPool&lt;DoubleBindVariable&gt; doubleVarPool;
+<i class="no-highlight">44</i>&nbsp;    private final ObjectPool&lt;FloatBindVariable&gt; floatVarPool;
+<i class="no-highlight">45</i>&nbsp;    private final ObjectPool&lt;GeoHashBindVariable&gt; geoHashVarPool;
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    private final ObjList&lt;Function&gt; indexedVariables = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">47</i>&nbsp;    private final ObjectPool&lt;IntBindVariable&gt; intVarPool;
+<i class="no-highlight">48</i>&nbsp;    private final ObjectPool&lt;Long256BindVariable&gt; long256VarPool;
+<i class="no-highlight">49</i>&nbsp;    private final ObjectPool&lt;LongBindVariable&gt; longVarPool;
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    private final CharSequenceObjHashMap&lt;Function&gt; namedVariables = new CharSequenceObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">51</i>&nbsp;    private final ObjectPool&lt;ShortBindVariable&gt; shortVarPool;
+<i class="no-highlight">52</i>&nbsp;    private final ObjectPool&lt;StrBindVariable&gt; strVarPool;
+<i class="no-highlight">53</i>&nbsp;    private final ObjectPool&lt;TimestampBindVariable&gt; timestampVarPool;
+<i class="no-highlight">54</i>&nbsp;    private final ObjectPool&lt;UuidBindVariable&gt; uuidVarPool;
+<i class="no-highlight">55</i>&nbsp;
+<b class="fc"><i class="no-highlight">56</i>&nbsp;    public BindVariableServiceImpl(CairoConfiguration configuration) {</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        final int poolSize = configuration.getBindVariablePoolSize();</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        this.doubleVarPool = new ObjectPool&lt;&gt;(DoubleBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;        this.floatVarPool = new ObjectPool&lt;&gt;(FloatBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        this.intVarPool = new ObjectPool&lt;&gt;(IntBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        this.longVarPool = new ObjectPool&lt;&gt;(LongBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        this.timestampVarPool = new ObjectPool&lt;&gt;(TimestampBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        this.dateVarPool = new ObjectPool&lt;&gt;(DateBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        this.shortVarPool = new ObjectPool&lt;&gt;(ShortBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        this.byteVarPool = new ObjectPool&lt;&gt;(ByteBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        this.geoHashVarPool = new ObjectPool&lt;&gt;(GeoHashBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        this.booleanVarPool = new ObjectPool&lt;&gt;(BooleanBindVariable::new, poolSize);</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        this.strVarPool = new ObjectPool&lt;&gt;(() -&gt; new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        this.charVarPool = new ObjectPool&lt;&gt;(CharBindVariable::new, 8);</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        this.long256VarPool = new ObjectPool&lt;&gt;(Long256BindVariable::new, 8);</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        this.uuidVarPool = new ObjectPool&lt;&gt;(UuidBindVariable::new, 8);</b>
+<i class="no-highlight">72</i>&nbsp;    }
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    @Override
+<i class="no-highlight">75</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        namedVariables.clear();</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        indexedVariables.clear();</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        doubleVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        floatVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        intVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        longVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        timestampVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        dateVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        shortVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        byteVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        booleanVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        strVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        charVarPool.clear();</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        long256VarPool.clear();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        geoHashVarPool.clear();</b>
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    @Override
+<i class="no-highlight">94</i>&nbsp;    public int define(int index, int type, int position) throws SqlException {
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        switch (ColumnType.tagOf(type)) {</b>
+<i class="no-highlight">96</i>&nbsp;            case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">97</i>&nbsp;                setBoolean(index);</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;                return type;</b>
+<i class="no-highlight">99</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">100</i>&nbsp;                setByte(index);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;                return type;</b>
+<i class="no-highlight">102</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                setShort(index);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;                return type;</b>
+<i class="no-highlight">105</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">106</i>&nbsp;                setChar(index);</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;                return type;</b>
+<i class="no-highlight">108</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                setInt(index);</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                return type;</b>
+<i class="no-highlight">111</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                setLong(index);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                return type;</b>
+<i class="no-highlight">114</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                setDate(index);</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                return type;</b>
+<i class="no-highlight">117</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                setTimestamp(index);</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                return type;</b>
+<i class="no-highlight">120</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                setFloat(index);</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                return type;</b>
+<i class="no-highlight">123</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                setDouble(index);</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                return type;</b>
+<i class="no-highlight">126</i>&nbsp;            case ColumnType.STRING:
+<i class="no-highlight">127</i>&nbsp;            case ColumnType.SYMBOL:
+<i class="no-highlight">128</i>&nbsp;            case ColumnType.VAR_ARG:
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                setStr(index);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                return ColumnType.STRING;</b>
+<i class="no-highlight">131</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                setLong256(index);</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                return type;</b>
+<i class="no-highlight">134</i>&nbsp;            case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                setBin(index);</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                return type;</b>
+<i class="no-highlight">137</i>&nbsp;            case ColumnType.GEOBYTE:
+<i class="no-highlight">138</i>&nbsp;            case ColumnType.GEOSHORT:
+<i class="no-highlight">139</i>&nbsp;            case ColumnType.GEOINT:
+<i class="no-highlight">140</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">141</i>&nbsp;                setGeoHash(index, type);</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                return type;</b>
+<i class="no-highlight">143</i>&nbsp;            case ColumnType.UUID:
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                setUuid(index);</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                return type;</b>
+<i class="no-highlight">146</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                throw SqlException.$(position, &quot;bind variable cannot be used [contextType=&quot;).put(ColumnType.nameOf(type)).put(&quot;, index=&quot;).put(index).put(&#39;]&#39;);</b>
+<i class="no-highlight">148</i>&nbsp;        }
+<i class="no-highlight">149</i>&nbsp;    }
+<i class="no-highlight">150</i>&nbsp;
+<i class="no-highlight">151</i>&nbsp;    @Override
+<i class="no-highlight">152</i>&nbsp;    public Function getFunction(CharSequence name) {
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        assert name != null;</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        assert Chars.startsWith(name, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        return namedVariables.valueAt(namedVariables.keyIndex(name, 1, name.length()));</b>
+<i class="no-highlight">156</i>&nbsp;    }
+<i class="no-highlight">157</i>&nbsp;
+<i class="no-highlight">158</i>&nbsp;    @Override
+<i class="no-highlight">159</i>&nbsp;    public Function getFunction(int index) {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        final int n = indexedVariables.size();</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        if (index &lt; n) {</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;            return indexedVariables.getQuick(index);</b>
+<i class="no-highlight">163</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        return null;</b>
+<i class="no-highlight">165</i>&nbsp;    }
+<i class="no-highlight">166</i>&nbsp;
+<i class="no-highlight">167</i>&nbsp;    @Override
+<i class="no-highlight">168</i>&nbsp;    public int getIndexedVariableCount() {
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        return indexedVariables.size();</b>
+<i class="no-highlight">170</i>&nbsp;    }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;    @Override
+<i class="no-highlight">173</i>&nbsp;    public ObjList&lt;CharSequence&gt; getNamedVariables() {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        return namedVariables.keys();</b>
+<i class="no-highlight">175</i>&nbsp;    }
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;    @Override
+<i class="no-highlight">178</i>&nbsp;    public void setBin(CharSequence name, BinarySequence value) throws SqlException {
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        if (index &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            namedVariables.putAt(index, name, new BinBindVariable(value));</b>
+<i class="no-highlight">182</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            Function function = namedVariables.valueAtQuick(index);</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            if (function instanceof BinBindVariable) {</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                ((BinBindVariable) function).value = value;</b>
+<i class="no-highlight">186</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                throw SqlException.$(0, &quot;bind variable &#39;&quot;).put(name).put(&quot;&#39; is already defined as &quot;).put(ColumnType.nameOf(function.getType()));</b>
+<i class="no-highlight">188</i>&nbsp;            }
+<i class="no-highlight">189</i>&nbsp;        }
+<i class="no-highlight">190</i>&nbsp;    }
+<i class="no-highlight">191</i>&nbsp;
+<i class="no-highlight">192</i>&nbsp;    @Override
+<i class="no-highlight">193</i>&nbsp;    public void setBin(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        setBin(index, null);</b>
+<i class="no-highlight">195</i>&nbsp;    }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;    @Override
+<i class="no-highlight">198</i>&nbsp;    public void setBin(int index, BinarySequence value) throws SqlException {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        if (function == null) {</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            indexedVariables.setQuick(index, new BinBindVariable(value));</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        } else if (function instanceof BinBindVariable) {</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            ((BinBindVariable) function).value = value;</b>
+<i class="no-highlight">205</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            throw SqlException.$(0, &quot;bind variable at &quot;).put(index).put(&quot; is already defined as &quot;).put(ColumnType.nameOf(function.getType()));</b>
+<i class="no-highlight">207</i>&nbsp;        }
+<i class="no-highlight">208</i>&nbsp;    }
+<i class="no-highlight">209</i>&nbsp;
+<i class="no-highlight">210</i>&nbsp;    @Override
+<i class="no-highlight">211</i>&nbsp;    public void setBoolean(CharSequence name, boolean value) throws SqlException {
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">214</i>&nbsp;            final BooleanBindVariable function;
+<b class="fc"><i class="no-highlight">215</i>&nbsp;            namedVariables.putAt(index, name, function = booleanVarPool.next());</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;            setBoolean0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">219</i>&nbsp;        }
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    @Override
+<i class="no-highlight">223</i>&nbsp;    public void setBoolean(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        setBoolean(index, false);</b>
+<i class="no-highlight">225</i>&nbsp;    }
+<i class="no-highlight">226</i>&nbsp;
+<i class="no-highlight">227</i>&nbsp;    @Override
+<i class="no-highlight">228</i>&nbsp;    public void setBoolean(int index, boolean value) throws SqlException {
+<b class="fc"><i class="no-highlight">229</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">230</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;            setBoolean0(function, value, index, null);</b>
+<i class="no-highlight">234</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">235</i>&nbsp;            indexedVariables.setQuick(index, function = booleanVarPool.next());</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            ((BooleanBindVariable) function).value = value;</b>
+<i class="no-highlight">237</i>&nbsp;        }
+<i class="no-highlight">238</i>&nbsp;    }
+<i class="no-highlight">239</i>&nbsp;
+<i class="no-highlight">240</i>&nbsp;    @Override
+<i class="no-highlight">241</i>&nbsp;    public void setByte(CharSequence name, byte value) throws SqlException {
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">244</i>&nbsp;            final ByteBindVariable function;
+<b class="fc"><i class="no-highlight">245</i>&nbsp;            namedVariables.putAt(index, name, function = byteVarPool.next());</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;            setByte0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">249</i>&nbsp;        }
+<i class="no-highlight">250</i>&nbsp;    }
+<i class="no-highlight">251</i>&nbsp;
+<i class="no-highlight">252</i>&nbsp;    @Override
+<i class="no-highlight">253</i>&nbsp;    public void setByte(int index, byte value) throws SqlException {
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">255</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            setByte0(function, value, index, null);</b>
+<i class="no-highlight">259</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">260</i>&nbsp;            indexedVariables.setQuick(index, function = byteVarPool.next());</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            ((ByteBindVariable) function).value = value;</b>
+<i class="no-highlight">262</i>&nbsp;        }
+<i class="no-highlight">263</i>&nbsp;    }
+<i class="no-highlight">264</i>&nbsp;
+<i class="no-highlight">265</i>&nbsp;    @Override
+<i class="no-highlight">266</i>&nbsp;    public void setByte(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        setByte(index, (byte) 0);</b>
+<i class="no-highlight">268</i>&nbsp;    }
+<i class="no-highlight">269</i>&nbsp;
+<i class="no-highlight">270</i>&nbsp;    @Override
+<i class="no-highlight">271</i>&nbsp;    public void setChar(CharSequence name, char value) throws SqlException {
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">274</i>&nbsp;            final CharBindVariable function;
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            namedVariables.putAt(index, name, function = charVarPool.next());</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            setChar0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">279</i>&nbsp;        }
+<i class="no-highlight">280</i>&nbsp;    }
+<i class="no-highlight">281</i>&nbsp;
+<i class="no-highlight">282</i>&nbsp;    @Override
+<i class="no-highlight">283</i>&nbsp;    public void setChar(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        setChar(index, (char) 0);</b>
+<i class="no-highlight">285</i>&nbsp;    }
+<i class="no-highlight">286</i>&nbsp;
+<i class="no-highlight">287</i>&nbsp;    @Override
+<i class="no-highlight">288</i>&nbsp;    public void setChar(int index, char value) throws SqlException {
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">290</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;            setChar0(function, value, index, null);</b>
+<i class="no-highlight">294</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">295</i>&nbsp;            indexedVariables.setQuick(index, function = charVarPool.next());</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            ((CharBindVariable) function).value = value;</b>
+<i class="no-highlight">297</i>&nbsp;        }
+<i class="no-highlight">298</i>&nbsp;    }
+<i class="no-highlight">299</i>&nbsp;
+<i class="no-highlight">300</i>&nbsp;    @Override
+<i class="no-highlight">301</i>&nbsp;    public void setDate(CharSequence name, long value) throws SqlException {
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">304</i>&nbsp;            final DateBindVariable function;
+<b class="fc"><i class="no-highlight">305</i>&nbsp;            namedVariables.putAt(index, name, function = dateVarPool.next());</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.DATE);</b>
+<i class="no-highlight">309</i>&nbsp;        }
+<i class="no-highlight">310</i>&nbsp;    }
+<i class="no-highlight">311</i>&nbsp;
+<i class="no-highlight">312</i>&nbsp;    @Override
+<i class="no-highlight">313</i>&nbsp;    public void setDate(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        setDate(index, Numbers.LONG_NaN);</b>
+<i class="no-highlight">315</i>&nbsp;    }
+<i class="no-highlight">316</i>&nbsp;
+<i class="no-highlight">317</i>&nbsp;    @Override
+<i class="no-highlight">318</i>&nbsp;    public void setDate(int index, long value) throws SqlException {
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">320</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            setLong0(function, value, index, null, ColumnType.DATE);</b>
+<i class="no-highlight">324</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">325</i>&nbsp;            indexedVariables.setQuick(index, function = dateVarPool.next());</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;            ((DateBindVariable) function).value = value;</b>
+<i class="no-highlight">327</i>&nbsp;        }
+<i class="no-highlight">328</i>&nbsp;    }
+<i class="no-highlight">329</i>&nbsp;
+<i class="no-highlight">330</i>&nbsp;    @Override
+<i class="no-highlight">331</i>&nbsp;    public void setDouble(CharSequence name, double value) throws SqlException {
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">334</i>&nbsp;            final DoubleBindVariable function;
+<b class="fc"><i class="no-highlight">335</i>&nbsp;            namedVariables.putAt(index, name, function = doubleVarPool.next());</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            setDouble0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">339</i>&nbsp;        }
+<i class="no-highlight">340</i>&nbsp;    }
+<i class="no-highlight">341</i>&nbsp;
+<i class="no-highlight">342</i>&nbsp;    @Override
+<i class="no-highlight">343</i>&nbsp;    public void setDouble(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">344</i>&nbsp;        setDouble(index, Double.NaN);</b>
+<i class="no-highlight">345</i>&nbsp;    }
+<i class="no-highlight">346</i>&nbsp;
+<i class="no-highlight">347</i>&nbsp;    @Override
+<i class="no-highlight">348</i>&nbsp;    public void setDouble(int index, double value) throws SqlException {
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">350</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;            setDouble0(function, value, index, null);</b>
+<i class="no-highlight">354</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">355</i>&nbsp;            indexedVariables.setQuick(index, function = doubleVarPool.next());</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;            ((DoubleBindVariable) function).value = value;</b>
+<i class="no-highlight">357</i>&nbsp;        }
+<i class="no-highlight">358</i>&nbsp;    }
+<i class="no-highlight">359</i>&nbsp;
+<i class="no-highlight">360</i>&nbsp;    @Override
+<i class="no-highlight">361</i>&nbsp;    public void setFloat(CharSequence name, float value) throws SqlException {
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">364</i>&nbsp;            final FloatBindVariable function;
+<b class="fc"><i class="no-highlight">365</i>&nbsp;            namedVariables.putAt(index, name, function = floatVarPool.next());</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;            setFloat0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">369</i>&nbsp;        }
+<i class="no-highlight">370</i>&nbsp;    }
+<i class="no-highlight">371</i>&nbsp;
+<i class="no-highlight">372</i>&nbsp;    @Override
+<i class="no-highlight">373</i>&nbsp;    public void setFloat(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        setFloat(index, Float.NaN);</b>
+<i class="no-highlight">375</i>&nbsp;    }
+<i class="no-highlight">376</i>&nbsp;
+<i class="no-highlight">377</i>&nbsp;    @Override
+<i class="no-highlight">378</i>&nbsp;    public void setFloat(int index, float value) throws SqlException {
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">380</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;            setFloat0(function, value, index, null);</b>
+<i class="no-highlight">384</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">385</i>&nbsp;            indexedVariables.setQuick(index, function = floatVarPool.next());</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;            ((FloatBindVariable) function).value = value;</b>
+<i class="no-highlight">387</i>&nbsp;        }
+<i class="no-highlight">388</i>&nbsp;    }
+<i class="no-highlight">389</i>&nbsp;
+<i class="no-highlight">390</i>&nbsp;    @Override
+<i class="no-highlight">391</i>&nbsp;    public void setGeoHash(CharSequence name, long value, int type) throws SqlException {
+<b class="fc"><i class="no-highlight">392</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">394</i>&nbsp;            final GeoHashBindVariable function;
+<b class="fc"><i class="no-highlight">395</i>&nbsp;            namedVariables.putAt(index, name, function = geoHashVarPool.next());</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;            function.setType(type);</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;        } else {</b>
+<b class="nc"><i class="no-highlight">399</i>&nbsp;            setGeoHash0(namedVariables.valueAtQuick(index), value, type, -1, name);</b>
+<i class="no-highlight">400</i>&nbsp;        }
+<i class="no-highlight">401</i>&nbsp;    }
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;    @Override
+<i class="no-highlight">404</i>&nbsp;    public void setGeoHash(int index, long value, int type) throws SqlException {
+<b class="fc"><i class="no-highlight">405</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">406</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">407</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            setGeoHash0(function, value, type, index, null);</b>
+<i class="no-highlight">410</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">411</i>&nbsp;            indexedVariables.setQuick(index, function = geoHashVarPool.next());</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;            ((GeoHashBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;            ((GeoHashBindVariable) function).setType(type);</b>
+<i class="no-highlight">414</i>&nbsp;        }
+<i class="no-highlight">415</i>&nbsp;    }
+<i class="no-highlight">416</i>&nbsp;
+<i class="no-highlight">417</i>&nbsp;    @Override
+<i class="no-highlight">418</i>&nbsp;    public void setGeoHash(int index, int type) throws SqlException {
+<b class="fc"><i class="no-highlight">419</i>&nbsp;        setGeoHash(index, GeoHashes.NULL, type);</b>
+<i class="no-highlight">420</i>&nbsp;    }
+<i class="no-highlight">421</i>&nbsp;
+<i class="no-highlight">422</i>&nbsp;    @Override
+<i class="no-highlight">423</i>&nbsp;    public void setInt(CharSequence name, int value) throws SqlException {
+<b class="fc"><i class="no-highlight">424</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">426</i>&nbsp;            final IntBindVariable function;
+<b class="fc"><i class="no-highlight">427</i>&nbsp;            namedVariables.putAt(index, name, function = intVarPool.next());</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;            setInt0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">431</i>&nbsp;        }
+<i class="no-highlight">432</i>&nbsp;    }
+<i class="no-highlight">433</i>&nbsp;
+<i class="no-highlight">434</i>&nbsp;    @Override
+<i class="no-highlight">435</i>&nbsp;    public void setInt(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">436</i>&nbsp;        setInt(index, Numbers.INT_NaN);</b>
+<i class="no-highlight">437</i>&nbsp;    }
+<i class="no-highlight">438</i>&nbsp;
+<i class="no-highlight">439</i>&nbsp;    @Override
+<i class="no-highlight">440</i>&nbsp;    public void setInt(int index, int value) throws SqlException {
+<b class="fc"><i class="no-highlight">441</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">442</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">443</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;            setInt0(function, value, index, null);</b>
+<i class="no-highlight">446</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">447</i>&nbsp;            indexedVariables.setQuick(index, function = intVarPool.next());</b>
+<b class="fc"><i class="no-highlight">448</i>&nbsp;            ((IntBindVariable) function).value = value;</b>
+<i class="no-highlight">449</i>&nbsp;        }
+<i class="no-highlight">450</i>&nbsp;    }
+<i class="no-highlight">451</i>&nbsp;
+<i class="no-highlight">452</i>&nbsp;    @Override
+<i class="no-highlight">453</i>&nbsp;    public void setLong(CharSequence name, long value) throws SqlException {
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">456</i>&nbsp;            final LongBindVariable function;
+<b class="fc"><i class="no-highlight">457</i>&nbsp;            namedVariables.putAt(index, name, function = longVarPool.next());</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.LONG);</b>
+<i class="no-highlight">461</i>&nbsp;        }
+<i class="no-highlight">462</i>&nbsp;    }
+<i class="no-highlight">463</i>&nbsp;
+<i class="no-highlight">464</i>&nbsp;    @Override
+<i class="no-highlight">465</i>&nbsp;    public void setLong(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">466</i>&nbsp;        setLong(index, Numbers.LONG_NaN);</b>
+<i class="no-highlight">467</i>&nbsp;    }
+<i class="no-highlight">468</i>&nbsp;
+<i class="no-highlight">469</i>&nbsp;    @Override
+<i class="no-highlight">470</i>&nbsp;    public void setLong(int index, long value) throws SqlException {
+<b class="fc"><i class="no-highlight">471</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">472</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">473</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;            setLong0(function, value, index, null, ColumnType.LONG);</b>
+<i class="no-highlight">476</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">477</i>&nbsp;            indexedVariables.setQuick(index, function = longVarPool.next());</b>
+<b class="fc"><i class="no-highlight">478</i>&nbsp;            ((LongBindVariable) function).value = value;</b>
+<i class="no-highlight">479</i>&nbsp;        }
+<i class="no-highlight">480</i>&nbsp;    }
+<i class="no-highlight">481</i>&nbsp;
+<i class="no-highlight">482</i>&nbsp;    @Override
+<i class="no-highlight">483</i>&nbsp;    public void setLong256(CharSequence name, long l0, long l1, long l2, long l3) throws SqlException {
+<b class="fc"><i class="no-highlight">484</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">486</i>&nbsp;            final Long256BindVariable function;
+<b class="fc"><i class="no-highlight">487</i>&nbsp;            namedVariables.putAt(index, name, function = long256VarPool.next());</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;            function.value.setAll(l0, l1, l2, l3);</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">490</i>&nbsp;            setLong2560(namedVariables.valueAtQuick(index), l0, l1, l2, l3, -1, name);</b>
+<i class="no-highlight">491</i>&nbsp;        }
+<i class="no-highlight">492</i>&nbsp;    }
+<i class="no-highlight">493</i>&nbsp;
+<i class="no-highlight">494</i>&nbsp;    @Override
+<i class="no-highlight">495</i>&nbsp;    public void setLong256(CharSequence name, Long256 value) throws SqlException {
+<b class="fc"><i class="no-highlight">496</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">497</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">498</i>&nbsp;            final Long256BindVariable function;
+<b class="fc"><i class="no-highlight">499</i>&nbsp;            namedVariables.putAt(index, name, function = long256VarPool.next());</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;            function.value.copyFrom(value);</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">502</i>&nbsp;            setLong2560(</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                    namedVariables.valueAtQuick(index),</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                    value.getLong0(),</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                    value.getLong1(),</b>
+<b class="fc"><i class="no-highlight">506</i>&nbsp;                    value.getLong2(),</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                    value.getLong3(),</b>
+<i class="no-highlight">508</i>&nbsp;                    -1,
+<i class="no-highlight">509</i>&nbsp;                    name
+<i class="no-highlight">510</i>&nbsp;            );
+<i class="no-highlight">511</i>&nbsp;        }
+<i class="no-highlight">512</i>&nbsp;    }
+<i class="no-highlight">513</i>&nbsp;
+<i class="no-highlight">514</i>&nbsp;    @Override
+<i class="no-highlight">515</i>&nbsp;    public void setLong256(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">516</i>&nbsp;        setLong256(index, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);</b>
+<i class="no-highlight">517</i>&nbsp;    }
+<i class="no-highlight">518</i>&nbsp;
+<i class="no-highlight">519</i>&nbsp;    @Override
+<i class="no-highlight">520</i>&nbsp;    public void setLong256(int index, long l0, long l1, long l2, long l3) throws SqlException {
+<b class="fc"><i class="no-highlight">521</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">522</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">523</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;            setLong2560(</b>
+<i class="no-highlight">526</i>&nbsp;                    function,
+<i class="no-highlight">527</i>&nbsp;                    l0,
+<i class="no-highlight">528</i>&nbsp;                    l1,
+<i class="no-highlight">529</i>&nbsp;                    l2,
+<i class="no-highlight">530</i>&nbsp;                    l3,
+<i class="no-highlight">531</i>&nbsp;                    index,
+<i class="no-highlight">532</i>&nbsp;                    null
+<i class="no-highlight">533</i>&nbsp;            );
+<i class="no-highlight">534</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">535</i>&nbsp;            indexedVariables.setQuick(index, function = long256VarPool.next());</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;            ((Long256BindVariable) function).setValue(l0, l1, l2, l3);</b>
+<i class="no-highlight">537</i>&nbsp;        }
+<i class="no-highlight">538</i>&nbsp;    }
+<i class="no-highlight">539</i>&nbsp;
+<i class="no-highlight">540</i>&nbsp;    @Override
+<i class="no-highlight">541</i>&nbsp;    public void setLong256(CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">542</i>&nbsp;        setLong256(name, Long256Impl.NULL_LONG256);</b>
+<i class="no-highlight">543</i>&nbsp;    }
+<i class="no-highlight">544</i>&nbsp;
+<i class="no-highlight">545</i>&nbsp;    @Override
+<i class="no-highlight">546</i>&nbsp;    public void setShort(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">547</i>&nbsp;        setShort(index, (short) 0);</b>
+<i class="no-highlight">548</i>&nbsp;    }
+<i class="no-highlight">549</i>&nbsp;
+<i class="no-highlight">550</i>&nbsp;    @Override
+<i class="no-highlight">551</i>&nbsp;    public void setShort(int index, short value) throws SqlException {
+<b class="fc"><i class="no-highlight">552</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">553</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">554</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">556</i>&nbsp;            setShort0(function, value, index, null);</b>
+<i class="no-highlight">557</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">558</i>&nbsp;            indexedVariables.setQuick(index, function = shortVarPool.next());</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;            ((ShortBindVariable) function).value = value;</b>
+<i class="no-highlight">560</i>&nbsp;        }
+<i class="no-highlight">561</i>&nbsp;    }
+<i class="no-highlight">562</i>&nbsp;
+<i class="no-highlight">563</i>&nbsp;    @Override
+<i class="no-highlight">564</i>&nbsp;    public void setShort(CharSequence name, short value) throws SqlException {
+<b class="fc"><i class="no-highlight">565</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">567</i>&nbsp;            final ShortBindVariable function;
+<b class="fc"><i class="no-highlight">568</i>&nbsp;            namedVariables.putAt(index, name, function = shortVarPool.next());</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">571</i>&nbsp;            setShort0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">572</i>&nbsp;        }
+<i class="no-highlight">573</i>&nbsp;    }
+<i class="no-highlight">574</i>&nbsp;
+<i class="no-highlight">575</i>&nbsp;    @Override
+<i class="no-highlight">576</i>&nbsp;    public void setStr(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">577</i>&nbsp;        setStr(index, null);</b>
+<i class="no-highlight">578</i>&nbsp;    }
+<i class="no-highlight">579</i>&nbsp;
+<i class="no-highlight">580</i>&nbsp;    @Override
+<i class="no-highlight">581</i>&nbsp;    public void setStr(int index, CharSequence value) throws SqlException {
+<b class="fc"><i class="no-highlight">582</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">583</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">584</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">585</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">586</i>&nbsp;            setStr0(function, value, index, null);</b>
+<i class="no-highlight">587</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">588</i>&nbsp;            indexedVariables.setQuick(index, function = strVarPool.next());</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;            ((StrBindVariable) function).setValue(value);</b>
+<i class="no-highlight">590</i>&nbsp;        }
+<i class="no-highlight">591</i>&nbsp;    }
+<i class="no-highlight">592</i>&nbsp;
+<i class="no-highlight">593</i>&nbsp;    @Override
+<i class="no-highlight">594</i>&nbsp;    public void setStr(CharSequence name, CharSequence value) throws SqlException {
+<b class="fc"><i class="no-highlight">595</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">597</i>&nbsp;            final StrBindVariable function;
+<b class="fc"><i class="no-highlight">598</i>&nbsp;            namedVariables.putAt(index, name, function = strVarPool.next());</b>
+<b class="fc"><i class="no-highlight">599</i>&nbsp;            function.setValue(value);</b>
+<b class="fc"><i class="no-highlight">600</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">601</i>&nbsp;            setStr0(namedVariables.valueAtQuick(index), value, -1, name);</b>
+<i class="no-highlight">602</i>&nbsp;        }
+<i class="no-highlight">603</i>&nbsp;    }
+<i class="no-highlight">604</i>&nbsp;
+<i class="no-highlight">605</i>&nbsp;    @Override
+<i class="no-highlight">606</i>&nbsp;    public void setTimestamp(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">607</i>&nbsp;        setTimestamp(index, Numbers.LONG_NaN);</b>
+<i class="no-highlight">608</i>&nbsp;    }
+<i class="no-highlight">609</i>&nbsp;
+<i class="no-highlight">610</i>&nbsp;    @Override
+<i class="no-highlight">611</i>&nbsp;    public void setTimestamp(int index, long value) throws SqlException {
+<b class="fc"><i class="no-highlight">612</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">613</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">614</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">615</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;            setTimestamp0(function, value, index);</b>
+<i class="no-highlight">617</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">618</i>&nbsp;            indexedVariables.setQuick(index, function = timestampVarPool.next());</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;            ((TimestampBindVariable) function).value = value;</b>
+<i class="no-highlight">620</i>&nbsp;        }
+<i class="no-highlight">621</i>&nbsp;    }
+<i class="no-highlight">622</i>&nbsp;
+<i class="no-highlight">623</i>&nbsp;    @Override
+<i class="no-highlight">624</i>&nbsp;    public void setTimestamp(CharSequence name, long value) throws SqlException {
+<b class="fc"><i class="no-highlight">625</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">627</i>&nbsp;            final TimestampBindVariable function;
+<b class="fc"><i class="no-highlight">628</i>&nbsp;            namedVariables.putAt(index, name, function = timestampVarPool.next());</b>
+<b class="fc"><i class="no-highlight">629</i>&nbsp;            function.value = value;</b>
+<b class="fc"><i class="no-highlight">630</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">631</i>&nbsp;            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.TIMESTAMP);</b>
+<i class="no-highlight">632</i>&nbsp;        }
+<i class="no-highlight">633</i>&nbsp;    }
+<i class="no-highlight">634</i>&nbsp;
+<i class="no-highlight">635</i>&nbsp;    @Override
+<i class="no-highlight">636</i>&nbsp;    public void setUuid(int index, long lo, long hi) throws SqlException {
+<b class="fc"><i class="no-highlight">637</i>&nbsp;        indexedVariables.extendPos(index + 1);</b>
+<i class="no-highlight">638</i>&nbsp;        // variable exists
+<b class="fc"><i class="no-highlight">639</i>&nbsp;        Function function = indexedVariables.getQuick(index);</b>
+<b class="fc"><i class="no-highlight">640</i>&nbsp;        if (function != null) {</b>
+<b class="fc"><i class="no-highlight">641</i>&nbsp;            setUuid(function, lo, hi, index, null);</b>
+<i class="no-highlight">642</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">643</i>&nbsp;            indexedVariables.setQuick(index, function = uuidVarPool.next());</b>
+<b class="fc"><i class="no-highlight">644</i>&nbsp;            ((UuidBindVariable) function).set(lo, hi);</b>
+<i class="no-highlight">645</i>&nbsp;        }
+<i class="no-highlight">646</i>&nbsp;    }
+<i class="no-highlight">647</i>&nbsp;
+<i class="no-highlight">648</i>&nbsp;    @Override
+<i class="no-highlight">649</i>&nbsp;    public void setUuid(CharSequence name, long lo, long hi) throws SqlException {
+<b class="fc"><i class="no-highlight">650</i>&nbsp;        int index = namedVariables.keyIndex(name);</b>
+<b class="fc"><i class="no-highlight">651</i>&nbsp;        if (index &gt; -1) {</b>
+<i class="no-highlight">652</i>&nbsp;            final UuidBindVariable function;
+<b class="fc"><i class="no-highlight">653</i>&nbsp;            namedVariables.putAt(index, name, function = uuidVarPool.next());</b>
+<b class="fc"><i class="no-highlight">654</i>&nbsp;            function.set(lo, hi);</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;        } else {</b>
+<b class="nc"><i class="no-highlight">656</i>&nbsp;            setUuid(namedVariables.valueAtQuick(index), lo, hi, -1, name);</b>
+<i class="no-highlight">657</i>&nbsp;        }
+<i class="no-highlight">658</i>&nbsp;    }
+<i class="no-highlight">659</i>&nbsp;
+<i class="no-highlight">660</i>&nbsp;    public void setUuid(int index) throws SqlException {
+<b class="fc"><i class="no-highlight">661</i>&nbsp;        setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);</b>
+<i class="no-highlight">662</i>&nbsp;    }
+<i class="no-highlight">663</i>&nbsp;
+<i class="no-highlight">664</i>&nbsp;    private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">665</i>&nbsp;        if (name == null) {</b>
+<b class="fc"><i class="no-highlight">666</i>&nbsp;            throw SqlException.$(0, &quot;bind variable at &quot;).put(index).put(&quot; is defined as &quot;).put(ColumnType.nameOf(function.getType())).put(&quot; and cannot accept &quot;).put(ColumnType.nameOf(srcType));</b>
+<i class="no-highlight">667</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">668</i>&nbsp;        throw SqlException.$(0, &quot;bind variable &#39;&quot;).put(name).put(&quot;&#39; is defined as &quot;).put(ColumnType.nameOf(function.getType())).put(&quot; and cannot accept &quot;).put(ColumnType.nameOf(srcType));</b>
+<i class="no-highlight">669</i>&nbsp;    }
+<i class="no-highlight">670</i>&nbsp;
+<i class="no-highlight">671</i>&nbsp;    private static void setBoolean0(Function function, boolean value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">672</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">673</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">674</i>&nbsp;            case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">675</i>&nbsp;                ((BooleanBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">676</i>&nbsp;                break;</b>
+<i class="no-highlight">677</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">678</i>&nbsp;                ((StrBindVariable) function).setValue(Boolean.toString(value));</b>
+<b class="fc"><i class="no-highlight">679</i>&nbsp;                break;</b>
+<i class="no-highlight">680</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">681</i>&nbsp;                reportError(function, ColumnType.BOOLEAN, index, name);</b>
+<i class="no-highlight">682</i>&nbsp;                break;
+<i class="no-highlight">683</i>&nbsp;        }
+<i class="no-highlight">684</i>&nbsp;    }
+<i class="no-highlight">685</i>&nbsp;
+<i class="no-highlight">686</i>&nbsp;    private static void setByte0(Function function, byte value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">687</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">688</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">689</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">690</i>&nbsp;                ((ByteBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">691</i>&nbsp;                break;</b>
+<i class="no-highlight">692</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">693</i>&nbsp;                ((ShortBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">694</i>&nbsp;                break;</b>
+<i class="no-highlight">695</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">696</i>&nbsp;                ((IntBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">697</i>&nbsp;                break;</b>
+<i class="no-highlight">698</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">699</i>&nbsp;                ((LongBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">700</i>&nbsp;                break;</b>
+<i class="no-highlight">701</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">702</i>&nbsp;                ((TimestampBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">703</i>&nbsp;                break;</b>
+<i class="no-highlight">704</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">705</i>&nbsp;                ((DateBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">706</i>&nbsp;                break;</b>
+<i class="no-highlight">707</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">708</i>&nbsp;                ((FloatBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">709</i>&nbsp;                break;</b>
+<i class="no-highlight">710</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">711</i>&nbsp;                ((DoubleBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">712</i>&nbsp;                break;</b>
+<i class="no-highlight">713</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">714</i>&nbsp;                ((StrBindVariable) function).setValue(value);</b>
+<b class="fc"><i class="no-highlight">715</i>&nbsp;                break;</b>
+<i class="no-highlight">716</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">717</i>&nbsp;                ((CharBindVariable) function).value = SqlUtil.implicitCastAsChar(value, ColumnType.BYTE);</b>
+<b class="fc"><i class="no-highlight">718</i>&nbsp;                break;</b>
+<i class="no-highlight">719</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">720</i>&nbsp;                reportError(function, ColumnType.BYTE, index, name);</b>
+<i class="no-highlight">721</i>&nbsp;                break;
+<i class="no-highlight">722</i>&nbsp;        }
+<i class="no-highlight">723</i>&nbsp;    }
+<i class="no-highlight">724</i>&nbsp;
+<i class="no-highlight">725</i>&nbsp;    private static void setChar0(Function function, char value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">726</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<i class="no-highlight">727</i>&nbsp;        // treat char as string representation of numeric type
+<b class="fc"><i class="no-highlight">728</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">729</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">730</i>&nbsp;                ((ByteBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.BYTE);</b>
+<b class="fc"><i class="no-highlight">731</i>&nbsp;                break;</b>
+<i class="no-highlight">732</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">733</i>&nbsp;                ((ShortBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.SHORT);</b>
+<b class="fc"><i class="no-highlight">734</i>&nbsp;                break;</b>
+<i class="no-highlight">735</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">736</i>&nbsp;                ((IntBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.INT);</b>
+<b class="fc"><i class="no-highlight">737</i>&nbsp;                break;</b>
+<i class="no-highlight">738</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">739</i>&nbsp;                ((LongBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.LONG);</b>
+<b class="fc"><i class="no-highlight">740</i>&nbsp;                break;</b>
+<i class="no-highlight">741</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">742</i>&nbsp;                ((DateBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.DATE);</b>
+<b class="fc"><i class="no-highlight">743</i>&nbsp;                break;</b>
+<i class="no-highlight">744</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">745</i>&nbsp;                ((TimestampBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.TIMESTAMP);</b>
+<b class="fc"><i class="no-highlight">746</i>&nbsp;                break;</b>
+<i class="no-highlight">747</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">748</i>&nbsp;                ((FloatBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.FLOAT);</b>
+<b class="fc"><i class="no-highlight">749</i>&nbsp;                break;</b>
+<i class="no-highlight">750</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">751</i>&nbsp;                ((DoubleBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.DOUBLE);</b>
+<b class="fc"><i class="no-highlight">752</i>&nbsp;                break;</b>
+<i class="no-highlight">753</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">754</i>&nbsp;                ((CharBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">755</i>&nbsp;                break;</b>
+<i class="no-highlight">756</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">757</i>&nbsp;                ((StrBindVariable) function).setValue(value);</b>
+<b class="fc"><i class="no-highlight">758</i>&nbsp;                break;</b>
+<i class="no-highlight">759</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">760</i>&nbsp;                ((GeoHashBindVariable) function).value = SqlUtil.implicitCastCharAsGeoHash(value, function.getType());</b>
+<b class="fc"><i class="no-highlight">761</i>&nbsp;                break;</b>
+<i class="no-highlight">762</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">763</i>&nbsp;                reportError(function, ColumnType.CHAR, index, name);</b>
+<i class="no-highlight">764</i>&nbsp;                break;
+<i class="no-highlight">765</i>&nbsp;        }
+<i class="no-highlight">766</i>&nbsp;    }
+<i class="no-highlight">767</i>&nbsp;
+<i class="no-highlight">768</i>&nbsp;    private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">769</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">770</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">771</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">772</i>&nbsp;                ((FloatBindVariable) function).value = SqlUtil.implicitCastAsFloat(value, ColumnType.DOUBLE);</b>
+<b class="fc"><i class="no-highlight">773</i>&nbsp;                break;</b>
+<i class="no-highlight">774</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">775</i>&nbsp;                ((DoubleBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">776</i>&nbsp;                break;</b>
+<i class="no-highlight">777</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">778</i>&nbsp;                if (value == value) {</b>
+<b class="fc"><i class="no-highlight">779</i>&nbsp;                    ((StrBindVariable) function).setValue(value);</b>
+<i class="no-highlight">780</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">781</i>&nbsp;                    ((StrBindVariable) function).setValue(null);</b>
+<i class="no-highlight">782</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">783</i>&nbsp;                break;</b>
+<i class="no-highlight">784</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">785</i>&nbsp;                reportError(function, ColumnType.DOUBLE, index, name);</b>
+<i class="no-highlight">786</i>&nbsp;                break;
+<i class="no-highlight">787</i>&nbsp;        }
+<i class="no-highlight">788</i>&nbsp;    }
+<i class="no-highlight">789</i>&nbsp;
+<i class="no-highlight">790</i>&nbsp;    private static void setFloat0(Function function, float value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">791</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">792</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">793</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">794</i>&nbsp;                ((FloatBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">795</i>&nbsp;                break;</b>
+<i class="no-highlight">796</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">797</i>&nbsp;                ((DoubleBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">798</i>&nbsp;                break;</b>
+<i class="no-highlight">799</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">800</i>&nbsp;                if (value == value) {</b>
+<b class="fc"><i class="no-highlight">801</i>&nbsp;                    ((StrBindVariable) function).setValue(value);</b>
+<i class="no-highlight">802</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">803</i>&nbsp;                    ((StrBindVariable) function).setValue(null);</b>
+<i class="no-highlight">804</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">805</i>&nbsp;                break;</b>
+<i class="no-highlight">806</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">807</i>&nbsp;                reportError(function, ColumnType.FLOAT, index, name);</b>
+<i class="no-highlight">808</i>&nbsp;                break;
+<i class="no-highlight">809</i>&nbsp;        }
+<i class="no-highlight">810</i>&nbsp;    }
+<i class="no-highlight">811</i>&nbsp;
+<i class="no-highlight">812</i>&nbsp;    private static void setGeoHash0(Function function, long value, int type, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">813</i>&nbsp;        final int varType = function.getType();</b>
+<b class="fc"><i class="no-highlight">814</i>&nbsp;        switch (ColumnType.tagOf(varType)) {</b>
+<i class="no-highlight">815</i>&nbsp;            case ColumnType.GEOBYTE:
+<i class="no-highlight">816</i>&nbsp;            case ColumnType.GEOINT:
+<i class="no-highlight">817</i>&nbsp;            case ColumnType.GEOSHORT:
+<i class="no-highlight">818</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">819</i>&nbsp;                int fromBits = ColumnType.getGeoHashBits(type);</b>
+<b class="fc"><i class="no-highlight">820</i>&nbsp;                int toBits = ColumnType.getGeoHashBits(varType);</b>
+<b class="fc"><i class="no-highlight">821</i>&nbsp;                if (fromBits == toBits) {</b>
+<b class="fc"><i class="no-highlight">822</i>&nbsp;                    ((GeoHashBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">823</i>&nbsp;                } else if (fromBits &gt; toBits) {</b>
+<b class="fc"><i class="no-highlight">824</i>&nbsp;                    ((GeoHashBindVariable) function).value = GeoHashes.widen(value, fromBits, toBits);</b>
+<b class="fc"><i class="no-highlight">825</i>&nbsp;                } else if (name != null) {</b>
+<b class="nc"><i class="no-highlight">826</i>&nbsp;                    throw SqlException.$(0, &quot;inconvertible types: &quot;)</b>
+<b class="nc"><i class="no-highlight">827</i>&nbsp;                            .put(ColumnType.nameOf(type))</b>
+<b class="nc"><i class="no-highlight">828</i>&nbsp;                            .put(&quot; -&gt; &quot;)</b>
+<b class="nc"><i class="no-highlight">829</i>&nbsp;                            .put(ColumnType.nameOf(varType))</b>
+<b class="nc"><i class="no-highlight">830</i>&nbsp;                            .put(&quot; [varName=&quot;).put(name).put(&#39;]&#39;);</b>
+<i class="no-highlight">831</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">832</i>&nbsp;                    throw SqlException.$(0, &quot;inconvertible types: &quot;)</b>
+<b class="fc"><i class="no-highlight">833</i>&nbsp;                            .put(ColumnType.nameOf(type))</b>
+<b class="fc"><i class="no-highlight">834</i>&nbsp;                            .put(&quot; -&gt; &quot;)</b>
+<b class="fc"><i class="no-highlight">835</i>&nbsp;                            .put(ColumnType.nameOf(varType))</b>
+<b class="fc"><i class="no-highlight">836</i>&nbsp;                            .put(&quot; [varIndex=&quot;).put(index).put(&#39;]&#39;);</b>
+<i class="no-highlight">837</i>&nbsp;                }
+<i class="no-highlight">838</i>&nbsp;                break;
+<i class="no-highlight">839</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">840</i>&nbsp;                reportError(function, type, index, name);</b>
+<i class="no-highlight">841</i>&nbsp;        }
+<i class="no-highlight">842</i>&nbsp;    }
+<i class="no-highlight">843</i>&nbsp;
+<i class="no-highlight">844</i>&nbsp;    private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">845</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">846</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">847</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">848</i>&nbsp;                ((ByteBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.INT) : 0;</b>
+<b class="fc"><i class="no-highlight">849</i>&nbsp;                break;</b>
+<i class="no-highlight">850</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">851</i>&nbsp;                ((ShortBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.INT) : 0;</b>
+<b class="fc"><i class="no-highlight">852</i>&nbsp;                break;</b>
+<i class="no-highlight">853</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">854</i>&nbsp;                ((IntBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">855</i>&nbsp;                break;</b>
+<i class="no-highlight">856</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">857</i>&nbsp;                ((LongBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;</b>
+<b class="fc"><i class="no-highlight">858</i>&nbsp;                break;</b>
+<i class="no-highlight">859</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">860</i>&nbsp;                ((TimestampBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;</b>
+<b class="fc"><i class="no-highlight">861</i>&nbsp;                break;</b>
+<i class="no-highlight">862</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">863</i>&nbsp;                ((DateBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;</b>
+<b class="fc"><i class="no-highlight">864</i>&nbsp;                break;</b>
+<i class="no-highlight">865</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">866</i>&nbsp;                ((FloatBindVariable) function).value = value != Numbers.INT_NaN ? value : Float.NaN;</b>
+<b class="fc"><i class="no-highlight">867</i>&nbsp;                break;</b>
+<i class="no-highlight">868</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">869</i>&nbsp;                ((DoubleBindVariable) function).value = value != Numbers.INT_NaN ? value : Double.NaN;</b>
+<b class="fc"><i class="no-highlight">870</i>&nbsp;                break;</b>
+<i class="no-highlight">871</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">872</i>&nbsp;                ((StrBindVariable) function).setValue(value);</b>
+<b class="fc"><i class="no-highlight">873</i>&nbsp;                break;</b>
+<i class="no-highlight">874</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">875</i>&nbsp;                ((CharBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.INT) : 0;</b>
+<b class="fc"><i class="no-highlight">876</i>&nbsp;                break;</b>
+<i class="no-highlight">877</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">878</i>&nbsp;                reportError(function, ColumnType.INT, index, name);</b>
+<i class="no-highlight">879</i>&nbsp;                break;
+<i class="no-highlight">880</i>&nbsp;        }
+<i class="no-highlight">881</i>&nbsp;    }
+<i class="no-highlight">882</i>&nbsp;
+<i class="no-highlight">883</i>&nbsp;    private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
+<b class="fc"><i class="no-highlight">884</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">885</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">886</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">887</i>&nbsp;                ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;</b>
+<b class="fc"><i class="no-highlight">888</i>&nbsp;                break;</b>
+<i class="no-highlight">889</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">890</i>&nbsp;                ((ShortBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.LONG) : 0;</b>
+<b class="fc"><i class="no-highlight">891</i>&nbsp;                break;</b>
+<i class="no-highlight">892</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">893</i>&nbsp;                ((IntBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsInt(value, ColumnType.LONG) : Numbers.INT_NaN;</b>
+<b class="fc"><i class="no-highlight">894</i>&nbsp;                break;</b>
+<i class="no-highlight">895</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">896</i>&nbsp;                ((LongBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">897</i>&nbsp;                break;</b>
+<i class="no-highlight">898</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">899</i>&nbsp;                ((TimestampBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">900</i>&nbsp;                break;</b>
+<i class="no-highlight">901</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">902</i>&nbsp;                ((DateBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">903</i>&nbsp;                break;</b>
+<i class="no-highlight">904</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">905</i>&nbsp;                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;</b>
+<b class="fc"><i class="no-highlight">906</i>&nbsp;                break;</b>
+<i class="no-highlight">907</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">908</i>&nbsp;                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;</b>
+<b class="fc"><i class="no-highlight">909</i>&nbsp;                break;</b>
+<i class="no-highlight">910</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">911</i>&nbsp;                ((StrBindVariable) function).setValue(value);</b>
+<b class="fc"><i class="no-highlight">912</i>&nbsp;                break;</b>
+<i class="no-highlight">913</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                ((CharBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;</b>
+<b class="fc"><i class="no-highlight">915</i>&nbsp;                break;</b>
+<i class="no-highlight">916</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">917</i>&nbsp;                reportError(function, srcType, index, name);</b>
+<i class="no-highlight">918</i>&nbsp;                break;
+<i class="no-highlight">919</i>&nbsp;        }
+<i class="no-highlight">920</i>&nbsp;    }
+<i class="no-highlight">921</i>&nbsp;
+<i class="no-highlight">922</i>&nbsp;    private static void setLong2560(
+<i class="no-highlight">923</i>&nbsp;            Function function,
+<i class="no-highlight">924</i>&nbsp;            long l0,
+<i class="no-highlight">925</i>&nbsp;            long l1,
+<i class="no-highlight">926</i>&nbsp;            long l2,
+<i class="no-highlight">927</i>&nbsp;            long l3,
+<i class="no-highlight">928</i>&nbsp;            int index,
+<i class="no-highlight">929</i>&nbsp;            @Nullable CharSequence name
+<i class="no-highlight">930</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">931</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">932</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">933</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">934</i>&nbsp;                ((Long256BindVariable) function).setValue(l0, l1, l2, l3);</b>
+<b class="fc"><i class="no-highlight">935</i>&nbsp;                break;</b>
+<i class="no-highlight">936</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">937</i>&nbsp;                ((StrBindVariable) function).setValue(l0, l1, l2, l3);</b>
+<b class="fc"><i class="no-highlight">938</i>&nbsp;                break;</b>
+<i class="no-highlight">939</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">940</i>&nbsp;                reportError(function, ColumnType.LONG256, index, name);</b>
+<i class="no-highlight">941</i>&nbsp;                break;
+<i class="no-highlight">942</i>&nbsp;        }
+<i class="no-highlight">943</i>&nbsp;    }
+<i class="no-highlight">944</i>&nbsp;
+<i class="no-highlight">945</i>&nbsp;    private static void setShort0(Function function, short value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">946</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">947</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">948</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">949</i>&nbsp;                ((ByteBindVariable) function).value = SqlUtil.implicitCastAsByte(value, ColumnType.SHORT);</b>
+<b class="fc"><i class="no-highlight">950</i>&nbsp;                break;</b>
+<i class="no-highlight">951</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">952</i>&nbsp;                ((ShortBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">953</i>&nbsp;                break;</b>
+<i class="no-highlight">954</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">955</i>&nbsp;                ((IntBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">956</i>&nbsp;                break;</b>
+<i class="no-highlight">957</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">958</i>&nbsp;                ((LongBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">959</i>&nbsp;                break;</b>
+<i class="no-highlight">960</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">961</i>&nbsp;                ((TimestampBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">962</i>&nbsp;                break;</b>
+<i class="no-highlight">963</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">964</i>&nbsp;                ((DateBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">965</i>&nbsp;                break;</b>
+<i class="no-highlight">966</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">967</i>&nbsp;                ((FloatBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">968</i>&nbsp;                break;</b>
+<i class="no-highlight">969</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">970</i>&nbsp;                ((DoubleBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">971</i>&nbsp;                break;</b>
+<i class="no-highlight">972</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">973</i>&nbsp;                ((StrBindVariable) function).setValue(value);</b>
+<b class="fc"><i class="no-highlight">974</i>&nbsp;                break;</b>
+<i class="no-highlight">975</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">976</i>&nbsp;                ((CharBindVariable) function).value = SqlUtil.implicitCastAsChar(value, ColumnType.SHORT);</b>
+<b class="fc"><i class="no-highlight">977</i>&nbsp;                break;</b>
+<i class="no-highlight">978</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">979</i>&nbsp;                reportError(function, ColumnType.SHORT, index, name);</b>
+<i class="no-highlight">980</i>&nbsp;                break;
+<i class="no-highlight">981</i>&nbsp;        }
+<i class="no-highlight">982</i>&nbsp;    }
+<i class="no-highlight">983</i>&nbsp;
+<i class="no-highlight">984</i>&nbsp;    private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">985</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">986</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">987</i>&nbsp;            case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">988</i>&nbsp;                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);</b>
+<b class="fc"><i class="no-highlight">989</i>&nbsp;                break;</b>
+<i class="no-highlight">990</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">991</i>&nbsp;                ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);</b>
+<b class="fc"><i class="no-highlight">992</i>&nbsp;                break;</b>
+<i class="no-highlight">993</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">994</i>&nbsp;                ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);</b>
+<b class="fc"><i class="no-highlight">995</i>&nbsp;                break;</b>
+<i class="no-highlight">996</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">997</i>&nbsp;                ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);</b>
+<b class="fc"><i class="no-highlight">998</i>&nbsp;                break;</b>
+<i class="no-highlight">999</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">1000</i>&nbsp;                ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);</b>
+<b class="fc"><i class="no-highlight">1001</i>&nbsp;                break;</b>
+<i class="no-highlight">1002</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">1003</i>&nbsp;                ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);</b>
+<b class="fc"><i class="no-highlight">1004</i>&nbsp;                break;</b>
+<i class="no-highlight">1005</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">1006</i>&nbsp;                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(value);</b>
+<b class="fc"><i class="no-highlight">1007</i>&nbsp;                break;</b>
+<i class="no-highlight">1008</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">1009</i>&nbsp;                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);</b>
+<b class="fc"><i class="no-highlight">1010</i>&nbsp;                break;</b>
+<i class="no-highlight">1011</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">1012</i>&nbsp;                ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);</b>
+<b class="fc"><i class="no-highlight">1013</i>&nbsp;                break;</b>
+<i class="no-highlight">1014</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">1015</i>&nbsp;                ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);</b>
+<b class="fc"><i class="no-highlight">1016</i>&nbsp;                break;</b>
+<i class="no-highlight">1017</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">1018</i>&nbsp;                ((StrBindVariable) function).setValue(value);</b>
+<b class="fc"><i class="no-highlight">1019</i>&nbsp;                break;</b>
+<i class="no-highlight">1020</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">1021</i>&nbsp;                SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);</b>
+<b class="fc"><i class="no-highlight">1022</i>&nbsp;                break;</b>
+<i class="no-highlight">1023</i>&nbsp;            case ColumnType.UUID:
+<b class="fc"><i class="no-highlight">1024</i>&nbsp;                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);</b>
+<b class="fc"><i class="no-highlight">1025</i>&nbsp;                break;</b>
+<i class="no-highlight">1026</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">1027</i>&nbsp;                reportError(function, ColumnType.STRING, index, name);</b>
+<i class="no-highlight">1028</i>&nbsp;                break;
+<i class="no-highlight">1029</i>&nbsp;        }
+<i class="no-highlight">1030</i>&nbsp;    }
+<i class="no-highlight">1031</i>&nbsp;
+<i class="no-highlight">1032</i>&nbsp;    private static void setTimestamp0(Function function, long value, int index) throws SqlException {
+<b class="fc"><i class="no-highlight">1033</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">1034</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">1035</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">1036</i>&nbsp;                ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP) : 0;</b>
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;                break;</b>
+<i class="no-highlight">1038</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">1039</i>&nbsp;                ((ShortBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.TIMESTAMP) : 0;</b>
+<b class="fc"><i class="no-highlight">1040</i>&nbsp;                break;</b>
+<i class="no-highlight">1041</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">1042</i>&nbsp;                ((IntBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsInt(value, ColumnType.TIMESTAMP) : Numbers.INT_NaN;</b>
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;                break;</b>
+<i class="no-highlight">1044</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">1045</i>&nbsp;                ((LongBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">1046</i>&nbsp;                break;</b>
+<i class="no-highlight">1047</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">1048</i>&nbsp;                ((TimestampBindVariable) function).value = value;</b>
+<b class="fc"><i class="no-highlight">1049</i>&nbsp;                break;</b>
+<i class="no-highlight">1050</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">1051</i>&nbsp;                ((DateBindVariable) function).value = value != Numbers.LONG_NaN ? value / 1000 : value;</b>
+<b class="fc"><i class="no-highlight">1052</i>&nbsp;                break;</b>
+<i class="no-highlight">1053</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">1054</i>&nbsp;                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;</b>
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;                break;</b>
+<i class="no-highlight">1056</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">1057</i>&nbsp;                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;</b>
+<b class="fc"><i class="no-highlight">1058</i>&nbsp;                break;</b>
+<i class="no-highlight">1059</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">1060</i>&nbsp;                ((StrBindVariable) function).setTimestamp(value);</b>
+<b class="fc"><i class="no-highlight">1061</i>&nbsp;                break;</b>
+<i class="no-highlight">1062</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">1063</i>&nbsp;                reportError(function, ColumnType.TIMESTAMP, index, null);</b>
+<i class="no-highlight">1064</i>&nbsp;                break;
+<i class="no-highlight">1065</i>&nbsp;        }
+<i class="no-highlight">1066</i>&nbsp;    }
+<i class="no-highlight">1067</i>&nbsp;
+<i class="no-highlight">1068</i>&nbsp;    private static void setUuid(Function function, long lo, long hi, int index, @Nullable CharSequence name) throws SqlException {
+<b class="fc"><i class="no-highlight">1069</i>&nbsp;        final int functionType = ColumnType.tagOf(function.getType());</b>
+<b class="fc"><i class="no-highlight">1070</i>&nbsp;        switch (functionType) {</b>
+<i class="no-highlight">1071</i>&nbsp;            case ColumnType.UUID:
+<b class="fc"><i class="no-highlight">1072</i>&nbsp;                ((UuidBindVariable) function).set(lo, hi);</b>
+<b class="fc"><i class="no-highlight">1073</i>&nbsp;                break;</b>
+<i class="no-highlight">1074</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">1075</i>&nbsp;                ((StrBindVariable) function).setUuidValue(lo, hi);</b>
+<b class="fc"><i class="no-highlight">1076</i>&nbsp;                break;</b>
+<i class="no-highlight">1077</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">1078</i>&nbsp;                reportError(function, ColumnType.UUID, index, name);</b>
+<i class="no-highlight">1079</i>&nbsp;                break;
+<i class="no-highlight">1080</i>&nbsp;        }
+<i class="no-highlight">1081</i>&nbsp;    }
+<i class="no-highlight">1082</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

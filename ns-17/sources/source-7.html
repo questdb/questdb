@@ -1,0 +1,203 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > PGJobContext</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.pgwire</a>
+</div>
+
+<h1>Coverage Summary for Class: PGJobContext (io.questdb.cutlass.pgwire)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">PGJobContext</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (19/19)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.pgwire;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.Metrics;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.CairoEngine;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.griffin.DatabaseSnapshotAgent;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.FunctionFactoryCache;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.SqlCompiler;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.network.PeerDisconnectedException;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.network.PeerIsSlowToReadException;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.network.PeerIsSlowToWriteException;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.network.QueryPausedException;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.AssociativeCache;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.WeakSelfReturningObjectPool;
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">41</i>&nbsp;
+<i class="no-highlight">42</i>&nbsp;public class PGJobContext implements Closeable {
+<i class="no-highlight">43</i>&nbsp;
+<i class="no-highlight">44</i>&nbsp;    private final SqlCompiler compiler;
+<i class="no-highlight">45</i>&nbsp;    private final AssociativeCache&lt;TypesAndSelect&gt; typesAndSelectCache;
+<i class="no-highlight">46</i>&nbsp;    private final WeakSelfReturningObjectPool&lt;TypesAndSelect&gt; typesAndSelectPool;
+<i class="no-highlight">47</i>&nbsp;    private final AssociativeCache&lt;TypesAndUpdate&gt; typesAndUpdateCache;
+<i class="no-highlight">48</i>&nbsp;    private final WeakSelfReturningObjectPool&lt;TypesAndUpdate&gt; typesAndUpdatePool;
+<i class="no-highlight">49</i>&nbsp;
+<i class="no-highlight">50</i>&nbsp;    public PGJobContext(
+<i class="no-highlight">51</i>&nbsp;            PGWireConfiguration configuration,
+<i class="no-highlight">52</i>&nbsp;            CairoEngine engine,
+<i class="no-highlight">53</i>&nbsp;            FunctionFactoryCache functionFactoryCache,
+<i class="no-highlight">54</i>&nbsp;            DatabaseSnapshotAgent snapshotAgent
+<b class="fc"><i class="no-highlight">55</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);</b>
+<i class="no-highlight">57</i>&nbsp;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        final Metrics metrics = engine.getMetrics();</b>
+<i class="no-highlight">59</i>&nbsp;
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        final boolean enableSelectCache = configuration.isSelectCacheEnabled();</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        typesAndSelectCache = new AssociativeCache&lt;&gt;(blockCount, rowCount, metrics.pgWire().cachedSelectsGauge());</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        typesAndSelectPool = new WeakSelfReturningObjectPool&lt;&gt;(TypesAndSelect::new, blockCount * rowCount);</b>
+<i class="no-highlight">65</i>&nbsp;
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        typesAndUpdateCache = new AssociativeCache&lt;&gt;(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        typesAndUpdatePool = new WeakSelfReturningObjectPool&lt;&gt;(parent -&gt; new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);</b>
+<i class="no-highlight">71</i>&nbsp;    }
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    @Override
+<i class="no-highlight">74</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        Misc.free(compiler);</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        Misc.free(typesAndSelectCache);</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        Misc.free(typesAndUpdateCache);</b>
+<i class="no-highlight">78</i>&nbsp;    }
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;    public void flushQueryCache() {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        typesAndSelectCache.clear();</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        typesAndUpdateCache.clear();</b>
+<i class="no-highlight">83</i>&nbsp;    }
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    public void handleClientOperation(
+<i class="no-highlight">86</i>&nbsp;            PGConnectionContext context,
+<i class="no-highlight">87</i>&nbsp;            int operation
+<i class="no-highlight">88</i>&nbsp;    ) throws PeerIsSlowToWriteException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        context.handleClientOperation(</b>
+<i class="no-highlight">90</i>&nbsp;                compiler,
+<i class="no-highlight">91</i>&nbsp;                typesAndSelectCache,
+<i class="no-highlight">92</i>&nbsp;                typesAndSelectPool,
+<i class="no-highlight">93</i>&nbsp;                typesAndUpdateCache,
+<i class="no-highlight">94</i>&nbsp;                typesAndUpdatePool,
+<i class="no-highlight">95</i>&nbsp;                operation
+<i class="no-highlight">96</i>&nbsp;        );
+<i class="no-highlight">97</i>&nbsp;    }
+<i class="no-highlight">98</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

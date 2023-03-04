@@ -1,0 +1,660 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > HttpHeaderParser</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.http</a>
+</div>
+
+<h1>Coverage Summary for Class: HttpHeaderParser (io.questdb.cutlass.http)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">HttpHeaderParser</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (26/26)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.2%
+  </span>
+  <span class="absValue">
+    (237/239)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">HttpHeaderParser$BoundaryAugmenter</td>
+<td class="coverageStat">
+  <span class="percent">
+    80%
+  </span>
+  <span class="absValue">
+    (4/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    75%
+  </span>
+  <span class="absValue">
+    (15/20)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    96.8%
+  </span>
+  <span class="absValue">
+    (30/31)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.3%
+  </span>
+  <span class="absValue">
+    (252/259)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.http;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.str.DirectByteCharSequence;
+<i class="no-highlight">29</i>&nbsp;
+<i class="no-highlight">30</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">31</i>&nbsp;
+<i class="no-highlight">32</i>&nbsp;public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
+<i class="no-highlight">33</i>&nbsp;    private static final String CONTENT_DISPOSITION_HEADER = &quot;Content-Disposition&quot;;
+<i class="no-highlight">34</i>&nbsp;    private static final String CONTENT_TYPE_HEADER = &quot;Content-Type&quot;;
+<b class="fc"><i class="no-highlight">35</i>&nbsp;    private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();</b>
+<b class="fc"><i class="no-highlight">36</i>&nbsp;    private final LowerCaseAsciiCharSequenceObjHashMap&lt;DirectByteCharSequence&gt; headers = new LowerCaseAsciiCharSequenceObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">37</i>&nbsp;    private final long hi;
+<i class="no-highlight">38</i>&nbsp;    private final ObjectPool&lt;DirectByteCharSequence&gt; pool;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;    private final DirectByteCharSequence temp = new DirectByteCharSequence();</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    private final CharSequenceObjHashMap&lt;DirectByteCharSequence&gt; urlParams = new CharSequenceObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">41</i>&nbsp;    private long _lo;
+<i class="no-highlight">42</i>&nbsp;    private long _wptr;
+<i class="no-highlight">43</i>&nbsp;    private DirectByteCharSequence boundary;
+<i class="no-highlight">44</i>&nbsp;    private DirectByteCharSequence charset;
+<i class="no-highlight">45</i>&nbsp;    private CharSequence contentDisposition;
+<i class="no-highlight">46</i>&nbsp;    private CharSequence contentDispositionFilename;
+<i class="no-highlight">47</i>&nbsp;    private CharSequence contentDispositionName;
+<i class="no-highlight">48</i>&nbsp;    private DirectByteCharSequence contentType;
+<i class="no-highlight">49</i>&nbsp;    private DirectByteCharSequence headerName;
+<i class="no-highlight">50</i>&nbsp;    private long headerPtr;
+<i class="no-highlight">51</i>&nbsp;    private boolean incomplete;
+<b class="fc"><i class="no-highlight">52</i>&nbsp;    private boolean isMethod = true;</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;    private boolean isQueryParams = false;</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private boolean isUrl = true;</b>
+<i class="no-highlight">55</i>&nbsp;    private DirectByteCharSequence method;
+<i class="no-highlight">56</i>&nbsp;    private DirectByteCharSequence methodLine;
+<i class="no-highlight">57</i>&nbsp;    private boolean needMethod;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private long statementTimeout = -1L;</b>
+<i class="no-highlight">59</i>&nbsp;    private DirectByteCharSequence url;
+<i class="no-highlight">60</i>&nbsp;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    public HttpHeaderParser(int bufferLen, ObjectPool&lt;DirectByteCharSequence&gt; pool) {</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        final int sz = Numbers.ceilPow2(bufferLen);</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        this.headerPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_HTTP_CONN);</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        this._wptr = headerPtr;</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        this.hi = this.headerPtr + sz;</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        this.pool = pool;</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        clear();</b>
+<i class="no-highlight">68</i>&nbsp;    }
+<i class="no-highlight">69</i>&nbsp;
+<i class="no-highlight">70</i>&nbsp;    @Override
+<i class="no-highlight">71</i>&nbsp;    public final void clear() {
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.needMethod = true;</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        this._wptr = this._lo = this.headerPtr;</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        this.incomplete = true;</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        this.headers.clear();</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        this.method = null;</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        this.url = null;</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        this.headerName = null;</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        this.contentType = null;</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        this.boundary = null;</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        this.contentDisposition = null;</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        this.contentDispositionName = null;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.contentDispositionFilename = null;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        this.urlParams.clear();</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        this.isMethod = true;</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        this.isUrl = true;</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        this.isQueryParams = false;</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        this.statementTimeout = -1L;</b>
+<i class="no-highlight">89</i>&nbsp;        // do not clear the pool
+<i class="no-highlight">90</i>&nbsp;        // this.pool.clear();
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    @Override
+<i class="no-highlight">94</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        if (this.headerPtr != 0) {</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;            this.headerPtr = Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            this.boundaryAugmenter.close();</b>
+<i class="no-highlight">98</i>&nbsp;        }
+<i class="no-highlight">99</i>&nbsp;    }
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;    @Override
+<i class="no-highlight">102</i>&nbsp;    public DirectByteCharSequence getBoundary() {
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        return boundaryAugmenter.of(boundary);</b>
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;    @Override
+<i class="no-highlight">107</i>&nbsp;    public DirectByteCharSequence getCharset() {
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        return charset;</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    @Override
+<i class="no-highlight">112</i>&nbsp;    public CharSequence getContentDisposition() {
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        return contentDisposition;</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;    @Override
+<i class="no-highlight">117</i>&nbsp;    public CharSequence getContentDispositionFilename() {
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        return contentDispositionFilename;</b>
+<i class="no-highlight">119</i>&nbsp;    }
+<i class="no-highlight">120</i>&nbsp;
+<i class="no-highlight">121</i>&nbsp;    @Override
+<i class="no-highlight">122</i>&nbsp;    public CharSequence getContentDispositionName() {
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        return contentDispositionName;</b>
+<i class="no-highlight">124</i>&nbsp;    }
+<i class="no-highlight">125</i>&nbsp;
+<i class="no-highlight">126</i>&nbsp;    @Override
+<i class="no-highlight">127</i>&nbsp;    public CharSequence getContentType() {
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        return contentType;</b>
+<i class="no-highlight">129</i>&nbsp;    }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;    @Override
+<i class="no-highlight">132</i>&nbsp;    public DirectByteCharSequence getHeader(CharSequence name) {
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        return headers.get(name);</b>
+<i class="no-highlight">134</i>&nbsp;    }
+<i class="no-highlight">135</i>&nbsp;
+<i class="no-highlight">136</i>&nbsp;    @Override
+<i class="no-highlight">137</i>&nbsp;    public ObjList&lt;CharSequence&gt; getHeaderNames() {
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        return headers.keys();</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    @Override
+<i class="no-highlight">142</i>&nbsp;    public CharSequence getMethod() {
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        return method;</b>
+<i class="no-highlight">144</i>&nbsp;    }
+<i class="no-highlight">145</i>&nbsp;
+<i class="no-highlight">146</i>&nbsp;    @Override
+<i class="no-highlight">147</i>&nbsp;    public CharSequence getMethodLine() {
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        return methodLine;</b>
+<i class="no-highlight">149</i>&nbsp;    }
+<i class="no-highlight">150</i>&nbsp;
+<i class="no-highlight">151</i>&nbsp;    @Override
+<i class="no-highlight">152</i>&nbsp;    public long getStatementTimeout() {
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        return statementTimeout;</b>
+<i class="no-highlight">154</i>&nbsp;    }
+<i class="no-highlight">155</i>&nbsp;
+<i class="no-highlight">156</i>&nbsp;    @Override
+<i class="no-highlight">157</i>&nbsp;    public CharSequence getUrl() {
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return url;</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    @Override
+<i class="no-highlight">162</i>&nbsp;    public DirectByteCharSequence getUrlParam(CharSequence name) {
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        return urlParams.get(name);</b>
+<i class="no-highlight">164</i>&nbsp;    }
+<i class="no-highlight">165</i>&nbsp;
+<i class="no-highlight">166</i>&nbsp;    public boolean isIncomplete() {
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        return incomplete;</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    public long parse(long ptr, long hi, boolean _method) {
+<i class="no-highlight">171</i>&nbsp;        long p;
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        if (_method &amp;&amp; needMethod) {</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;            int l = parseMethod(ptr, hi);</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            p = ptr + l;</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            p = ptr;</b>
+<i class="no-highlight">177</i>&nbsp;        }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;        DirectByteCharSequence v;
+<i class="no-highlight">180</i>&nbsp;
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        while (p &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            if (_wptr == this.hi) {</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                throw HttpException.instance(&quot;header is too large&quot;);</b>
+<i class="no-highlight">184</i>&nbsp;            }
+<i class="no-highlight">185</i>&nbsp;
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            char b = (char) Unsafe.getUnsafe().getByte(p++);</b>
+<i class="no-highlight">187</i>&nbsp;
+<b class="fc"><i class="no-highlight">188</i>&nbsp;            if (b == &#39;\r&#39;) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                continue;</b>
+<i class="no-highlight">190</i>&nbsp;            }
+<i class="no-highlight">191</i>&nbsp;
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);</b>
+<i class="no-highlight">193</i>&nbsp;
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            switch (b) {</b>
+<i class="no-highlight">195</i>&nbsp;                case &#39;:&#39;:
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                    if (headerName == null) {</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                        headerName = pool.next().of(_lo, _wptr - 1);</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                        _lo = _wptr + 1;</b>
+<i class="no-highlight">199</i>&nbsp;                    }
+<i class="no-highlight">200</i>&nbsp;                    break;
+<i class="no-highlight">201</i>&nbsp;                case &#39;\n&#39;:
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                    if (headerName == null) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                        incomplete = false;</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                        parseKnownHeaders();</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                        return p;</b>
+<i class="no-highlight">206</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                    v = pool.next().of(_lo, _wptr - 1);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                    _lo = _wptr;</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                    headers.put(headerName, v);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                    headerName = null;</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                    break;</b>
+<i class="no-highlight">212</i>&nbsp;                default:
+<i class="no-highlight">213</i>&nbsp;                    break;
+<i class="no-highlight">214</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        }</b>
+<i class="no-highlight">216</i>&nbsp;
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        return p;</b>
+<i class="no-highlight">218</i>&nbsp;    }
+<i class="no-highlight">219</i>&nbsp;
+<i class="no-highlight">220</i>&nbsp;    public int size() {
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        return headers.size();</b>
+<i class="no-highlight">222</i>&nbsp;    }
+<i class="no-highlight">223</i>&nbsp;
+<i class="no-highlight">224</i>&nbsp;    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        int len = that.length();</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        if (len == 0) {</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;            throw HttpException.instance(&quot;missing value [key=&quot;).put(key).put(&#39;]&#39;);</b>
+<i class="no-highlight">228</i>&nbsp;        }
+<i class="no-highlight">229</i>&nbsp;
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        if (that.charAt(0) == &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;            if (that.charAt(len - 1) == &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                return that.of(that.getLo() + 1, that.getHi() - 1);</b>
+<i class="no-highlight">233</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                throw HttpException.instance(&quot;unclosed quote [key=&quot;).put(key).put(&#39;]&#39;);</b>
+<i class="no-highlight">235</i>&nbsp;            }
+<i class="no-highlight">236</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            return that;</b>
+<i class="no-highlight">238</i>&nbsp;        }
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    private void parseContentDisposition() {
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        DirectByteCharSequence contentDisposition = getHeader(CONTENT_DISPOSITION_HEADER);</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        if (contentDisposition == null) {</b>
+<i class="no-highlight">244</i>&nbsp;            return;
+<i class="no-highlight">245</i>&nbsp;        }
+<i class="no-highlight">246</i>&nbsp;
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        long p = contentDisposition.getLo();</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        long _lo = p;</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        long hi = contentDisposition.getHi();</b>
+<i class="no-highlight">250</i>&nbsp;
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        boolean expectFormData = true;</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        boolean swallowSpace = true;</b>
+<i class="no-highlight">253</i>&nbsp;
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        DirectByteCharSequence name = null;</b>
+<i class="no-highlight">255</i>&nbsp;
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        while (p &lt;= hi) {</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;            char b = (char) Unsafe.getUnsafe().getByte(p++);</b>
+<i class="no-highlight">258</i>&nbsp;
+<b class="fc"><i class="no-highlight">259</i>&nbsp;            if (b == &#39; &#39; &amp;&amp; swallowSpace) {</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                _lo = p;</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                continue;</b>
+<i class="no-highlight">262</i>&nbsp;            }
+<i class="no-highlight">263</i>&nbsp;
+<b class="fc"><i class="no-highlight">264</i>&nbsp;            if (p &gt; hi || b == &#39;;&#39;) {</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                if (expectFormData) {</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;                    this.contentDisposition = pool.next().of(_lo, p - 1);</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                    _lo = p;</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;                    expectFormData = false;</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                    continue;</b>
+<i class="no-highlight">270</i>&nbsp;                }
+<i class="no-highlight">271</i>&nbsp;
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                if (name == null) {</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                    throw HttpException.instance(&quot;Malformed &quot;).put(CONTENT_DISPOSITION_HEADER).put(&quot; header&quot;);</b>
+<i class="no-highlight">274</i>&nbsp;                }
+<i class="no-highlight">275</i>&nbsp;
+<b class="fc"><i class="no-highlight">276</i>&nbsp;                if (Chars.equals(&quot;name&quot;, name)) {</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                    this.contentDispositionName = unquote(&quot;name&quot;, pool.next().of(_lo, p - 1));</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                    swallowSpace = true;</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                    _lo = p;</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                    name = null;</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;                    continue;</b>
+<i class="no-highlight">282</i>&nbsp;                }
+<i class="no-highlight">283</i>&nbsp;
+<b class="fc"><i class="no-highlight">284</i>&nbsp;                if (Chars.equals(&quot;filename&quot;, name)) {</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                    this.contentDispositionFilename = unquote(&quot;filename&quot;, pool.next().of(_lo, p - 1));</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                    _lo = p;</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;                    name = null;</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;                    continue;</b>
+<i class="no-highlight">289</i>&nbsp;                }
+<i class="no-highlight">290</i>&nbsp;
+<b class="fc"><i class="no-highlight">291</i>&nbsp;                if (p &gt; hi) {</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                    break;</b>
+<i class="no-highlight">293</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">294</i>&nbsp;            } else if (b == &#39;=&#39;) {</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;                _lo = p;</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                swallowSpace = false;</b>
+<i class="no-highlight">298</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        }</b>
+<i class="no-highlight">300</i>&nbsp;    }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;    private void parseContentType() {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        DirectByteCharSequence seq = getHeader(CONTENT_TYPE_HEADER);</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        if (seq == null) {</b>
+<i class="no-highlight">305</i>&nbsp;            return;
+<i class="no-highlight">306</i>&nbsp;        }
+<i class="no-highlight">307</i>&nbsp;
+<b class="fc"><i class="no-highlight">308</i>&nbsp;        long p = seq.getLo();</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        long _lo = p;</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;        long hi = seq.getHi();</b>
+<i class="no-highlight">311</i>&nbsp;
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        DirectByteCharSequence name = null;</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;        boolean contentType = true;</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        boolean swallowSpace = true;</b>
+<i class="no-highlight">315</i>&nbsp;
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        while (p &lt;= hi) {</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;            char b = (char) Unsafe.getUnsafe().getByte(p++);</b>
+<i class="no-highlight">318</i>&nbsp;
+<b class="fc"><i class="no-highlight">319</i>&nbsp;            if (b == &#39; &#39; &amp;&amp; swallowSpace) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                _lo = p;</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                continue;</b>
+<i class="no-highlight">322</i>&nbsp;            }
+<i class="no-highlight">323</i>&nbsp;
+<b class="fc"><i class="no-highlight">324</i>&nbsp;            if (p &gt; hi || b == &#39;;&#39;) {</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                if (contentType) {</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                    this.contentType = pool.next().of(_lo, p - 1);</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                    _lo = p;</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;                    contentType = false;</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                    continue;</b>
+<i class="no-highlight">330</i>&nbsp;                }
+<i class="no-highlight">331</i>&nbsp;
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                if (name == null) {</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                    throw HttpException.instance(&quot;Malformed &quot;).put(CONTENT_TYPE_HEADER).put(&quot; header&quot;);</b>
+<i class="no-highlight">334</i>&nbsp;                }
+<i class="no-highlight">335</i>&nbsp;
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                if (Chars.equals(&quot;charset&quot;, name)) {</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                    this.charset = pool.next().of(_lo, p - 1);</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;                    name = null;</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;                    _lo = p;</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                    continue;</b>
+<i class="no-highlight">341</i>&nbsp;                }
+<i class="no-highlight">342</i>&nbsp;
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                if (Chars.equals(&quot;boundary&quot;, name)) {</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                    this.boundary = pool.next().of(_lo, p - 1);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                    _lo = p;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                    name = null;</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                    continue;</b>
+<i class="no-highlight">348</i>&nbsp;                }
+<i class="no-highlight">349</i>&nbsp;
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                if (p &gt; hi) {</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                    break;</b>
+<i class="no-highlight">352</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">353</i>&nbsp;            } else if (b == &#39;=&#39;) {</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                _lo = p;</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                swallowSpace = false;</b>
+<i class="no-highlight">357</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        }</b>
+<i class="no-highlight">359</i>&nbsp;    }
+<i class="no-highlight">360</i>&nbsp;
+<i class="no-highlight">361</i>&nbsp;    private void parseKnownHeaders() {
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        parseContentType();</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        parseContentDisposition();</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        parseStatementTimeout();</b>
+<i class="no-highlight">365</i>&nbsp;    }
+<i class="no-highlight">366</i>&nbsp;
+<i class="no-highlight">367</i>&nbsp;    private int parseMethod(long lo, long hi) {
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        long p = lo;</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        while (p &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            if (_wptr == this.hi) {</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                throw HttpException.instance(&quot;url is too long&quot;);</b>
+<i class="no-highlight">372</i>&nbsp;            }
+<i class="no-highlight">373</i>&nbsp;
+<b class="fc"><i class="no-highlight">374</i>&nbsp;            char b = (char) Unsafe.getUnsafe().getByte(p++);</b>
+<i class="no-highlight">375</i>&nbsp;
+<b class="fc"><i class="no-highlight">376</i>&nbsp;            if (b == &#39;\r&#39;) {</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                continue;</b>
+<i class="no-highlight">378</i>&nbsp;            }
+<i class="no-highlight">379</i>&nbsp;
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            switch (b) {</b>
+<i class="no-highlight">381</i>&nbsp;                case &#39; &#39;:
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                    if (isMethod) {</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                        method = pool.next().of(_lo, _wptr);</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                        _lo = _wptr + 1;</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                        isMethod = false;</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                    } else if (isUrl) {</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                        url = pool.next().of(_lo, _wptr);</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                        isUrl = false;</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                        _lo = _wptr + 1;</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;                    } else if (isQueryParams) {</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                        int o = urlDecode(_lo, _wptr, urlParams);</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                        isQueryParams = false;</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;                        _lo = _wptr;</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;                        _wptr -= o;</b>
+<b class="fc"><i class="no-highlight">395</i>&nbsp;                    }</b>
+<i class="no-highlight">396</i>&nbsp;                    break;
+<i class="no-highlight">397</i>&nbsp;                case &#39;?&#39;:
+<b class="fc"><i class="no-highlight">398</i>&nbsp;                    url = pool.next().of(_lo, _wptr);</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                    isUrl = false;</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                    isQueryParams = true;</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                    _lo = _wptr + 1;</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                    break;</b>
+<i class="no-highlight">403</i>&nbsp;                case &#39;\n&#39;:
+<b class="fc"><i class="no-highlight">404</i>&nbsp;                    if (method == null) {</b>
+<b class="nc"><i class="no-highlight">405</i>&nbsp;                        throw HttpException.instance(&quot;bad method&quot;);</b>
+<i class="no-highlight">406</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                    methodLine = pool.next().of(method.getLo(), _wptr);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                    needMethod = false;</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                    this._lo = _wptr;</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                    return (int) (p - lo);</b>
+<i class="no-highlight">411</i>&nbsp;                default:
+<i class="no-highlight">412</i>&nbsp;                    break;
+<i class="no-highlight">413</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">414</i>&nbsp;            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;        return (int) (p - lo);</b>
+<i class="no-highlight">417</i>&nbsp;    }
+<i class="no-highlight">418</i>&nbsp;
+<i class="no-highlight">419</i>&nbsp;    private void parseStatementTimeout() {
+<b class="fc"><i class="no-highlight">420</i>&nbsp;        statementTimeout = -1L;</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;        DirectByteCharSequence timeout = getHeader(&quot;Statement-Timeout&quot;);</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;        if (timeout == null) {</b>
+<i class="no-highlight">423</i>&nbsp;            return;
+<i class="no-highlight">424</i>&nbsp;        }
+<i class="no-highlight">425</i>&nbsp;
+<i class="no-highlight">426</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">427</i>&nbsp;            statementTimeout = Numbers.parseLong(timeout);</b>
+<b class="nc"><i class="no-highlight">428</i>&nbsp;        } catch (NumericException ex) {</b>
+<i class="no-highlight">429</i>&nbsp;            // keep -1L as default
+<b class="fc"><i class="no-highlight">430</i>&nbsp;        }</b>
+<i class="no-highlight">431</i>&nbsp;    }
+<i class="no-highlight">432</i>&nbsp;
+<i class="no-highlight">433</i>&nbsp;    private int urlDecode(long lo, long hi, CharSequenceObjHashMap&lt;DirectByteCharSequence&gt; map) {
+<b class="fc"><i class="no-highlight">434</i>&nbsp;        long _lo = lo;</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        long rp = lo;</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;        long wp = lo;</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;        int offset = 0;</b>
+<i class="no-highlight">438</i>&nbsp;
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        CharSequence name = null;</b>
+<i class="no-highlight">440</i>&nbsp;
+<b class="fc"><i class="no-highlight">441</i>&nbsp;        while (rp &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            char b = (char) Unsafe.getUnsafe().getByte(rp++);</b>
+<i class="no-highlight">443</i>&nbsp;
+<b class="fc"><i class="no-highlight">444</i>&nbsp;            switch (b) {</b>
+<i class="no-highlight">445</i>&nbsp;                case &#39;=&#39;:
+<b class="fc"><i class="no-highlight">446</i>&nbsp;                    if (_lo &lt; wp) {</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;                        name = pool.next().of(_lo, wp);</b>
+<i class="no-highlight">448</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">449</i>&nbsp;                    _lo = rp - offset;</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;                    break;</b>
+<i class="no-highlight">451</i>&nbsp;                case &#39;&amp;&#39;:
+<b class="fc"><i class="no-highlight">452</i>&nbsp;                    if (name != null) {</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;                        map.put(name, pool.next().of(_lo, wp));</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                        name = null;</b>
+<i class="no-highlight">455</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">456</i>&nbsp;                    _lo = rp - offset;</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                    break;</b>
+<i class="no-highlight">458</i>&nbsp;                case &#39;+&#39;:
+<b class="fc"><i class="no-highlight">459</i>&nbsp;                    Unsafe.getUnsafe().putByte(wp++, (byte) &#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                    continue;</b>
+<i class="no-highlight">461</i>&nbsp;                case &#39;%&#39;:
+<i class="no-highlight">462</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                        if (rp + 1 &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">464</i>&nbsp;                            byte bb = (byte) Numbers.parseHexInt(temp.of(rp, rp += 2));</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;                            Unsafe.getUnsafe().putByte(wp++, bb);</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                            offset += 2;</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                            continue;</b>
+<i class="no-highlight">468</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">469</i>&nbsp;                    } catch (NumericException ignore) {</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                    throw HttpException.instance(&quot;invalid query encoding&quot;);</b>
+<i class="no-highlight">472</i>&nbsp;                default:
+<i class="no-highlight">473</i>&nbsp;                    break;
+<i class="no-highlight">474</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">475</i>&nbsp;            Unsafe.getUnsafe().putByte(wp++, (byte) b);</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;        }</b>
+<i class="no-highlight">477</i>&nbsp;
+<b class="fc"><i class="no-highlight">478</i>&nbsp;        if (_lo &lt; wp &amp;&amp; name != null) {</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;            map.put(name, pool.next().of(_lo, wp));</b>
+<i class="no-highlight">480</i>&nbsp;        }
+<i class="no-highlight">481</i>&nbsp;
+<b class="fc"><i class="no-highlight">482</i>&nbsp;        return offset;</b>
+<i class="no-highlight">483</i>&nbsp;    }
+<i class="no-highlight">484</i>&nbsp;
+<i class="no-highlight">485</i>&nbsp;    public static class BoundaryAugmenter implements Closeable {
+<i class="no-highlight">486</i>&nbsp;        private static final String BOUNDARY_PREFIX = &quot;\r\n--&quot;;
+<b class="fc"><i class="no-highlight">487</i>&nbsp;        private final DirectByteCharSequence export = new DirectByteCharSequence();</b>
+<i class="no-highlight">488</i>&nbsp;        private long _wptr;
+<i class="no-highlight">489</i>&nbsp;        private long lim;
+<i class="no-highlight">490</i>&nbsp;        private long lo;
+<i class="no-highlight">491</i>&nbsp;
+<b class="fc"><i class="no-highlight">492</i>&nbsp;        public BoundaryAugmenter() {</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;            this.lim = 64;</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;            this.lo = this._wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;            of0(BOUNDARY_PREFIX);</b>
+<i class="no-highlight">496</i>&nbsp;        }
+<i class="no-highlight">497</i>&nbsp;
+<i class="no-highlight">498</i>&nbsp;        @Override
+<i class="no-highlight">499</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">500</i>&nbsp;            if (lo &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                this.lo = this._wptr = Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);</b>
+<i class="no-highlight">502</i>&nbsp;            }
+<i class="no-highlight">503</i>&nbsp;        }
+<i class="no-highlight">504</i>&nbsp;
+<i class="no-highlight">505</i>&nbsp;        public DirectByteCharSequence of(CharSequence value) {
+<b class="fc"><i class="no-highlight">506</i>&nbsp;            int len = value.length() + BOUNDARY_PREFIX.length();</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;            if (len &gt; lim) {</b>
+<b class="nc"><i class="no-highlight">508</i>&nbsp;                resize(len);</b>
+<i class="no-highlight">509</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">510</i>&nbsp;            _wptr = lo + BOUNDARY_PREFIX.length();</b>
+<b class="fc"><i class="no-highlight">511</i>&nbsp;            of0(value);</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;            return export.of(lo, _wptr);</b>
+<i class="no-highlight">513</i>&nbsp;        }
+<i class="no-highlight">514</i>&nbsp;
+<i class="no-highlight">515</i>&nbsp;        private void of0(CharSequence value) {
+<b class="fc"><i class="no-highlight">516</i>&nbsp;            int len = value.length();</b>
+<b class="fc"><i class="no-highlight">517</i>&nbsp;            Chars.asciiStrCpy(value, len, _wptr);</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;            _wptr += len;</b>
+<i class="no-highlight">519</i>&nbsp;        }
+<i class="no-highlight">520</i>&nbsp;
+<i class="no-highlight">521</i>&nbsp;        private void resize(int lim) {
+<b class="nc"><i class="no-highlight">522</i>&nbsp;            final long prevLim = this.lim;</b>
+<b class="nc"><i class="no-highlight">523</i>&nbsp;            this.lim = Numbers.ceilPow2(lim);</b>
+<b class="nc"><i class="no-highlight">524</i>&nbsp;            this.lo = this._wptr = Unsafe.realloc(this.lo, prevLim, this.lim, MemoryTag.NATIVE_HTTP_CONN);</b>
+<b class="nc"><i class="no-highlight">525</i>&nbsp;            of0(BOUNDARY_PREFIX);</b>
+<i class="no-highlight">526</i>&nbsp;        }
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

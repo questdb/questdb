@@ -1,0 +1,525 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > RecordTreeChain</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.orderby</a>
+</div>
+
+<h1>Coverage Summary for Class: RecordTreeChain (io.questdb.griffin.engine.orderby)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">RecordTreeChain</td>
+<td class="coverageStat">
+  <span class="percent">
+    96%
+  </span>
+  <span class="absValue">
+    (24/25)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.8%
+  </span>
+  <span class="absValue">
+    (131/134)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">RecordTreeChain$TreeCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    90.9%
+  </span>
+  <span class="absValue">
+    (10/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.4%
+  </span>
+  <span class="absValue">
+    (27/28)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    94.4%
+  </span>
+  <span class="absValue">
+    (34/36)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.5%
+  </span>
+  <span class="absValue">
+    (158/162)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.orderby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.ColumnTypes;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.RecordChain;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.RecordSink;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.Reopenable;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cairo.sql.SymbolTable;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.engine.RecordComparator;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.MemoryPages;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.Mutable;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">39</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;public class RecordTreeChain implements Closeable, Mutable, Reopenable {
+<i class="no-highlight">44</i>&nbsp;    private static final byte BLACK = 0;
+<i class="no-highlight">45</i>&nbsp;    // P(8) + L + R + C(1) + REF + TOP
+<i class="no-highlight">46</i>&nbsp;    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8;
+<i class="no-highlight">47</i>&nbsp;    private static final int O_COLOUR = 24;
+<i class="no-highlight">48</i>&nbsp;    private static final int O_LEFT = 8;
+<i class="no-highlight">49</i>&nbsp;    private static final int O_REF = 25;
+<i class="no-highlight">50</i>&nbsp;    private static final int O_RIGHT = 16;
+<i class="no-highlight">51</i>&nbsp;    private static final int O_TOP = 33;
+<i class="no-highlight">52</i>&nbsp;    private static final byte RED = 1;
+<i class="no-highlight">53</i>&nbsp;    private final RecordComparator comparator;
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private final TreeCursor cursor = new TreeCursor();</b>
+<i class="no-highlight">55</i>&nbsp;    private final MemoryPages mem;
+<i class="no-highlight">56</i>&nbsp;    private final RecordChain recordChain;
+<i class="no-highlight">57</i>&nbsp;    private final Record recordChainRecord;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private long root = -1;</b>
+<i class="no-highlight">59</i>&nbsp;
+<i class="no-highlight">60</i>&nbsp;    public RecordTreeChain(
+<i class="no-highlight">61</i>&nbsp;            @NotNull ColumnTypes columnTypes,
+<i class="no-highlight">62</i>&nbsp;            @NotNull RecordSink recordSink,
+<i class="no-highlight">63</i>&nbsp;            @NotNull RecordComparator comparator,
+<i class="no-highlight">64</i>&nbsp;            long keyPageSize,
+<i class="no-highlight">65</i>&nbsp;            int keyMaxPages,
+<i class="no-highlight">66</i>&nbsp;            long valuePageSize,
+<i class="no-highlight">67</i>&nbsp;            int valueMaxPages
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        this.comparator = comparator;</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        this.mem = new MemoryPages(keyPageSize, keyMaxPages);</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.recordChainRecord = this.recordChain.getRecordB();</b>
+<i class="no-highlight">73</i>&nbsp;    }
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    @Override
+<i class="no-highlight">76</i>&nbsp;    public void clear() {
+<b class="nc"><i class="no-highlight">77</i>&nbsp;        root = -1;</b>
+<b class="nc"><i class="no-highlight">78</i>&nbsp;        mem.clear();</b>
+<b class="nc"><i class="no-highlight">79</i>&nbsp;        recordChain.clear();</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    @Override
+<i class="no-highlight">83</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        root = -1;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        Misc.free(recordChain);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        Misc.free(mem);</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        Misc.free(cursor);</b>
+<i class="no-highlight">88</i>&nbsp;    }
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;    public TreeCursor getCursor(RecordCursor base) {
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        cursor.of(base);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        return cursor;</b>
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    public void put(Record record) {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        if (root == -1) {</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            putParent(record);</b>
+<i class="no-highlight">98</i>&nbsp;            return;
+<i class="no-highlight">99</i>&nbsp;        }
+<i class="no-highlight">100</i>&nbsp;
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        comparator.setLeft(record);</b>
+<i class="no-highlight">102</i>&nbsp;
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        long p = root;</b>
+<i class="no-highlight">104</i>&nbsp;        long parent;
+<i class="no-highlight">105</i>&nbsp;        int cmp;
+<i class="no-highlight">106</i>&nbsp;        do {
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            parent = p;</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;            long r = refOf(p);</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;            recordChain.recordAt(recordChainRecord, r);</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;            cmp = comparator.compare(recordChainRecord);</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;            if (cmp &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                p = leftOf(p);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;            } else if (cmp &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                p = rightOf(p);</b>
+<i class="no-highlight">115</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                setRef(p, recordChain.put(record, r));</b>
+<i class="no-highlight">117</i>&nbsp;                return;
+<i class="no-highlight">118</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        } while (p &gt; -1);</b>
+<i class="no-highlight">120</i>&nbsp;
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        p = allocateBlock();</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        setParent(p, parent);</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        long r = recordChain.put(record, -1L);</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        setTop(p, r);</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        setRef(p, r);</b>
+<i class="no-highlight">126</i>&nbsp;
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        if (cmp &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;            setLeft(parent, p);</b>
+<i class="no-highlight">129</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">130</i>&nbsp;            setRight(parent, p);</b>
+<i class="no-highlight">131</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        fix(p);</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    @Override
+<i class="no-highlight">136</i>&nbsp;    public void reopen() {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        recordChain.reopen();</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        mem.reopen();</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    private static byte colorOf(long blockAddress) {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    private static long leftOf(long blockAddress) {
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);</b>
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    private static long parent2Of(long blockAddress) {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        return parentOf(parentOf(blockAddress));</b>
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    private static long parentOf(long blockAddress) {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress);</b>
+<i class="no-highlight">155</i>&nbsp;    }
+<i class="no-highlight">156</i>&nbsp;
+<i class="no-highlight">157</i>&nbsp;    private static long refOf(long blockAddress) {
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    private static long rightOf(long blockAddress) {
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);</b>
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    private static void setColor(long blockAddress, byte colour) {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        if (blockAddress == -1) {</b>
+<i class="no-highlight">167</i>&nbsp;            return;
+<i class="no-highlight">168</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);</b>
+<i class="no-highlight">170</i>&nbsp;    }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;    private static void setLeft(long blockAddress, long left) {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);</b>
+<i class="no-highlight">174</i>&nbsp;    }
+<i class="no-highlight">175</i>&nbsp;
+<i class="no-highlight">176</i>&nbsp;    private static void setParent(long blockAddress, long parent) {
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        Unsafe.getUnsafe().putLong(blockAddress, parent);</b>
+<i class="no-highlight">178</i>&nbsp;    }
+<i class="no-highlight">179</i>&nbsp;
+<i class="no-highlight">180</i>&nbsp;    private static void setRef(long blockAddress, long recRef) {
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        Unsafe.getUnsafe().putLong(blockAddress + O_REF, recRef);</b>
+<i class="no-highlight">182</i>&nbsp;    }
+<i class="no-highlight">183</i>&nbsp;
+<i class="no-highlight">184</i>&nbsp;    private static void setRight(long blockAddress, long right) {
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        Unsafe.getUnsafe().putLong(blockAddress + O_RIGHT, right);</b>
+<i class="no-highlight">186</i>&nbsp;    }
+<i class="no-highlight">187</i>&nbsp;
+<i class="no-highlight">188</i>&nbsp;    private static void setTop(long blockAddress, long recRef) {
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        Unsafe.getUnsafe().putLong(blockAddress + O_TOP, recRef);</b>
+<i class="no-highlight">190</i>&nbsp;    }
+<i class="no-highlight">191</i>&nbsp;
+<i class="no-highlight">192</i>&nbsp;    private static long successor(long current) {
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        long p = rightOf(current);</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        if (p != -1) {</b>
+<i class="no-highlight">195</i>&nbsp;            long l;
+<b class="fc"><i class="no-highlight">196</i>&nbsp;            while ((l = leftOf(p)) != -1) {</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                p = l;</b>
+<i class="no-highlight">198</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            p = parentOf(current);</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            long ch = current;</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            while (p != -1 &amp;&amp; ch == rightOf(p)) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                ch = p;</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                p = parentOf(p);</b>
+<i class="no-highlight">205</i>&nbsp;            }
+<i class="no-highlight">206</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        return p;</b>
+<i class="no-highlight">208</i>&nbsp;    }
+<i class="no-highlight">209</i>&nbsp;
+<i class="no-highlight">210</i>&nbsp;    private static long topOf(long blockAddress) {
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);</b>
+<i class="no-highlight">212</i>&nbsp;    }
+<i class="no-highlight">213</i>&nbsp;
+<i class="no-highlight">214</i>&nbsp;    private long allocateBlock() {
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        long p = mem.allocate(BLOCK_SIZE);</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        setLeft(p, -1);</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        setRight(p, -1);</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        setColor(p, BLACK);</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        return p;</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    private void fix(long x) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        setColor(x, RED);</b>
+<i class="no-highlight">224</i>&nbsp;
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        while (x != -1 &amp;&amp; x != root &amp;&amp; colorOf(parentOf(x)) == RED) {</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;            if (parentOf(x) == leftOf(parent2Of(x))) {</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                long y = rightOf(parent2Of(x));</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                if (colorOf(y) == RED) {</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                    setColor(parentOf(x), BLACK);</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                    setColor(y, BLACK);</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                    setColor(parent2Of(x), RED);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                    x = parent2Of(x);</b>
+<i class="no-highlight">233</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                    if (x == rightOf(parentOf(x))) {</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;                        x = parentOf(x);</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;                        rotateLeft(x);</b>
+<i class="no-highlight">237</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">238</i>&nbsp;                    setColor(parentOf(x), BLACK);</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;                    setColor(parent2Of(x), RED);</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;                    rotateRight(parent2Of(x));</b>
+<i class="no-highlight">241</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">242</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                long y = leftOf(parent2Of(x));</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;                if (colorOf(y) == RED) {</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                    setColor(parentOf(x), BLACK);</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                    setColor(y, BLACK);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                    setColor(parent2Of(x), RED);</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;                    x = parent2Of(x);</b>
+<i class="no-highlight">249</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                    if (x == leftOf(parentOf(x))) {</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;                        x = parentOf(x);</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;                        rotateRight(x);</b>
+<i class="no-highlight">253</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">254</i>&nbsp;                    setColor(parentOf(x), BLACK);</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                    setColor(parent2Of(x), RED);</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                    rotateLeft(parent2Of(x));</b>
+<i class="no-highlight">257</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            }</b>
+<i class="no-highlight">259</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        setColor(root, BLACK);</b>
+<i class="no-highlight">261</i>&nbsp;    }
+<i class="no-highlight">262</i>&nbsp;
+<i class="no-highlight">263</i>&nbsp;    private void putParent(Record record) {
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        root = allocateBlock();</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        long r = recordChain.put(record, -1L);</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        setTop(root, r);</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        setRef(root, r);</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        setParent(root, -1);</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        setLeft(root, -1);</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        setRight(root, -1);</b>
+<i class="no-highlight">271</i>&nbsp;    }
+<i class="no-highlight">272</i>&nbsp;
+<i class="no-highlight">273</i>&nbsp;    private void rotateLeft(long p) {
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        if (p != -1) {</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            long r = rightOf(p);</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            setRight(p, leftOf(r));</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            if (leftOf(r) != -1) {</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                setParent(leftOf(r), p);</b>
+<i class="no-highlight">279</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            setParent(r, parentOf(p));</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;            if (parentOf(p) == -1) {</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                root = r;</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            } else if (leftOf(parentOf(p)) == p) {</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;                setLeft(parentOf(p), r);</b>
+<i class="no-highlight">285</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                setRight(parentOf(p), r);</b>
+<i class="no-highlight">287</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            setLeft(r, p);</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            setParent(p, r);</b>
+<i class="no-highlight">290</i>&nbsp;        }
+<i class="no-highlight">291</i>&nbsp;    }
+<i class="no-highlight">292</i>&nbsp;
+<i class="no-highlight">293</i>&nbsp;    private void rotateRight(long p) {
+<b class="fc"><i class="no-highlight">294</i>&nbsp;        if (p != -1) {</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;            long l = leftOf(p);</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            setLeft(p, rightOf(l));</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;            if (rightOf(l) != -1) {</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                setParent(rightOf(l), p);</b>
+<i class="no-highlight">299</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            setParent(l, parentOf(p));</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            if (parentOf(p) == -1) {</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;                root = l;</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            } else if (rightOf(parentOf(p)) == p) {</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                setRight(parentOf(p), l);</b>
+<i class="no-highlight">305</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">306</i>&nbsp;                setLeft(parentOf(p), l);</b>
+<i class="no-highlight">307</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            setRight(l, p);</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;            setParent(p, l);</b>
+<i class="no-highlight">310</i>&nbsp;        }
+<i class="no-highlight">311</i>&nbsp;    }
+<i class="no-highlight">312</i>&nbsp;
+<i class="no-highlight">313</i>&nbsp;    public class TreeCursor implements RecordCursor {
+<i class="no-highlight">314</i>&nbsp;        private RecordCursor base;
+<i class="no-highlight">315</i>&nbsp;        private long current;
+<i class="no-highlight">316</i>&nbsp;        private boolean isOpen;
+<i class="no-highlight">317</i>&nbsp;
+<b class="fc"><i class="no-highlight">318</i>&nbsp;        public TreeCursor() {</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;            this.isOpen = true;</b>
+<i class="no-highlight">320</i>&nbsp;        }
+<i class="no-highlight">321</i>&nbsp;
+<i class="no-highlight">322</i>&nbsp;        @Override
+<i class="no-highlight">323</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">324</i>&nbsp;            if (isOpen) {</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                isOpen = false;</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                Misc.free(base);</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                current = -1;</b>
+<i class="no-highlight">328</i>&nbsp;            }
+<i class="no-highlight">329</i>&nbsp;        }
+<i class="no-highlight">330</i>&nbsp;
+<i class="no-highlight">331</i>&nbsp;        @Override
+<i class="no-highlight">332</i>&nbsp;        public Record getRecord() {
+<b class="fc"><i class="no-highlight">333</i>&nbsp;            return recordChain.getRecord();</b>
+<i class="no-highlight">334</i>&nbsp;        }
+<i class="no-highlight">335</i>&nbsp;
+<i class="no-highlight">336</i>&nbsp;        @Override
+<i class="no-highlight">337</i>&nbsp;        public Record getRecordB() {
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            return recordChain.getRecordB();</b>
+<i class="no-highlight">339</i>&nbsp;        }
+<i class="no-highlight">340</i>&nbsp;
+<i class="no-highlight">341</i>&nbsp;        @Override
+<i class="no-highlight">342</i>&nbsp;        public SymbolTable getSymbolTable(int columnIndex) {
+<b class="fc"><i class="no-highlight">343</i>&nbsp;            return base.getSymbolTable(columnIndex);</b>
+<i class="no-highlight">344</i>&nbsp;        }
+<i class="no-highlight">345</i>&nbsp;
+<i class="no-highlight">346</i>&nbsp;        @Override
+<i class="no-highlight">347</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">348</i>&nbsp;            if (recordChain.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                return true;</b>
+<i class="no-highlight">350</i>&nbsp;            }
+<i class="no-highlight">351</i>&nbsp;
+<b class="fc"><i class="no-highlight">352</i>&nbsp;            current = successor(current);</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;            if (current == -1) {</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                return false;</b>
+<i class="no-highlight">355</i>&nbsp;            }
+<i class="no-highlight">356</i>&nbsp;
+<b class="fc"><i class="no-highlight">357</i>&nbsp;            recordChain.of(topOf(current));</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;            return recordChain.hasNext();</b>
+<i class="no-highlight">359</i>&nbsp;        }
+<i class="no-highlight">360</i>&nbsp;
+<i class="no-highlight">361</i>&nbsp;        @Override
+<i class="no-highlight">362</i>&nbsp;        public SymbolTable newSymbolTable(int columnIndex) {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;            return base.newSymbolTable(columnIndex);</b>
+<i class="no-highlight">364</i>&nbsp;        }
+<i class="no-highlight">365</i>&nbsp;
+<i class="no-highlight">366</i>&nbsp;        @Override
+<i class="no-highlight">367</i>&nbsp;        public void recordAt(Record record, long atRowId) {
+<b class="fc"><i class="no-highlight">368</i>&nbsp;            recordChain.recordAt(record, atRowId);</b>
+<i class="no-highlight">369</i>&nbsp;        }
+<i class="no-highlight">370</i>&nbsp;
+<i class="no-highlight">371</i>&nbsp;        @Override
+<i class="no-highlight">372</i>&nbsp;        public long size() {
+<b class="nc"><i class="no-highlight">373</i>&nbsp;            return base.size();</b>
+<i class="no-highlight">374</i>&nbsp;        }
+<i class="no-highlight">375</i>&nbsp;
+<i class="no-highlight">376</i>&nbsp;        @Override
+<i class="no-highlight">377</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">378</i>&nbsp;            long p = root;</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;            if (p != -1) {</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                while (leftOf(p) != -1) {</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                    p = leftOf(p);</b>
+<i class="no-highlight">382</i>&nbsp;                }
+<i class="no-highlight">383</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">384</i>&nbsp;            recordChain.of(topOf(current = p));</b>
+<i class="no-highlight">385</i>&nbsp;        }
+<i class="no-highlight">386</i>&nbsp;
+<i class="no-highlight">387</i>&nbsp;        private void of(RecordCursor base) {
+<b class="fc"><i class="no-highlight">388</i>&nbsp;            isOpen = true;</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;            this.base = base;</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;            recordChain.setSymbolTableResolver(base);</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;            toTop();</b>
+<i class="no-highlight">392</i>&nbsp;        }
+<i class="no-highlight">393</i>&nbsp;    }
+<i class="no-highlight">394</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

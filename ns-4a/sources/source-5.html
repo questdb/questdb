@@ -1,0 +1,493 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > O3CopyTask</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.tasks</a>
+</div>
+
+<h1>Coverage Summary for Class: O3CopyTask (io.questdb.tasks)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">O3CopyTask</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (52/52)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (101/101)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.tasks;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.BitmapIndexWriter;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.TableWriter;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.AbstractLockable;
+<i class="no-highlight">30</i>&nbsp;
+<i class="no-highlight">31</i>&nbsp;import java.util.concurrent.atomic.AtomicInteger;
+<i class="no-highlight">32</i>&nbsp;
+<b class="fc"><i class="no-highlight">33</i>&nbsp;public class O3CopyTask extends AbstractLockable {</b>
+<i class="no-highlight">34</i>&nbsp;    private int blockType;
+<i class="no-highlight">35</i>&nbsp;    private AtomicInteger columnCounter;
+<i class="no-highlight">36</i>&nbsp;    private int columnType;
+<i class="no-highlight">37</i>&nbsp;    private long dstFixAddr;
+<i class="no-highlight">38</i>&nbsp;    private int dstFixFd;
+<i class="no-highlight">39</i>&nbsp;    private long dstFixFileOffset;
+<i class="no-highlight">40</i>&nbsp;    private long dstFixOffset;
+<i class="no-highlight">41</i>&nbsp;    private long dstFixSize;
+<i class="no-highlight">42</i>&nbsp;    private long dstIndexAdjust;
+<i class="no-highlight">43</i>&nbsp;    private long dstIndexOffset;
+<i class="no-highlight">44</i>&nbsp;    private int dstKFd;
+<i class="no-highlight">45</i>&nbsp;    private int dstVFd;
+<i class="no-highlight">46</i>&nbsp;    private long dstVarAddr;
+<i class="no-highlight">47</i>&nbsp;    private long dstVarAdjust;
+<i class="no-highlight">48</i>&nbsp;    private int dstVarFd;
+<i class="no-highlight">49</i>&nbsp;    private long dstVarOffset;
+<i class="no-highlight">50</i>&nbsp;    private long dstVarOffsetEnd;
+<i class="no-highlight">51</i>&nbsp;    private long dstVarSize;
+<i class="no-highlight">52</i>&nbsp;    private int indexBlockCapacity;
+<i class="no-highlight">53</i>&nbsp;    private BitmapIndexWriter indexWriter;
+<i class="no-highlight">54</i>&nbsp;    private AtomicInteger partCounter;
+<i class="no-highlight">55</i>&nbsp;    private boolean partitionMutates;
+<i class="no-highlight">56</i>&nbsp;    private long partitionTimestamp;
+<i class="no-highlight">57</i>&nbsp;    private long srcDataFixAddr;
+<i class="no-highlight">58</i>&nbsp;    private int srcDataFixFd;
+<i class="no-highlight">59</i>&nbsp;    private long srcDataFixOffset;
+<i class="no-highlight">60</i>&nbsp;    private long srcDataFixSize;
+<i class="no-highlight">61</i>&nbsp;    private long srcDataHi;
+<i class="no-highlight">62</i>&nbsp;    private long srcDataLo;
+<i class="no-highlight">63</i>&nbsp;    private long srcDataMax;
+<i class="no-highlight">64</i>&nbsp;    private long srcDataTop;
+<i class="no-highlight">65</i>&nbsp;    private long srcDataVarAddr;
+<i class="no-highlight">66</i>&nbsp;    private int srcDataVarFd;
+<i class="no-highlight">67</i>&nbsp;    private long srcDataVarOffset;
+<i class="no-highlight">68</i>&nbsp;    private long srcDataVarSize;
+<i class="no-highlight">69</i>&nbsp;    private long srcOooFixAddr;
+<i class="no-highlight">70</i>&nbsp;    private long srcOooHi;
+<i class="no-highlight">71</i>&nbsp;    private long srcOooLo;
+<i class="no-highlight">72</i>&nbsp;    private long srcOooMax;
+<i class="no-highlight">73</i>&nbsp;    private long srcOooPartitionHi;
+<i class="no-highlight">74</i>&nbsp;    private long srcOooPartitionLo;
+<i class="no-highlight">75</i>&nbsp;    private long srcOooVarAddr;
+<i class="no-highlight">76</i>&nbsp;    private long srcTimestampAddr;
+<i class="no-highlight">77</i>&nbsp;    private int srcTimestampFd;
+<i class="no-highlight">78</i>&nbsp;    private long srcTimestampSize;
+<i class="no-highlight">79</i>&nbsp;    private TableWriter tableWriter;
+<i class="no-highlight">80</i>&nbsp;    private long timestampMax;
+<i class="no-highlight">81</i>&nbsp;    private long timestampMergeIndexAddr;
+<i class="no-highlight">82</i>&nbsp;    private long timestampMergeIndexSize;
+<i class="no-highlight">83</i>&nbsp;    private long timestampMin;
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    public int getBlockType() {
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        return blockType;</b>
+<i class="no-highlight">87</i>&nbsp;    }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;    public AtomicInteger getColumnCounter() {
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        return columnCounter;</b>
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    public int getColumnType() {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        return columnType;</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    public long getDstFixAddr() {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        return dstFixAddr;</b>
+<i class="no-highlight">99</i>&nbsp;    }
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;    public int getDstFixFd() {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        return dstFixFd;</b>
+<i class="no-highlight">103</i>&nbsp;    }
+<i class="no-highlight">104</i>&nbsp;
+<i class="no-highlight">105</i>&nbsp;    public long getDstFixFileOffset() {
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        return dstFixFileOffset;</b>
+<i class="no-highlight">107</i>&nbsp;    }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;    public long getDstFixOffset() {
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        return dstFixOffset;</b>
+<i class="no-highlight">111</i>&nbsp;    }
+<i class="no-highlight">112</i>&nbsp;
+<i class="no-highlight">113</i>&nbsp;    public long getDstFixSize() {
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        return dstFixSize;</b>
+<i class="no-highlight">115</i>&nbsp;    }
+<i class="no-highlight">116</i>&nbsp;
+<i class="no-highlight">117</i>&nbsp;    public long getDstIndexAdjust() {
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        return dstIndexAdjust;</b>
+<i class="no-highlight">119</i>&nbsp;    }
+<i class="no-highlight">120</i>&nbsp;
+<i class="no-highlight">121</i>&nbsp;    public long getDstIndexOffset() {
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        return dstIndexOffset;</b>
+<i class="no-highlight">123</i>&nbsp;    }
+<i class="no-highlight">124</i>&nbsp;
+<i class="no-highlight">125</i>&nbsp;    public int getDstKFd() {
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        return dstKFd;</b>
+<i class="no-highlight">127</i>&nbsp;    }
+<i class="no-highlight">128</i>&nbsp;
+<i class="no-highlight">129</i>&nbsp;    public int getDstVFd() {
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        return dstVFd;</b>
+<i class="no-highlight">131</i>&nbsp;    }
+<i class="no-highlight">132</i>&nbsp;
+<i class="no-highlight">133</i>&nbsp;    public long getDstVarAddr() {
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        return dstVarAddr;</b>
+<i class="no-highlight">135</i>&nbsp;    }
+<i class="no-highlight">136</i>&nbsp;
+<i class="no-highlight">137</i>&nbsp;    public long getDstVarAdjust() {
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        return dstVarAdjust;</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    public int getDstVarFd() {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        return dstVarFd;</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    public long getDstVarOffset() {
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        return dstVarOffset;</b>
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    public long getDstVarOffsetEnd() {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        return dstVarOffsetEnd;</b>
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    public long getDstVarSize() {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        return dstVarSize;</b>
+<i class="no-highlight">155</i>&nbsp;    }
+<i class="no-highlight">156</i>&nbsp;
+<i class="no-highlight">157</i>&nbsp;    public int getIndexBlockCapacity() {
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return indexBlockCapacity;</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    public BitmapIndexWriter getIndexWriter() {
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        return indexWriter;</b>
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    public AtomicInteger getPartCounter() {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        return partCounter;</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    public long getPartitionTimestamp() {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        return partitionTimestamp;</b>
+<i class="no-highlight">171</i>&nbsp;    }
+<i class="no-highlight">172</i>&nbsp;
+<i class="no-highlight">173</i>&nbsp;    public long getSrcDataFixAddr() {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        return srcDataFixAddr;</b>
+<i class="no-highlight">175</i>&nbsp;    }
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;    public int getSrcDataFixFd() {
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        return srcDataFixFd;</b>
+<i class="no-highlight">179</i>&nbsp;    }
+<i class="no-highlight">180</i>&nbsp;
+<i class="no-highlight">181</i>&nbsp;    public long getSrcDataFixOffset() {
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        return srcDataFixOffset;</b>
+<i class="no-highlight">183</i>&nbsp;    }
+<i class="no-highlight">184</i>&nbsp;
+<i class="no-highlight">185</i>&nbsp;    public long getSrcDataFixSize() {
+<b class="fc"><i class="no-highlight">186</i>&nbsp;        return srcDataFixSize;</b>
+<i class="no-highlight">187</i>&nbsp;    }
+<i class="no-highlight">188</i>&nbsp;
+<i class="no-highlight">189</i>&nbsp;    public long getSrcDataHi() {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        return srcDataHi;</b>
+<i class="no-highlight">191</i>&nbsp;    }
+<i class="no-highlight">192</i>&nbsp;
+<i class="no-highlight">193</i>&nbsp;    public long getSrcDataLo() {
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        return srcDataLo;</b>
+<i class="no-highlight">195</i>&nbsp;    }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;    public long getSrcDataMax() {
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        return srcDataMax;</b>
+<i class="no-highlight">199</i>&nbsp;    }
+<i class="no-highlight">200</i>&nbsp;
+<i class="no-highlight">201</i>&nbsp;    public long getSrcDataTop() {
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        return srcDataTop;</b>
+<i class="no-highlight">203</i>&nbsp;    }
+<i class="no-highlight">204</i>&nbsp;
+<i class="no-highlight">205</i>&nbsp;    public long getSrcDataVarAddr() {
+<b class="fc"><i class="no-highlight">206</i>&nbsp;        return srcDataVarAddr;</b>
+<i class="no-highlight">207</i>&nbsp;    }
+<i class="no-highlight">208</i>&nbsp;
+<i class="no-highlight">209</i>&nbsp;    public int getSrcDataVarFd() {
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        return srcDataVarFd;</b>
+<i class="no-highlight">211</i>&nbsp;    }
+<i class="no-highlight">212</i>&nbsp;
+<i class="no-highlight">213</i>&nbsp;    public long getSrcDataVarOffset() {
+<b class="fc"><i class="no-highlight">214</i>&nbsp;        return srcDataVarOffset;</b>
+<i class="no-highlight">215</i>&nbsp;    }
+<i class="no-highlight">216</i>&nbsp;
+<i class="no-highlight">217</i>&nbsp;    public long getSrcDataVarSize() {
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        return srcDataVarSize;</b>
+<i class="no-highlight">219</i>&nbsp;    }
+<i class="no-highlight">220</i>&nbsp;
+<i class="no-highlight">221</i>&nbsp;    public long getSrcOooFixAddr() {
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        return srcOooFixAddr;</b>
+<i class="no-highlight">223</i>&nbsp;    }
+<i class="no-highlight">224</i>&nbsp;
+<i class="no-highlight">225</i>&nbsp;    public long getSrcOooHi() {
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        return srcOooHi;</b>
+<i class="no-highlight">227</i>&nbsp;    }
+<i class="no-highlight">228</i>&nbsp;
+<i class="no-highlight">229</i>&nbsp;    public long getSrcOooLo() {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        return srcOooLo;</b>
+<i class="no-highlight">231</i>&nbsp;    }
+<i class="no-highlight">232</i>&nbsp;
+<i class="no-highlight">233</i>&nbsp;    public long getSrcOooMax() {
+<b class="fc"><i class="no-highlight">234</i>&nbsp;        return srcOooMax;</b>
+<i class="no-highlight">235</i>&nbsp;    }
+<i class="no-highlight">236</i>&nbsp;
+<i class="no-highlight">237</i>&nbsp;    public long getSrcOooPartitionHi() {
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        return srcOooPartitionHi;</b>
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    public long getSrcOooPartitionLo() {
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        return srcOooPartitionLo;</b>
+<i class="no-highlight">243</i>&nbsp;    }
+<i class="no-highlight">244</i>&nbsp;
+<i class="no-highlight">245</i>&nbsp;    public long getSrcOooVarAddr() {
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        return srcOooVarAddr;</b>
+<i class="no-highlight">247</i>&nbsp;    }
+<i class="no-highlight">248</i>&nbsp;
+<i class="no-highlight">249</i>&nbsp;    public long getSrcTimestampAddr() {
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        return srcTimestampAddr;</b>
+<i class="no-highlight">251</i>&nbsp;    }
+<i class="no-highlight">252</i>&nbsp;
+<i class="no-highlight">253</i>&nbsp;    public int getSrcTimestampFd() {
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        return srcTimestampFd;</b>
+<i class="no-highlight">255</i>&nbsp;    }
+<i class="no-highlight">256</i>&nbsp;
+<i class="no-highlight">257</i>&nbsp;    public long getSrcTimestampSize() {
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        return srcTimestampSize;</b>
+<i class="no-highlight">259</i>&nbsp;    }
+<i class="no-highlight">260</i>&nbsp;
+<i class="no-highlight">261</i>&nbsp;    public TableWriter getTableWriter() {
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        return tableWriter;</b>
+<i class="no-highlight">263</i>&nbsp;    }
+<i class="no-highlight">264</i>&nbsp;
+<i class="no-highlight">265</i>&nbsp;    public long getTimestampMax() {
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        return timestampMax;</b>
+<i class="no-highlight">267</i>&nbsp;    }
+<i class="no-highlight">268</i>&nbsp;
+<i class="no-highlight">269</i>&nbsp;    public long getTimestampMergeIndexAddr() {
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        return timestampMergeIndexAddr;</b>
+<i class="no-highlight">271</i>&nbsp;    }
+<i class="no-highlight">272</i>&nbsp;
+<i class="no-highlight">273</i>&nbsp;    public long getTimestampMergeIndexSize() {
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        return timestampMergeIndexSize;</b>
+<i class="no-highlight">275</i>&nbsp;    }
+<i class="no-highlight">276</i>&nbsp;
+<i class="no-highlight">277</i>&nbsp;    public long getTimestampMin() {
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        return timestampMin;</b>
+<i class="no-highlight">279</i>&nbsp;    }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;    public boolean isPartitionMutates() {
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        return partitionMutates;</b>
+<i class="no-highlight">283</i>&nbsp;    }
+<i class="no-highlight">284</i>&nbsp;
+<i class="no-highlight">285</i>&nbsp;    public void of(
+<i class="no-highlight">286</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">287</i>&nbsp;            AtomicInteger partCounter,
+<i class="no-highlight">288</i>&nbsp;            int columnType,
+<i class="no-highlight">289</i>&nbsp;            int blockType,
+<i class="no-highlight">290</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">291</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">292</i>&nbsp;            int srcDataFixFd,
+<i class="no-highlight">293</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">294</i>&nbsp;            long srcDataFixOffset,
+<i class="no-highlight">295</i>&nbsp;            long srcDataFixSize,
+<i class="no-highlight">296</i>&nbsp;            int srcDataVarFd,
+<i class="no-highlight">297</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">298</i>&nbsp;            long srcDataVarOffset,
+<i class="no-highlight">299</i>&nbsp;            long srcDataVarSize,
+<i class="no-highlight">300</i>&nbsp;            long srcDataLo,
+<i class="no-highlight">301</i>&nbsp;            long srcDataHi,
+<i class="no-highlight">302</i>&nbsp;            long srcDataTop,
+<i class="no-highlight">303</i>&nbsp;            long srcDataMax,
+<i class="no-highlight">304</i>&nbsp;            long srcOooFixAddr,
+<i class="no-highlight">305</i>&nbsp;            long srcOooVarAddr,
+<i class="no-highlight">306</i>&nbsp;            long srcOooLo,
+<i class="no-highlight">307</i>&nbsp;            long srcOooHi,
+<i class="no-highlight">308</i>&nbsp;            long srcOooMax,
+<i class="no-highlight">309</i>&nbsp;            long srcOooPartitionLo,
+<i class="no-highlight">310</i>&nbsp;            long srcOooPartitionHi,
+<i class="no-highlight">311</i>&nbsp;            long timestampMin,
+<i class="no-highlight">312</i>&nbsp;            long timestampMax,
+<i class="no-highlight">313</i>&nbsp;            long oooTimestampHi,
+<i class="no-highlight">314</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">315</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">316</i>&nbsp;            long dstFixOffset,
+<i class="no-highlight">317</i>&nbsp;            long dstFixFileOffset,
+<i class="no-highlight">318</i>&nbsp;            long dstFixSize,
+<i class="no-highlight">319</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">320</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">321</i>&nbsp;            long dstVarOffset,
+<i class="no-highlight">322</i>&nbsp;            long dstVarOffsetEnd,
+<i class="no-highlight">323</i>&nbsp;            long dstVarAdjust,
+<i class="no-highlight">324</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">325</i>&nbsp;            int dstKFd,
+<i class="no-highlight">326</i>&nbsp;            int dstVFd,
+<i class="no-highlight">327</i>&nbsp;            long dstIndexOffset,
+<i class="no-highlight">328</i>&nbsp;            long dstIndexAdjust,
+<i class="no-highlight">329</i>&nbsp;            int indexBlockCapacity,
+<i class="no-highlight">330</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">331</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">332</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">333</i>&nbsp;            boolean partitionMutates,
+<i class="no-highlight">334</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">335</i>&nbsp;            BitmapIndexWriter indexWriter
+<i class="no-highlight">336</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        this.columnCounter = columnCounter;</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        this.partCounter = partCounter;</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;        this.columnType = columnType;</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;        this.blockType = blockType;</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        this.timestampMergeIndexAddr = timestampMergeIndexAddr;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        this.timestampMergeIndexSize = timestampMergeIndexSize;</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        this.srcDataFixFd = srcDataFixFd;</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;        this.srcDataFixAddr = srcDataFixAddr;</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        this.srcDataFixOffset = srcDataFixOffset;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;        this.srcDataFixSize = srcDataFixSize;</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;        this.srcDataVarFd = srcDataVarFd;</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;        this.srcDataVarAddr = srcDataVarAddr;</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        this.srcDataVarOffset = srcDataVarOffset;</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;        this.srcDataVarSize = srcDataVarSize;</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        this.srcDataTop = srcDataTop;</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;        this.srcDataLo = srcDataLo;</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;        this.srcDataHi = srcDataHi;</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;        this.srcDataMax = srcDataMax;</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;        this.srcOooFixAddr = srcOooFixAddr;</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;        this.srcOooVarAddr = srcOooVarAddr;</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        this.srcOooLo = srcOooLo;</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        this.srcOooHi = srcOooHi;</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        this.srcOooMax = srcOooMax;</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;        this.srcOooPartitionLo = srcOooPartitionLo;</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;        this.srcOooPartitionHi = srcOooPartitionHi;</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        this.timestampMin = timestampMin;</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        this.timestampMax = timestampMax;</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        this.partitionTimestamp = oooTimestampHi;</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;        this.dstFixFd = dstFixFd;</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;        this.dstFixAddr = dstFixAddr;</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        this.dstFixOffset = dstFixOffset;</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        this.dstFixFileOffset = dstFixFileOffset;</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        this.dstFixSize = dstFixSize;</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        this.dstVarFd = dstVarFd;</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;        this.dstVarAddr = dstVarAddr;</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;        this.dstVarOffset = dstVarOffset;</b>
+<b class="fc"><i class="no-highlight">373</i>&nbsp;        this.dstVarOffsetEnd = dstVarOffsetEnd;</b>
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        this.dstVarAdjust = dstVarAdjust;</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        this.dstVarSize = dstVarSize;</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        this.dstKFd = dstKFd;</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;        this.dstVFd = dstVFd;</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;        this.dstIndexOffset = dstIndexOffset;</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        this.dstIndexAdjust = dstIndexAdjust;</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        this.indexBlockCapacity = indexBlockCapacity;</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        this.srcTimestampFd = srcTimestampFd;</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        this.srcTimestampAddr = srcTimestampAddr;</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        this.srcTimestampSize = srcTimestampSize;</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;        this.partitionMutates = partitionMutates;</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        this.tableWriter = tableWriter;</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        this.indexWriter = indexWriter;</b>
+<i class="no-highlight">387</i>&nbsp;    }
+<i class="no-highlight">388</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

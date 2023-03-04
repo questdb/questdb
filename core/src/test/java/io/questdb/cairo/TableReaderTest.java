@@ -1470,7 +1470,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 tableReaderCursor.of(reader);
                 Boolean hasNextLine = tableReaderCursor.hasNext();
                 Assert.assertEquals(true, hasNextLine);
-
                 Record recordA = tableReaderCursor.getRecord();
                 Record recordB = tableReaderCursor.getRecordB();
                 Assert.assertEquals(recordA.getClass(), recordB.getClass());

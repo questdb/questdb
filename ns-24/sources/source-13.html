@@ -1,0 +1,395 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > PgDatabaseFunctionFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.functions.catalogue</a>
+</div>
+
+<h1>Coverage Summary for Class: PgDatabaseFunctionFactory (io.questdb.griffin.engine.functions.catalogue)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">PgDatabaseFunctionFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.3%
+  </span>
+  <span class="absValue">
+    (5/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.2%
+  </span>
+  <span class="absValue">
+    (20/21)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">PgDatabaseFunctionFactory$PgDatabaseRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (6/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    44.4%
+  </span>
+  <span class="absValue">
+    (8/18)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">PgDatabaseFunctionFactory$PgDatabaseRecordCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    66.7%
+  </span>
+  <span class="absValue">
+    (6/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    76.9%
+  </span>
+  <span class="absValue">
+    (10/13)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">PgDatabaseFunctionFactory$PgDatabaseRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    75%
+  </span>
+  <span class="absValue">
+    (3/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.3%
+  </span>
+  <span class="absValue">
+    (5/6)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    76.9%
+  </span>
+  <span class="absValue">
+    (20/26)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    74.1%
+  </span>
+  <span class="absValue">
+    (43/58)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.functions.catalogue;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.FunctionFactory;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.engine.functions.CursorFunction;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.IntList;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">38</i>&nbsp;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;public class PgDatabaseFunctionFactory implements FunctionFactory {</b>
+<i class="no-highlight">40</i>&nbsp;    private final static RecordMetadata METADATA;
+<i class="no-highlight">41</i>&nbsp;    private final static String SIGNATURE = &quot;pg_catalog.pg_database()&quot;;
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;    @Override
+<i class="no-highlight">44</i>&nbsp;    public String getSignature() {
+<b class="fc"><i class="no-highlight">45</i>&nbsp;        return SIGNATURE;</b>
+<i class="no-highlight">46</i>&nbsp;    }
+<i class="no-highlight">47</i>&nbsp;
+<i class="no-highlight">48</i>&nbsp;    @Override
+<i class="no-highlight">49</i>&nbsp;    public boolean isCursor() {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;        return true;</b>
+<i class="no-highlight">51</i>&nbsp;    }
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    @Override
+<i class="no-highlight">54</i>&nbsp;    public boolean isRuntimeConstant() {
+<b class="nc"><i class="no-highlight">55</i>&nbsp;        return true;</b>
+<i class="no-highlight">56</i>&nbsp;    }
+<i class="no-highlight">57</i>&nbsp;
+<i class="no-highlight">58</i>&nbsp;    @Override
+<i class="no-highlight">59</i>&nbsp;    public Function newInstance(
+<i class="no-highlight">60</i>&nbsp;            int position,
+<i class="no-highlight">61</i>&nbsp;            ObjList&lt;Function&gt; args,
+<i class="no-highlight">62</i>&nbsp;            IntList argPositions,
+<i class="no-highlight">63</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">64</i>&nbsp;            SqlExecutionContext sqlExecutionContext
+<i class="no-highlight">65</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        return new CursorFunction(new PgDatabaseRecordCursorFactory());</b>
+<i class="no-highlight">67</i>&nbsp;    }
+<i class="no-highlight">68</i>&nbsp;
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private static class PgDatabaseRecord implements Record {</b>
+<i class="no-highlight">70</i>&nbsp;        @Override
+<i class="no-highlight">71</i>&nbsp;        public boolean getBool(int col) {
+<i class="no-highlight">72</i>&nbsp;            // datistemplate
+<i class="no-highlight">73</i>&nbsp;            // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
+<i class="no-highlight">74</i>&nbsp;            // datallowconn
+<i class="no-highlight">75</i>&nbsp;            // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
+<b class="fc"><i class="no-highlight">76</i>&nbsp;            return col != 6;</b>
+<i class="no-highlight">77</i>&nbsp;        }
+<i class="no-highlight">78</i>&nbsp;
+<i class="no-highlight">79</i>&nbsp;        @Override
+<i class="no-highlight">80</i>&nbsp;        public int getInt(int col) {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            switch (col) {</b>
+<i class="no-highlight">82</i>&nbsp;                case 0:
+<i class="no-highlight">83</i>&nbsp;                    // oid
+<b class="fc"><i class="no-highlight">84</i>&nbsp;                    return 1;</b>
+<i class="no-highlight">85</i>&nbsp;                case 2:
+<i class="no-highlight">86</i>&nbsp;                    // datdba
+<b class="nc"><i class="no-highlight">87</i>&nbsp;                    return 2;</b>
+<i class="no-highlight">88</i>&nbsp;                case 3:
+<i class="no-highlight">89</i>&nbsp;                    // encoding
+<b class="nc"><i class="no-highlight">90</i>&nbsp;                    return 0;</b>
+<i class="no-highlight">91</i>&nbsp;                case 8:
+<i class="no-highlight">92</i>&nbsp;                    // datconnlimit
+<b class="nc"><i class="no-highlight">93</i>&nbsp;                    return -1;</b>
+<i class="no-highlight">94</i>&nbsp;                case 9:
+<i class="no-highlight">95</i>&nbsp;                    // datlastsysoid
+<b class="nc"><i class="no-highlight">96</i>&nbsp;                    return 1; // same as oid</b>
+<i class="no-highlight">97</i>&nbsp;                default:
+<i class="no-highlight">98</i>&nbsp;                    // dattablespace
+<i class="no-highlight">99</i>&nbsp;                    // pg_tablespace.oid
+<b class="nc"><i class="no-highlight">100</i>&nbsp;                    return 3;</b>
+<i class="no-highlight">101</i>&nbsp;            }
+<i class="no-highlight">102</i>&nbsp;        }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;        @Override
+<i class="no-highlight">105</i>&nbsp;        public long getLong(int col) {
+<b class="nc"><i class="no-highlight">106</i>&nbsp;            if (col == 10) {</b>
+<i class="no-highlight">107</i>&nbsp;                // datfrozenxid
+<b class="nc"><i class="no-highlight">108</i>&nbsp;                return -1;</b>
+<i class="no-highlight">109</i>&nbsp;            } else {
+<i class="no-highlight">110</i>&nbsp;                // datminmxid
+<b class="nc"><i class="no-highlight">111</i>&nbsp;                return 0;</b>
+<i class="no-highlight">112</i>&nbsp;            }
+<i class="no-highlight">113</i>&nbsp;        }
+<i class="no-highlight">114</i>&nbsp;
+<i class="no-highlight">115</i>&nbsp;        @Override
+<i class="no-highlight">116</i>&nbsp;        public CharSequence getStr(int col) {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;            switch (col) {</b>
+<i class="no-highlight">118</i>&nbsp;                case 1:
+<i class="no-highlight">119</i>&nbsp;                    // datname
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                    return Constants.DB_NAME;</b>
+<i class="no-highlight">121</i>&nbsp;                case 13:
+<i class="no-highlight">122</i>&nbsp;                    // datacl
+<b class="nc"><i class="no-highlight">123</i>&nbsp;                    return &quot;&quot;;</b>
+<i class="no-highlight">124</i>&nbsp;                default:
+<i class="no-highlight">125</i>&nbsp;                    // datcollate
+<i class="no-highlight">126</i>&nbsp;                    // datctype
+<b class="nc"><i class="no-highlight">127</i>&nbsp;                    return &quot;en_US.UTF-8&quot;;</b>
+<i class="no-highlight">128</i>&nbsp;            }
+<i class="no-highlight">129</i>&nbsp;        }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;        @Override
+<i class="no-highlight">132</i>&nbsp;        public CharSequence getStrB(int col) {
+<b class="fc"><i class="no-highlight">133</i>&nbsp;            return getStr(col);</b>
+<i class="no-highlight">134</i>&nbsp;        }
+<i class="no-highlight">135</i>&nbsp;
+<i class="no-highlight">136</i>&nbsp;        @Override
+<i class="no-highlight">137</i>&nbsp;        public int getStrLen(int col) {
+<b class="fc"><i class="no-highlight">138</i>&nbsp;            return getStr(col).length();</b>
+<i class="no-highlight">139</i>&nbsp;        }
+<i class="no-highlight">140</i>&nbsp;    }
+<i class="no-highlight">141</i>&nbsp;
+<b class="fc"><i class="no-highlight">142</i>&nbsp;    private static class PgDatabaseRecordCursor implements RecordCursor {</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        private boolean hasNext = true;</b>
+<i class="no-highlight">145</i>&nbsp;
+<i class="no-highlight">146</i>&nbsp;        @Override
+<i class="no-highlight">147</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        }</b>
+<i class="no-highlight">149</i>&nbsp;
+<i class="no-highlight">150</i>&nbsp;        @Override
+<i class="no-highlight">151</i>&nbsp;        public Record getRecord() {
+<b class="fc"><i class="no-highlight">152</i>&nbsp;            return RECORD;</b>
+<i class="no-highlight">153</i>&nbsp;        }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;        @Override
+<i class="no-highlight">156</i>&nbsp;        public Record getRecordB() {
+<b class="nc"><i class="no-highlight">157</i>&nbsp;            return RECORD;</b>
+<i class="no-highlight">158</i>&nbsp;        }
+<i class="no-highlight">159</i>&nbsp;
+<i class="no-highlight">160</i>&nbsp;        @Override
+<i class="no-highlight">161</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">162</i>&nbsp;            if (hasNext) {</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;                hasNext = false;</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;                return true;</b>
+<i class="no-highlight">165</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">166</i>&nbsp;            return false;</b>
+<i class="no-highlight">167</i>&nbsp;        }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;        @Override
+<i class="no-highlight">170</i>&nbsp;        public void recordAt(Record record, long atRowId) {
+<b class="nc"><i class="no-highlight">171</i>&nbsp;        }</b>
+<i class="no-highlight">172</i>&nbsp;
+<i class="no-highlight">173</i>&nbsp;        @Override
+<i class="no-highlight">174</i>&nbsp;        public long size() {
+<b class="nc"><i class="no-highlight">175</i>&nbsp;            return 1;</b>
+<i class="no-highlight">176</i>&nbsp;        }
+<i class="no-highlight">177</i>&nbsp;
+<i class="no-highlight">178</i>&nbsp;        @Override
+<i class="no-highlight">179</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">180</i>&nbsp;            hasNext = true;</b>
+<i class="no-highlight">181</i>&nbsp;        }
+<i class="no-highlight">182</i>&nbsp;    }
+<i class="no-highlight">183</i>&nbsp;
+<i class="no-highlight">184</i>&nbsp;    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();</b>
+<i class="no-highlight">186</i>&nbsp;
+<i class="no-highlight">187</i>&nbsp;        public PgDatabaseRecordCursorFactory() {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;            super(METADATA);</b>
+<i class="no-highlight">189</i>&nbsp;        }
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;        @Override
+<i class="no-highlight">192</i>&nbsp;        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            cursor.toTop();</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            return cursor;</b>
+<i class="no-highlight">195</i>&nbsp;        }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;        @Override
+<i class="no-highlight">198</i>&nbsp;        public boolean recordCursorSupportsRandomAccess() {
+<b class="nc"><i class="no-highlight">199</i>&nbsp;            return true;</b>
+<i class="no-highlight">200</i>&nbsp;        }
+<i class="no-highlight">201</i>&nbsp;
+<i class="no-highlight">202</i>&nbsp;        @Override
+<i class="no-highlight">203</i>&nbsp;        public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            sink.type(SIGNATURE);</b>
+<i class="no-highlight">205</i>&nbsp;        }
+<i class="no-highlight">206</i>&nbsp;    }
+<i class="no-highlight">207</i>&nbsp;
+<i class="no-highlight">208</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        final GenericRecordMetadata metadata = new GenericRecordMetadata();</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;oid&quot;, ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datname&quot;, ColumnType.STRING));</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datdba&quot;, ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;encoding&quot;, ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datcollate&quot;, ColumnType.STRING));</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datctype&quot;, ColumnType.STRING));</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datistemplate&quot;, ColumnType.BOOLEAN));</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datallowconn&quot;, ColumnType.BOOLEAN));</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datconnlimit&quot;, ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datlastsysoid&quot;, ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datfrozenxid&quot;, ColumnType.LONG));</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datminmxid&quot;, ColumnType.LONG));</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;dattablespace&quot;, ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        metadata.add(new TableColumnMetadata(&quot;datacl&quot;, ColumnType.STRING));</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        METADATA = metadata;</b>
+<i class="no-highlight">225</i>&nbsp;    }
+<i class="no-highlight">226</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

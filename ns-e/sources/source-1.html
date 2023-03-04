@@ -1,0 +1,710 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > Sender</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.client</a>
+</div>
+
+<h1>Coverage Summary for Class: Sender (io.questdb.client)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">Sender</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">Sender$LineSenderBuilder</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (12/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96%
+  </span>
+  <span class="absValue">
+    (96/100)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">Sender$LineSenderBuilder$AdvancedTlsSettings</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">Sender$LineSenderBuilder$AuthBuilder</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (9/9)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">Sender$TlsValidationMode</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (21/21)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.6%
+  </span>
+  <span class="absValue">
+    (115/119)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.client;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cutlass.line.LineChannel;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cutlass.line.LineSenderException;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cutlass.line.LineTcpSender;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cutlass.line.tcp.AuthDb;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.network.NetworkFacade;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.network.NetworkFacadeImpl;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.Chars;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.NumericException;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import javax.security.auth.DestroyFailedException;
+<i class="no-highlight">40</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">41</i>&nbsp;import java.security.PrivateKey;
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;/**
+<i class="no-highlight">44</i>&nbsp; * ILP client to feed data to a remote QuestDB instance.
+<i class="no-highlight">45</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">46</i>&nbsp; * Use {@link #builder()} method to create a new instance.
+<i class="no-highlight">47</i>&nbsp; * &lt;br&gt;
+<i class="no-highlight">48</i>&nbsp; * How to use the Sender:
+<i class="no-highlight">49</i>&nbsp; * &lt;ol&gt;
+<i class="no-highlight">50</i>&nbsp; *     &lt;li&gt;Obtain an instance via {@link #builder()}&lt;/li&gt;
+<i class="no-highlight">51</i>&nbsp; *     &lt;li&gt;Use {@link #table(CharSequence)} to select a table&lt;/li&gt;
+<i class="no-highlight">52</i>&nbsp; *     &lt;li&gt;Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.&lt;/li&gt;
+<i class="no-highlight">53</i>&nbsp; *     &lt;li&gt;Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
+<i class="no-highlight">54</i>&nbsp; *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
+<i class="no-highlight">55</i>&nbsp; *     {@link #timestampColumn(CharSequence, long)} to add remaining columns columns&lt;/li&gt;
+<i class="no-highlight">56</i>&nbsp; *     &lt;li&gt;Use {@link #at(long)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+<i class="no-highlight">57</i>&nbsp; *     {@link #atNow()} which will add a timestamp on a server.&lt;/li&gt;
+<i class="no-highlight">58</i>&nbsp; *     &lt;li&gt;Optionally: You can use {@link #flush()} to send locally buffered data into a server&lt;/li&gt;
+<i class="no-highlight">59</i>&nbsp; * &lt;/ol&gt;
+<i class="no-highlight">60</i>&nbsp; * &lt;br&gt;
+<i class="no-highlight">61</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">62</i>&nbsp; * Sender implements the &lt;code&gt;java.io.Closeable&lt;/code&gt; interface. Thus, you must call the {@link #close()} method
+<i class="no-highlight">63</i>&nbsp; * when you no longer need it.
+<i class="no-highlight">64</i>&nbsp; * &lt;br&gt;
+<i class="no-highlight">65</i>&nbsp; * Thread-safety: Sender is not thread-safe. Each thread-safe needs its own instance or you have to implement
+<i class="no-highlight">66</i>&nbsp; * a mechanism for passing Sender instances among thread. An object pool could have this role.
+<i class="no-highlight">67</i>&nbsp; * &lt;br&gt;
+<i class="no-highlight">68</i>&nbsp; * Error-handling: Most errors throw an instance of {@link LineSenderException}.
+<i class="no-highlight">69</i>&nbsp; */
+<i class="no-highlight">70</i>&nbsp;public interface Sender extends Closeable {
+<i class="no-highlight">71</i>&nbsp;
+<i class="no-highlight">72</i>&nbsp;    /**
+<i class="no-highlight">73</i>&nbsp;     * Construct a Builder object to create a new Sender instance.
+<i class="no-highlight">74</i>&nbsp;     *
+<i class="no-highlight">75</i>&nbsp;     * @return Builder object to create a new Sender instance.
+<i class="no-highlight">76</i>&nbsp;     */
+<i class="no-highlight">77</i>&nbsp;    static LineSenderBuilder builder() {
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        return new LineSenderBuilder();</b>
+<i class="no-highlight">79</i>&nbsp;    }
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    /**
+<i class="no-highlight">82</i>&nbsp;     * Finalize the current row and assign an explicit timestamp.
+<i class="no-highlight">83</i>&nbsp;     * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
+<i class="no-highlight">84</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">85</i>&nbsp;     * From a client perspective timestamp is an opaque number, and it&#39;s interpreted only on a QuestDB server.
+<i class="no-highlight">86</i>&nbsp;     * QuestDB server default behaviour is to treat the timestamp as a number of nanoseconds since 1st Jan 1970 UTC.
+<i class="no-highlight">87</i>&nbsp;     * This behavior can be adjusted by QuestDB server configuration. See &lt;code&gt;line.tcp.timestamp&lt;/code&gt; in
+<i class="no-highlight">88</i>&nbsp;     * &lt;a href=&quot;https://questdb.io/docs/reference/configuration/&quot;&gt;QuestDB server documentation&lt;/a&gt;
+<i class="no-highlight">89</i>&nbsp;     *
+<i class="no-highlight">90</i>&nbsp;     * @param timestamp time since 1st Jan 1970 UTC (epoch)
+<i class="no-highlight">91</i>&nbsp;     */
+<i class="no-highlight">92</i>&nbsp;    void at(long timestamp);
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;    /**
+<i class="no-highlight">95</i>&nbsp;     * Finalize the current row and let QuestDB server assign a timestamp. If you need to set timestamp
+<i class="no-highlight">96</i>&nbsp;     * explicitly then see {@link #at(long)}.
+<i class="no-highlight">97</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">98</i>&nbsp;     * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
+<i class="no-highlight">99</i>&nbsp;     */
+<i class="no-highlight">100</i>&nbsp;    void atNow();
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    /**
+<i class="no-highlight">103</i>&nbsp;     * Add a column with a boolean value.
+<i class="no-highlight">104</i>&nbsp;     *
+<i class="no-highlight">105</i>&nbsp;     * @param name  name of the column
+<i class="no-highlight">106</i>&nbsp;     * @param value value to add
+<i class="no-highlight">107</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">108</i>&nbsp;     */
+<i class="no-highlight">109</i>&nbsp;    Sender boolColumn(CharSequence name, boolean value);
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    /**
+<i class="no-highlight">112</i>&nbsp;     * Close this Sender.
+<i class="no-highlight">113</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">114</i>&nbsp;     * This must be called before dereferencing Sender, otherwise resources might leak.
+<i class="no-highlight">115</i>&nbsp;     * Upon returning from this method the Sender is closed and cannot be used anymore.
+<i class="no-highlight">116</i>&nbsp;     * Close method is idempotent, calling this method multiple times has no effect.
+<i class="no-highlight">117</i>&nbsp;     * Calling any other on a closed Sender will throw {@link LineSenderException}
+<i class="no-highlight">118</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">119</i>&nbsp;     */
+<i class="no-highlight">120</i>&nbsp;    @Override
+<i class="no-highlight">121</i>&nbsp;    void close();
+<i class="no-highlight">122</i>&nbsp;
+<i class="no-highlight">123</i>&nbsp;    /**
+<i class="no-highlight">124</i>&nbsp;     * Add a column with a floating point value.
+<i class="no-highlight">125</i>&nbsp;     *
+<i class="no-highlight">126</i>&nbsp;     * @param name  name of the column
+<i class="no-highlight">127</i>&nbsp;     * @param value value to add
+<i class="no-highlight">128</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">129</i>&nbsp;     */
+<i class="no-highlight">130</i>&nbsp;    Sender doubleColumn(CharSequence name, double value);
+<i class="no-highlight">131</i>&nbsp;
+<i class="no-highlight">132</i>&nbsp;    /**
+<i class="no-highlight">133</i>&nbsp;     * Force flushing internal buffers to a server.
+<i class="no-highlight">134</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">135</i>&nbsp;     * You should also call this method when you expect a period of quiescence during which no data will be written.
+<i class="no-highlight">136</i>&nbsp;     * Otherwise, previously buffered data would not be sent to a server.
+<i class="no-highlight">137</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">138</i>&nbsp;     * This method is also useful when you need a fine control over Sender batching behaviour. Buffer flushing reduces
+<i class="no-highlight">139</i>&nbsp;     * the batching effect. This means it can lower the overall throughput, as each batch has a certain fixed cost
+<i class="no-highlight">140</i>&nbsp;     * component, but it can decrease maximum latency as messages spend less time waiting in buffers and waiting for
+<i class="no-highlight">141</i>&nbsp;     * automatic flush.
+<i class="no-highlight">142</i>&nbsp;     *
+<i class="no-highlight">143</i>&nbsp;     * @see LineSenderBuilder#bufferCapacity(int)
+<i class="no-highlight">144</i>&nbsp;     */
+<i class="no-highlight">145</i>&nbsp;    void flush();
+<i class="no-highlight">146</i>&nbsp;
+<i class="no-highlight">147</i>&nbsp;    /**
+<i class="no-highlight">148</i>&nbsp;     * Add a column with an integer value.
+<i class="no-highlight">149</i>&nbsp;     *
+<i class="no-highlight">150</i>&nbsp;     * @param name  name of the column
+<i class="no-highlight">151</i>&nbsp;     * @param value value to add
+<i class="no-highlight">152</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">153</i>&nbsp;     */
+<i class="no-highlight">154</i>&nbsp;    Sender longColumn(CharSequence name, long value);
+<i class="no-highlight">155</i>&nbsp;
+<i class="no-highlight">156</i>&nbsp;    /**
+<i class="no-highlight">157</i>&nbsp;     * Add a column with a string value.
+<i class="no-highlight">158</i>&nbsp;     *
+<i class="no-highlight">159</i>&nbsp;     * @param name  name of the column
+<i class="no-highlight">160</i>&nbsp;     * @param value value to add
+<i class="no-highlight">161</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">162</i>&nbsp;     */
+<i class="no-highlight">163</i>&nbsp;    Sender stringColumn(CharSequence name, CharSequence value);
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    /**
+<i class="no-highlight">166</i>&nbsp;     * Add a column with a symbol value. You must call add symbols before adding any other column types.
+<i class="no-highlight">167</i>&nbsp;     *
+<i class="no-highlight">168</i>&nbsp;     * @param name  name of the column
+<i class="no-highlight">169</i>&nbsp;     * @param value value to add
+<i class="no-highlight">170</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">171</i>&nbsp;     */
+<i class="no-highlight">172</i>&nbsp;    Sender symbol(CharSequence name, CharSequence value);
+<i class="no-highlight">173</i>&nbsp;
+<i class="no-highlight">174</i>&nbsp;    /**
+<i class="no-highlight">175</i>&nbsp;     * Select the table for a new row. This is always the first method to start a error. It&#39;s an error to call other
+<i class="no-highlight">176</i>&nbsp;     * methods without calling this method first.
+<i class="no-highlight">177</i>&nbsp;     *
+<i class="no-highlight">178</i>&nbsp;     * @param table name of the table
+<i class="no-highlight">179</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">180</i>&nbsp;     */
+<i class="no-highlight">181</i>&nbsp;    Sender table(CharSequence table);
+<i class="no-highlight">182</i>&nbsp;
+<i class="no-highlight">183</i>&nbsp;    /**
+<i class="no-highlight">184</i>&nbsp;     * Add a column with a non-designated timestamp value.
+<i class="no-highlight">185</i>&nbsp;     *
+<i class="no-highlight">186</i>&nbsp;     * @param name  name of the column
+<i class="no-highlight">187</i>&nbsp;     * @param value value to add (in microseconds since epoch)
+<i class="no-highlight">188</i>&nbsp;     * @return this instance for method chaining
+<i class="no-highlight">189</i>&nbsp;     */
+<i class="no-highlight">190</i>&nbsp;    Sender timestampColumn(CharSequence name, long value);
+<i class="no-highlight">191</i>&nbsp;
+<i class="no-highlight">192</i>&nbsp;    /**
+<i class="no-highlight">193</i>&nbsp;     * Configure TLS mode.
+<i class="no-highlight">194</i>&nbsp;     * Most users should not need to use anything but the default mode.
+<i class="no-highlight">195</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">196</i>&nbsp;    enum TlsValidationMode {</b>
+<i class="no-highlight">197</i>&nbsp;
+<i class="no-highlight">198</i>&nbsp;        /**
+<i class="no-highlight">199</i>&nbsp;         * Sender validates a server certificate chain and throws an exception
+<i class="no-highlight">200</i>&nbsp;         * when a certificate is not trusted.
+<i class="no-highlight">201</i>&nbsp;         */
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        DEFAULT,</b>
+<i class="no-highlight">203</i>&nbsp;
+<i class="no-highlight">204</i>&nbsp;        /**
+<i class="no-highlight">205</i>&nbsp;         * Suitable for testing. In this mode Sender does not validate a server certificate chain.
+<i class="no-highlight">206</i>&nbsp;         * This is inherently insecure and should never be used in a production environment.
+<i class="no-highlight">207</i>&nbsp;         * Useful in test environments with self-signed certificates.
+<i class="no-highlight">208</i>&nbsp;         */
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        INSECURE</b>
+<i class="no-highlight">210</i>&nbsp;    }
+<i class="no-highlight">211</i>&nbsp;
+<i class="no-highlight">212</i>&nbsp;    /**
+<i class="no-highlight">213</i>&nbsp;     * Builder class to construct a new instance of a Sender.
+<i class="no-highlight">214</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">215</i>&nbsp;     * Example usage:
+<i class="no-highlight">216</i>&nbsp;     * &lt;pre&gt;{@code
+<i class="no-highlight">217</i>&nbsp;     * try (Sender sender = Sender.builder()
+<i class="no-highlight">218</i>&nbsp;     *  .address(&quot;localhost:9009&quot;)
+<i class="no-highlight">219</i>&nbsp;     *  .build()) {
+<i class="no-highlight">220</i>&nbsp;     *      sender.table(tableName).column(&quot;value&quot;, 42).atNow();
+<i class="no-highlight">221</i>&nbsp;     *  }
+<i class="no-highlight">222</i>&nbsp;     * }&lt;/pre&gt;
+<i class="no-highlight">223</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">224</i>&nbsp;    final class LineSenderBuilder {</b>
+<i class="no-highlight">225</i>&nbsp;        // indicates that buffer capacity was not set explicitly
+<i class="no-highlight">226</i>&nbsp;        private static final byte BUFFER_CAPACITY_DEFAULT = 0;
+<i class="no-highlight">227</i>&nbsp;        private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
+<i class="no-highlight">228</i>&nbsp;        private static final int DEFAULT_PORT = 9009;
+<i class="no-highlight">229</i>&nbsp;        private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
+<i class="no-highlight">230</i>&nbsp;        // indicate that port was not set explicitly
+<i class="no-highlight">231</i>&nbsp;        private static final byte PORT_DEFAULT = 0;
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;</b>
+<i class="no-highlight">233</i>&nbsp;        private String host;
+<i class="no-highlight">234</i>&nbsp;        private String keyId;
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        private int port = PORT_DEFAULT;</b>
+<i class="no-highlight">236</i>&nbsp;        private PrivateKey privateKey;
+<i class="no-highlight">237</i>&nbsp;        private boolean shouldDestroyPrivKey;
+<i class="no-highlight">238</i>&nbsp;        private boolean tlsEnabled;
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;</b>
+<i class="no-highlight">240</i>&nbsp;        private char[] trustStorePassword;
+<i class="no-highlight">241</i>&nbsp;        private String trustStorePath;
+<i class="no-highlight">242</i>&nbsp;
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        private LineSenderBuilder() {</b>
+<i class="no-highlight">244</i>&nbsp;
+<i class="no-highlight">245</i>&nbsp;        }
+<i class="no-highlight">246</i>&nbsp;
+<i class="no-highlight">247</i>&nbsp;
+<i class="no-highlight">248</i>&nbsp;        /**
+<i class="no-highlight">249</i>&nbsp;         * Set address of a QuestDB server. It can be either a domain name or a textual representation of an IP address.
+<i class="no-highlight">250</i>&nbsp;         * Only IPv4 addresses are supported.
+<i class="no-highlight">251</i>&nbsp;         * &lt;br&gt;
+<i class="no-highlight">252</i>&nbsp;         * Optionally, you can also include a port. In this can you separate a port from the address by using a colon.
+<i class="no-highlight">253</i>&nbsp;         * Example: my.example.org:54321.
+<i class="no-highlight">254</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">255</i>&nbsp;         * If you can include a port then you must not call {@link LineSenderBuilder#port(int)}.
+<i class="no-highlight">256</i>&nbsp;         *
+<i class="no-highlight">257</i>&nbsp;         * @param address address of a QuestDB server
+<i class="no-highlight">258</i>&nbsp;         * @return this instance for method chaining.
+<i class="no-highlight">259</i>&nbsp;         */
+<i class="no-highlight">260</i>&nbsp;        public LineSenderBuilder address(CharSequence address) {
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            if (this.host != null) {</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                throw new LineSenderException(&quot;server address is already configured &quot;)</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                        .put(&quot;[configured-address=&quot;).put(this.host).put(&quot;]&quot;);</b>
+<i class="no-highlight">264</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">265</i>&nbsp;            if (address == null || address.length() == 0) {</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;                throw new LineSenderException(&quot;address cannot be empty nor null&quot;);</b>
+<i class="no-highlight">267</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">268</i>&nbsp;            int portIndex = Chars.indexOf(address, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;            if (portIndex + 1 == address.length()) {</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                throw new LineSenderException(&quot;address cannot ends with : &quot;)</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                        .put(&quot;[address=&quot;).put(address).put(&quot;]&quot;);</b>
+<i class="no-highlight">272</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            if (portIndex != -1) {</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                if (port != 0) {</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                    throw new LineSenderException(&quot;address contains a port, but a port was already configured &quot;)</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;                            .put(&quot;[address=&quot;).put(address)</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                            .put(&quot;, configured-port=&quot;).put(port)</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                            .put(&quot;]&quot;);</b>
+<i class="no-highlight">279</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                this.host = address.subSequence(0, portIndex).toString();</b>
+<i class="no-highlight">281</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                    port = Numbers.parseInt(address, portIndex + 1, address.length());</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;                } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;                    throw new LineSenderException(&quot;cannot parse port from address &quot;, e).</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                            put(&quot;[address=&quot;).put(address).put(&quot;]&quot;);</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                }</b>
+<i class="no-highlight">287</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">288</i>&nbsp;                this.host = address.toString();</b>
+<i class="no-highlight">289</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            return this;</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<i class="no-highlight">292</i>&nbsp;
+<i class="no-highlight">293</i>&nbsp;        /**
+<i class="no-highlight">294</i>&nbsp;         * Advanced TLS configuration. Most users should not need to use this.
+<i class="no-highlight">295</i>&nbsp;         *
+<i class="no-highlight">296</i>&nbsp;         * @return instance of {@link AdvancedTlsSettings} to advanced TLS configuration
+<i class="no-highlight">297</i>&nbsp;         */
+<i class="no-highlight">298</i>&nbsp;        public AdvancedTlsSettings advancedTls() {
+<b class="fc"><i class="no-highlight">299</i>&nbsp;            if (LineSenderBuilder.this.trustStorePath != null) {</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;                throw new LineSenderException(&quot;custom trust store was already configured &quot;)</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;                        .put(&quot;[configured-path=&quot;).put(LineSenderBuilder.this.trustStorePath).put(&quot;]&quot;);</b>
+<i class="no-highlight">302</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            if (tlsValidationMode == TlsValidationMode.INSECURE) {</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                throw new LineSenderException(&quot;TLS validation was already disabled&quot;);</b>
+<i class="no-highlight">305</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            return new AdvancedTlsSettings();</b>
+<i class="no-highlight">307</i>&nbsp;        }
+<i class="no-highlight">308</i>&nbsp;
+<i class="no-highlight">309</i>&nbsp;        /**
+<i class="no-highlight">310</i>&nbsp;         * Configure capacity of an internal buffer.
+<i class="no-highlight">311</i>&nbsp;         * Bigger buffer increase batching effect.
+<i class="no-highlight">312</i>&nbsp;         *
+<i class="no-highlight">313</i>&nbsp;         * @param bufferCapacity buffer capacity in bytes.
+<i class="no-highlight">314</i>&nbsp;         * @return this instance for method chaining
+<i class="no-highlight">315</i>&nbsp;         * @see Sender#flush()
+<i class="no-highlight">316</i>&nbsp;         */
+<i class="no-highlight">317</i>&nbsp;        public LineSenderBuilder bufferCapacity(int bufferCapacity) {
+<b class="fc"><i class="no-highlight">318</i>&nbsp;            if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                throw new LineSenderException(&quot;buffer capacity was already configured &quot;)</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                        .put(&quot;[configured-capacity=&quot;).put(this.bufferCapacity).put(&quot;]&quot;);</b>
+<i class="no-highlight">321</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">322</i>&nbsp;            this.bufferCapacity = bufferCapacity;</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            return this;</b>
+<i class="no-highlight">324</i>&nbsp;        }
+<i class="no-highlight">325</i>&nbsp;
+<i class="no-highlight">326</i>&nbsp;        /**
+<i class="no-highlight">327</i>&nbsp;         * Build a Sender instance. This method construct a Sender instance.
+<i class="no-highlight">328</i>&nbsp;         *
+<i class="no-highlight">329</i>&nbsp;         * @return returns a configured instance of Sender.
+<i class="no-highlight">330</i>&nbsp;         */
+<i class="no-highlight">331</i>&nbsp;        public Sender build() {
+<b class="fc"><i class="no-highlight">332</i>&nbsp;            configureDefaults();</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;            validateParameters();</b>
+<i class="no-highlight">334</i>&nbsp;
+<b class="fc"><i class="no-highlight">335</i>&nbsp;            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);</b>
+<i class="no-highlight">337</i>&nbsp;            LineTcpSender sender;
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            if (tlsEnabled) {</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;                assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null</b>
+<i class="no-highlight">340</i>&nbsp;                DelegatingTlsChannel tlsChannel;
+<i class="no-highlight">341</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host);</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                } catch (Throwable t) {</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                    channel.close();</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                    throw rethrow(t);</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                channel = tlsChannel;</b>
+<i class="no-highlight">348</i>&nbsp;            }
+<i class="no-highlight">349</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                sender = new LineTcpSender(channel, bufferCapacity);</b>
+<b class="nc"><i class="no-highlight">351</i>&nbsp;            } catch (Throwable t) {</b>
+<b class="nc"><i class="no-highlight">352</i>&nbsp;                channel.close();</b>
+<b class="nc"><i class="no-highlight">353</i>&nbsp;                throw rethrow(t);</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;            if (privateKey != null) {</b>
+<i class="no-highlight">356</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                    sender.authenticate(keyId, privateKey);</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                } catch (Throwable t) {</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                    sender.close();</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                    throw rethrow(t);</b>
+<i class="no-highlight">361</i>&nbsp;                } finally {
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                    if (shouldDestroyPrivKey) {</b>
+<i class="no-highlight">363</i>&nbsp;                        try {
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                            privateKey.destroy();</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                        } catch (DestroyFailedException e) {</b>
+<i class="no-highlight">366</i>&nbsp;                            // not much we can do
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                        }</b>
+<i class="no-highlight">368</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                }</b>
+<i class="no-highlight">370</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">371</i>&nbsp;            return sender;</b>
+<i class="no-highlight">372</i>&nbsp;        }
+<i class="no-highlight">373</i>&nbsp;
+<i class="no-highlight">374</i>&nbsp;        /**
+<i class="no-highlight">375</i>&nbsp;         * Configure authentication. This is needed when QuestDB server required clients to authenticate.
+<i class="no-highlight">376</i>&nbsp;         *
+<i class="no-highlight">377</i>&nbsp;         * @param keyId keyId the client will send to a server.
+<i class="no-highlight">378</i>&nbsp;         * @return an instance of {@link AuthBuilder}. As to finish authentication configuration.
+<i class="no-highlight">379</i>&nbsp;         */
+<i class="no-highlight">380</i>&nbsp;        public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
+<b class="fc"><i class="no-highlight">381</i>&nbsp;            if (this.keyId != null) {</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                throw new LineSenderException(&quot;authentication keyId was already configured &quot;)</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                        .put(&quot;[configured-keyId=&quot;).put(this.keyId).put(&quot;]&quot;);</b>
+<i class="no-highlight">384</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">385</i>&nbsp;            this.keyId = keyId;</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;            return new LineSenderBuilder.AuthBuilder();</b>
+<i class="no-highlight">387</i>&nbsp;        }
+<i class="no-highlight">388</i>&nbsp;
+<i class="no-highlight">389</i>&nbsp;        /**
+<i class="no-highlight">390</i>&nbsp;         * Instruct a client to use TLS when connecting to a QuestDB server
+<i class="no-highlight">391</i>&nbsp;         *
+<i class="no-highlight">392</i>&nbsp;         * @return this instance for method chaining.
+<i class="no-highlight">393</i>&nbsp;         */
+<i class="no-highlight">394</i>&nbsp;        public LineSenderBuilder enableTls() {
+<b class="fc"><i class="no-highlight">395</i>&nbsp;            if (tlsEnabled) {</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;                throw new LineSenderException(&quot;tls was already enabled&quot;);</b>
+<i class="no-highlight">397</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">398</i>&nbsp;            tlsEnabled = true;</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;            return this;</b>
+<i class="no-highlight">400</i>&nbsp;        }
+<i class="no-highlight">401</i>&nbsp;
+<i class="no-highlight">402</i>&nbsp;        /**
+<i class="no-highlight">403</i>&nbsp;         * Set port where a QuestDB server is listening on.
+<i class="no-highlight">404</i>&nbsp;         *
+<i class="no-highlight">405</i>&nbsp;         * @param port port where a QuestDB server is listening on.
+<i class="no-highlight">406</i>&nbsp;         * @return this instance for method chaining
+<i class="no-highlight">407</i>&nbsp;         */
+<i class="no-highlight">408</i>&nbsp;        public LineSenderBuilder port(int port) {
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            if (this.port != 0) {</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                throw new LineSenderException(&quot;post is already configured &quot;)</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                        .put(&quot;[configured-port=&quot;).put(port).put(&quot;]&quot;);</b>
+<i class="no-highlight">412</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">413</i>&nbsp;            this.port = port;</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;            return this;</b>
+<i class="no-highlight">415</i>&nbsp;        }
+<i class="no-highlight">416</i>&nbsp;
+<i class="no-highlight">417</i>&nbsp;        private static RuntimeException rethrow(Throwable t) {
+<b class="fc"><i class="no-highlight">418</i>&nbsp;            if (t instanceof LineSenderException) {</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                throw (LineSenderException) t;</b>
+<i class="no-highlight">420</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">421</i>&nbsp;            throw new LineSenderException(t);</b>
+<i class="no-highlight">422</i>&nbsp;        }
+<i class="no-highlight">423</i>&nbsp;
+<i class="no-highlight">424</i>&nbsp;        private void configureDefaults() {
+<b class="fc"><i class="no-highlight">425</i>&nbsp;            if (bufferCapacity == BUFFER_CAPACITY_DEFAULT) {</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                bufferCapacity = DEFAULT_BUFFER_CAPACITY;</b>
+<i class="no-highlight">427</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">428</i>&nbsp;            if (port == PORT_DEFAULT) {</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                port = DEFAULT_PORT;</b>
+<i class="no-highlight">430</i>&nbsp;            }
+<i class="no-highlight">431</i>&nbsp;        }
+<i class="no-highlight">432</i>&nbsp;
+<i class="no-highlight">433</i>&nbsp;        private void validateParameters() {
+<b class="fc"><i class="no-highlight">434</i>&nbsp;            if (host == null) {</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                throw new LineSenderException(&quot;questdb server address not set&quot;);</b>
+<i class="no-highlight">436</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">437</i>&nbsp;            if (!tlsEnabled &amp;&amp; trustStorePath != null) {</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                throw new LineSenderException(&quot;custom trust store configured, but TLS was not enabled &quot;)</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                        .put(&quot;[configured-path=&quot;).put(LineSenderBuilder.this.trustStorePath).put(&quot;]&quot;);</b>
+<i class="no-highlight">440</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            if (!tlsEnabled &amp;&amp; tlsValidationMode != TlsValidationMode.DEFAULT) {</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                throw new LineSenderException(&quot;TSL validation disabled, but TLS was not enabled&quot;);</b>
+<i class="no-highlight">443</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">444</i>&nbsp;            if (keyId != null &amp;&amp; bufferCapacity &lt; MIN_BUFFER_SIZE_FOR_AUTH) {</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;                throw new LineSenderException(&quot;Requested buffer too small &quot;)</b>
+<b class="fc"><i class="no-highlight">446</i>&nbsp;                        .put(&quot;[minimal-capacity=&quot;).put(MIN_BUFFER_SIZE_FOR_AUTH)</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;                        .put(&quot;, requested-capacity=&quot;).put(bufferCapacity)</b>
+<b class="fc"><i class="no-highlight">448</i>&nbsp;                        .put(&quot;]&quot;);</b>
+<i class="no-highlight">449</i>&nbsp;            }
+<i class="no-highlight">450</i>&nbsp;        }
+<i class="no-highlight">451</i>&nbsp;
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        public class AdvancedTlsSettings {</b>
+<i class="no-highlight">453</i>&nbsp;            /**
+<i class="no-highlight">454</i>&nbsp;             * Configure a custom truststore. This is only needed when using {@link #enableTls()} when your default
+<i class="no-highlight">455</i>&nbsp;             * truststore does not contain certificate chain used by a server. Most users should not need it.
+<i class="no-highlight">456</i>&nbsp;             * &lt;br&gt;
+<i class="no-highlight">457</i>&nbsp;             * The path can be either a path on a local filesystem. Or you can prefix it with &quot;classpath:&quot; to instruct
+<i class="no-highlight">458</i>&nbsp;             * the Sender to load a trust store from a classpath.
+<i class="no-highlight">459</i>&nbsp;             *
+<i class="no-highlight">460</i>&nbsp;             * @param trustStorePath     a path to a trust store.
+<i class="no-highlight">461</i>&nbsp;             * @param trustStorePassword a password to for the trustore
+<i class="no-highlight">462</i>&nbsp;             * @return an instance of LineSenderBuilder for further configuration
+<i class="no-highlight">463</i>&nbsp;             */
+<i class="no-highlight">464</i>&nbsp;            public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
+<b class="fc"><i class="no-highlight">465</i>&nbsp;                LineSenderBuilder.this.trustStorePath = trustStorePath;</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                LineSenderBuilder.this.trustStorePassword = trustStorePassword;</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                return LineSenderBuilder.this;</b>
+<i class="no-highlight">468</i>&nbsp;            }
+<i class="no-highlight">469</i>&nbsp;
+<i class="no-highlight">470</i>&nbsp;            /**
+<i class="no-highlight">471</i>&nbsp;             * This server certification validation altogether.
+<i class="no-highlight">472</i>&nbsp;             * This is suitable when testing self-signed certificate. It&#39;s inherently insecure and should
+<i class="no-highlight">473</i>&nbsp;             * never be used in a production.
+<i class="no-highlight">474</i>&nbsp;             * &lt;br&gt;
+<i class="no-highlight">475</i>&nbsp;             * If you cannot use trusted certificate then you should prefer {@link  #customTrustStore(String, char[])}
+<i class="no-highlight">476</i>&nbsp;             * over disabling validation.
+<i class="no-highlight">477</i>&nbsp;             *
+<i class="no-highlight">478</i>&nbsp;             * @return an instance of LineSenderBuilder for further configuration
+<i class="no-highlight">479</i>&nbsp;             */
+<i class="no-highlight">480</i>&nbsp;            public LineSenderBuilder disableCertificateValidation() {
+<b class="fc"><i class="no-highlight">481</i>&nbsp;                LineSenderBuilder.this.tlsValidationMode = TlsValidationMode.INSECURE;</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;                return LineSenderBuilder.this;</b>
+<i class="no-highlight">483</i>&nbsp;            }
+<i class="no-highlight">484</i>&nbsp;
+<i class="no-highlight">485</i>&nbsp;        }
+<i class="no-highlight">486</i>&nbsp;
+<i class="no-highlight">487</i>&nbsp;        /**
+<i class="no-highlight">488</i>&nbsp;         * Auxiliary class to configure client authentication.
+<i class="no-highlight">489</i>&nbsp;         * If you have an instance of {@link PrivateKey} then you can pass it directly.
+<i class="no-highlight">490</i>&nbsp;         * Alternative a private key encoded as a string token can be used too.
+<i class="no-highlight">491</i>&nbsp;         */
+<b class="fc"><i class="no-highlight">492</i>&nbsp;        public class AuthBuilder {</b>
+<i class="no-highlight">493</i>&nbsp;
+<i class="no-highlight">494</i>&nbsp;            /**
+<i class="no-highlight">495</i>&nbsp;             * Authenticate by using a token.
+<i class="no-highlight">496</i>&nbsp;             *
+<i class="no-highlight">497</i>&nbsp;             * @param token authentication token
+<i class="no-highlight">498</i>&nbsp;             * @return an instance of LineSenderBuilder for further configuration
+<i class="no-highlight">499</i>&nbsp;             */
+<i class="no-highlight">500</i>&nbsp;            public LineSenderBuilder authToken(String token) {
+<i class="no-highlight">501</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">502</i>&nbsp;                    LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                } catch (IllegalArgumentException e) {</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                    throw new LineSenderException(&quot;could not import token&quot;, e);</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">506</i>&nbsp;                LineSenderBuilder.this.shouldDestroyPrivKey = true;</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                return LineSenderBuilder.this;</b>
+<i class="no-highlight">508</i>&nbsp;            }
+<i class="no-highlight">509</i>&nbsp;
+<i class="no-highlight">510</i>&nbsp;            /**
+<i class="no-highlight">511</i>&nbsp;             * Configures a private key for authentication.
+<i class="no-highlight">512</i>&nbsp;             *
+<i class="no-highlight">513</i>&nbsp;             * @param privateKey privateKey to use for authentication
+<i class="no-highlight">514</i>&nbsp;             * @return an instance of LineSenderBuilder for further configuration
+<i class="no-highlight">515</i>&nbsp;             */
+<i class="no-highlight">516</i>&nbsp;            public LineSenderBuilder privateKey(PrivateKey privateKey) {
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                LineSenderBuilder.this.privateKey = privateKey;</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;                return LineSenderBuilder.this;</b>
+<i class="no-highlight">519</i>&nbsp;            }
+<i class="no-highlight">520</i>&nbsp;        }
+<i class="no-highlight">521</i>&nbsp;    }
+<i class="no-highlight">522</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

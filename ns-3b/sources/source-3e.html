@@ -1,0 +1,360 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > ReaderPoolRecordCursorFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.table</a>
+</div>
+
+<h1>Coverage Summary for Class: ReaderPoolRecordCursorFactory (io.questdb.griffin.engine.table)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">ReaderPoolRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (13/13)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">ReaderPoolRecordCursorFactory$ReaderPoolCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (11/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (35/35)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">ReaderPoolRecordCursorFactory$ReaderPoolCursor$ReaderPoolEntryRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    90%
+  </span>
+  <span class="absValue">
+    (9/10)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (21/21)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.3%
+  </span>
+  <span class="absValue">
+    (57/58)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.table;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.pool.AbstractMultiTenantPool;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.pool.ReaderPool;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">35</i>&nbsp;
+<i class="no-highlight">36</i>&nbsp;import java.util.Iterator;
+<i class="no-highlight">37</i>&nbsp;import java.util.Map;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFactory {
+<i class="no-highlight">40</i>&nbsp;    private static final RecordMetadata METADATA;
+<i class="no-highlight">41</i>&nbsp;    private static final int OWNER_COLUMN_INDEX = 1;
+<i class="no-highlight">42</i>&nbsp;    private static final int TABLE_COLUMN_INDEX = 0;
+<i class="no-highlight">43</i>&nbsp;    private static final int TIMESTAMP_COLUMN_INDEX = 2;
+<i class="no-highlight">44</i>&nbsp;    private static final int TXN_COLUMN_INDEX = 3;
+<i class="no-highlight">45</i>&nbsp;    private final CairoEngine cairoEngine;
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;    public ReaderPoolRecordCursorFactory(CairoEngine cairoEngine) {
+<b class="fc"><i class="no-highlight">48</i>&nbsp;        super(METADATA);</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;        this.cairoEngine = cairoEngine;</b>
+<i class="no-highlight">50</i>&nbsp;    }
+<i class="no-highlight">51</i>&nbsp;
+<i class="no-highlight">52</i>&nbsp;    @Override
+<i class="no-highlight">53</i>&nbsp;    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        readerPoolCursor.of(cairoEngine.getReaderPoolEntries());</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        return readerPoolCursor;</b>
+<i class="no-highlight">57</i>&nbsp;    }
+<i class="no-highlight">58</i>&nbsp;
+<i class="no-highlight">59</i>&nbsp;    @Override
+<i class="no-highlight">60</i>&nbsp;    public boolean recordCursorSupportsRandomAccess() {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        return false;</b>
+<i class="no-highlight">62</i>&nbsp;    }
+<i class="no-highlight">63</i>&nbsp;
+<i class="no-highlight">64</i>&nbsp;    @Override
+<i class="no-highlight">65</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        sink.type(&quot;reader_pool&quot;);</b>
+<i class="no-highlight">67</i>&nbsp;    }
+<i class="no-highlight">68</i>&nbsp;
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private static class ReaderPoolCursor implements RecordCursor {</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        private int allocationIndex = 0;</b>
+<i class="no-highlight">72</i>&nbsp;        private Iterator&lt;Map.Entry&lt;CharSequence, AbstractMultiTenantPool.Entry&lt;ReaderPool.R&gt;&gt;&gt; iterator;
+<i class="no-highlight">73</i>&nbsp;        private long owner;
+<i class="no-highlight">74</i>&nbsp;        private AbstractMultiTenantPool.Entry&lt;ReaderPool.R&gt; poolEntry;
+<i class="no-highlight">75</i>&nbsp;        private Map&lt;CharSequence, AbstractMultiTenantPool.Entry&lt;ReaderPool.R&gt;&gt; readerPoolEntries;
+<i class="no-highlight">76</i>&nbsp;        private TableToken tableToken;
+<i class="no-highlight">77</i>&nbsp;        private long timestamp;
+<i class="no-highlight">78</i>&nbsp;        private long txn;
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;        @Override
+<i class="no-highlight">81</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        }</b>
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;        @Override
+<i class="no-highlight">85</i>&nbsp;        public Record getRecord() {
+<b class="fc"><i class="no-highlight">86</i>&nbsp;            return record;</b>
+<i class="no-highlight">87</i>&nbsp;        }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;        @Override
+<i class="no-highlight">90</i>&nbsp;        public Record getRecordB() {
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            throw new UnsupportedOperationException(&quot;RecordB not implemented&quot;);</b>
+<i class="no-highlight">92</i>&nbsp;        }
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;        @Override
+<i class="no-highlight">95</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;            return tryAdvance();</b>
+<i class="no-highlight">97</i>&nbsp;        }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;        public void of(Map&lt;CharSequence, AbstractMultiTenantPool.Entry&lt;ReaderPool.R&gt;&gt; readerPoolEntries) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;            this.readerPoolEntries = readerPoolEntries;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            toTop();</b>
+<i class="no-highlight">102</i>&nbsp;        }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;        @Override
+<i class="no-highlight">105</i>&nbsp;        public void recordAt(Record record, long atRowId) {
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            throw new UnsupportedOperationException(&quot;Random access not implemented&quot;);</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;        @Override
+<i class="no-highlight">110</i>&nbsp;        public long size() {
+<b class="fc"><i class="no-highlight">111</i>&nbsp;            return -1;</b>
+<i class="no-highlight">112</i>&nbsp;        }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;        @Override
+<i class="no-highlight">115</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">116</i>&nbsp;            iterator = readerPoolEntries.entrySet().iterator();</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;            allocationIndex = 0;</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            poolEntry = null;</b>
+<i class="no-highlight">119</i>&nbsp;        }
+<i class="no-highlight">120</i>&nbsp;
+<i class="no-highlight">121</i>&nbsp;        private boolean selectPoolEntry() {
+<i class="no-highlight">122</i>&nbsp;            for (; ; ) {
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                if (poolEntry == null) {</b>
+<i class="no-highlight">124</i>&nbsp;                    // either we just started the iteration or the last Entry did not have
+<i class="no-highlight">125</i>&nbsp;                    // anything chained. let&#39;s advance in the CHM iterator
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                    assert allocationIndex == 0;</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                    if (!iterator.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                        return false;</b>
+<i class="no-highlight">129</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                    Map.Entry&lt;CharSequence, AbstractMultiTenantPool.Entry&lt;ReaderPool.R&gt;&gt; mapEntry = iterator.next();</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;                    poolEntry = mapEntry.getValue();</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                    return true;</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {</b>
+<i class="no-highlight">134</i>&nbsp;                    // we exhausted all slots in the current Entry
+<i class="no-highlight">135</i>&nbsp;                    // let&#39;s see if there is another Entry chained
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                    poolEntry = poolEntry.getNext();</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                    allocationIndex = 0;</b>
+<i class="no-highlight">138</i>&nbsp;                } else {
+<i class="no-highlight">139</i>&nbsp;                    // the current entry still has slots to inspect
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                    return true;</b>
+<i class="no-highlight">141</i>&nbsp;                }
+<i class="no-highlight">142</i>&nbsp;            }
+<i class="no-highlight">143</i>&nbsp;        }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;        private boolean tryAdvance() {
+<i class="no-highlight">146</i>&nbsp;            TableReader reader;
+<i class="no-highlight">147</i>&nbsp;            do {
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                if (!selectPoolEntry()) {</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                    return false;</b>
+<i class="no-highlight">150</i>&nbsp;                }
+<i class="no-highlight">151</i>&nbsp;                // Volatile read because the owner is set by other thread(s).
+<i class="no-highlight">152</i>&nbsp;                // It ensures everything the other thread wrote to other fields before (volatile) writing the &#39;owner&#39;
+<i class="no-highlight">153</i>&nbsp;                // will become visible too (Synchronizes-With Order).
+<i class="no-highlight">154</i>&nbsp;                // This does not imply the individual fields will be consistent. Why? There are other threads modifying
+<i class="no-highlight">155</i>&nbsp;                // entries concurrently with us reading them. So e.g. the &#39;reader&#39; field can be changed after we read
+<i class="no-highlight">156</i>&nbsp;                // &#39;owner&#39;. So what&#39;s the point of volatile read? It ensures we don&#39;t read arbitrary stale data.
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                owner = poolEntry.getOwnerVolatile(allocationIndex);</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;                timestamp = poolEntry.getReleaseOrAcquireTime(allocationIndex);</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                reader = poolEntry.getTenant(allocationIndex);</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                allocationIndex++;</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;            } while (reader == null);</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;            txn = reader.getTxn();</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            tableToken = reader.getTableToken();</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            return true;</b>
+<i class="no-highlight">165</i>&nbsp;        }
+<i class="no-highlight">166</i>&nbsp;
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        private class ReaderPoolEntryRecord implements Record {</b>
+<i class="no-highlight">168</i>&nbsp;            @Override
+<i class="no-highlight">169</i>&nbsp;            public long getLong(int col) {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                switch (col) {</b>
+<i class="no-highlight">171</i>&nbsp;                    case OWNER_COLUMN_INDEX:
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                        return owner;</b>
+<i class="no-highlight">173</i>&nbsp;                    case TXN_COLUMN_INDEX:
+<b class="fc"><i class="no-highlight">174</i>&nbsp;                        return txn;</b>
+<i class="no-highlight">175</i>&nbsp;                    default:
+<b class="nc"><i class="no-highlight">176</i>&nbsp;                        throw CairoException.nonCritical().put(&quot;unsupported column number. [column=&quot;).put(col).put(&quot;]&quot;);</b>
+<i class="no-highlight">177</i>&nbsp;                }
+<i class="no-highlight">178</i>&nbsp;            }
+<i class="no-highlight">179</i>&nbsp;
+<i class="no-highlight">180</i>&nbsp;            @Override
+<i class="no-highlight">181</i>&nbsp;            public CharSequence getStr(int col) {
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                assert col == TABLE_COLUMN_INDEX;</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                return tableToken.getTableName();</b>
+<i class="no-highlight">184</i>&nbsp;            }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;            @Override
+<i class="no-highlight">187</i>&nbsp;            public CharSequence getStrB(int col) {
+<i class="no-highlight">188</i>&nbsp;                // CharSequence are mutable, but in this case CharSequences were used as map keys
+<i class="no-highlight">189</i>&nbsp;                // hence I don&#39;t assume they would be mutable
+<i class="no-highlight">190</i>&nbsp;                // todo: explore what happens when a table is renamed
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                return getStr(col);</b>
+<i class="no-highlight">192</i>&nbsp;            }
+<i class="no-highlight">193</i>&nbsp;
+<i class="no-highlight">194</i>&nbsp;            @Override
+<i class="no-highlight">195</i>&nbsp;            public long getTimestamp(int col) {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                assert col == TIMESTAMP_COLUMN_INDEX;</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                return timestamp;</b>
+<i class="no-highlight">198</i>&nbsp;            }
+<i class="no-highlight">199</i>&nbsp;        }
+<i class="no-highlight">200</i>&nbsp;    }
+<i class="no-highlight">201</i>&nbsp;
+<i class="no-highlight">202</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        final GenericRecordMetadata metadata = new GenericRecordMetadata();</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata(&quot;table&quot;, ColumnType.STRING))</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata(&quot;owner&quot;, ColumnType.LONG))</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata(&quot;timestamp&quot;, ColumnType.TIMESTAMP))</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                .add(TXN_COLUMN_INDEX, new TableColumnMetadata(&quot;txn&quot;, ColumnType.LONG));</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        METADATA = metadata;</b>
+<i class="no-highlight">209</i>&nbsp;    }
+<i class="no-highlight">210</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

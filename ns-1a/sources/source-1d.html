@@ -1,0 +1,2147 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > SqlKeywords</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin</a>
+</div>
+
+<h1>Coverage Summary for Class: SqlKeywords (io.questdb.griffin)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">SqlKeywords</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.3%
+  </span>
+  <span class="absValue">
+    (148/149)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.4%
+  </span>
+  <span class="absValue">
+    (1267/1275)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.Chars;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.LowerCaseCharSequenceHashSet;
+<i class="no-highlight">29</i>&nbsp;
+<b class="nc"><i class="no-highlight">30</i>&nbsp;public class SqlKeywords {</b>
+<i class="no-highlight">31</i>&nbsp;    public static final int CASE_KEYWORD_LENGTH = 4;
+<i class="no-highlight">32</i>&nbsp;    public static final String CONCAT_FUNC_NAME = &quot;concat&quot;;
+<i class="no-highlight">33</i>&nbsp;    public static final int GEOHASH_KEYWORD_LENGTH = 7;
+<b class="fc"><i class="no-highlight">34</i>&nbsp;    private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();</b>
+<i class="no-highlight">35</i>&nbsp;
+<i class="no-highlight">36</i>&nbsp;    public static boolean isAddKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">37</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">38</i>&nbsp;            return false;</b>
+<i class="no-highlight">39</i>&nbsp;        }
+<i class="no-highlight">40</i>&nbsp;
+<b class="fc"><i class="no-highlight">41</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;d&#39;;</b>
+<i class="no-highlight">45</i>&nbsp;    }
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;    public static boolean isAlignKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">48</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;            return false;</b>
+<i class="no-highlight">50</i>&nbsp;        }
+<i class="no-highlight">51</i>&nbsp;
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">58</i>&nbsp;    }
+<i class="no-highlight">59</i>&nbsp;
+<i class="no-highlight">60</i>&nbsp;    public static boolean isAllKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;            return false;</b>
+<i class="no-highlight">63</i>&nbsp;        }
+<i class="no-highlight">64</i>&nbsp;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">69</i>&nbsp;    }
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;    public static boolean isAlterKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;            return false;</b>
+<i class="no-highlight">74</i>&nbsp;        }
+<i class="no-highlight">75</i>&nbsp;
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">82</i>&nbsp;    }
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;    public static boolean isAndKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;            return false;</b>
+<i class="no-highlight">87</i>&nbsp;        }
+<i class="no-highlight">88</i>&nbsp;
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;d&#39;;</b>
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    public static boolean isAsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            return false;</b>
+<i class="no-highlight">98</i>&nbsp;        }
+<i class="no-highlight">99</i>&nbsp;
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">103</i>&nbsp;    }
+<i class="no-highlight">104</i>&nbsp;
+<i class="no-highlight">105</i>&nbsp;    public static boolean isAscKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            return false;</b>
+<i class="no-highlight">108</i>&nbsp;        }
+<i class="no-highlight">109</i>&nbsp;
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;c&#39;;</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;    public static boolean isAtKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            return false;</b>
+<i class="no-highlight">119</i>&nbsp;        }
+<i class="no-highlight">120</i>&nbsp;
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">124</i>&nbsp;    }
+<i class="no-highlight">125</i>&nbsp;
+<i class="no-highlight">126</i>&nbsp;    public static boolean isAttachKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;            return false;</b>
+<i class="no-highlight">129</i>&nbsp;        }
+<i class="no-highlight">130</i>&nbsp;
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">138</i>&nbsp;    }
+<i class="no-highlight">139</i>&nbsp;
+<i class="no-highlight">140</i>&nbsp;    public static boolean isBatchKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;            return false;</b>
+<i class="no-highlight">143</i>&nbsp;        }
+<i class="no-highlight">144</i>&nbsp;
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    public static boolean isBetweenKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;            return false;</b>
+<i class="no-highlight">156</i>&nbsp;        }
+<i class="no-highlight">157</i>&nbsp;
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">166</i>&nbsp;    }
+<i class="no-highlight">167</i>&nbsp;
+<i class="no-highlight">168</i>&nbsp;    public static boolean isByKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="nc"><i class="no-highlight">170</i>&nbsp;            return false;</b>
+<i class="no-highlight">171</i>&nbsp;        }
+<i class="no-highlight">172</i>&nbsp;
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">176</i>&nbsp;    }
+<i class="no-highlight">177</i>&nbsp;
+<i class="no-highlight">178</i>&nbsp;    public static boolean isBypassKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;            return false;</b>
+<i class="no-highlight">181</i>&nbsp;        }
+<i class="no-highlight">182</i>&nbsp;
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;y&#39;</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">190</i>&nbsp;    }
+<i class="no-highlight">191</i>&nbsp;
+<i class="no-highlight">192</i>&nbsp;    public static boolean isCacheKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            return false;</b>
+<i class="no-highlight">195</i>&nbsp;        }
+<i class="no-highlight">196</i>&nbsp;
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">203</i>&nbsp;    }
+<i class="no-highlight">204</i>&nbsp;
+<i class="no-highlight">205</i>&nbsp;    public static boolean isCalendarKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">206</i>&nbsp;        if (tok.length() != 8) {</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            return false;</b>
+<i class="no-highlight">208</i>&nbsp;        }
+<i class="no-highlight">209</i>&nbsp;
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">219</i>&nbsp;    }
+<i class="no-highlight">220</i>&nbsp;
+<i class="no-highlight">221</i>&nbsp;    public static boolean isCancelKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;            return false;</b>
+<i class="no-highlight">224</i>&nbsp;        }
+<i class="no-highlight">225</i>&nbsp;
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">233</i>&nbsp;    }
+<i class="no-highlight">234</i>&nbsp;
+<i class="no-highlight">235</i>&nbsp;    public static boolean isCapacityKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        if (tok.length() != 8) {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            return false;</b>
+<i class="no-highlight">238</i>&nbsp;        }
+<i class="no-highlight">239</i>&nbsp;
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    public static boolean isCaseKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;            return false;</b>
+<i class="no-highlight">254</i>&nbsp;        }
+<i class="no-highlight">255</i>&nbsp;
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">261</i>&nbsp;    }
+<i class="no-highlight">262</i>&nbsp;
+<i class="no-highlight">263</i>&nbsp;    public static boolean isCastKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;            return false;</b>
+<i class="no-highlight">266</i>&nbsp;        }
+<i class="no-highlight">267</i>&nbsp;
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">273</i>&nbsp;    }
+<i class="no-highlight">274</i>&nbsp;
+<i class="no-highlight">275</i>&nbsp;    public static boolean isCenturyKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">276</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            return false;</b>
+<i class="no-highlight">278</i>&nbsp;        }
+<i class="no-highlight">279</i>&nbsp;
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">288</i>&nbsp;    }
+<i class="no-highlight">289</i>&nbsp;
+<i class="no-highlight">290</i>&nbsp;    public static boolean isColonColon(CharSequence tok) {
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        return tok.length() == 2 &amp;&amp; tok.charAt(0) == &#39;:&#39; &amp;&amp; tok.charAt(1) == &#39;:&#39;;</b>
+<i class="no-highlight">292</i>&nbsp;    }
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;    public static boolean isColumnKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            return false;</b>
+<i class="no-highlight">297</i>&nbsp;        }
+<i class="no-highlight">298</i>&nbsp;
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">306</i>&nbsp;    }
+<i class="no-highlight">307</i>&nbsp;
+<i class="no-highlight">308</i>&nbsp;    public static boolean isColumnsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            return false;</b>
+<i class="no-highlight">311</i>&nbsp;        }
+<i class="no-highlight">312</i>&nbsp;
+<b class="fc"><i class="no-highlight">313</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">321</i>&nbsp;    }
+<i class="no-highlight">322</i>&nbsp;
+<i class="no-highlight">323</i>&nbsp;    public static boolean isConcatKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;            return false;</b>
+<i class="no-highlight">326</i>&nbsp;        }
+<i class="no-highlight">327</i>&nbsp;
+<i class="no-highlight">328</i>&nbsp;        // Reference equal in case it&#39;s already replaced token name
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        if (tok == CONCAT_FUNC_NAME) return true;</b>
+<i class="no-highlight">330</i>&nbsp;
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">338</i>&nbsp;    }
+<i class="no-highlight">339</i>&nbsp;
+<i class="no-highlight">340</i>&nbsp;    public static boolean isConcatOperator(CharSequence tok) {
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;            return false;</b>
+<i class="no-highlight">343</i>&nbsp;        }
+<i class="no-highlight">344</i>&nbsp;
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;        return tok.charAt(i++) == &#39;|&#39;</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                &amp;&amp; tok.charAt(i) == &#39;|&#39;;</b>
+<i class="no-highlight">348</i>&nbsp;    }
+<i class="no-highlight">349</i>&nbsp;
+<i class="no-highlight">350</i>&nbsp;    public static boolean isCopyKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;            return false;</b>
+<i class="no-highlight">353</i>&nbsp;        }
+<i class="no-highlight">354</i>&nbsp;
+<b class="fc"><i class="no-highlight">355</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">360</i>&nbsp;    }
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;    public static boolean isCountKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;            return false;</b>
+<i class="no-highlight">365</i>&nbsp;        }
+<i class="no-highlight">366</i>&nbsp;
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">373</i>&nbsp;    }
+<i class="no-highlight">374</i>&nbsp;
+<i class="no-highlight">375</i>&nbsp;    public static boolean isCreateKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            return false;</b>
+<i class="no-highlight">378</i>&nbsp;        }
+<i class="no-highlight">379</i>&nbsp;
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">387</i>&nbsp;    }
+<i class="no-highlight">388</i>&nbsp;
+<i class="no-highlight">389</i>&nbsp;    public static boolean isDatabaseKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">390</i>&nbsp;        if (tok.length() != 8) {</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;            return false;</b>
+<i class="no-highlight">392</i>&nbsp;        }
+<i class="no-highlight">393</i>&nbsp;
+<b class="fc"><i class="no-highlight">394</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">395</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">403</i>&nbsp;    }
+<i class="no-highlight">404</i>&nbsp;
+<i class="no-highlight">405</i>&nbsp;    public static boolean isDateKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">406</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;            return false;</b>
+<i class="no-highlight">408</i>&nbsp;        }
+<i class="no-highlight">409</i>&nbsp;
+<b class="fc"><i class="no-highlight">410</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">415</i>&nbsp;    }
+<i class="no-highlight">416</i>&nbsp;
+<i class="no-highlight">417</i>&nbsp;    public static boolean isDateStyleKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">418</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;            return false;</b>
+<i class="no-highlight">420</i>&nbsp;        }
+<i class="no-highlight">421</i>&nbsp;
+<b class="fc"><i class="no-highlight">422</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;y&#39;</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">432</i>&nbsp;    }
+<i class="no-highlight">433</i>&nbsp;
+<i class="no-highlight">434</i>&nbsp;    public static boolean isDayKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;            return false;</b>
+<i class="no-highlight">437</i>&nbsp;        }
+<i class="no-highlight">438</i>&nbsp;
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">443</i>&nbsp;    }
+<i class="no-highlight">444</i>&nbsp;
+<i class="no-highlight">445</i>&nbsp;    public static boolean isDecadeKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">446</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;            return false;</b>
+<i class="no-highlight">448</i>&nbsp;        }
+<i class="no-highlight">449</i>&nbsp;
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">457</i>&nbsp;    }
+<i class="no-highlight">458</i>&nbsp;
+<i class="no-highlight">459</i>&nbsp;    public static boolean isDelimiterKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">460</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;            return false;</b>
+<i class="no-highlight">462</i>&nbsp;        }
+<i class="no-highlight">463</i>&nbsp;
+<b class="fc"><i class="no-highlight">464</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">472</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">474</i>&nbsp;    }
+<i class="no-highlight">475</i>&nbsp;
+<i class="no-highlight">476</i>&nbsp;    public static boolean isDescKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">477</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">478</i>&nbsp;            return false;</b>
+<i class="no-highlight">479</i>&nbsp;        }
+<i class="no-highlight">480</i>&nbsp;
+<b class="fc"><i class="no-highlight">481</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;c&#39;;</b>
+<i class="no-highlight">486</i>&nbsp;    }
+<i class="no-highlight">487</i>&nbsp;
+<i class="no-highlight">488</i>&nbsp;    public static boolean isDetachKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">489</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">490</i>&nbsp;            return false;</b>
+<i class="no-highlight">491</i>&nbsp;        }
+<i class="no-highlight">492</i>&nbsp;
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">497</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">498</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">500</i>&nbsp;    }
+<i class="no-highlight">501</i>&nbsp;
+<i class="no-highlight">502</i>&nbsp;    public static boolean isDistinctKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">503</i>&nbsp;        if (tok.length() != 8) {</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;            return false;</b>
+<i class="no-highlight">505</i>&nbsp;        }
+<i class="no-highlight">506</i>&nbsp;
+<b class="fc"><i class="no-highlight">507</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">508</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">511</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">515</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">516</i>&nbsp;    }
+<i class="no-highlight">517</i>&nbsp;
+<i class="no-highlight">518</i>&nbsp;    public static boolean isDowKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">519</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;            return false;</b>
+<i class="no-highlight">521</i>&nbsp;        }
+<i class="no-highlight">522</i>&nbsp;
+<b class="fc"><i class="no-highlight">523</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;w&#39;;</b>
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;    public static boolean isDoyKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">530</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">531</i>&nbsp;            return false;</b>
+<i class="no-highlight">532</i>&nbsp;        }
+<i class="no-highlight">533</i>&nbsp;
+<b class="fc"><i class="no-highlight">534</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">535</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">537</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">538</i>&nbsp;    }
+<i class="no-highlight">539</i>&nbsp;
+<i class="no-highlight">540</i>&nbsp;    public static boolean isDropKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">541</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;            return false;</b>
+<i class="no-highlight">543</i>&nbsp;        }
+<i class="no-highlight">544</i>&nbsp;
+<b class="fc"><i class="no-highlight">545</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;p&#39;;</b>
+<i class="no-highlight">550</i>&nbsp;    }
+<i class="no-highlight">551</i>&nbsp;
+<i class="no-highlight">552</i>&nbsp;    public static boolean isEndKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">553</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;            return false;</b>
+<i class="no-highlight">555</i>&nbsp;        }
+<i class="no-highlight">556</i>&nbsp;
+<b class="fc"><i class="no-highlight">557</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">558</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;d&#39;;</b>
+<i class="no-highlight">561</i>&nbsp;    }
+<i class="no-highlight">562</i>&nbsp;
+<i class="no-highlight">563</i>&nbsp;    public static boolean isEpochKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">564</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;            return false;</b>
+<i class="no-highlight">566</i>&nbsp;        }
+<i class="no-highlight">567</i>&nbsp;
+<b class="fc"><i class="no-highlight">568</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">571</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">572</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">574</i>&nbsp;    }
+<i class="no-highlight">575</i>&nbsp;
+<i class="no-highlight">576</i>&nbsp;    public static boolean isExceptKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">577</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">578</i>&nbsp;            return false;</b>
+<i class="no-highlight">579</i>&nbsp;        }
+<i class="no-highlight">580</i>&nbsp;
+<b class="fc"><i class="no-highlight">581</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">582</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">583</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">585</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">587</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">588</i>&nbsp;    }
+<i class="no-highlight">589</i>&nbsp;
+<i class="no-highlight">590</i>&nbsp;    public static boolean isExclusiveKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">591</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="nc"><i class="no-highlight">592</i>&nbsp;            return false;</b>
+<i class="no-highlight">593</i>&nbsp;        }
+<i class="no-highlight">594</i>&nbsp;
+<b class="fc"><i class="no-highlight">595</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">597</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">598</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">599</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">600</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">601</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">602</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">603</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;v&#39;</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">605</i>&nbsp;    }
+<i class="no-highlight">606</i>&nbsp;
+<i class="no-highlight">607</i>&nbsp;    public static boolean isExistsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">608</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">609</i>&nbsp;            return false;</b>
+<i class="no-highlight">610</i>&nbsp;        }
+<i class="no-highlight">611</i>&nbsp;
+<b class="fc"><i class="no-highlight">612</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">613</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">614</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">615</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">619</i>&nbsp;    }
+<i class="no-highlight">620</i>&nbsp;
+<i class="no-highlight">621</i>&nbsp;    public static boolean isExplainKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">622</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">623</i>&nbsp;            return false;</b>
+<i class="no-highlight">624</i>&nbsp;        }
+<i class="no-highlight">625</i>&nbsp;
+<b class="fc"><i class="no-highlight">626</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">627</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">628</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">629</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">630</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">631</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">632</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">633</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">634</i>&nbsp;    }
+<i class="no-highlight">635</i>&nbsp;
+<i class="no-highlight">636</i>&nbsp;    public static boolean isExtractKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">637</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">638</i>&nbsp;            return false;</b>
+<i class="no-highlight">639</i>&nbsp;        }
+<i class="no-highlight">640</i>&nbsp;
+<b class="fc"><i class="no-highlight">641</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">642</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">643</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">644</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">645</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">646</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">647</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">648</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">649</i>&nbsp;    }
+<i class="no-highlight">650</i>&nbsp;
+<i class="no-highlight">651</i>&nbsp;    public static boolean isFalseKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">652</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">653</i>&nbsp;            return false;</b>
+<i class="no-highlight">654</i>&nbsp;        }
+<i class="no-highlight">655</i>&nbsp;
+<b class="fc"><i class="no-highlight">656</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">657</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">658</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">659</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">660</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">661</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">662</i>&nbsp;    }
+<i class="no-highlight">663</i>&nbsp;
+<i class="no-highlight">664</i>&nbsp;    public static boolean isFillKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">665</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">666</i>&nbsp;            return false;</b>
+<i class="no-highlight">667</i>&nbsp;        }
+<i class="no-highlight">668</i>&nbsp;
+<b class="fc"><i class="no-highlight">669</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">670</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">671</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">672</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">673</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">674</i>&nbsp;    }
+<i class="no-highlight">675</i>&nbsp;
+<i class="no-highlight">676</i>&nbsp;    public static boolean isFirstKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">677</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">678</i>&nbsp;            return false;</b>
+<i class="no-highlight">679</i>&nbsp;        }
+<i class="no-highlight">680</i>&nbsp;
+<b class="fc"><i class="no-highlight">681</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">682</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">683</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">684</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">685</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">686</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">687</i>&nbsp;    }
+<i class="no-highlight">688</i>&nbsp;
+<i class="no-highlight">689</i>&nbsp;    public static boolean isFloat4Keyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">690</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">691</i>&nbsp;            return false;</b>
+<i class="no-highlight">692</i>&nbsp;        }
+<i class="no-highlight">693</i>&nbsp;
+<b class="fc"><i class="no-highlight">694</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">695</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">696</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">697</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">698</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">699</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">700</i>&nbsp;                &amp;&amp; (tok.charAt(i)) == &#39;4&#39;;</b>
+<i class="no-highlight">701</i>&nbsp;    }
+<i class="no-highlight">702</i>&nbsp;
+<i class="no-highlight">703</i>&nbsp;    public static boolean isFloat8Keyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">704</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">705</i>&nbsp;            return false;</b>
+<i class="no-highlight">706</i>&nbsp;        }
+<i class="no-highlight">707</i>&nbsp;
+<b class="fc"><i class="no-highlight">708</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">709</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">710</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">711</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">712</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">713</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">714</i>&nbsp;                &amp;&amp; (tok.charAt(i)) == &#39;8&#39;;</b>
+<i class="no-highlight">715</i>&nbsp;    }
+<i class="no-highlight">716</i>&nbsp;
+<i class="no-highlight">717</i>&nbsp;    // only for Python drivers, which use &#39;float&#39; keyword to represent double in Java
+<i class="no-highlight">718</i>&nbsp;    // for example, &#39;NaN&#39;::float   &#39;Infinity&#39;::float
+<i class="no-highlight">719</i>&nbsp;    public static boolean isFloatKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">720</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">721</i>&nbsp;            return false;</b>
+<i class="no-highlight">722</i>&nbsp;        }
+<i class="no-highlight">723</i>&nbsp;
+<b class="fc"><i class="no-highlight">724</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">725</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">726</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">727</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">728</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">729</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">730</i>&nbsp;    }
+<i class="no-highlight">731</i>&nbsp;
+<i class="no-highlight">732</i>&nbsp;    public static boolean isFormatKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">733</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">734</i>&nbsp;            return false;</b>
+<i class="no-highlight">735</i>&nbsp;        }
+<i class="no-highlight">736</i>&nbsp;
+<b class="fc"><i class="no-highlight">737</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">738</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">739</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">740</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">741</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">742</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">743</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">744</i>&nbsp;    }
+<i class="no-highlight">745</i>&nbsp;
+<i class="no-highlight">746</i>&nbsp;    public static boolean isFromKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">747</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">748</i>&nbsp;            return false;</b>
+<i class="no-highlight">749</i>&nbsp;        }
+<i class="no-highlight">750</i>&nbsp;
+<b class="fc"><i class="no-highlight">751</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">752</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">753</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">754</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">755</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;m&#39;;</b>
+<i class="no-highlight">756</i>&nbsp;    }
+<i class="no-highlight">757</i>&nbsp;
+<i class="no-highlight">758</i>&nbsp;    public static boolean isFullKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">759</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">760</i>&nbsp;            return false;</b>
+<i class="no-highlight">761</i>&nbsp;        }
+<i class="no-highlight">762</i>&nbsp;
+<b class="fc"><i class="no-highlight">763</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">764</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">765</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">766</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">767</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">768</i>&nbsp;    }
+<i class="no-highlight">769</i>&nbsp;
+<i class="no-highlight">770</i>&nbsp;    public static boolean isGeoHashKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">771</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">772</i>&nbsp;            return false;</b>
+<i class="no-highlight">773</i>&nbsp;        }
+<i class="no-highlight">774</i>&nbsp;
+<b class="fc"><i class="no-highlight">775</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">776</i>&nbsp;        return isGeoHashKeyword(tok, i);</b>
+<i class="no-highlight">777</i>&nbsp;    }
+<i class="no-highlight">778</i>&nbsp;
+<i class="no-highlight">779</i>&nbsp;    public static boolean isGroupKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">780</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">781</i>&nbsp;            return false;</b>
+<i class="no-highlight">782</i>&nbsp;        }
+<i class="no-highlight">783</i>&nbsp;
+<b class="fc"><i class="no-highlight">784</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">785</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">786</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">787</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">788</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">789</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;p&#39;;</b>
+<i class="no-highlight">790</i>&nbsp;    }
+<i class="no-highlight">791</i>&nbsp;
+<i class="no-highlight">792</i>&nbsp;    public static boolean isHeaderKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">793</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">794</i>&nbsp;            return false;</b>
+<i class="no-highlight">795</i>&nbsp;        }
+<i class="no-highlight">796</i>&nbsp;
+<b class="fc"><i class="no-highlight">797</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">798</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">799</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">800</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">801</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">802</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">804</i>&nbsp;    }
+<i class="no-highlight">805</i>&nbsp;
+<i class="no-highlight">806</i>&nbsp;    public static boolean isHourKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">807</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">808</i>&nbsp;            return false;</b>
+<i class="no-highlight">809</i>&nbsp;        }
+<i class="no-highlight">810</i>&nbsp;
+<b class="fc"><i class="no-highlight">811</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">812</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">814</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">815</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">816</i>&nbsp;    }
+<i class="no-highlight">817</i>&nbsp;
+<i class="no-highlight">818</i>&nbsp;    public static boolean isIfKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">819</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">820</i>&nbsp;            return false;</b>
+<i class="no-highlight">821</i>&nbsp;        }
+<i class="no-highlight">822</i>&nbsp;
+<b class="fc"><i class="no-highlight">823</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">824</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">825</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;f&#39;;</b>
+<i class="no-highlight">826</i>&nbsp;    }
+<i class="no-highlight">827</i>&nbsp;
+<i class="no-highlight">828</i>&nbsp;    public static boolean isInKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">829</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">830</i>&nbsp;            return false;</b>
+<i class="no-highlight">831</i>&nbsp;        }
+<i class="no-highlight">832</i>&nbsp;
+<b class="fc"><i class="no-highlight">833</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">834</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">835</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">836</i>&nbsp;    }
+<i class="no-highlight">837</i>&nbsp;
+<i class="no-highlight">838</i>&nbsp;    public static boolean isIndexKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">839</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">840</i>&nbsp;            return false;</b>
+<i class="no-highlight">841</i>&nbsp;        }
+<i class="no-highlight">842</i>&nbsp;
+<b class="fc"><i class="no-highlight">843</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">844</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">845</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">846</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">847</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">848</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;x&#39;;</b>
+<i class="no-highlight">849</i>&nbsp;    }
+<i class="no-highlight">850</i>&nbsp;
+<i class="no-highlight">851</i>&nbsp;    public static boolean isInsertKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">852</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">853</i>&nbsp;            return false;</b>
+<i class="no-highlight">854</i>&nbsp;        }
+<i class="no-highlight">855</i>&nbsp;
+<b class="fc"><i class="no-highlight">856</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">857</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">858</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">859</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">860</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">861</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">862</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">863</i>&nbsp;    }
+<i class="no-highlight">864</i>&nbsp;
+<i class="no-highlight">865</i>&nbsp;    public static boolean isIntersectKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">866</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="nc"><i class="no-highlight">867</i>&nbsp;            return false;</b>
+<i class="no-highlight">868</i>&nbsp;        }
+<i class="no-highlight">869</i>&nbsp;
+<b class="fc"><i class="no-highlight">870</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">871</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">872</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">873</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">874</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">875</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">876</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">877</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">878</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">879</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">880</i>&nbsp;    }
+<i class="no-highlight">881</i>&nbsp;
+<i class="no-highlight">882</i>&nbsp;    public static boolean isIntoKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">883</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="nc"><i class="no-highlight">884</i>&nbsp;            return false;</b>
+<i class="no-highlight">885</i>&nbsp;        }
+<i class="no-highlight">886</i>&nbsp;
+<b class="fc"><i class="no-highlight">887</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">888</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">889</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">890</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">891</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;o&#39;;</b>
+<i class="no-highlight">892</i>&nbsp;    }
+<i class="no-highlight">893</i>&nbsp;
+<i class="no-highlight">894</i>&nbsp;    public static boolean isIsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">895</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">896</i>&nbsp;            return false;</b>
+<i class="no-highlight">897</i>&nbsp;        }
+<i class="no-highlight">898</i>&nbsp;
+<b class="fc"><i class="no-highlight">899</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">900</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">901</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">902</i>&nbsp;    }
+<i class="no-highlight">903</i>&nbsp;
+<i class="no-highlight">904</i>&nbsp;    public static boolean isIsoDowKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">905</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">906</i>&nbsp;            return false;</b>
+<i class="no-highlight">907</i>&nbsp;        }
+<i class="no-highlight">908</i>&nbsp;
+<b class="fc"><i class="no-highlight">909</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">910</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">911</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">912</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">913</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">915</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;w&#39;;</b>
+<i class="no-highlight">916</i>&nbsp;    }
+<i class="no-highlight">917</i>&nbsp;
+<i class="no-highlight">918</i>&nbsp;    public static boolean isIsoYearKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">919</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">920</i>&nbsp;            return false;</b>
+<i class="no-highlight">921</i>&nbsp;        }
+<i class="no-highlight">922</i>&nbsp;
+<b class="fc"><i class="no-highlight">923</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">924</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">925</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">926</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">927</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;y&#39;</b>
+<b class="fc"><i class="no-highlight">928</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">929</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">930</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">931</i>&nbsp;    }
+<i class="no-highlight">932</i>&nbsp;
+<i class="no-highlight">933</i>&nbsp;    public static boolean isIsolationKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">934</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="fc"><i class="no-highlight">935</i>&nbsp;            return false;</b>
+<i class="no-highlight">936</i>&nbsp;        }
+<i class="no-highlight">937</i>&nbsp;
+<b class="fc"><i class="no-highlight">938</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">939</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">940</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">941</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">942</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">943</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">944</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">945</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">946</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">947</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">948</i>&nbsp;    }
+<i class="no-highlight">949</i>&nbsp;
+<i class="no-highlight">950</i>&nbsp;    public static boolean isJsonKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">951</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">952</i>&nbsp;            return false;</b>
+<i class="no-highlight">953</i>&nbsp;        }
+<i class="no-highlight">954</i>&nbsp;
+<b class="fc"><i class="no-highlight">955</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">956</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;j&#39;</b>
+<b class="fc"><i class="no-highlight">957</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">958</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">959</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">960</i>&nbsp;    }
+<i class="no-highlight">961</i>&nbsp;
+<i class="no-highlight">962</i>&nbsp;    public static boolean isLastKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">963</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">964</i>&nbsp;            return false;</b>
+<i class="no-highlight">965</i>&nbsp;        }
+<i class="no-highlight">966</i>&nbsp;
+<b class="fc"><i class="no-highlight">967</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">968</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">969</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">970</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">971</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">972</i>&nbsp;    }
+<i class="no-highlight">973</i>&nbsp;
+<i class="no-highlight">974</i>&nbsp;    public static boolean isLatestKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">975</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">976</i>&nbsp;            return false;</b>
+<i class="no-highlight">977</i>&nbsp;        }
+<i class="no-highlight">978</i>&nbsp;
+<b class="fc"><i class="no-highlight">979</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">980</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">981</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">982</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">983</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">984</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">985</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">986</i>&nbsp;    }
+<i class="no-highlight">987</i>&nbsp;
+<i class="no-highlight">988</i>&nbsp;    public static boolean isLeftKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">989</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">990</i>&nbsp;            return false;</b>
+<i class="no-highlight">991</i>&nbsp;        }
+<i class="no-highlight">992</i>&nbsp;
+<b class="fc"><i class="no-highlight">993</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">994</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">995</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">996</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">997</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">998</i>&nbsp;    }
+<i class="no-highlight">999</i>&nbsp;
+<i class="no-highlight">1000</i>&nbsp;    public static boolean isLevelKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1001</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1002</i>&nbsp;            return false;</b>
+<i class="no-highlight">1003</i>&nbsp;        }
+<i class="no-highlight">1004</i>&nbsp;
+<b class="fc"><i class="no-highlight">1005</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1006</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1007</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1008</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;v&#39;</b>
+<b class="fc"><i class="no-highlight">1009</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1010</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">1011</i>&nbsp;    }
+<i class="no-highlight">1012</i>&nbsp;
+<i class="no-highlight">1013</i>&nbsp;    public static boolean isLikeKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1014</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1015</i>&nbsp;            return false;</b>
+<i class="no-highlight">1016</i>&nbsp;        }
+<i class="no-highlight">1017</i>&nbsp;
+<b class="fc"><i class="no-highlight">1018</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1019</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1020</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1021</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;k&#39;</b>
+<b class="fc"><i class="no-highlight">1022</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1023</i>&nbsp;    }
+<i class="no-highlight">1024</i>&nbsp;
+<i class="no-highlight">1025</i>&nbsp;    public static boolean isLimitKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1027</i>&nbsp;            return false;</b>
+<i class="no-highlight">1028</i>&nbsp;        }
+<i class="no-highlight">1029</i>&nbsp;
+<b class="fc"><i class="no-highlight">1030</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1031</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1032</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1033</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1034</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1035</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1036</i>&nbsp;    }
+<i class="no-highlight">1037</i>&nbsp;
+<i class="no-highlight">1038</i>&nbsp;    public static boolean isLinearKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1039</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1040</i>&nbsp;            return false;</b>
+<i class="no-highlight">1041</i>&nbsp;        }
+<i class="no-highlight">1042</i>&nbsp;
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1044</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1045</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1046</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1047</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1048</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1049</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1050</i>&nbsp;    }
+<i class="no-highlight">1051</i>&nbsp;
+<i class="no-highlight">1052</i>&nbsp;    public static boolean isListKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1053</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1054</i>&nbsp;            return false;</b>
+<i class="no-highlight">1055</i>&nbsp;        }
+<i class="no-highlight">1056</i>&nbsp;
+<b class="fc"><i class="no-highlight">1057</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1058</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1059</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1060</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1061</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1062</i>&nbsp;    }
+<i class="no-highlight">1063</i>&nbsp;
+<i class="no-highlight">1064</i>&nbsp;    public static boolean isLockKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1065</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1066</i>&nbsp;            return false;</b>
+<i class="no-highlight">1067</i>&nbsp;        }
+<i class="no-highlight">1068</i>&nbsp;
+<b class="fc"><i class="no-highlight">1069</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1070</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1071</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1072</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1073</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;k&#39;;</b>
+<i class="no-highlight">1074</i>&nbsp;    }
+<i class="no-highlight">1075</i>&nbsp;
+<i class="no-highlight">1076</i>&nbsp;    public static boolean isMaxIdentifierLength(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1077</i>&nbsp;        if (tok.length() != 21) {</b>
+<b class="fc"><i class="no-highlight">1078</i>&nbsp;            return false;</b>
+<i class="no-highlight">1079</i>&nbsp;        }
+<i class="no-highlight">1080</i>&nbsp;
+<b class="fc"><i class="no-highlight">1081</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1082</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1083</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1084</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">1085</i>&nbsp;                &amp;&amp; tok.charAt(i++) == &#39;_&#39;</b>
+<b class="fc"><i class="no-highlight">1086</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1087</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1088</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1089</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1090</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1091</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1092</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">1093</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1094</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1095</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1096</i>&nbsp;                &amp;&amp; tok.charAt(i++) == &#39;_&#39;</b>
+<b class="fc"><i class="no-highlight">1097</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1098</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1099</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1100</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">1101</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1102</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">1103</i>&nbsp;    }
+<i class="no-highlight">1104</i>&nbsp;
+<i class="no-highlight">1105</i>&nbsp;    public static boolean isMaxUncommittedRowsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1106</i>&nbsp;        if (tok.length() != 18) {</b>
+<b class="fc"><i class="no-highlight">1107</i>&nbsp;            return false;</b>
+<i class="no-highlight">1108</i>&nbsp;        }
+<i class="no-highlight">1109</i>&nbsp;
+<b class="fc"><i class="no-highlight">1110</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1111</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1112</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1113</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">1114</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1115</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1116</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1117</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1118</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1119</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1120</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1121</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1122</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1123</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1124</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1125</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1126</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1127</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1128</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1129</i>&nbsp;    }
+<i class="no-highlight">1130</i>&nbsp;
+<i class="no-highlight">1131</i>&nbsp;    public static boolean isMicrosecondsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1132</i>&nbsp;        if (tok.length() != 12) {</b>
+<b class="fc"><i class="no-highlight">1133</i>&nbsp;            return false;</b>
+<i class="no-highlight">1134</i>&nbsp;        }
+<i class="no-highlight">1135</i>&nbsp;
+<b class="fc"><i class="no-highlight">1136</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1137</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1138</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1139</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1140</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1141</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1142</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1143</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1144</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1145</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1146</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1147</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1148</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1149</i>&nbsp;    }
+<i class="no-highlight">1150</i>&nbsp;
+<i class="no-highlight">1151</i>&nbsp;    public static boolean isMillenniumKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1152</i>&nbsp;        if (tok.length() != 10) {</b>
+<b class="fc"><i class="no-highlight">1153</i>&nbsp;            return false;</b>
+<i class="no-highlight">1154</i>&nbsp;        }
+<i class="no-highlight">1155</i>&nbsp;
+<b class="fc"><i class="no-highlight">1156</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1157</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1158</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1159</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1160</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1161</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1162</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1163</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1164</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1165</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1166</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;m&#39;;</b>
+<i class="no-highlight">1167</i>&nbsp;    }
+<i class="no-highlight">1168</i>&nbsp;
+<i class="no-highlight">1169</i>&nbsp;    public static boolean isMillisecondsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1170</i>&nbsp;        if (tok.length() != 12) {</b>
+<b class="fc"><i class="no-highlight">1171</i>&nbsp;            return false;</b>
+<i class="no-highlight">1172</i>&nbsp;        }
+<i class="no-highlight">1173</i>&nbsp;
+<b class="fc"><i class="no-highlight">1174</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1175</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1176</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1177</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1178</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1179</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1180</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1181</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1182</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1183</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1184</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1185</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1186</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1187</i>&nbsp;    }
+<i class="no-highlight">1188</i>&nbsp;
+<i class="no-highlight">1189</i>&nbsp;    public static boolean isMinuteKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1190</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1191</i>&nbsp;            return false;</b>
+<i class="no-highlight">1192</i>&nbsp;        }
+<i class="no-highlight">1193</i>&nbsp;
+<b class="fc"><i class="no-highlight">1194</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1195</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1196</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1197</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1198</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1199</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1200</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1201</i>&nbsp;    }
+<i class="no-highlight">1202</i>&nbsp;
+<i class="no-highlight">1203</i>&nbsp;    public static boolean isMonthKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1204</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1205</i>&nbsp;            return false;</b>
+<i class="no-highlight">1206</i>&nbsp;        }
+<i class="no-highlight">1207</i>&nbsp;
+<b class="fc"><i class="no-highlight">1208</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1209</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1210</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1211</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1212</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1213</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">1214</i>&nbsp;    }
+<i class="no-highlight">1215</i>&nbsp;
+<i class="no-highlight">1216</i>&nbsp;    public static boolean isNanKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1217</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">1218</i>&nbsp;            return false;</b>
+<i class="no-highlight">1219</i>&nbsp;        }
+<i class="no-highlight">1220</i>&nbsp;
+<b class="fc"><i class="no-highlight">1221</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1222</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1223</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1224</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1225</i>&nbsp;    }
+<i class="no-highlight">1226</i>&nbsp;
+<i class="no-highlight">1227</i>&nbsp;    public static boolean isNoCacheKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1228</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">1229</i>&nbsp;            return false;</b>
+<i class="no-highlight">1230</i>&nbsp;        }
+<i class="no-highlight">1231</i>&nbsp;
+<b class="fc"><i class="no-highlight">1232</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1233</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1234</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1235</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1236</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1237</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1238</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">1239</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1240</i>&nbsp;    }
+<i class="no-highlight">1241</i>&nbsp;
+<i class="no-highlight">1242</i>&nbsp;    public static boolean isNoneKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1243</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1244</i>&nbsp;            return false;</b>
+<i class="no-highlight">1245</i>&nbsp;        }
+<i class="no-highlight">1246</i>&nbsp;
+<b class="fc"><i class="no-highlight">1247</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1248</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1249</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1250</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1251</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1252</i>&nbsp;    }
+<i class="no-highlight">1253</i>&nbsp;
+<i class="no-highlight">1254</i>&nbsp;    public static boolean isNotJoinKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1255</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1256</i>&nbsp;            return true;</b>
+<i class="no-highlight">1257</i>&nbsp;        }
+<i class="no-highlight">1258</i>&nbsp;
+<b class="fc"><i class="no-highlight">1259</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1260</i>&nbsp;        return (tok.charAt(i++) | 32) != &#39;j&#39;</b>
+<b class="fc"><i class="no-highlight">1261</i>&nbsp;                || (tok.charAt(i++) | 32) != &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1262</i>&nbsp;                || (tok.charAt(i++) | 32) != &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1263</i>&nbsp;                || (tok.charAt(i) | 32) != &#39;n&#39;;</b>
+<i class="no-highlight">1264</i>&nbsp;    }
+<i class="no-highlight">1265</i>&nbsp;
+<i class="no-highlight">1266</i>&nbsp;    public static boolean isNotKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1267</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">1268</i>&nbsp;            return false;</b>
+<i class="no-highlight">1269</i>&nbsp;        }
+<i class="no-highlight">1270</i>&nbsp;
+<b class="fc"><i class="no-highlight">1271</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1272</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1273</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1274</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1275</i>&nbsp;    }
+<i class="no-highlight">1276</i>&nbsp;
+<i class="no-highlight">1277</i>&nbsp;    public static boolean isNullKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1278</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1279</i>&nbsp;            return false;</b>
+<i class="no-highlight">1280</i>&nbsp;        }
+<i class="no-highlight">1281</i>&nbsp;
+<b class="fc"><i class="no-highlight">1282</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1283</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1284</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1285</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1286</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">1287</i>&nbsp;    }
+<i class="no-highlight">1288</i>&nbsp;
+<i class="no-highlight">1289</i>&nbsp;    public static boolean isO3MaxLagKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1290</i>&nbsp;        if (tok.length() != 8) {</b>
+<b class="fc"><i class="no-highlight">1291</i>&nbsp;            return false;</b>
+<i class="no-highlight">1292</i>&nbsp;        }
+<i class="no-highlight">1293</i>&nbsp;
+<b class="fc"><i class="no-highlight">1294</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1295</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1296</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;3&#39;</b>
+<b class="fc"><i class="no-highlight">1297</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1298</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1299</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">1300</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1301</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1302</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;g&#39;;</b>
+<i class="no-highlight">1303</i>&nbsp;    }
+<i class="no-highlight">1304</i>&nbsp;
+<i class="no-highlight">1305</i>&nbsp;    public static boolean isObservationKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1306</i>&nbsp;        if (tok.length() != 11) {</b>
+<b class="fc"><i class="no-highlight">1307</i>&nbsp;            return false;</b>
+<i class="no-highlight">1308</i>&nbsp;        }
+<i class="no-highlight">1309</i>&nbsp;
+<b class="fc"><i class="no-highlight">1310</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1311</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1312</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">1313</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1314</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1315</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1316</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;v&#39;</b>
+<b class="fc"><i class="no-highlight">1317</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1318</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1319</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1320</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1321</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1322</i>&nbsp;    }
+<i class="no-highlight">1323</i>&nbsp;
+<i class="no-highlight">1324</i>&nbsp;    public static boolean isOffsetKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1325</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1326</i>&nbsp;            return false;</b>
+<i class="no-highlight">1327</i>&nbsp;        }
+<i class="no-highlight">1328</i>&nbsp;
+<b class="fc"><i class="no-highlight">1329</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1330</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1331</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">1332</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">1333</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1334</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1335</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1336</i>&nbsp;    }
+<i class="no-highlight">1337</i>&nbsp;
+<i class="no-highlight">1338</i>&nbsp;    public static boolean isOnKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1339</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">1340</i>&nbsp;            return false;</b>
+<i class="no-highlight">1341</i>&nbsp;        }
+<i class="no-highlight">1342</i>&nbsp;
+<b class="fc"><i class="no-highlight">1343</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1344</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1345</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1346</i>&nbsp;    }
+<i class="no-highlight">1347</i>&nbsp;
+<i class="no-highlight">1348</i>&nbsp;    public static boolean isOnlyKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1349</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1350</i>&nbsp;            return false;</b>
+<i class="no-highlight">1351</i>&nbsp;        }
+<i class="no-highlight">1352</i>&nbsp;
+<b class="fc"><i class="no-highlight">1353</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1354</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1355</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1356</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1357</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;y&#39;;</b>
+<i class="no-highlight">1358</i>&nbsp;    }
+<i class="no-highlight">1359</i>&nbsp;
+<i class="no-highlight">1360</i>&nbsp;    public static boolean isOrKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1361</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">1362</i>&nbsp;            return false;</b>
+<i class="no-highlight">1363</i>&nbsp;        }
+<i class="no-highlight">1364</i>&nbsp;
+<b class="fc"><i class="no-highlight">1365</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1366</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1367</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1368</i>&nbsp;    }
+<i class="no-highlight">1369</i>&nbsp;
+<i class="no-highlight">1370</i>&nbsp;    public static boolean isOrderKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1371</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1372</i>&nbsp;            return false;</b>
+<i class="no-highlight">1373</i>&nbsp;        }
+<i class="no-highlight">1374</i>&nbsp;
+<b class="fc"><i class="no-highlight">1375</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1376</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1377</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1378</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1379</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1380</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1381</i>&nbsp;    }
+<i class="no-highlight">1382</i>&nbsp;
+<i class="no-highlight">1383</i>&nbsp;    public static boolean isOuterKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1384</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1385</i>&nbsp;            return false;</b>
+<i class="no-highlight">1386</i>&nbsp;        }
+<i class="no-highlight">1387</i>&nbsp;
+<b class="fc"><i class="no-highlight">1388</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1389</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1390</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1391</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1392</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1393</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1394</i>&nbsp;    }
+<i class="no-highlight">1395</i>&nbsp;
+<i class="no-highlight">1396</i>&nbsp;    public static boolean isOverKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1397</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1398</i>&nbsp;            return false;</b>
+<i class="no-highlight">1399</i>&nbsp;        }
+<i class="no-highlight">1400</i>&nbsp;
+<b class="fc"><i class="no-highlight">1401</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1402</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1403</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;v&#39;</b>
+<b class="fc"><i class="no-highlight">1404</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1405</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1406</i>&nbsp;    }
+<i class="no-highlight">1407</i>&nbsp;
+<i class="no-highlight">1408</i>&nbsp;    public static boolean isParamKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1409</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1410</i>&nbsp;            return false;</b>
+<i class="no-highlight">1411</i>&nbsp;        }
+<i class="no-highlight">1412</i>&nbsp;
+<b class="fc"><i class="no-highlight">1413</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1414</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1415</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1416</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1417</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1418</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;m&#39;;</b>
+<i class="no-highlight">1419</i>&nbsp;    }
+<i class="no-highlight">1420</i>&nbsp;
+<i class="no-highlight">1421</i>&nbsp;    public static boolean isPartitionKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1422</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="fc"><i class="no-highlight">1423</i>&nbsp;            return false;</b>
+<i class="no-highlight">1424</i>&nbsp;        }
+<i class="no-highlight">1425</i>&nbsp;
+<b class="fc"><i class="no-highlight">1426</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1427</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1428</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1429</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1430</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1431</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1432</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1433</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1434</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1435</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1436</i>&nbsp;    }
+<i class="no-highlight">1437</i>&nbsp;
+<i class="no-highlight">1438</i>&nbsp;    public static boolean isPartitionsKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1439</i>&nbsp;        if (tok.length() != 10) {</b>
+<b class="fc"><i class="no-highlight">1440</i>&nbsp;            return false;</b>
+<i class="no-highlight">1441</i>&nbsp;        }
+<i class="no-highlight">1442</i>&nbsp;
+<b class="fc"><i class="no-highlight">1443</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1444</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1445</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1446</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1447</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1448</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1449</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1450</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1451</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1452</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1453</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1454</i>&nbsp;    }
+<i class="no-highlight">1455</i>&nbsp;
+<i class="no-highlight">1456</i>&nbsp;    public static boolean isPrecisionKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1457</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="fc"><i class="no-highlight">1458</i>&nbsp;            return false;</b>
+<i class="no-highlight">1459</i>&nbsp;        }
+<i class="no-highlight">1460</i>&nbsp;
+<b class="fc"><i class="no-highlight">1461</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1462</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1463</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1464</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1465</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1466</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1467</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1468</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1469</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1470</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1471</i>&nbsp;    }
+<i class="no-highlight">1472</i>&nbsp;
+<i class="no-highlight">1473</i>&nbsp;    public static boolean isPrevKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1474</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1475</i>&nbsp;            return false;</b>
+<i class="no-highlight">1476</i>&nbsp;        }
+<i class="no-highlight">1477</i>&nbsp;
+<b class="fc"><i class="no-highlight">1478</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1479</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1480</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1481</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1482</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;v&#39;;</b>
+<i class="no-highlight">1483</i>&nbsp;    }
+<i class="no-highlight">1484</i>&nbsp;
+<i class="no-highlight">1485</i>&nbsp;    public static boolean isQuarterKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1486</i>&nbsp;        if (tok.length() != 7) {</b>
+<b class="fc"><i class="no-highlight">1487</i>&nbsp;            return false;</b>
+<i class="no-highlight">1488</i>&nbsp;        }
+<i class="no-highlight">1489</i>&nbsp;
+<b class="fc"><i class="no-highlight">1490</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1491</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;q&#39;</b>
+<b class="fc"><i class="no-highlight">1492</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1493</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1494</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1495</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1496</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1497</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1498</i>&nbsp;    }
+<i class="no-highlight">1499</i>&nbsp;
+<i class="no-highlight">1500</i>&nbsp;    public static boolean isQuote(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1501</i>&nbsp;        return tok.length() == 1 &amp;&amp; tok.charAt(0) == &#39;\&#39;&#39;;</b>
+<i class="no-highlight">1502</i>&nbsp;    }
+<i class="no-highlight">1503</i>&nbsp;
+<i class="no-highlight">1504</i>&nbsp;    public static boolean isRenameKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1505</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1506</i>&nbsp;            return false;</b>
+<i class="no-highlight">1507</i>&nbsp;        }
+<i class="no-highlight">1508</i>&nbsp;
+<b class="fc"><i class="no-highlight">1509</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1510</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1511</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1512</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1513</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1514</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1515</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1516</i>&nbsp;    }
+<i class="no-highlight">1517</i>&nbsp;
+<i class="no-highlight">1518</i>&nbsp;    public static boolean isResumeKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1519</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1520</i>&nbsp;            return false;</b>
+<i class="no-highlight">1521</i>&nbsp;        }
+<i class="no-highlight">1522</i>&nbsp;
+<b class="fc"><i class="no-highlight">1523</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1524</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1525</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1526</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1527</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1528</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1529</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1530</i>&nbsp;    }
+<i class="no-highlight">1531</i>&nbsp;
+<i class="no-highlight">1532</i>&nbsp;    public static boolean isRightKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1533</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1534</i>&nbsp;            return false;</b>
+<i class="no-highlight">1535</i>&nbsp;        }
+<i class="no-highlight">1536</i>&nbsp;
+<b class="fc"><i class="no-highlight">1537</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1538</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1539</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1540</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">1541</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">1542</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1543</i>&nbsp;    }
+<i class="no-highlight">1544</i>&nbsp;
+<i class="no-highlight">1545</i>&nbsp;    public static boolean isSampleKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1546</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1547</i>&nbsp;            return false;</b>
+<i class="no-highlight">1548</i>&nbsp;        }
+<i class="no-highlight">1549</i>&nbsp;
+<b class="fc"><i class="no-highlight">1550</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1551</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1552</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1553</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1554</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1555</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1556</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1557</i>&nbsp;    }
+<i class="no-highlight">1558</i>&nbsp;
+<i class="no-highlight">1559</i>&nbsp;    public static boolean isSearchPath(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1560</i>&nbsp;        if (tok.length() != 11) {</b>
+<b class="fc"><i class="no-highlight">1561</i>&nbsp;            return false;</b>
+<i class="no-highlight">1562</i>&nbsp;        }
+<i class="no-highlight">1563</i>&nbsp;
+<b class="fc"><i class="no-highlight">1564</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1565</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1566</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1567</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1568</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1569</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1570</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">1571</i>&nbsp;                &amp;&amp; (tok.charAt(i++)) == &#39;_&#39;</b>
+<b class="fc"><i class="no-highlight">1572</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1573</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1574</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1575</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">1576</i>&nbsp;    }
+<i class="no-highlight">1577</i>&nbsp;
+<i class="no-highlight">1578</i>&nbsp;    public static boolean isSecondKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1579</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1580</i>&nbsp;            return false;</b>
+<i class="no-highlight">1581</i>&nbsp;        }
+<i class="no-highlight">1582</i>&nbsp;
+<b class="fc"><i class="no-highlight">1583</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1584</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1585</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1586</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1587</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1588</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1589</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;d&#39;;</b>
+<i class="no-highlight">1590</i>&nbsp;    }
+<i class="no-highlight">1591</i>&nbsp;
+<i class="no-highlight">1592</i>&nbsp;    public static boolean isSelectKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1593</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1594</i>&nbsp;            return false;</b>
+<i class="no-highlight">1595</i>&nbsp;        }
+<i class="no-highlight">1596</i>&nbsp;
+<b class="fc"><i class="no-highlight">1597</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1598</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1599</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1600</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1601</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1602</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1603</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1604</i>&nbsp;    }
+<i class="no-highlight">1605</i>&nbsp;
+<i class="no-highlight">1606</i>&nbsp;    public static boolean isSemicolon(CharSequence token) {
+<b class="fc"><i class="no-highlight">1607</i>&nbsp;        return Chars.equals(token, &#39;;&#39;);</b>
+<i class="no-highlight">1608</i>&nbsp;    }
+<i class="no-highlight">1609</i>&nbsp;
+<i class="no-highlight">1610</i>&nbsp;    public static boolean isSetKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1611</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">1612</i>&nbsp;            return false;</b>
+<i class="no-highlight">1613</i>&nbsp;        }
+<i class="no-highlight">1614</i>&nbsp;
+<b class="fc"><i class="no-highlight">1615</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1616</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1617</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1618</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1619</i>&nbsp;    }
+<i class="no-highlight">1620</i>&nbsp;
+<i class="no-highlight">1621</i>&nbsp;    public static boolean isStandardConformingStrings(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1622</i>&nbsp;        if (tok.length() != 27) {</b>
+<b class="fc"><i class="no-highlight">1623</i>&nbsp;            return false;</b>
+<i class="no-highlight">1624</i>&nbsp;        }
+<i class="no-highlight">1625</i>&nbsp;
+<b class="fc"><i class="no-highlight">1626</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1627</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1628</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1629</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1630</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1631</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1632</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1633</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1634</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1635</i>&nbsp;                &amp;&amp; (tok.charAt(i++)) == &#39;_&#39;</b>
+<b class="fc"><i class="no-highlight">1636</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1637</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1638</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1639</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">1640</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1641</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1642</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1643</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1644</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1645</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">1646</i>&nbsp;                &amp;&amp; (tok.charAt(i++)) == &#39;_&#39;</b>
+<b class="fc"><i class="no-highlight">1647</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1648</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1649</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1650</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1651</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1652</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">1653</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1654</i>&nbsp;    }
+<i class="no-highlight">1655</i>&nbsp;
+<i class="no-highlight">1656</i>&nbsp;    public static boolean isSumKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1657</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">1658</i>&nbsp;            return false;</b>
+<i class="no-highlight">1659</i>&nbsp;        }
+<i class="no-highlight">1660</i>&nbsp;
+<b class="fc"><i class="no-highlight">1661</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1662</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1663</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1664</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;m&#39;;</b>
+<i class="no-highlight">1665</i>&nbsp;    }
+<i class="no-highlight">1666</i>&nbsp;
+<i class="no-highlight">1667</i>&nbsp;    public static boolean isSystemKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1668</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1669</i>&nbsp;            return false;</b>
+<i class="no-highlight">1670</i>&nbsp;        }
+<i class="no-highlight">1671</i>&nbsp;
+<b class="fc"><i class="no-highlight">1672</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1673</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1674</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;y&#39;</b>
+<b class="fc"><i class="no-highlight">1675</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1676</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1677</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1678</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;m&#39;;</b>
+<i class="no-highlight">1679</i>&nbsp;    }
+<i class="no-highlight">1680</i>&nbsp;
+<i class="no-highlight">1681</i>&nbsp;    public static boolean isTableKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1682</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1683</i>&nbsp;            return false;</b>
+<i class="no-highlight">1684</i>&nbsp;        }
+<i class="no-highlight">1685</i>&nbsp;
+<b class="fc"><i class="no-highlight">1686</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1687</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1688</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1689</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">1690</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1691</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1692</i>&nbsp;    }
+<i class="no-highlight">1693</i>&nbsp;
+<i class="no-highlight">1694</i>&nbsp;    public static boolean isTablesKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1695</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1696</i>&nbsp;            return false;</b>
+<i class="no-highlight">1697</i>&nbsp;        }
+<i class="no-highlight">1698</i>&nbsp;
+<b class="fc"><i class="no-highlight">1699</i>&nbsp;        int i = 0;</b>
+<i class="no-highlight">1700</i>&nbsp;        // @formatter:off
+<b class="fc"><i class="no-highlight">1701</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1702</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1703</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;b&#39;</b>
+<b class="fc"><i class="no-highlight">1704</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1705</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1706</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1707</i>&nbsp;        // @formatter:on
+<i class="no-highlight">1708</i>&nbsp;    }
+<i class="no-highlight">1709</i>&nbsp;
+<i class="no-highlight">1710</i>&nbsp;    public static boolean isTextKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1711</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1712</i>&nbsp;            return false;</b>
+<i class="no-highlight">1713</i>&nbsp;        }
+<i class="no-highlight">1714</i>&nbsp;
+<b class="fc"><i class="no-highlight">1715</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1716</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1717</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1718</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">1719</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">1720</i>&nbsp;    }
+<i class="no-highlight">1721</i>&nbsp;
+<i class="no-highlight">1722</i>&nbsp;    public static boolean isTimeKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1723</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1724</i>&nbsp;            return false;</b>
+<i class="no-highlight">1725</i>&nbsp;        }
+<i class="no-highlight">1726</i>&nbsp;
+<b class="fc"><i class="no-highlight">1727</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1728</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1729</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1730</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1731</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1732</i>&nbsp;    }
+<i class="no-highlight">1733</i>&nbsp;
+<i class="no-highlight">1734</i>&nbsp;    public static boolean isTimestampKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1735</i>&nbsp;        if (tok.length() != 9) {</b>
+<b class="fc"><i class="no-highlight">1736</i>&nbsp;            return false;</b>
+<i class="no-highlight">1737</i>&nbsp;        }
+<i class="no-highlight">1738</i>&nbsp;
+<b class="fc"><i class="no-highlight">1739</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1740</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1741</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1742</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1743</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1744</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1745</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1746</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1747</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;m&#39;</b>
+<b class="fc"><i class="no-highlight">1748</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;p&#39;;</b>
+<i class="no-highlight">1749</i>&nbsp;    }
+<i class="no-highlight">1750</i>&nbsp;
+<i class="no-highlight">1751</i>&nbsp;    public static boolean isToKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1752</i>&nbsp;        if (tok.length() != 2) {</b>
+<b class="fc"><i class="no-highlight">1753</i>&nbsp;            return false;</b>
+<i class="no-highlight">1754</i>&nbsp;        }
+<i class="no-highlight">1755</i>&nbsp;
+<b class="fc"><i class="no-highlight">1756</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1757</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1758</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;o&#39;;</b>
+<i class="no-highlight">1759</i>&nbsp;    }
+<i class="no-highlight">1760</i>&nbsp;
+<i class="no-highlight">1761</i>&nbsp;    public static boolean isTransactionIsolation(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1762</i>&nbsp;        if (tok.length() != 21) {</b>
+<b class="fc"><i class="no-highlight">1763</i>&nbsp;            return false;</b>
+<i class="no-highlight">1764</i>&nbsp;        }
+<i class="no-highlight">1765</i>&nbsp;
+<b class="fc"><i class="no-highlight">1766</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1767</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1768</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1769</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1770</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1771</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1772</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1773</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1774</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1775</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1776</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1777</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1778</i>&nbsp;                &amp;&amp; (tok.charAt(i++)) == &#39;_&#39;</b>
+<b class="fc"><i class="no-highlight">1779</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1780</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1781</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1782</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1783</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1784</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1785</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1786</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1787</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1788</i>&nbsp;    }
+<i class="no-highlight">1789</i>&nbsp;
+<i class="no-highlight">1790</i>&nbsp;    public static boolean isTransactionKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1791</i>&nbsp;        if (tok.length() != 11) {</b>
+<b class="fc"><i class="no-highlight">1792</i>&nbsp;            return false;</b>
+<i class="no-highlight">1793</i>&nbsp;        }
+<i class="no-highlight">1794</i>&nbsp;
+<b class="fc"><i class="no-highlight">1795</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1796</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1797</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1798</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1799</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1800</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">1801</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1802</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1803</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1804</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1805</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1806</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1807</i>&nbsp;    }
+<i class="no-highlight">1808</i>&nbsp;
+<i class="no-highlight">1809</i>&nbsp;    public static boolean isTrueKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1810</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1811</i>&nbsp;            return false;</b>
+<i class="no-highlight">1812</i>&nbsp;        }
+<i class="no-highlight">1813</i>&nbsp;
+<b class="fc"><i class="no-highlight">1814</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1815</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1816</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1817</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1818</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1819</i>&nbsp;    }
+<i class="no-highlight">1820</i>&nbsp;
+<i class="no-highlight">1821</i>&nbsp;    public static boolean isTxnKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1822</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">1823</i>&nbsp;            return false;</b>
+<i class="no-highlight">1824</i>&nbsp;        }
+<i class="no-highlight">1825</i>&nbsp;
+<b class="fc"><i class="no-highlight">1826</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1827</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1828</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;x&#39;</b>
+<b class="fc"><i class="no-highlight">1829</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1830</i>&nbsp;    }
+<i class="no-highlight">1831</i>&nbsp;
+<i class="no-highlight">1832</i>&nbsp;    public static boolean isTypeKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1833</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1834</i>&nbsp;            return false;</b>
+<i class="no-highlight">1835</i>&nbsp;        }
+<i class="no-highlight">1836</i>&nbsp;
+<b class="fc"><i class="no-highlight">1837</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1838</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1839</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;y&#39;</b>
+<b class="fc"><i class="no-highlight">1840</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1841</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1842</i>&nbsp;    }
+<i class="no-highlight">1843</i>&nbsp;
+<i class="no-highlight">1844</i>&nbsp;    public static boolean isUnionKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1845</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1846</i>&nbsp;            return false;</b>
+<i class="no-highlight">1847</i>&nbsp;        }
+<i class="no-highlight">1848</i>&nbsp;
+<b class="fc"><i class="no-highlight">1849</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1850</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1851</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1852</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1853</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1854</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1855</i>&nbsp;    }
+<i class="no-highlight">1856</i>&nbsp;
+<i class="no-highlight">1857</i>&nbsp;    public static boolean isUnlockKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1858</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1859</i>&nbsp;            return false;</b>
+<i class="no-highlight">1860</i>&nbsp;        }
+<i class="no-highlight">1861</i>&nbsp;
+<b class="fc"><i class="no-highlight">1862</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1863</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1864</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1865</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1866</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1867</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;c&#39;</b>
+<b class="fc"><i class="no-highlight">1868</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;k&#39;;</b>
+<i class="no-highlight">1869</i>&nbsp;    }
+<i class="no-highlight">1870</i>&nbsp;
+<i class="no-highlight">1871</i>&nbsp;    public static boolean isUpdateKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1872</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1873</i>&nbsp;            return false;</b>
+<i class="no-highlight">1874</i>&nbsp;        }
+<i class="no-highlight">1875</i>&nbsp;
+<b class="fc"><i class="no-highlight">1876</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1877</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1878</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;p&#39;</b>
+<b class="fc"><i class="no-highlight">1879</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;d&#39;</b>
+<b class="fc"><i class="no-highlight">1880</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1881</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1882</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1883</i>&nbsp;    }
+<i class="no-highlight">1884</i>&nbsp;
+<i class="no-highlight">1885</i>&nbsp;    public static boolean isValuesKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1886</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1887</i>&nbsp;            return false;</b>
+<i class="no-highlight">1888</i>&nbsp;        }
+<i class="no-highlight">1889</i>&nbsp;
+<b class="fc"><i class="no-highlight">1890</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1891</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;v&#39;</b>
+<b class="fc"><i class="no-highlight">1892</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1893</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;l&#39;</b>
+<b class="fc"><i class="no-highlight">1894</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;u&#39;</b>
+<b class="fc"><i class="no-highlight">1895</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1896</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;s&#39;;</b>
+<i class="no-highlight">1897</i>&nbsp;    }
+<i class="no-highlight">1898</i>&nbsp;
+<i class="no-highlight">1899</i>&nbsp;    public static boolean isWalKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1900</i>&nbsp;        if (tok.length() != 3) {</b>
+<b class="fc"><i class="no-highlight">1901</i>&nbsp;            return false;</b>
+<i class="no-highlight">1902</i>&nbsp;        }
+<i class="no-highlight">1903</i>&nbsp;
+<b class="fc"><i class="no-highlight">1904</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1905</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1906</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1907</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;l&#39;;</b>
+<i class="no-highlight">1908</i>&nbsp;    }
+<i class="no-highlight">1909</i>&nbsp;
+<i class="no-highlight">1910</i>&nbsp;    public static boolean isWeekKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1911</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="nc"><i class="no-highlight">1912</i>&nbsp;            return false;</b>
+<i class="no-highlight">1913</i>&nbsp;        }
+<i class="no-highlight">1914</i>&nbsp;
+<b class="fc"><i class="no-highlight">1915</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1916</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1917</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1918</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1919</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;k&#39;;</b>
+<i class="no-highlight">1920</i>&nbsp;    }
+<i class="no-highlight">1921</i>&nbsp;
+<i class="no-highlight">1922</i>&nbsp;    public static boolean isWhereKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1923</i>&nbsp;        if (tok.length() != 5) {</b>
+<b class="fc"><i class="no-highlight">1924</i>&nbsp;            return false;</b>
+<i class="no-highlight">1925</i>&nbsp;        }
+<i class="no-highlight">1926</i>&nbsp;
+<b class="fc"><i class="no-highlight">1927</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1928</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1929</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">1930</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1931</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1932</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1933</i>&nbsp;    }
+<i class="no-highlight">1934</i>&nbsp;
+<i class="no-highlight">1935</i>&nbsp;    public static boolean isWithKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1936</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1937</i>&nbsp;            return false;</b>
+<i class="no-highlight">1938</i>&nbsp;        }
+<i class="no-highlight">1939</i>&nbsp;
+<b class="fc"><i class="no-highlight">1940</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1941</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1942</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1943</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1944</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">1945</i>&nbsp;    }
+<i class="no-highlight">1946</i>&nbsp;
+<i class="no-highlight">1947</i>&nbsp;    public static boolean isWithinKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1948</i>&nbsp;        if (tok == null || tok.length() != 6) {</b>
+<b class="fc"><i class="no-highlight">1949</i>&nbsp;            return false;</b>
+<i class="no-highlight">1950</i>&nbsp;        }
+<i class="no-highlight">1951</i>&nbsp;
+<b class="fc"><i class="no-highlight">1952</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1953</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1954</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1955</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1956</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">1957</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1958</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;n&#39;;</b>
+<i class="no-highlight">1959</i>&nbsp;    }
+<i class="no-highlight">1960</i>&nbsp;
+<i class="no-highlight">1961</i>&nbsp;    public static boolean isWriterKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1962</i>&nbsp;        if (tok.length() != 6) {</b>
+<b class="nc"><i class="no-highlight">1963</i>&nbsp;            return false;</b>
+<i class="no-highlight">1964</i>&nbsp;        }
+<i class="no-highlight">1965</i>&nbsp;
+<b class="fc"><i class="no-highlight">1966</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1967</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;w&#39;</b>
+<b class="fc"><i class="no-highlight">1968</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;r&#39;</b>
+<b class="fc"><i class="no-highlight">1969</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">1970</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">1971</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1972</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1973</i>&nbsp;    }
+<i class="no-highlight">1974</i>&nbsp;
+<i class="no-highlight">1975</i>&nbsp;    public static boolean isYearKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1976</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="nc"><i class="no-highlight">1977</i>&nbsp;            return false;</b>
+<i class="no-highlight">1978</i>&nbsp;        }
+<i class="no-highlight">1979</i>&nbsp;
+<b class="fc"><i class="no-highlight">1980</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1981</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;y&#39;</b>
+<b class="fc"><i class="no-highlight">1982</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">1983</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">1984</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;r&#39;;</b>
+<i class="no-highlight">1985</i>&nbsp;    }
+<i class="no-highlight">1986</i>&nbsp;
+<i class="no-highlight">1987</i>&nbsp;    public static boolean isZoneKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">1988</i>&nbsp;        if (tok.length() != 4) {</b>
+<b class="fc"><i class="no-highlight">1989</i>&nbsp;            return false;</b>
+<i class="no-highlight">1990</i>&nbsp;        }
+<i class="no-highlight">1991</i>&nbsp;
+<b class="fc"><i class="no-highlight">1992</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">1993</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;z&#39;</b>
+<b class="fc"><i class="no-highlight">1994</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">1995</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">1996</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;e&#39;;</b>
+<i class="no-highlight">1997</i>&nbsp;    }
+<i class="no-highlight">1998</i>&nbsp;
+<i class="no-highlight">1999</i>&nbsp;    public static boolean startsWithGeoHashKeyword(CharSequence tok) {
+<b class="fc"><i class="no-highlight">2000</i>&nbsp;        if (tok.length() &lt; 7) {</b>
+<b class="fc"><i class="no-highlight">2001</i>&nbsp;            return false;</b>
+<i class="no-highlight">2002</i>&nbsp;        }
+<i class="no-highlight">2003</i>&nbsp;
+<b class="fc"><i class="no-highlight">2004</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">2005</i>&nbsp;        return isGeoHashKeyword(tok, i);</b>
+<i class="no-highlight">2006</i>&nbsp;    }
+<i class="no-highlight">2007</i>&nbsp;
+<i class="no-highlight">2008</i>&nbsp;    public static boolean validateExtractPart(CharSequence token) {
+<b class="fc"><i class="no-highlight">2009</i>&nbsp;        return TIMESTAMP_PART_SET.contains(token);</b>
+<i class="no-highlight">2010</i>&nbsp;    }
+<i class="no-highlight">2011</i>&nbsp;
+<i class="no-highlight">2012</i>&nbsp;    private static boolean isGeoHashKeyword(CharSequence tok, int i) {
+<b class="fc"><i class="no-highlight">2013</i>&nbsp;        return (tok.charAt(i++) | 32) == &#39;g&#39;</b>
+<b class="fc"><i class="no-highlight">2014</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;e&#39;</b>
+<b class="fc"><i class="no-highlight">2015</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;o&#39;</b>
+<b class="fc"><i class="no-highlight">2016</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;h&#39;</b>
+<b class="fc"><i class="no-highlight">2017</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">2018</i>&nbsp;                &amp;&amp; (tok.charAt(i++) | 32) == &#39;s&#39;</b>
+<b class="fc"><i class="no-highlight">2019</i>&nbsp;                &amp;&amp; (tok.charAt(i) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">2020</i>&nbsp;    }
+<i class="no-highlight">2021</i>&nbsp;
+<i class="no-highlight">2022</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">2023</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;microseconds&quot;);</b>
+<b class="fc"><i class="no-highlight">2024</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;milliseconds&quot;);</b>
+<b class="fc"><i class="no-highlight">2025</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;second&quot;);</b>
+<b class="fc"><i class="no-highlight">2026</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;minute&quot;);</b>
+<b class="fc"><i class="no-highlight">2027</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;hour&quot;);</b>
+<b class="fc"><i class="no-highlight">2028</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;day&quot;);</b>
+<b class="fc"><i class="no-highlight">2029</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;doy&quot;);</b>
+<b class="fc"><i class="no-highlight">2030</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;dow&quot;);</b>
+<b class="fc"><i class="no-highlight">2031</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;week&quot;);</b>
+<b class="fc"><i class="no-highlight">2032</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;month&quot;);</b>
+<b class="fc"><i class="no-highlight">2033</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;quarter&quot;);</b>
+<b class="fc"><i class="no-highlight">2034</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;year&quot;);</b>
+<b class="fc"><i class="no-highlight">2035</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;isoyear&quot;);</b>
+<b class="fc"><i class="no-highlight">2036</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;isodow&quot;);</b>
+<b class="fc"><i class="no-highlight">2037</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;decade&quot;);</b>
+<b class="fc"><i class="no-highlight">2038</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;century&quot;);</b>
+<b class="fc"><i class="no-highlight">2039</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;millennium&quot;);</b>
+<b class="fc"><i class="no-highlight">2040</i>&nbsp;        TIMESTAMP_PART_SET.add(&quot;epoch&quot;);</b>
+<i class="no-highlight">2041</i>&nbsp;    }
+<i class="no-highlight">2042</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

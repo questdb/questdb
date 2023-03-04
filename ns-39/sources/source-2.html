@@ -1,0 +1,669 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > AlterOperation</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.ops</a>
+</div>
+
+<h1>Coverage Summary for Class: AlterOperation (io.questdb.griffin.engine.ops)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">AlterOperation</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (24/24)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.7%
+  </span>
+  <span class="absValue">
+    (202/211)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">AlterOperation$CharSequenceList</td>
+  </tr>
+  <tr>
+    <td class="name">AlterOperation$DirectCharSequenceList</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    89.3%
+  </span>
+  <span class="absValue">
+    (25/28)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">AlterOperation$ObjCharSequenceList</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (35/35)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.1%
+  </span>
+  <span class="absValue">
+    (233/245)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.ops;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.vm.MemoryFCRImpl;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.vm.api.MemoryA;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCR;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.wal.MetadataService;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.Chars;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.LongList;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.Mutable;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.str.DirectCharSequence;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.tasks.TableWriterTask;
+<i class="no-highlight">40</i>&nbsp;
+<b class="fc"><i class="no-highlight">41</i>&nbsp;public class AlterOperation extends AbstractOperation implements Mutable {</b>
+<i class="no-highlight">42</i>&nbsp;    public final static short ADD_COLUMN = 1;
+<i class="no-highlight">43</i>&nbsp;    public final static short ADD_INDEX = 4;
+<i class="no-highlight">44</i>&nbsp;    public final static short ADD_SYMBOL_CACHE = 6;
+<i class="no-highlight">45</i>&nbsp;    public final static short ATTACH_PARTITION = 3;
+<i class="no-highlight">46</i>&nbsp;    public final static String CMD_NAME = &quot;ALTER TABLE&quot;;
+<i class="no-highlight">47</i>&nbsp;    public final static short DETACH_PARTITION = 12;
+<i class="no-highlight">48</i>&nbsp;    public final static short DO_NOTHING = 0;
+<i class="no-highlight">49</i>&nbsp;    public final static short DROP_COLUMN = 8;
+<i class="no-highlight">50</i>&nbsp;    public final static short DROP_INDEX = 5;
+<i class="no-highlight">51</i>&nbsp;    public final static short DROP_PARTITION = 2;
+<i class="no-highlight">52</i>&nbsp;    public final static short REMOVE_SYMBOL_CACHE = 7;
+<i class="no-highlight">53</i>&nbsp;    public final static short RENAME_COLUMN = 9;
+<i class="no-highlight">54</i>&nbsp;    public final static short SET_PARAM_COMMIT_LAG = 11;
+<i class="no-highlight">55</i>&nbsp;    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
+<b class="fc"><i class="no-highlight">56</i>&nbsp;    private final static Log LOG = LogFactory.getLog(AlterOperation.class);</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;    private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();</b>
+<i class="no-highlight">58</i>&nbsp;    // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
+<i class="no-highlight">59</i>&nbsp;    // to exception message using TableUtils.setSinkForPartition.
+<i class="no-highlight">60</i>&nbsp;    private final LongList extraInfo;
+<i class="no-highlight">61</i>&nbsp;    private final ObjCharSequenceList extraStrInfo;
+<i class="no-highlight">62</i>&nbsp;    private CharSequenceList activeExtraStrInfo;
+<i class="no-highlight">63</i>&nbsp;    private short command;
+<i class="no-highlight">64</i>&nbsp;    private MemoryFCRImpl deserializeMem;
+<i class="no-highlight">65</i>&nbsp;
+<i class="no-highlight">66</i>&nbsp;    public AlterOperation() {
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        this(new LongList(), new ObjList&lt;&gt;());</b>
+<i class="no-highlight">68</i>&nbsp;    }
+<i class="no-highlight">69</i>&nbsp;
+<b class="fc"><i class="no-highlight">70</i>&nbsp;    public AlterOperation(LongList extraInfo, ObjList&lt;CharSequence&gt; charSequenceObjList) {</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        this.extraInfo = extraInfo;</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.extraStrInfo = new ObjCharSequenceList(charSequenceObjList);</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        this.command = DO_NOTHING;</b>
+<i class="no-highlight">74</i>&nbsp;    }
+<i class="no-highlight">75</i>&nbsp;
+<i class="no-highlight">76</i>&nbsp;    @Override
+<i class="no-highlight">77</i>&nbsp;    // todo: supply bitset to indicate which ops are supported and which arent
+<i class="no-highlight">78</i>&nbsp;    //     &quot;structural changes&quot; doesn&#39;t cover is as &quot;add column&quot; is supported
+<i class="no-highlight">79</i>&nbsp;    public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+<i class="no-highlight">80</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            switch (command) {</b>
+<i class="no-highlight">82</i>&nbsp;                case ADD_COLUMN:
+<b class="fc"><i class="no-highlight">83</i>&nbsp;                    applyAddColumn(svc);</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;                    break;</b>
+<i class="no-highlight">85</i>&nbsp;                case DROP_COLUMN:
+<b class="fc"><i class="no-highlight">86</i>&nbsp;                    if (!contextAllowsAnyStructureChanges) {</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;                        throw AlterTableContextException.INSTANCE;</b>
+<i class="no-highlight">88</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">89</i>&nbsp;                    applyDropColumn(svc);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;                    break;</b>
+<i class="no-highlight">91</i>&nbsp;                case RENAME_COLUMN:
+<b class="fc"><i class="no-highlight">92</i>&nbsp;                    if (!contextAllowsAnyStructureChanges) {</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;                        throw AlterTableContextException.INSTANCE;</b>
+<i class="no-highlight">94</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">95</i>&nbsp;                    applyRenameColumn(svc);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;                    break;</b>
+<i class="no-highlight">97</i>&nbsp;                case DROP_PARTITION:
+<b class="fc"><i class="no-highlight">98</i>&nbsp;                    applyDropPartition(svc);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;                    break;</b>
+<i class="no-highlight">100</i>&nbsp;                case DETACH_PARTITION:
+<b class="fc"><i class="no-highlight">101</i>&nbsp;                    applyDetachPartition(svc);</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;                    break;</b>
+<i class="no-highlight">103</i>&nbsp;                case ATTACH_PARTITION:
+<b class="fc"><i class="no-highlight">104</i>&nbsp;                    applyAttachPartition(svc);</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                    break;</b>
+<i class="no-highlight">106</i>&nbsp;                case ADD_INDEX:
+<b class="fc"><i class="no-highlight">107</i>&nbsp;                    applyAddIndex(svc);</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                    break;</b>
+<i class="no-highlight">109</i>&nbsp;                case DROP_INDEX:
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                    applyDropIndex(svc);</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;                    break;</b>
+<i class="no-highlight">112</i>&nbsp;                case ADD_SYMBOL_CACHE:
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                    applySetSymbolCache(svc, true);</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                    break;</b>
+<i class="no-highlight">115</i>&nbsp;                case REMOVE_SYMBOL_CACHE:
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                    applySetSymbolCache(svc, false);</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                    break;</b>
+<i class="no-highlight">118</i>&nbsp;                case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                    applyParamUncommittedRows(svc);</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                    break;</b>
+<i class="no-highlight">121</i>&nbsp;                case SET_PARAM_COMMIT_LAG:
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                    applyParamO3MaxLag(svc);</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                    break;</b>
+<i class="no-highlight">124</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                    LOG.error()</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                            .$(&quot;invalid alter table command [code=&quot;).$(command)</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                            .$(&quot; ,table=&quot;).$(svc.getTableToken())</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                            .I$();</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                    throw CairoException.critical(0).put(&quot;invalid alter table command [code=&quot;).put(command).put(&#39;]&#39;);</b>
+<i class="no-highlight">130</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">131</i>&nbsp;        } catch (EntryUnavailableException ex) {</b>
+<b class="nc"><i class="no-highlight">132</i>&nbsp;            throw ex;</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;            LOG.critical().$(&quot;could not alter table [table=&quot;).$(svc.getTableToken())</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                    .$(&quot;, command=&quot;).$(command)</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                    .$(&quot;, errno=&quot;).$(e.getErrno())</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                    .$(&quot;, message=`&quot;).$(e.getFlyweightMessage()).$(&#39;`&#39;)</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">139</i>&nbsp;
+<b class="fc"><i class="no-highlight">140</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        return 0;</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    @Override
+<i class="no-highlight">146</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        command = DO_NOTHING;</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        extraStrInfo.clear();</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        directExtraStrInfo.clear();</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        activeExtraStrInfo = extraStrInfo;</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        extraInfo.clear();</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        clearCommandCorrelationId();</b>
+<i class="no-highlight">153</i>&nbsp;    }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    @Override
+<i class="no-highlight">156</i>&nbsp;    public AlterOperation deserialize(TableWriterTask event) {
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        clear();</b>
+<i class="no-highlight">158</i>&nbsp;
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        tableToken = event.getTableToken();</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        long readPtr = event.getData();</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        long length = event.getDataSize();</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        final long hi = readPtr + length;</b>
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;        // This is not hot path, do safe deserialization
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        if (readPtr + 10 &gt;= hi) {</b>
+<b class="nc"><i class="no-highlight">166</i>&nbsp;            throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [1]&quot;);</b>
+<i class="no-highlight">167</i>&nbsp;        }
+<i class="no-highlight">168</i>&nbsp;
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        if (deserializeMem == null) {</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;            deserializeMem = new MemoryFCRImpl();</b>
+<i class="no-highlight">171</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        deserializeMem.of(readPtr, length);</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        deserializeBody(deserializeMem, 0L, length);</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        return this;</b>
+<i class="no-highlight">175</i>&nbsp;    }
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;    public void deserializeBody(MemoryCR buffer, long offsetLo, long offsetHi) {
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        clear();</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        long readPtr = offsetLo;</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        if (readPtr + 10 &gt; offsetHi) {</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            throw CairoException</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                    .critical(0)</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                    .put(&quot;cannot read alter statement serialized, data is too short to read 10 bytes header [offset=&quot;)</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                    .put(offsetLo)</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                    .put(&quot;, size=&quot;)</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                    .put(offsetHi - offsetLo)</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">188</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        command = buffer.getShort(readPtr);</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        readPtr += 2;</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        tableNamePosition = buffer.getInt(readPtr);</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        readPtr += 4;</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        int longSize = buffer.getInt(readPtr);</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        readPtr += 4;</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;        if (longSize &lt; 0 || readPtr + longSize * 8L &gt;= offsetHi) {</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;            throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [2]&quot;);</b>
+<i class="no-highlight">197</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        extraInfo.clear();</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        for (int i = 0; i &lt; longSize; i++) {</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            extraInfo.add(buffer.getLong(readPtr));</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            readPtr += 8;</b>
+<i class="no-highlight">202</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        directExtraStrInfo.of(buffer, readPtr, offsetHi);</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        activeExtraStrInfo = directExtraStrInfo;</b>
+<i class="no-highlight">205</i>&nbsp;    }
+<i class="no-highlight">206</i>&nbsp;
+<i class="no-highlight">207</i>&nbsp;    @Override
+<i class="no-highlight">208</i>&nbsp;    public boolean isStructural() {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        switch (command) {</b>
+<i class="no-highlight">210</i>&nbsp;            case ADD_COLUMN:
+<i class="no-highlight">211</i>&nbsp;            case RENAME_COLUMN:
+<i class="no-highlight">212</i>&nbsp;            case DROP_COLUMN:
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                return true;</b>
+<i class="no-highlight">214</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                return false;</b>
+<i class="no-highlight">216</i>&nbsp;        }
+<i class="no-highlight">217</i>&nbsp;    }
+<i class="no-highlight">218</i>&nbsp;
+<i class="no-highlight">219</i>&nbsp;    public AlterOperation of(
+<i class="no-highlight">220</i>&nbsp;            short command,
+<i class="no-highlight">221</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">222</i>&nbsp;            int tableId,
+<i class="no-highlight">223</i>&nbsp;            int tableNamePosition
+<i class="no-highlight">224</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableToken, tableId, -1, tableNamePosition);</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        this.command = command;</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        this.activeExtraStrInfo = this.extraStrInfo;</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        return this;</b>
+<i class="no-highlight">229</i>&nbsp;    }
+<i class="no-highlight">230</i>&nbsp;
+<i class="no-highlight">231</i>&nbsp;    public void ofAddColumn(
+<i class="no-highlight">232</i>&nbsp;            int tableId,
+<i class="no-highlight">233</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">234</i>&nbsp;            int tableNamePosition,
+<i class="no-highlight">235</i>&nbsp;            CharSequence columnName,
+<i class="no-highlight">236</i>&nbsp;            int columnNamePosition,
+<i class="no-highlight">237</i>&nbsp;            int columnType,
+<i class="no-highlight">238</i>&nbsp;            int symbolCapacity,
+<i class="no-highlight">239</i>&nbsp;            boolean cache,
+<i class="no-highlight">240</i>&nbsp;            boolean indexed,
+<i class="no-highlight">241</i>&nbsp;            int indexValueBlockCapacity
+<i class="no-highlight">242</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        of(AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        assert columnName != null &amp;&amp; columnName.length() &gt; 0;</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        extraStrInfo.strings.add(Chars.toString(columnName));</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        extraInfo.add(columnType);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        extraInfo.add(symbolCapacity);</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        extraInfo.add(cache ? 1 : -1);</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        extraInfo.add(indexed ? 1 : -1);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        extraInfo.add(indexValueBlockCapacity);</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        extraInfo.add(columnNamePosition);</b>
+<i class="no-highlight">252</i>&nbsp;    }
+<i class="no-highlight">253</i>&nbsp;
+<i class="no-highlight">254</i>&nbsp;    @Override
+<i class="no-highlight">255</i>&nbsp;    public void serialize(TableWriterTask event) {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        super.serialize(event);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        event.putShort(command);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        event.putInt(tableNamePosition);</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        event.putInt(extraInfo.size());</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        for (int i = 0, n = extraInfo.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            event.putLong(extraInfo.getQuick(i));</b>
+<i class="no-highlight">262</i>&nbsp;        }
+<i class="no-highlight">263</i>&nbsp;
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        event.putInt(extraStrInfo.size());</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        for (int i = 0, n = extraStrInfo.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;            event.putStr(extraStrInfo.getStrA(i));</b>
+<i class="no-highlight">267</i>&nbsp;        }
+<i class="no-highlight">268</i>&nbsp;    }
+<i class="no-highlight">269</i>&nbsp;
+<i class="no-highlight">270</i>&nbsp;    public void serializeBody(MemoryA sink) {
+<b class="fc"><i class="no-highlight">271</i>&nbsp;        sink.putShort(command);</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        sink.putInt(tableNamePosition);</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        sink.putInt(extraInfo.size());</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        for (int i = 0, n = extraInfo.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            sink.putLong(extraInfo.getQuick(i));</b>
+<i class="no-highlight">276</i>&nbsp;        }
+<i class="no-highlight">277</i>&nbsp;
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        sink.putInt(extraStrInfo.size());</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        for (int i = 0, n = extraStrInfo.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            sink.putStr(extraStrInfo.getStrA(i));</b>
+<i class="no-highlight">281</i>&nbsp;        }
+<i class="no-highlight">282</i>&nbsp;    }
+<i class="no-highlight">283</i>&nbsp;
+<i class="no-highlight">284</i>&nbsp;    @Override
+<i class="no-highlight">285</i>&nbsp;    public void startAsync() {
+<b class="fc"><i class="no-highlight">286</i>&nbsp;    }</b>
+<i class="no-highlight">287</i>&nbsp;
+<i class="no-highlight">288</i>&nbsp;    private void applyAddColumn(MetadataService svc) {
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        int lParam = 0;</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        for (int i = 0, n = activeExtraStrInfo.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;            CharSequence columnName = activeExtraStrInfo.getStrA(i);</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;            int type = (int) extraInfo.get(lParam++);</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;            int symbolCapacity = (int) extraInfo.get(lParam++);</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;            boolean symbolCacheFlag = extraInfo.get(lParam++) &gt; 0;</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;            boolean isIndexed = extraInfo.get(lParam++) &gt; 0;</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            int indexValueBlockCapacity = (int) extraInfo.get(lParam++);</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;            int columnNamePosition = (int) extraInfo.get(lParam++);</b>
+<i class="no-highlight">298</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">299</i>&nbsp;                svc.addColumn(</b>
+<i class="no-highlight">300</i>&nbsp;                        columnName,
+<i class="no-highlight">301</i>&nbsp;                        type,
+<i class="no-highlight">302</i>&nbsp;                        symbolCapacity,
+<i class="no-highlight">303</i>&nbsp;                        symbolCacheFlag,
+<i class="no-highlight">304</i>&nbsp;                        isIndexed,
+<i class="no-highlight">305</i>&nbsp;                        indexValueBlockCapacity,
+<i class="no-highlight">306</i>&nbsp;                        false
+<i class="no-highlight">307</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            } catch (CairoException e) {</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                e.position(columnNamePosition);</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;                throw e;</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            }</b>
+<i class="no-highlight">312</i>&nbsp;        }
+<i class="no-highlight">313</i>&nbsp;    }
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;    private void applyAddIndex(MetadataService svc) {
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        final CharSequence columnName = activeExtraStrInfo.getStrA(0);</b>
+<i class="no-highlight">317</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">318</i>&nbsp;            svc.addIndex(columnName, (int) extraInfo.get(0));</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        } catch (CairoException e) {</b>
+<i class="no-highlight">320</i>&nbsp;            // augment exception with table position
+<b class="fc"><i class="no-highlight">321</i>&nbsp;            e.position(tableNamePosition);</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        }</b>
+<i class="no-highlight">324</i>&nbsp;    }
+<i class="no-highlight">325</i>&nbsp;
+<i class="no-highlight">326</i>&nbsp;    private void applyAttachPartition(MetadataService svc) {
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        for (int i = 0, n = extraInfo.size() / 2; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;            final long partitionTimestamp = extraInfo.getQuick(i * 2);</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;            AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;            if (AttachDetachStatus.OK != attachDetachStatus) {</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;                throw CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;could not attach partition [table=&quot;).put(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                        .put(&quot;, detachStatus=&quot;).put(attachDetachStatus.name())</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                        .put(&quot;, partitionTimestamp=&quot;).ts(partitionTimestamp)</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                        .put(&quot;, partitionBy=&quot;).put(PartitionBy.toString(svc.getPartitionBy()))</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                        .put(&#39;]&#39;)</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                        .position((int) extraInfo.getQuick(i * 2 + 1));</b>
+<i class="no-highlight">337</i>&nbsp;            }
+<i class="no-highlight">338</i>&nbsp;        }
+<i class="no-highlight">339</i>&nbsp;    }
+<i class="no-highlight">340</i>&nbsp;
+<i class="no-highlight">341</i>&nbsp;    private void applyDetachPartition(MetadataService svc) {
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        for (int i = 0, n = extraInfo.size() / 2; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;            final long partitionTimestamp = extraInfo.getQuick(i * 2);</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;            if (AttachDetachStatus.OK != attachDetachStatus) {</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                throw CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;could not detach partition [table=&quot;).put(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                        .put(&quot;, detachStatus=&quot;).put(attachDetachStatus.name())</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;                        .put(&quot;, partitionTimestamp=&quot;).ts(partitionTimestamp)</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                        .put(&quot;, partitionBy=&quot;).put(PartitionBy.toString(svc.getPartitionBy()))</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                        .put(&#39;]&#39;)</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                        .position((int) extraInfo.getQuick(i * 2 + 1));</b>
+<i class="no-highlight">352</i>&nbsp;            }
+<i class="no-highlight">353</i>&nbsp;        }
+<i class="no-highlight">354</i>&nbsp;    }
+<i class="no-highlight">355</i>&nbsp;
+<i class="no-highlight">356</i>&nbsp;    private void applyDropColumn(MetadataService svc) {
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        for (int i = 0, n = activeExtraStrInfo.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;            svc.removeColumn(activeExtraStrInfo.getStrA(i));</b>
+<i class="no-highlight">359</i>&nbsp;        }
+<i class="no-highlight">360</i>&nbsp;    }
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;    private void applyDropIndex(MetadataService svc) {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        final CharSequence columnName = activeExtraStrInfo.getStrA(0);</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        final int columnNamePosition = (int) extraInfo.get(0);</b>
+<i class="no-highlight">365</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">366</i>&nbsp;            svc.dropIndex(columnName);</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;            e.position(columnNamePosition);</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        }</b>
+<i class="no-highlight">371</i>&nbsp;    }
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;    private void applyDropPartition(MetadataService svc) {
+<i class="no-highlight">374</i>&nbsp;        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        for (int i = 0, n = extraInfo.size() / 2; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;            long partitionTimestamp = extraInfo.getQuick(i * 2);</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            if (!svc.removePartition(partitionTimestamp)) {</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                throw CairoException.nonCritical()</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                        .put(&quot;could not remove partition [table=&quot;).put(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                        .put(&quot;, partitionTimestamp=&quot;).ts(partitionTimestamp)</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                        .put(&quot;, partitionBy=&quot;).put(PartitionBy.toString(svc.getPartitionBy()))</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                        .put(&#39;]&#39;)</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                        .position((int) extraInfo.getQuick(i * 2 + 1));</b>
+<i class="no-highlight">384</i>&nbsp;            }
+<i class="no-highlight">385</i>&nbsp;        }
+<i class="no-highlight">386</i>&nbsp;    }
+<i class="no-highlight">387</i>&nbsp;
+<i class="no-highlight">388</i>&nbsp;    private void applyParamO3MaxLag(MetadataService svc) {
+<b class="fc"><i class="no-highlight">389</i>&nbsp;        long o3MaxLag = extraInfo.get(0);</b>
+<i class="no-highlight">390</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">391</i>&nbsp;            svc.setMetaO3MaxLag(o3MaxLag);</b>
+<b class="nc"><i class="no-highlight">392</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="nc"><i class="no-highlight">393</i>&nbsp;            LOG.error().$(&quot;could not change o3MaxLag [table=&quot;).utf8(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</b>
+<b class="nc"><i class="no-highlight">394</i>&nbsp;                    .$(&quot;, errno=&quot;).$(e.getErrno())</b>
+<b class="nc"><i class="no-highlight">395</i>&nbsp;                    .$(&quot;, error=&quot;).$(e.getFlyweightMessage())</b>
+<b class="nc"><i class="no-highlight">396</i>&nbsp;                    .I$();</b>
+<b class="nc"><i class="no-highlight">397</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;        }</b>
+<i class="no-highlight">399</i>&nbsp;    }
+<i class="no-highlight">400</i>&nbsp;
+<i class="no-highlight">401</i>&nbsp;    private void applyParamUncommittedRows(MetadataService svc) {
+<b class="fc"><i class="no-highlight">402</i>&nbsp;        int maxUncommittedRows = (int) extraInfo.get(0);</b>
+<i class="no-highlight">403</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">404</i>&nbsp;            svc.setMetaMaxUncommittedRows(maxUncommittedRows);</b>
+<b class="fc"><i class="no-highlight">405</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;            e.position(tableNamePosition);</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        }</b>
+<i class="no-highlight">409</i>&nbsp;    }
+<i class="no-highlight">410</i>&nbsp;
+<i class="no-highlight">411</i>&nbsp;    private void applyRenameColumn(MetadataService svc) {
+<i class="no-highlight">412</i>&nbsp;        // To avoid storing 2 var len fields, store only new name as CharSequence
+<i class="no-highlight">413</i>&nbsp;        // and index of existing column.
+<b class="fc"><i class="no-highlight">414</i>&nbsp;        int i = 0, n = activeExtraStrInfo.size();</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;        while (i &lt; n) {</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;            CharSequence columnName = activeExtraStrInfo.getStrA(i++);</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;            CharSequence newName = activeExtraStrInfo.getStrB(i++);</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;            svc.renameColumn(columnName, newName);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;        }</b>
+<i class="no-highlight">420</i>&nbsp;    }
+<i class="no-highlight">421</i>&nbsp;
+<i class="no-highlight">422</i>&nbsp;    private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {
+<b class="fc"><i class="no-highlight">423</i>&nbsp;        CharSequence columnName = activeExtraStrInfo.getStrA(0);</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;        svc.changeCacheFlag(</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                svc.getMetadata().getColumnIndex(columnName),</b>
+<i class="no-highlight">426</i>&nbsp;                isCacheOn
+<i class="no-highlight">427</i>&nbsp;        );
+<i class="no-highlight">428</i>&nbsp;    }
+<i class="no-highlight">429</i>&nbsp;
+<i class="no-highlight">430</i>&nbsp;    interface CharSequenceList extends Mutable {
+<i class="no-highlight">431</i>&nbsp;        CharSequence getStrA(int i);
+<i class="no-highlight">432</i>&nbsp;
+<i class="no-highlight">433</i>&nbsp;        CharSequence getStrB(int i);
+<i class="no-highlight">434</i>&nbsp;
+<i class="no-highlight">435</i>&nbsp;        int size();
+<i class="no-highlight">436</i>&nbsp;    }
+<i class="no-highlight">437</i>&nbsp;
+<b class="fc"><i class="no-highlight">438</i>&nbsp;    private static class DirectCharSequenceList implements CharSequenceList {</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        private final LongList offsets = new LongList();</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;        private final DirectCharSequence strA = new DirectCharSequence();</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;        private final DirectCharSequence strB = new DirectCharSequence();</b>
+<i class="no-highlight">442</i>&nbsp;
+<i class="no-highlight">443</i>&nbsp;        @Override
+<i class="no-highlight">444</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">445</i>&nbsp;            offsets.clear();</b>
+<i class="no-highlight">446</i>&nbsp;        }
+<i class="no-highlight">447</i>&nbsp;
+<i class="no-highlight">448</i>&nbsp;        public CharSequence getStrA(int i) {
+<b class="fc"><i class="no-highlight">449</i>&nbsp;            long lo = offsets.get(i * 2);</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            long hi = offsets.get(i * 2 + 1);</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            strA.of(lo, hi);</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;            return strA;</b>
+<i class="no-highlight">453</i>&nbsp;        }
+<i class="no-highlight">454</i>&nbsp;
+<i class="no-highlight">455</i>&nbsp;        @Override
+<i class="no-highlight">456</i>&nbsp;        public CharSequence getStrB(int i) {
+<b class="fc"><i class="no-highlight">457</i>&nbsp;            long lo = offsets.get(i * 2);</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;            long hi = offsets.get(i * 2 + 1);</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;            strB.of(lo, hi);</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            return strB;</b>
+<i class="no-highlight">461</i>&nbsp;        }
+<i class="no-highlight">462</i>&nbsp;
+<i class="no-highlight">463</i>&nbsp;        public void of(MemoryCR buffer, long lo, long hi) {
+<b class="fc"><i class="no-highlight">464</i>&nbsp;            if (lo + Integer.BYTES &gt; hi) {</b>
+<b class="nc"><i class="no-highlight">465</i>&nbsp;                throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [11]&quot;);</b>
+<i class="no-highlight">466</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">467</i>&nbsp;            int size = buffer.getInt(lo);</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;            lo += 4;</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;            for (int i = 0; i &lt; size; i++) {</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;                if (lo + Integer.BYTES &gt; hi) {</b>
+<b class="nc"><i class="no-highlight">471</i>&nbsp;                    throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [12]&quot;);</b>
+<i class="no-highlight">472</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                int stringSize = 2 * buffer.getInt(lo);</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;                lo += 4;</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;                if (lo + stringSize &gt; hi) {</b>
+<b class="nc"><i class="no-highlight">476</i>&nbsp;                    throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [13]&quot;);</b>
+<i class="no-highlight">477</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">478</i>&nbsp;                long address = buffer.addressOf(lo);</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                offsets.add(address, address + stringSize);</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;                lo += stringSize;</b>
+<i class="no-highlight">481</i>&nbsp;            }
+<i class="no-highlight">482</i>&nbsp;        }
+<i class="no-highlight">483</i>&nbsp;
+<i class="no-highlight">484</i>&nbsp;        @Override
+<i class="no-highlight">485</i>&nbsp;        public int size() {
+<b class="fc"><i class="no-highlight">486</i>&nbsp;            return offsets.size() / 2;</b>
+<i class="no-highlight">487</i>&nbsp;        }
+<i class="no-highlight">488</i>&nbsp;    }
+<i class="no-highlight">489</i>&nbsp;
+<i class="no-highlight">490</i>&nbsp;    private static class ObjCharSequenceList implements CharSequenceList {
+<i class="no-highlight">491</i>&nbsp;        private final ObjList&lt;CharSequence&gt; strings;
+<i class="no-highlight">492</i>&nbsp;
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        public ObjCharSequenceList(ObjList&lt;CharSequence&gt; strings) {</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;            this.strings = strings;</b>
+<i class="no-highlight">495</i>&nbsp;        }
+<i class="no-highlight">496</i>&nbsp;
+<i class="no-highlight">497</i>&nbsp;        @Override
+<i class="no-highlight">498</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">499</i>&nbsp;            strings.clear();</b>
+<i class="no-highlight">500</i>&nbsp;        }
+<i class="no-highlight">501</i>&nbsp;
+<i class="no-highlight">502</i>&nbsp;        public CharSequence getStrA(int i) {
+<b class="fc"><i class="no-highlight">503</i>&nbsp;            return strings.get(i);</b>
+<i class="no-highlight">504</i>&nbsp;        }
+<i class="no-highlight">505</i>&nbsp;
+<i class="no-highlight">506</i>&nbsp;        @Override
+<i class="no-highlight">507</i>&nbsp;        public CharSequence getStrB(int i) {
+<b class="fc"><i class="no-highlight">508</i>&nbsp;            return strings.get(i);</b>
+<i class="no-highlight">509</i>&nbsp;        }
+<i class="no-highlight">510</i>&nbsp;
+<i class="no-highlight">511</i>&nbsp;        @Override
+<i class="no-highlight">512</i>&nbsp;        public int size() {
+<b class="fc"><i class="no-highlight">513</i>&nbsp;            return strings.size();</b>
+<i class="no-highlight">514</i>&nbsp;        }
+<i class="no-highlight">515</i>&nbsp;    }
+<i class="no-highlight">516</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

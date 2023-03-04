@@ -1,0 +1,1173 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > IntervalUtils</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.model</a>
+</div>
+
+<h1>Coverage Summary for Class: IntervalUtils (io.questdb.griffin.model)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">IntervalUtils</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (44/44)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.7%
+  </span>
+  <span class="absValue">
+    (502/519)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.model;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.LongList;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.NumericException;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.datetime.microtime.Timestamps;
+<i class="no-highlight">34</i>&nbsp;
+<b class="fc"><i class="no-highlight">35</i>&nbsp;public final class IntervalUtils {</b>
+<i class="no-highlight">36</i>&nbsp;    public static final int HI_INDEX = 1;
+<i class="no-highlight">37</i>&nbsp;    public static final int LO_INDEX = 0;
+<i class="no-highlight">38</i>&nbsp;    public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
+<i class="no-highlight">39</i>&nbsp;    public static final int PERIOD_COUNT_INDEX = 3;
+<i class="no-highlight">40</i>&nbsp;    public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
+<i class="no-highlight">41</i>&nbsp;
+<i class="no-highlight">42</i>&nbsp;    public static void addHiLoInterval(
+<i class="no-highlight">43</i>&nbsp;            long lo,
+<i class="no-highlight">44</i>&nbsp;            long hi,
+<i class="no-highlight">45</i>&nbsp;            int period,
+<i class="no-highlight">46</i>&nbsp;            char periodType,
+<i class="no-highlight">47</i>&nbsp;            int periodCount,
+<i class="no-highlight">48</i>&nbsp;            short operation,
+<i class="no-highlight">49</i>&nbsp;            LongList out) {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;        addHiLoInterval(lo, hi, period, periodType, periodCount, IntervalDynamicIndicator.NONE, IntervalOperation.NONE, operation, out);</b>
+<i class="no-highlight">51</i>&nbsp;    }
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    public static void addHiLoInterval(
+<i class="no-highlight">54</i>&nbsp;            long lo,
+<i class="no-highlight">55</i>&nbsp;            long hi,
+<i class="no-highlight">56</i>&nbsp;            int period,
+<i class="no-highlight">57</i>&nbsp;            char periodType,
+<i class="no-highlight">58</i>&nbsp;            int periodCount,
+<i class="no-highlight">59</i>&nbsp;            short adjustment,
+<i class="no-highlight">60</i>&nbsp;            short dynamicIndicator,
+<i class="no-highlight">61</i>&nbsp;            short operation,
+<i class="no-highlight">62</i>&nbsp;            LongList out
+<i class="no-highlight">63</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        out.add(</b>
+<i class="no-highlight">65</i>&nbsp;                lo,
+<i class="no-highlight">66</i>&nbsp;                hi,
+<b class="fc"><i class="no-highlight">67</i>&nbsp;                Numbers.encodeLowHighInts(</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;                        Numbers.encodeLowHighShorts(adjustment, dynamicIndicator)</b>
+<i class="no-highlight">70</i>&nbsp;                ),
+<b class="fc"><i class="no-highlight">71</i>&nbsp;                Numbers.encodeLowHighInts(period, periodCount)</b>
+<i class="no-highlight">72</i>&nbsp;        );
+<i class="no-highlight">73</i>&nbsp;    }
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    public static void addHiLoInterval(long lo,
+<i class="no-highlight">76</i>&nbsp;                                       long hi,
+<i class="no-highlight">77</i>&nbsp;                                       short adjustment,
+<i class="no-highlight">78</i>&nbsp;                                       short dynamicIndicator,
+<i class="no-highlight">79</i>&nbsp;                                       short operation,
+<i class="no-highlight">80</i>&nbsp;                                       LongList out) {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, adjustment, dynamicIndicator, operation, out);</b>
+<i class="no-highlight">82</i>&nbsp;    }
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;    public static void addHiLoInterval(long lo, long hi, short operation, LongList out) {
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, operation, out);</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    public static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        temp.add(lo, hi);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        if (count &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            switch (periodType) {</b>
+<i class="no-highlight">92</i>&nbsp;                case PeriodType.YEAR:
+<b class="fc"><i class="no-highlight">93</i>&nbsp;                    addYearIntervals(period, count, temp);</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;                    break;</b>
+<i class="no-highlight">95</i>&nbsp;                case PeriodType.MONTH:
+<b class="fc"><i class="no-highlight">96</i>&nbsp;                    addMonthInterval(period, count, temp);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;                    break;</b>
+<i class="no-highlight">98</i>&nbsp;                case PeriodType.HOUR:
+<b class="fc"><i class="no-highlight">99</i>&nbsp;                    addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;                    break;</b>
+<i class="no-highlight">101</i>&nbsp;                case PeriodType.MINUTE:
+<b class="fc"><i class="no-highlight">102</i>&nbsp;                    addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                    break;</b>
+<i class="no-highlight">104</i>&nbsp;                case PeriodType.SECOND:
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                    addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;                    break;</b>
+<i class="no-highlight">107</i>&nbsp;                case PeriodType.DAY:
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                    addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);</b>
+<i class="no-highlight">109</i>&nbsp;                    break;
+<i class="no-highlight">110</i>&nbsp;            }
+<i class="no-highlight">111</i>&nbsp;        }
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;    public static void applyLastEncodedIntervalEx(LongList intervals) {
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        int index = intervals.size() - 4;</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        long lo = getEncodedPeriodLo(intervals, index);</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        long hi = getEncodedPeriodHi(intervals, index);</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        int period = getEncodedPeriod(intervals, index);</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        char periodType = getEncodedPeriodType(intervals, index);</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        int count = getEncodedPeriodCount(intervals, index);</b>
+<i class="no-highlight">121</i>&nbsp;
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        intervals.setPos(index);</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        if (periodType == PeriodType.NONE) {</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;            intervals.extendAndSet(index + 1, hi);</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            intervals.setQuick(index, lo);</b>
+<i class="no-highlight">126</i>&nbsp;            return;
+<i class="no-highlight">127</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        apply(intervals, lo, hi, period, periodType, count);</b>
+<i class="no-highlight">129</i>&nbsp;    }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;    public static short getEncodedAdjustment(LongList intervals, int index) {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        return Numbers.decodeLowShort(Numbers.decodeHighInt(</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));</b>
+<i class="no-highlight">134</i>&nbsp;    }
+<i class="no-highlight">135</i>&nbsp;
+<i class="no-highlight">136</i>&nbsp;    public static short getEncodedDynamicIndicator(LongList intervals, int index) {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        return Numbers.decodeHighShort(Numbers.decodeHighInt(</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    public static short getEncodedOperation(LongList intervals, int index) {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        return Numbers.decodeLowShort(</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;                Numbers.decodeLowInt(</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)</b>
+<i class="no-highlight">145</i>&nbsp;                )
+<i class="no-highlight">146</i>&nbsp;        );
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    public static int getEncodedPeriod(LongList intervals, int index) {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        return Numbers.decodeLowInt(</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                intervals.getQuick(index + PERIOD_COUNT_INDEX)</b>
+<i class="no-highlight">152</i>&nbsp;        );
+<i class="no-highlight">153</i>&nbsp;    }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    public static int getEncodedPeriodCount(LongList intervals, int index) {
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        return Numbers.decodeHighInt(</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                intervals.getQuick(index + PERIOD_COUNT_INDEX));</b>
+<i class="no-highlight">158</i>&nbsp;    }
+<i class="no-highlight">159</i>&nbsp;
+<i class="no-highlight">160</i>&nbsp;    public static long getEncodedPeriodHi(LongList out, int index) {
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        return out.getQuick(index + HI_INDEX);</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    public static long getEncodedPeriodLo(LongList out, int index) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        return out.getQuick(index + LO_INDEX);</b>
+<i class="no-highlight">166</i>&nbsp;    }
+<i class="no-highlight">167</i>&nbsp;
+<i class="no-highlight">168</i>&nbsp;    public static char getEncodedPeriodType(LongList intervals, int index) {
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        int pts = Numbers.decodeHighShort(</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                Numbers.decodeLowInt(</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)</b>
+<i class="no-highlight">172</i>&nbsp;                )
+<i class="no-highlight">173</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        return (char) (pts - (int) Short.MIN_VALUE);</b>
+<i class="no-highlight">175</i>&nbsp;    }
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;    public static boolean isInIntervals(LongList intervals, long timestamp) {
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        int left = 0;</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        int right = intervals.size() / 2 - 1;</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        while (left &lt;= right) {</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            int mid = (left + right) / 2;</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            long lo = getEncodedPeriodLo(intervals, mid * 2);</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            long hi = getEncodedPeriodHi(intervals, mid * 2);</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            if (lo &gt; timestamp) {</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                right = mid - 1;</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            } else if (hi &lt; timestamp) {</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                left = mid + 1;</b>
+<i class="no-highlight">188</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                return true;</b>
+<i class="no-highlight">190</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        return false;</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    public static long parseCCPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
+<i class="no-highlight">196</i>&nbsp;        long ts;
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        if (lim - pos &lt; 4) {</b>
+<b class="nc"><i class="no-highlight">198</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">199</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        int p = pos;</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        int year = Numbers.parseInt(seq, p, p += 4);</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        boolean l = Timestamps.isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            checkChar(seq, p++, lim, &#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;            int month = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            checkRange(month, 1, 12);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                checkChar(seq, p++, lim, &#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                int day = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;                    checkChar(seq, p++, lim, &#39;T&#39;, &#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                    int hour = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                    checkRange(hour, 0, 23);</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                    if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                        checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                        int min = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;                        checkRange(min, 0, 59);</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;                        if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;                            checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;                            int sec = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                            checkRange(sec, 0, 59);</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                            if (lim - p &gt; 3 &amp;&amp; seq.charAt(p) == &#39;.&#39;) {</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                                p++;</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;                                int ms = Numbers.parseInt(seq, p, p += 3);</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;                                if (lim - p &gt; 2 &amp;&amp; Character.isDigit(seq.charAt(p))) {</b>
+<i class="no-highlight">227</i>&nbsp;                                    // micros
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                                    int micr = Numbers.parseInt(seq, p, p += 3);</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                                    ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                                            + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">231</i>&nbsp;                                            + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">232</i>&nbsp;                                            + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">233</i>&nbsp;                                            + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">234</i>&nbsp;                                            + sec * Timestamps.SECOND_MICROS
+<i class="no-highlight">235</i>&nbsp;                                            + ms * Timestamps.MILLI_MICROS
+<i class="no-highlight">236</i>&nbsp;                                            + micr
+<b class="fc"><i class="no-highlight">237</i>&nbsp;                                            + checkTimezoneTail(seq, p, lim)</b>
+<i class="no-highlight">238</i>&nbsp;                                            + 1;
+<b class="fc"><i class="no-highlight">239</i>&nbsp;                                } else {</b>
+<i class="no-highlight">240</i>&nbsp;                                    // millis
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                                    ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                                            + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">243</i>&nbsp;                                            + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">244</i>&nbsp;                                            + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">245</i>&nbsp;                                            + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">246</i>&nbsp;                                            + sec * Timestamps.SECOND_MICROS
+<i class="no-highlight">247</i>&nbsp;                                            + (ms + 1) * Timestamps.MILLI_MICROS
+<b class="fc"><i class="no-highlight">248</i>&nbsp;                                            + checkTimezoneTail(seq, p, lim);</b>
+<i class="no-highlight">249</i>&nbsp;                                }
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                            } else {</b>
+<i class="no-highlight">251</i>&nbsp;                                // seconds
+<b class="fc"><i class="no-highlight">252</i>&nbsp;                                ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                                        + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">254</i>&nbsp;                                        + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">255</i>&nbsp;                                        + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">256</i>&nbsp;                                        + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">257</i>&nbsp;                                        + (sec + 1) * Timestamps.SECOND_MICROS
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                                        + checkTimezoneTail(seq, p, lim);</b>
+<i class="no-highlight">259</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                        } else {</b>
+<i class="no-highlight">261</i>&nbsp;                            // minute
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                            ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                                    + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">264</i>&nbsp;                                    + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">265</i>&nbsp;                                    + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">266</i>&nbsp;                                    + (min + 1) * Timestamps.MINUTE_MICROS;
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                    } else {</b>
+<i class="no-highlight">270</i>&nbsp;                        // year + month + day + hour
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                        ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                                + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">273</i>&nbsp;                                + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">274</i>&nbsp;                                + (hour + 1) * Timestamps.HOUR_MICROS;
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                } else {</b>
+<i class="no-highlight">278</i>&nbsp;                    // year + month + day
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                    ts = Timestamps.addDays(Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                            + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">281</i>&nbsp;                            + (day - 1) * Timestamps.DAY_MICROS, 1);
+<i class="no-highlight">282</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            } else {</b>
+<i class="no-highlight">284</i>&nbsp;                // year + month
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                ts = Timestamps.addMonths(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l), 1);</b>
+<i class="no-highlight">286</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">287</i>&nbsp;        } else {</b>
+<i class="no-highlight">288</i>&nbsp;            // year
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            ts = Timestamps.yearMicros(year + 1, Timestamps.isLeapYear(year + 1));</b>
+<i class="no-highlight">290</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        return ts;</b>
+<i class="no-highlight">292</i>&nbsp;    }
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;    public static long parseCCPartialDate(CharSequence seq) throws NumericException {
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        return parseCCPartialDate(seq, 0, seq.length());</b>
+<i class="no-highlight">296</i>&nbsp;    }
+<i class="no-highlight">297</i>&nbsp;
+<i class="no-highlight">298</i>&nbsp;    public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
+<i class="no-highlight">299</i>&nbsp;        long ts;
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        if (lim - pos &lt; 4) {</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">302</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        int p = pos;</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        int year = Numbers.parseInt(seq, p, p += 4);</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        boolean l = Timestamps.isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;            checkChar(seq, p++, lim, &#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            int month = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;            checkRange(month, 1, 12);</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;                checkChar(seq, p++, lim, &#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                int day = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;                if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;                    checkChar(seq, p++, lim, &#39;T&#39;, &#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;                    int hour = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;                    checkRange(hour, 0, 23);</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;                    if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                        checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                        int min = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                        checkRange(min, 0, 59);</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                        if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                            checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;                            int sec = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                            checkRange(sec, 0, 59);</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                            if (p &lt; lim &amp;&amp; seq.charAt(p) == &#39;.&#39;) {</b>
+<i class="no-highlight">327</i>&nbsp;
+<b class="fc"><i class="no-highlight">328</i>&nbsp;                                p++;</b>
+<i class="no-highlight">329</i>&nbsp;                                // varlen milli and micros
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                                int micrLim = p + 6;</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;                                int mlim = Math.min(lim, micrLim);</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                                int micr = 0;</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                                for (; p &lt; mlim; p++) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                                    char c = seq.charAt(p);</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                                    if (c &lt; &#39;0&#39; || c &gt; &#39;9&#39;) {</b>
+<i class="no-highlight">336</i>&nbsp;                                        // Timezone
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                                        break;</b>
+<i class="no-highlight">338</i>&nbsp;                                    }
+<b class="fc"><i class="no-highlight">339</i>&nbsp;                                    micr *= 10;</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                                    micr += c - &#39;0&#39;;</b>
+<i class="no-highlight">341</i>&nbsp;                                }
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                                micr *= tenPow(micrLim - p);</b>
+<i class="no-highlight">343</i>&nbsp;
+<i class="no-highlight">344</i>&nbsp;                                // micros
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                                ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                                        + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">347</i>&nbsp;                                        + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">348</i>&nbsp;                                        + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">349</i>&nbsp;                                        + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">350</i>&nbsp;                                        + sec * Timestamps.SECOND_MICROS
+<i class="no-highlight">351</i>&nbsp;                                        + micr
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                                        + checkTimezoneTail(seq, p, lim);</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;                            } else {</b>
+<i class="no-highlight">354</i>&nbsp;                                // seconds
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                                ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                                        + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">357</i>&nbsp;                                        + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">358</i>&nbsp;                                        + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">359</i>&nbsp;                                        + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">360</i>&nbsp;                                        + sec * Timestamps.SECOND_MICROS
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                                        + checkTimezoneTail(seq, p, lim);</b>
+<i class="no-highlight">362</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                        } else {</b>
+<i class="no-highlight">364</i>&nbsp;                            // minute
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                            ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                                    + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">367</i>&nbsp;                                    + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">368</i>&nbsp;                                    + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">369</i>&nbsp;                                    + min * Timestamps.MINUTE_MICROS;
+<i class="no-highlight">370</i>&nbsp;
+<i class="no-highlight">371</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                    } else {</b>
+<i class="no-highlight">373</i>&nbsp;                        // year + month + day + hour
+<b class="fc"><i class="no-highlight">374</i>&nbsp;                        ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                                + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">376</i>&nbsp;                                + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">377</i>&nbsp;                                + hour * Timestamps.HOUR_MICROS;
+<i class="no-highlight">378</i>&nbsp;
+<i class="no-highlight">379</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                } else {</b>
+<i class="no-highlight">381</i>&nbsp;                    // year + month + day
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                    ts = Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                            + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">384</i>&nbsp;                            + (day - 1) * Timestamps.DAY_MICROS;
+<i class="no-highlight">385</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">386</i>&nbsp;            } else {</b>
+<i class="no-highlight">387</i>&nbsp;                // year + month
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));</b>
+<i class="no-highlight">389</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">390</i>&nbsp;        } else {</b>
+<i class="no-highlight">391</i>&nbsp;            // year
+<b class="fc"><i class="no-highlight">392</i>&nbsp;            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));</b>
+<i class="no-highlight">393</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">394</i>&nbsp;        return ts;</b>
+<i class="no-highlight">395</i>&nbsp;    }
+<i class="no-highlight">396</i>&nbsp;
+<i class="no-highlight">397</i>&nbsp;    public static long parseFloorPartialTimestamp(CharSequence seq) throws NumericException {
+<b class="fc"><i class="no-highlight">398</i>&nbsp;        return parseFloorPartialTimestamp(seq, 0, seq.length());</b>
+<i class="no-highlight">399</i>&nbsp;    }
+<i class="no-highlight">400</i>&nbsp;
+<i class="no-highlight">401</i>&nbsp;    public static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
+<b class="fc"><i class="no-highlight">402</i>&nbsp;        if (lim - pos &lt; 4) {</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">404</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">405</i>&nbsp;        int p = pos;</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;        int year = Numbers.parseInt(seq, p, p += 4);</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;        boolean l = Timestamps.isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            checkChar(seq, p++, lim, &#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;            int month = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;            checkRange(month, 1, 12);</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;            if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;                checkChar(seq, p++, lim, &#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                int day = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                    checkChar(seq, p++, lim, &#39;T&#39;);</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                    int hour = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                    checkRange(hour, 0, 23);</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;                    if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                        checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                        int min = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                        checkRange(min, 0, 59);</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                        if (checkLen(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                            checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                            int sec = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                            checkRange(sec, 0, 59);</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                            if (p &lt; lim) {</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                                throw NumericException.INSTANCE;</b>
+<i class="no-highlight">430</i>&nbsp;                            } else {
+<i class="no-highlight">431</i>&nbsp;                                // seconds
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                                addHiLoInterval(Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;                                                + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">434</i>&nbsp;                                                + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">435</i>&nbsp;                                                + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">436</i>&nbsp;                                                + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">437</i>&nbsp;                                                + sec * Timestamps.SECOND_MICROS,
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                                        Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                                                + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">440</i>&nbsp;                                                + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">441</i>&nbsp;                                                + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">442</i>&nbsp;                                                + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">443</i>&nbsp;                                                + sec * Timestamps.SECOND_MICROS
+<i class="no-highlight">444</i>&nbsp;                                                + 999999,
+<i class="no-highlight">445</i>&nbsp;                                        operation,
+<i class="no-highlight">446</i>&nbsp;                                        out);
+<i class="no-highlight">447</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">448</i>&nbsp;                        } else {</b>
+<i class="no-highlight">449</i>&nbsp;                            // minute
+<b class="fc"><i class="no-highlight">450</i>&nbsp;                            addHiLoInterval(Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;                                            + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">452</i>&nbsp;                                            + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">453</i>&nbsp;                                            + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">454</i>&nbsp;                                            + min * Timestamps.MINUTE_MICROS,
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                                    Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;                                            + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">457</i>&nbsp;                                            + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">458</i>&nbsp;                                            + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">459</i>&nbsp;                                            + min * Timestamps.MINUTE_MICROS
+<i class="no-highlight">460</i>&nbsp;                                            + 59 * Timestamps.SECOND_MICROS
+<i class="no-highlight">461</i>&nbsp;                                            + 999999,
+<i class="no-highlight">462</i>&nbsp;                                    operation,
+<i class="no-highlight">463</i>&nbsp;                                    out);
+<i class="no-highlight">464</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">465</i>&nbsp;                    } else {</b>
+<i class="no-highlight">466</i>&nbsp;                        // year + month + day + hour
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                        addHiLoInterval(Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                                        + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">469</i>&nbsp;                                        + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">470</i>&nbsp;                                        + hour * Timestamps.HOUR_MICROS,
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                                Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">472</i>&nbsp;                                        + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">473</i>&nbsp;                                        + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">474</i>&nbsp;                                        + hour * Timestamps.HOUR_MICROS
+<i class="no-highlight">475</i>&nbsp;                                        + 59 * Timestamps.MINUTE_MICROS
+<i class="no-highlight">476</i>&nbsp;                                        + 59 * Timestamps.SECOND_MICROS
+<i class="no-highlight">477</i>&nbsp;                                        + 999999,
+<i class="no-highlight">478</i>&nbsp;                                operation,
+<i class="no-highlight">479</i>&nbsp;                                out);
+<i class="no-highlight">480</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">481</i>&nbsp;                } else {</b>
+<i class="no-highlight">482</i>&nbsp;                    // year + month + day
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                    addHiLoInterval(Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                                    + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">485</i>&nbsp;                                    + (day - 1) * Timestamps.DAY_MICROS,
+<b class="fc"><i class="no-highlight">486</i>&nbsp;                            Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                                    + Timestamps.monthOfYearMicros(month, l)</b>
+<i class="no-highlight">488</i>&nbsp;                                    + (day - 1) * Timestamps.DAY_MICROS
+<i class="no-highlight">489</i>&nbsp;                                    + 23 * Timestamps.HOUR_MICROS
+<i class="no-highlight">490</i>&nbsp;                                    + 59 * Timestamps.MINUTE_MICROS
+<i class="no-highlight">491</i>&nbsp;                                    + 59 * Timestamps.SECOND_MICROS
+<i class="no-highlight">492</i>&nbsp;                                    + 999999,
+<i class="no-highlight">493</i>&nbsp;                            operation,
+<i class="no-highlight">494</i>&nbsp;                            out);
+<i class="no-highlight">495</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">496</i>&nbsp;            } else {</b>
+<i class="no-highlight">497</i>&nbsp;                // year + month
+<b class="fc"><i class="no-highlight">498</i>&nbsp;                addHiLoInterval(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                        Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                                + Timestamps.monthOfYearMicros(month, l)</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                                + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS</b>
+<i class="no-highlight">502</i>&nbsp;                                + 23 * Timestamps.HOUR_MICROS
+<i class="no-highlight">503</i>&nbsp;                                + 59 * Timestamps.MINUTE_MICROS
+<i class="no-highlight">504</i>&nbsp;                                + 59 * Timestamps.SECOND_MICROS
+<i class="no-highlight">505</i>&nbsp;                                + 999999,
+<i class="no-highlight">506</i>&nbsp;                        operation,
+<i class="no-highlight">507</i>&nbsp;                        out);
+<i class="no-highlight">508</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">509</i>&nbsp;        } else {</b>
+<i class="no-highlight">510</i>&nbsp;            // year
+<b class="fc"><i class="no-highlight">511</i>&nbsp;            addHiLoInterval(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;                    Timestamps.yearMicros(year, l)</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                            + Timestamps.monthOfYearMicros(12, l)</b>
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                            + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS</b>
+<i class="no-highlight">515</i>&nbsp;                            + 23 * Timestamps.HOUR_MICROS
+<i class="no-highlight">516</i>&nbsp;                            + 59 * Timestamps.MINUTE_MICROS
+<i class="no-highlight">517</i>&nbsp;                            + 59 * Timestamps.SECOND_MICROS
+<i class="no-highlight">518</i>&nbsp;                            + 999999,
+<i class="no-highlight">519</i>&nbsp;                    operation,
+<i class="no-highlight">520</i>&nbsp;                    out);
+<i class="no-highlight">521</i>&nbsp;        }
+<i class="no-highlight">522</i>&nbsp;    }
+<i class="no-highlight">523</i>&nbsp;
+<i class="no-highlight">524</i>&nbsp;    public static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+<b class="fc"><i class="no-highlight">525</i>&nbsp;        int writeIndex = out.size();</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        int[] pos = new int[3];</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;        int p = -1;</b>
+<b class="fc"><i class="no-highlight">528</i>&nbsp;        for (int i = lo; i &lt; lim; i++) {</b>
+<b class="fc"><i class="no-highlight">529</i>&nbsp;            if (seq.charAt(i) == &#39;;&#39;) {</b>
+<b class="fc"><i class="no-highlight">530</i>&nbsp;                if (p &gt; 1) {</b>
+<b class="nc"><i class="no-highlight">531</i>&nbsp;                    throw SqlException.$(position, &quot;Invalid interval format&quot;);</b>
+<i class="no-highlight">532</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">533</i>&nbsp;                pos[++p] = i;</b>
+<i class="no-highlight">534</i>&nbsp;            }
+<i class="no-highlight">535</i>&nbsp;        }
+<i class="no-highlight">536</i>&nbsp;
+<b class="fc"><i class="no-highlight">537</i>&nbsp;        switch (p) {</b>
+<i class="no-highlight">538</i>&nbsp;            case -1:
+<i class="no-highlight">539</i>&nbsp;                // no semicolons, just date part, which can be interval in itself
+<i class="no-highlight">540</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">541</i>&nbsp;                    parseInterval(seq, lo, lim, operation, out);</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;                    break;</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;                } catch (NumericException ignore) {</b>
+<i class="no-highlight">544</i>&nbsp;                    // this must be a date then?
+<i class="no-highlight">545</i>&nbsp;                }
+<i class="no-highlight">546</i>&nbsp;
+<i class="no-highlight">547</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                    long millis = parseFloorPartialTimestamp(seq, lo, lim);</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                    addHiLoInterval(millis, millis, operation, out);</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;                    break;</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;                } catch (NumericException e) {</b>
+<i class="no-highlight">552</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                        long millis = Numbers.parseLong(seq);</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;                        addHiLoInterval(millis, millis, operation, out);</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;                        break;</b>
+<b class="fc"><i class="no-highlight">556</i>&nbsp;                    } catch (NumericException e2) {</b>
+<b class="fc"><i class="no-highlight">557</i>&nbsp;                        throw SqlException.$(position, &quot;Invalid date&quot;);</b>
+<i class="no-highlight">558</i>&nbsp;                    }
+<i class="no-highlight">559</i>&nbsp;                }
+<i class="no-highlight">560</i>&nbsp;            case 0:
+<i class="no-highlight">561</i>&nbsp;                // single semicolon, expect period format after date
+<b class="fc"><i class="no-highlight">562</i>&nbsp;                parseRange(seq, lo, pos[0], lim, position, operation, out);</b>
+<b class="fc"><i class="no-highlight">563</i>&nbsp;                break;</b>
+<i class="no-highlight">564</i>&nbsp;            case 2:
+<i class="no-highlight">565</i>&nbsp;                // 2018-01-10T10:30:00.000Z;30m;2d;2
+<i class="no-highlight">566</i>&nbsp;                // means 10:30-11:00 every second day starting 2018-01-10
+<i class="no-highlight">567</i>&nbsp;                int period;
+<i class="no-highlight">568</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);</b>
+<b class="nc"><i class="no-highlight">570</i>&nbsp;                } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">571</i>&nbsp;                    throw SqlException.$(position, &quot;Period not a number&quot;);</b>
+<b class="fc"><i class="no-highlight">572</i>&nbsp;                }</b>
+<i class="no-highlight">573</i>&nbsp;                int count;
+<i class="no-highlight">574</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                    count = Numbers.parseInt(seq, pos[2] + 1, lim);</b>
+<b class="nc"><i class="no-highlight">576</i>&nbsp;                } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">577</i>&nbsp;                    throw SqlException.$(position, &quot;Count not a number&quot;);</b>
+<b class="fc"><i class="no-highlight">578</i>&nbsp;                }</b>
+<i class="no-highlight">579</i>&nbsp;
+<b class="fc"><i class="no-highlight">580</i>&nbsp;                parseRange(seq, lo, pos[0], pos[1], position, operation, out);</b>
+<b class="fc"><i class="no-highlight">581</i>&nbsp;                char type = seq.charAt(pos[2] - 1);</b>
+<b class="fc"><i class="no-highlight">582</i>&nbsp;                long low = getEncodedPeriodLo(out, writeIndex);</b>
+<b class="fc"><i class="no-highlight">583</i>&nbsp;                long hi = getEncodedPeriodHi(out, writeIndex);</b>
+<i class="no-highlight">584</i>&nbsp;
+<b class="fc"><i class="no-highlight">585</i>&nbsp;                replaceHiLoInterval(low, hi, period, type, count, operation, out);</b>
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                switch (type) {</b>
+<i class="no-highlight">587</i>&nbsp;                    case PeriodType.YEAR:
+<i class="no-highlight">588</i>&nbsp;                    case PeriodType.MONTH:
+<i class="no-highlight">589</i>&nbsp;                    case PeriodType.HOUR:
+<i class="no-highlight">590</i>&nbsp;                    case PeriodType.MINUTE:
+<i class="no-highlight">591</i>&nbsp;                    case PeriodType.SECOND:
+<i class="no-highlight">592</i>&nbsp;                    case PeriodType.DAY:
+<b class="fc"><i class="no-highlight">593</i>&nbsp;                        break;</b>
+<i class="no-highlight">594</i>&nbsp;                    default:
+<b class="nc"><i class="no-highlight">595</i>&nbsp;                        throw SqlException.$(position, &quot;Unknown period: &quot; + type + &quot; at &quot; + (p - 1));</b>
+<i class="no-highlight">596</i>&nbsp;                }
+<i class="no-highlight">597</i>&nbsp;                break;
+<i class="no-highlight">598</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">599</i>&nbsp;                throw SqlException.$(position, &quot;Invalid interval format&quot;);</b>
+<i class="no-highlight">600</i>&nbsp;        }
+<i class="no-highlight">601</i>&nbsp;    }
+<i class="no-highlight">602</i>&nbsp;
+<i class="no-highlight">603</i>&nbsp;    public static void parseSingleTimestamp(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+<i class="no-highlight">604</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">605</i>&nbsp;            long millis = parseFloorPartialTimestamp(seq, lo, lim);</b>
+<b class="fc"><i class="no-highlight">606</i>&nbsp;            addHiLoInterval(millis, millis, operation, out);</b>
+<b class="fc"><i class="no-highlight">607</i>&nbsp;        } catch (NumericException e) {</b>
+<i class="no-highlight">608</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">609</i>&nbsp;                long millis = Numbers.parseLong(seq);</b>
+<b class="fc"><i class="no-highlight">610</i>&nbsp;                addHiLoInterval(millis, millis, operation, out);</b>
+<b class="fc"><i class="no-highlight">611</i>&nbsp;            } catch (NumericException e2) {</b>
+<b class="fc"><i class="no-highlight">612</i>&nbsp;                for (int i = lo; i &lt; lim; i++) {</b>
+<b class="fc"><i class="no-highlight">613</i>&nbsp;                    if (seq.charAt(i) == &#39;;&#39;) {</b>
+<b class="fc"><i class="no-highlight">614</i>&nbsp;                        throw SqlException.$(position, &quot;Not a date, use IN keyword with intervals&quot;);</b>
+<i class="no-highlight">615</i>&nbsp;                    }
+<i class="no-highlight">616</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">617</i>&nbsp;                throw SqlException.$(position, &quot;Invalid date&quot;);</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;        }</b>
+<i class="no-highlight">620</i>&nbsp;    }
+<i class="no-highlight">621</i>&nbsp;
+<i class="no-highlight">622</i>&nbsp;    public static void subtract(LongList intervals, int divider) {
+<b class="fc"><i class="no-highlight">623</i>&nbsp;        IntervalUtils.invert(intervals, divider);</b>
+<b class="fc"><i class="no-highlight">624</i>&nbsp;        IntervalUtils.intersectInplace(intervals, divider);</b>
+<i class="no-highlight">625</i>&nbsp;    }
+<i class="no-highlight">626</i>&nbsp;
+<i class="no-highlight">627</i>&nbsp;    public static long tryParseTimestamp(CharSequence seq) throws CairoException {
+<i class="no-highlight">628</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">629</i>&nbsp;            return parseFloorPartialTimestamp(seq, 0, seq.length());</b>
+<b class="nc"><i class="no-highlight">630</i>&nbsp;        } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">631</i>&nbsp;            throw CairoException.nonCritical().put(&quot;Invalid timestamp: &quot;).put(seq);</b>
+<i class="no-highlight">632</i>&nbsp;        }
+<i class="no-highlight">633</i>&nbsp;    }
+<i class="no-highlight">634</i>&nbsp;
+<i class="no-highlight">635</i>&nbsp;    private static void addMillisInterval(long period, int count, LongList out) {
+<b class="fc"><i class="no-highlight">636</i>&nbsp;        int k = out.size();</b>
+<b class="fc"><i class="no-highlight">637</i>&nbsp;        long lo = out.getQuick(k - 2);</b>
+<b class="fc"><i class="no-highlight">638</i>&nbsp;        long hi = out.getQuick(k - 1);</b>
+<b class="fc"><i class="no-highlight">639</i>&nbsp;        int n = count - 1;</b>
+<b class="fc"><i class="no-highlight">640</i>&nbsp;        if (period &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">641</i>&nbsp;            lo += period * n;</b>
+<b class="fc"><i class="no-highlight">642</i>&nbsp;            hi += period * n;</b>
+<b class="fc"><i class="no-highlight">643</i>&nbsp;            out.setQuick(k - 2, lo);</b>
+<b class="fc"><i class="no-highlight">644</i>&nbsp;            out.setQuick(k - 1, hi);</b>
+<b class="fc"><i class="no-highlight">645</i>&nbsp;            period = -period;</b>
+<i class="no-highlight">646</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">647</i>&nbsp;        int writePoint = k / 2;</b>
+<i class="no-highlight">648</i>&nbsp;
+<b class="fc"><i class="no-highlight">649</i>&nbsp;        for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">650</i>&nbsp;            lo += period;</b>
+<b class="fc"><i class="no-highlight">651</i>&nbsp;            hi += period;</b>
+<b class="fc"><i class="no-highlight">652</i>&nbsp;            writePoint = append(out, writePoint, lo, hi);</b>
+<i class="no-highlight">653</i>&nbsp;        }
+<i class="no-highlight">654</i>&nbsp;    }
+<i class="no-highlight">655</i>&nbsp;
+<i class="no-highlight">656</i>&nbsp;    private static void addMonthInterval(int period, int count, LongList out) {
+<b class="fc"><i class="no-highlight">657</i>&nbsp;        int k = out.size();</b>
+<b class="fc"><i class="no-highlight">658</i>&nbsp;        long lo = out.getQuick(k - 2);</b>
+<b class="fc"><i class="no-highlight">659</i>&nbsp;        long hi = out.getQuick(k - 1);</b>
+<b class="fc"><i class="no-highlight">660</i>&nbsp;        int writePoint = k / 2;</b>
+<b class="fc"><i class="no-highlight">661</i>&nbsp;        int n = count - 1;</b>
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        if (period &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">663</i>&nbsp;            lo = Timestamps.addMonths(lo, period * n);</b>
+<b class="fc"><i class="no-highlight">664</i>&nbsp;            hi = Timestamps.addMonths(hi, period * n);</b>
+<b class="fc"><i class="no-highlight">665</i>&nbsp;            out.setQuick(k - 2, lo);</b>
+<b class="fc"><i class="no-highlight">666</i>&nbsp;            out.setQuick(k - 1, hi);</b>
+<b class="fc"><i class="no-highlight">667</i>&nbsp;            period = -period;</b>
+<i class="no-highlight">668</i>&nbsp;        }
+<i class="no-highlight">669</i>&nbsp;
+<b class="fc"><i class="no-highlight">670</i>&nbsp;        for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">671</i>&nbsp;            lo = Timestamps.addMonths(lo, period);</b>
+<b class="fc"><i class="no-highlight">672</i>&nbsp;            hi = Timestamps.addMonths(hi, period);</b>
+<b class="fc"><i class="no-highlight">673</i>&nbsp;            writePoint = append(out, writePoint, lo, hi);</b>
+<i class="no-highlight">674</i>&nbsp;        }
+<i class="no-highlight">675</i>&nbsp;    }
+<i class="no-highlight">676</i>&nbsp;
+<i class="no-highlight">677</i>&nbsp;    private static void addYearIntervals(int period, int count, LongList out) {
+<b class="fc"><i class="no-highlight">678</i>&nbsp;        int k = out.size();</b>
+<b class="fc"><i class="no-highlight">679</i>&nbsp;        long lo = out.getQuick(k - 2);</b>
+<b class="fc"><i class="no-highlight">680</i>&nbsp;        long hi = out.getQuick(k - 1);</b>
+<b class="fc"><i class="no-highlight">681</i>&nbsp;        int writePoint = k / 2;</b>
+<b class="fc"><i class="no-highlight">682</i>&nbsp;        int n = count - 1;</b>
+<b class="fc"><i class="no-highlight">683</i>&nbsp;        if (period &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">684</i>&nbsp;            lo = Timestamps.addYear(lo, period * n);</b>
+<b class="fc"><i class="no-highlight">685</i>&nbsp;            hi = Timestamps.addYear(hi, period * n);</b>
+<b class="fc"><i class="no-highlight">686</i>&nbsp;            out.setQuick(k - 2, lo);</b>
+<b class="fc"><i class="no-highlight">687</i>&nbsp;            out.setQuick(k - 1, hi);</b>
+<b class="fc"><i class="no-highlight">688</i>&nbsp;            period = -period;</b>
+<i class="no-highlight">689</i>&nbsp;        }
+<i class="no-highlight">690</i>&nbsp;
+<b class="fc"><i class="no-highlight">691</i>&nbsp;        for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">692</i>&nbsp;            lo = Timestamps.addYear(lo, period);</b>
+<b class="fc"><i class="no-highlight">693</i>&nbsp;            hi = Timestamps.addYear(hi, period);</b>
+<b class="fc"><i class="no-highlight">694</i>&nbsp;            writePoint = append(out, writePoint, lo, hi);</b>
+<i class="no-highlight">695</i>&nbsp;        }
+<i class="no-highlight">696</i>&nbsp;    }
+<i class="no-highlight">697</i>&nbsp;
+<i class="no-highlight">698</i>&nbsp;    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
+<b class="fc"><i class="no-highlight">699</i>&nbsp;        if (p &gt;= lim || s.charAt(p) != c) {</b>
+<b class="fc"><i class="no-highlight">700</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">701</i>&nbsp;        }
+<i class="no-highlight">702</i>&nbsp;    }
+<i class="no-highlight">703</i>&nbsp;
+<i class="no-highlight">704</i>&nbsp;    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
+<b class="fc"><i class="no-highlight">705</i>&nbsp;        if (p &gt;= lim || (s.charAt(p) != c1 &amp;&amp; s.charAt(p) != c2)) {</b>
+<b class="fc"><i class="no-highlight">706</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">707</i>&nbsp;        }
+<i class="no-highlight">708</i>&nbsp;    }
+<i class="no-highlight">709</i>&nbsp;
+<i class="no-highlight">710</i>&nbsp;    private static boolean checkLen(int p, int lim) throws NumericException {
+<b class="fc"><i class="no-highlight">711</i>&nbsp;        if (lim - p &gt; 2) {</b>
+<b class="fc"><i class="no-highlight">712</i>&nbsp;            return true;</b>
+<i class="no-highlight">713</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">714</i>&nbsp;        if (lim &lt;= p) {</b>
+<b class="fc"><i class="no-highlight">715</i>&nbsp;            return false;</b>
+<i class="no-highlight">716</i>&nbsp;        }
+<i class="no-highlight">717</i>&nbsp;
+<b class="fc"><i class="no-highlight">718</i>&nbsp;        throw NumericException.INSTANCE;</b>
+<i class="no-highlight">719</i>&nbsp;    }
+<i class="no-highlight">720</i>&nbsp;
+<i class="no-highlight">721</i>&nbsp;    private static boolean checkLenStrict(int p, int lim) throws NumericException {
+<b class="fc"><i class="no-highlight">722</i>&nbsp;        if (lim - p == 2) {</b>
+<b class="fc"><i class="no-highlight">723</i>&nbsp;            return true;</b>
+<i class="no-highlight">724</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">725</i>&nbsp;        if (lim &lt;= p) {</b>
+<b class="fc"><i class="no-highlight">726</i>&nbsp;            return false;</b>
+<i class="no-highlight">727</i>&nbsp;        }
+<i class="no-highlight">728</i>&nbsp;
+<b class="nc"><i class="no-highlight">729</i>&nbsp;        throw NumericException.INSTANCE;</b>
+<i class="no-highlight">730</i>&nbsp;    }
+<i class="no-highlight">731</i>&nbsp;
+<i class="no-highlight">732</i>&nbsp;    private static void checkRange(int x, int min, int max) throws NumericException {
+<b class="fc"><i class="no-highlight">733</i>&nbsp;        if (x &lt; min || x &gt; max) {</b>
+<b class="fc"><i class="no-highlight">734</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">735</i>&nbsp;        }
+<i class="no-highlight">736</i>&nbsp;    }
+<i class="no-highlight">737</i>&nbsp;
+<i class="no-highlight">738</i>&nbsp;    private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
+<b class="fc"><i class="no-highlight">739</i>&nbsp;        if (lim == p) {</b>
+<b class="fc"><i class="no-highlight">740</i>&nbsp;            return 0;</b>
+<i class="no-highlight">741</i>&nbsp;        }
+<i class="no-highlight">742</i>&nbsp;
+<b class="fc"><i class="no-highlight">743</i>&nbsp;        if (lim - p &lt; 2) {</b>
+<b class="fc"><i class="no-highlight">744</i>&nbsp;            checkChar(seq, p, lim, &#39;Z&#39;);</b>
+<b class="fc"><i class="no-highlight">745</i>&nbsp;            return 0;</b>
+<i class="no-highlight">746</i>&nbsp;        }
+<i class="no-highlight">747</i>&nbsp;
+<b class="fc"><i class="no-highlight">748</i>&nbsp;        if (lim - p &gt; 2) {</b>
+<b class="fc"><i class="no-highlight">749</i>&nbsp;            int tzSign = parseSign(seq, p++);</b>
+<b class="fc"><i class="no-highlight">750</i>&nbsp;            int hour = Numbers.parseInt(seq, p, p += 2);</b>
+<b class="fc"><i class="no-highlight">751</i>&nbsp;            checkRange(hour, 0, 23);</b>
+<i class="no-highlight">752</i>&nbsp;
+<b class="fc"><i class="no-highlight">753</i>&nbsp;            if (lim - p == 3) {</b>
+<i class="no-highlight">754</i>&nbsp;                // Optional : separator between hours and mins in timezone
+<b class="fc"><i class="no-highlight">755</i>&nbsp;                checkChar(seq, p++, lim, &#39;:&#39;);</b>
+<i class="no-highlight">756</i>&nbsp;            }
+<i class="no-highlight">757</i>&nbsp;
+<b class="fc"><i class="no-highlight">758</i>&nbsp;            if (checkLenStrict(p, lim)) {</b>
+<b class="fc"><i class="no-highlight">759</i>&nbsp;                int min = Numbers.parseInt(seq, p, p + 2);</b>
+<b class="fc"><i class="no-highlight">760</i>&nbsp;                checkRange(min, 0, 59);</b>
+<b class="fc"><i class="no-highlight">761</i>&nbsp;                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);</b>
+<i class="no-highlight">762</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">763</i>&nbsp;                return tzSign * (hour * Timestamps.HOUR_MICROS);</b>
+<i class="no-highlight">764</i>&nbsp;            }
+<i class="no-highlight">765</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">766</i>&nbsp;        throw NumericException.INSTANCE;</b>
+<i class="no-highlight">767</i>&nbsp;    }
+<i class="no-highlight">768</i>&nbsp;
+<i class="no-highlight">769</i>&nbsp;    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
+<b class="fc"><i class="no-highlight">770</i>&nbsp;        char type = seq.charAt(lim - 1);</b>
+<i class="no-highlight">771</i>&nbsp;        int period;
+<i class="no-highlight">772</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">773</i>&nbsp;            period = Numbers.parseInt(seq, p + 1, lim - 1);</b>
+<b class="nc"><i class="no-highlight">774</i>&nbsp;        } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">775</i>&nbsp;            throw SqlException.$(position, &quot;Range not a number&quot;);</b>
+<b class="fc"><i class="no-highlight">776</i>&nbsp;        }</b>
+<i class="no-highlight">777</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">778</i>&nbsp;            int index = out.size();</b>
+<b class="fc"><i class="no-highlight">779</i>&nbsp;            parseInterval(seq, lo, p, operation, out);</b>
+<b class="fc"><i class="no-highlight">780</i>&nbsp;            long low = getEncodedPeriodLo(out, index);</b>
+<b class="fc"><i class="no-highlight">781</i>&nbsp;            long hi = getEncodedPeriodHi(out, index);</b>
+<b class="fc"><i class="no-highlight">782</i>&nbsp;            hi = Timestamps.addPeriod(hi, type, period);</b>
+<b class="fc"><i class="no-highlight">783</i>&nbsp;            if (hi &lt; low) {</b>
+<b class="nc"><i class="no-highlight">784</i>&nbsp;                throw SqlException.invalidDate(position);</b>
+<i class="no-highlight">785</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">786</i>&nbsp;            replaceHiLoInterval(low, hi, operation, out);</b>
+<i class="no-highlight">787</i>&nbsp;            return;
+<b class="fc"><i class="no-highlight">788</i>&nbsp;        } catch (NumericException ignore) {</b>
+<i class="no-highlight">789</i>&nbsp;            // try date instead
+<i class="no-highlight">790</i>&nbsp;        }
+<i class="no-highlight">791</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">792</i>&nbsp;            long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);</b>
+<b class="fc"><i class="no-highlight">793</i>&nbsp;            long hiMillis = Timestamps.addPeriod(loMillis, type, period);</b>
+<b class="fc"><i class="no-highlight">794</i>&nbsp;            if (hiMillis &lt; loMillis) {</b>
+<b class="fc"><i class="no-highlight">795</i>&nbsp;                throw SqlException.invalidDate(position);</b>
+<i class="no-highlight">796</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">797</i>&nbsp;            addHiLoInterval(loMillis, hiMillis, operation, out);</b>
+<b class="nc"><i class="no-highlight">798</i>&nbsp;        } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">799</i>&nbsp;            throw SqlException.invalidDate(position);</b>
+<b class="fc"><i class="no-highlight">800</i>&nbsp;        }</b>
+<i class="no-highlight">801</i>&nbsp;    }
+<i class="no-highlight">802</i>&nbsp;
+<i class="no-highlight">803</i>&nbsp;    private static int parseSign(CharSequence seq, int p) throws NumericException {
+<i class="no-highlight">804</i>&nbsp;        int tzSign;
+<b class="fc"><i class="no-highlight">805</i>&nbsp;        switch (seq.charAt(p)) {</b>
+<i class="no-highlight">806</i>&nbsp;            case &#39;+&#39;:
+<b class="fc"><i class="no-highlight">807</i>&nbsp;                tzSign = -1;</b>
+<b class="fc"><i class="no-highlight">808</i>&nbsp;                break;</b>
+<i class="no-highlight">809</i>&nbsp;            case &#39;-&#39;:
+<b class="fc"><i class="no-highlight">810</i>&nbsp;                tzSign = 1;</b>
+<b class="fc"><i class="no-highlight">811</i>&nbsp;                break;</b>
+<i class="no-highlight">812</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">813</i>&nbsp;                throw NumericException.INSTANCE;</b>
+<i class="no-highlight">814</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">815</i>&nbsp;        return tzSign;</b>
+<i class="no-highlight">816</i>&nbsp;    }
+<i class="no-highlight">817</i>&nbsp;
+<i class="no-highlight">818</i>&nbsp;    private static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+<b class="fc"><i class="no-highlight">819</i>&nbsp;        int lastIndex = out.size() - 4;</b>
+<b class="fc"><i class="no-highlight">820</i>&nbsp;        out.setQuick(lastIndex, lo);</b>
+<b class="fc"><i class="no-highlight">821</i>&nbsp;        out.setQuick(lastIndex + HI_INDEX, hi);</b>
+<b class="fc"><i class="no-highlight">822</i>&nbsp;        out.setQuick(lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX, Numbers.encodeLowHighInts(</b>
+<b class="fc"><i class="no-highlight">823</i>&nbsp;                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),</b>
+<i class="no-highlight">824</i>&nbsp;                0));
+<b class="fc"><i class="no-highlight">825</i>&nbsp;        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));</b>
+<i class="no-highlight">826</i>&nbsp;    }
+<i class="no-highlight">827</i>&nbsp;
+<i class="no-highlight">828</i>&nbsp;    private static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
+<b class="fc"><i class="no-highlight">829</i>&nbsp;        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);</b>
+<i class="no-highlight">830</i>&nbsp;    }
+<i class="no-highlight">831</i>&nbsp;
+<i class="no-highlight">832</i>&nbsp;    private static int tenPow(int i) throws NumericException {
+<b class="fc"><i class="no-highlight">833</i>&nbsp;        switch (i) {</b>
+<i class="no-highlight">834</i>&nbsp;            case 0:
+<b class="fc"><i class="no-highlight">835</i>&nbsp;                return 1;</b>
+<i class="no-highlight">836</i>&nbsp;            case 1:
+<b class="fc"><i class="no-highlight">837</i>&nbsp;                return 10;</b>
+<i class="no-highlight">838</i>&nbsp;            case 2:
+<b class="fc"><i class="no-highlight">839</i>&nbsp;                return 100;</b>
+<i class="no-highlight">840</i>&nbsp;            case 3:
+<b class="fc"><i class="no-highlight">841</i>&nbsp;                return 1000;</b>
+<i class="no-highlight">842</i>&nbsp;            case 4:
+<b class="fc"><i class="no-highlight">843</i>&nbsp;                return 10000;</b>
+<i class="no-highlight">844</i>&nbsp;            case 5:
+<b class="fc"><i class="no-highlight">845</i>&nbsp;                return 100000;</b>
+<i class="no-highlight">846</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">847</i>&nbsp;                throw NumericException.INSTANCE;</b>
+<i class="no-highlight">848</i>&nbsp;        }
+<i class="no-highlight">849</i>&nbsp;    }
+<i class="no-highlight">850</i>&nbsp;
+<i class="no-highlight">851</i>&nbsp;    static int append(LongList list, int writePoint, long lo, long hi) {
+<b class="fc"><i class="no-highlight">852</i>&nbsp;        if (writePoint &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">853</i>&nbsp;            long prevHi = list.getQuick(2 * writePoint - 1) + 1;</b>
+<b class="fc"><i class="no-highlight">854</i>&nbsp;            if (prevHi &gt;= lo) {</b>
+<b class="fc"><i class="no-highlight">855</i>&nbsp;                list.setQuick(2 * writePoint - 1, hi);</b>
+<b class="fc"><i class="no-highlight">856</i>&nbsp;                return writePoint;</b>
+<i class="no-highlight">857</i>&nbsp;            }
+<i class="no-highlight">858</i>&nbsp;        }
+<i class="no-highlight">859</i>&nbsp;
+<b class="fc"><i class="no-highlight">860</i>&nbsp;        list.extendAndSet(2 * writePoint + 1, hi);</b>
+<b class="fc"><i class="no-highlight">861</i>&nbsp;        list.setQuick(2 * writePoint, lo);</b>
+<b class="fc"><i class="no-highlight">862</i>&nbsp;        return writePoint + 1;</b>
+<i class="no-highlight">863</i>&nbsp;    }
+<i class="no-highlight">864</i>&nbsp;
+<i class="no-highlight">865</i>&nbsp;    /**
+<i class="no-highlight">866</i>&nbsp;     * Intersects two lists of intervals compacted in one list in place.
+<i class="no-highlight">867</i>&nbsp;     * Intervals to be chronologically ordered and result list will be ordered as well.
+<i class="no-highlight">868</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">869</i>&nbsp;     * Treat a as 2 lists,
+<i class="no-highlight">870</i>&nbsp;     * a: first from 0 to divider
+<i class="no-highlight">871</i>&nbsp;     * b: from divider to the end of list
+<i class="no-highlight">872</i>&nbsp;     *
+<i class="no-highlight">873</i>&nbsp;     * @param concatenatedIntervals 2 lists of intervals concatenated in 1
+<i class="no-highlight">874</i>&nbsp;     */
+<i class="no-highlight">875</i>&nbsp;    static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
+<b class="fc"><i class="no-highlight">876</i>&nbsp;        final int sizeA = dividerIndex / 2;</b>
+<b class="fc"><i class="no-highlight">877</i>&nbsp;        final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;</b>
+<b class="fc"><i class="no-highlight">878</i>&nbsp;        int aLower = 0;</b>
+<i class="no-highlight">879</i>&nbsp;
+<b class="fc"><i class="no-highlight">880</i>&nbsp;        int intervalB = sizeA;</b>
+<b class="fc"><i class="no-highlight">881</i>&nbsp;        int writePoint = 0;</b>
+<i class="no-highlight">882</i>&nbsp;
+<b class="fc"><i class="no-highlight">883</i>&nbsp;        int aUpperSize = sizeB;</b>
+<b class="fc"><i class="no-highlight">884</i>&nbsp;        int aUpper = sizeB;</b>
+<i class="no-highlight">885</i>&nbsp;
+<b class="fc"><i class="no-highlight">886</i>&nbsp;        while ((aLower &lt; sizeA || aUpper &lt; aUpperSize) &amp;&amp; intervalB &lt; sizeB) {</b>
+<i class="no-highlight">887</i>&nbsp;
+<b class="fc"><i class="no-highlight">888</i>&nbsp;            int intervalA = aUpper &lt; aUpperSize ? aUpper : aLower;</b>
+<b class="fc"><i class="no-highlight">889</i>&nbsp;            long aLo = concatenatedIntervals.getQuick(intervalA * 2);</b>
+<b class="fc"><i class="no-highlight">890</i>&nbsp;            long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);</b>
+<i class="no-highlight">891</i>&nbsp;
+<b class="fc"><i class="no-highlight">892</i>&nbsp;            long bLo = concatenatedIntervals.getQuick(intervalB * 2);</b>
+<b class="fc"><i class="no-highlight">893</i>&nbsp;            long bHi = concatenatedIntervals.getQuick(intervalB * 2 + 1);</b>
+<i class="no-highlight">894</i>&nbsp;
+<b class="fc"><i class="no-highlight">895</i>&nbsp;            if (aHi &lt; bLo) {</b>
+<i class="no-highlight">896</i>&nbsp;                // a fully above b
+<i class="no-highlight">897</i>&nbsp;                // a loses
+<b class="fc"><i class="no-highlight">898</i>&nbsp;                if (aUpper &lt; aUpperSize) {</b>
+<b class="fc"><i class="no-highlight">899</i>&nbsp;                    aUpper++;</b>
+<i class="no-highlight">900</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">901</i>&nbsp;                    aLower++;</b>
+<i class="no-highlight">902</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">903</i>&nbsp;            } else if (aLo &gt; bHi) {</b>
+<i class="no-highlight">904</i>&nbsp;                // a fully below b
+<i class="no-highlight">905</i>&nbsp;                // b loses
+<b class="fc"><i class="no-highlight">906</i>&nbsp;                intervalB++;</b>
+<i class="no-highlight">907</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">908</i>&nbsp;                if (aHi &lt; bHi) {</b>
+<i class="no-highlight">909</i>&nbsp;                    // b hanging lower than a
+<i class="no-highlight">910</i>&nbsp;                    // a loses
+<b class="fc"><i class="no-highlight">911</i>&nbsp;                    if (aUpper &lt; aUpperSize) {</b>
+<b class="fc"><i class="no-highlight">912</i>&nbsp;                        aUpper++;</b>
+<i class="no-highlight">913</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                        aLower++;</b>
+<i class="no-highlight">915</i>&nbsp;                    }
+<i class="no-highlight">916</i>&nbsp;                } else {
+<i class="no-highlight">917</i>&nbsp;                    // otherwise a lower than b
+<i class="no-highlight">918</i>&nbsp;                    // a loses
+<b class="fc"><i class="no-highlight">919</i>&nbsp;                    intervalB++;</b>
+<i class="no-highlight">920</i>&nbsp;                }
+<i class="no-highlight">921</i>&nbsp;
+<b class="fc"><i class="no-highlight">922</i>&nbsp;                assert writePoint &lt;= aLower || writePoint &gt;= sizeA;</b>
+<b class="fc"><i class="no-highlight">923</i>&nbsp;                if (writePoint == aLower &amp;&amp; aLower &lt; sizeA) {</b>
+<i class="no-highlight">924</i>&nbsp;                    // We cannot keep A position, it will be overwritten, hence intervalB++; is not possible
+<i class="no-highlight">925</i>&nbsp;                    // Copy a point to A area instead
+<b class="fc"><i class="no-highlight">926</i>&nbsp;                    concatenatedIntervals.add(</b>
+<b class="fc"><i class="no-highlight">927</i>&nbsp;                            concatenatedIntervals.getQuick(writePoint * 2),</b>
+<b class="fc"><i class="no-highlight">928</i>&nbsp;                            concatenatedIntervals.getQuick(writePoint * 2 + 1)</b>
+<i class="no-highlight">929</i>&nbsp;                    );
+<b class="fc"><i class="no-highlight">930</i>&nbsp;                    aUpperSize = concatenatedIntervals.size() / 2;</b>
+<b class="fc"><i class="no-highlight">931</i>&nbsp;                    aLower++;</b>
+<i class="no-highlight">932</i>&nbsp;                }
+<i class="no-highlight">933</i>&nbsp;
+<b class="fc"><i class="no-highlight">934</i>&nbsp;                writePoint = append(concatenatedIntervals, writePoint, Math.max(aLo, bLo), Math.min(aHi, bHi));</b>
+<i class="no-highlight">935</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">936</i>&nbsp;        }</b>
+<i class="no-highlight">937</i>&nbsp;
+<b class="fc"><i class="no-highlight">938</i>&nbsp;        concatenatedIntervals.setPos(2 * writePoint);</b>
+<i class="no-highlight">939</i>&nbsp;    }
+<i class="no-highlight">940</i>&nbsp;
+<i class="no-highlight">941</i>&nbsp;    /**
+<i class="no-highlight">942</i>&nbsp;     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+<i class="no-highlight">943</i>&nbsp;     *
+<i class="no-highlight">944</i>&nbsp;     * @param intervals collection of intervals
+<i class="no-highlight">945</i>&nbsp;     */
+<i class="no-highlight">946</i>&nbsp;    static void invert(LongList intervals) {
+<b class="fc"><i class="no-highlight">947</i>&nbsp;        invert(intervals, 0);</b>
+<i class="no-highlight">948</i>&nbsp;    }
+<i class="no-highlight">949</i>&nbsp;
+<i class="no-highlight">950</i>&nbsp;    /**
+<i class="no-highlight">951</i>&nbsp;     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+<i class="no-highlight">952</i>&nbsp;     *
+<i class="no-highlight">953</i>&nbsp;     * @param intervals collection of intervals
+<i class="no-highlight">954</i>&nbsp;     */
+<i class="no-highlight">955</i>&nbsp;    static void invert(LongList intervals, int startIndex) {
+<b class="fc"><i class="no-highlight">956</i>&nbsp;        long last = Long.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">957</i>&nbsp;        int n = intervals.size();</b>
+<b class="fc"><i class="no-highlight">958</i>&nbsp;        int writeIndex = startIndex;</b>
+<b class="fc"><i class="no-highlight">959</i>&nbsp;        for (int i = startIndex; i &lt; n; i += 2) {</b>
+<b class="fc"><i class="no-highlight">960</i>&nbsp;            final long lo = intervals.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">961</i>&nbsp;            final long hi = intervals.getQuick(i + 1);</b>
+<b class="fc"><i class="no-highlight">962</i>&nbsp;            if (lo &gt; last) {</b>
+<b class="fc"><i class="no-highlight">963</i>&nbsp;                intervals.setQuick(writeIndex, last);</b>
+<b class="fc"><i class="no-highlight">964</i>&nbsp;                intervals.setQuick(writeIndex + 1, lo - 1);</b>
+<b class="fc"><i class="no-highlight">965</i>&nbsp;                writeIndex += 2;</b>
+<i class="no-highlight">966</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">967</i>&nbsp;            last = hi + 1;</b>
+<i class="no-highlight">968</i>&nbsp;        }
+<i class="no-highlight">969</i>&nbsp;
+<i class="no-highlight">970</i>&nbsp;        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
+<b class="fc"><i class="no-highlight">971</i>&nbsp;        if (last != Long.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">972</i>&nbsp;            intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);</b>
+<b class="fc"><i class="no-highlight">973</i>&nbsp;            intervals.setQuick(writeIndex, last);</b>
+<b class="fc"><i class="no-highlight">974</i>&nbsp;            writeIndex += 2;</b>
+<i class="no-highlight">975</i>&nbsp;        }
+<i class="no-highlight">976</i>&nbsp;
+<b class="fc"><i class="no-highlight">977</i>&nbsp;        intervals.setPos(writeIndex);</b>
+<i class="no-highlight">978</i>&nbsp;    }
+<i class="no-highlight">979</i>&nbsp;
+<i class="no-highlight">980</i>&nbsp;    /**
+<i class="no-highlight">981</i>&nbsp;     * Unions two lists of intervals compacted in one list in place.
+<i class="no-highlight">982</i>&nbsp;     * Intervals to be chronologically ordered and result list will be ordered as well.
+<i class="no-highlight">983</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">984</i>&nbsp;     * Treat a as 2 lists,
+<i class="no-highlight">985</i>&nbsp;     * a: first from 0 to divider
+<i class="no-highlight">986</i>&nbsp;     * b: from divider to the end of list
+<i class="no-highlight">987</i>&nbsp;     *
+<i class="no-highlight">988</i>&nbsp;     * @param intervals 2 lists of intervals concatenated in 1
+<i class="no-highlight">989</i>&nbsp;     */
+<i class="no-highlight">990</i>&nbsp;    static void unionInplace(LongList intervals, int dividerIndex) {
+<b class="fc"><i class="no-highlight">991</i>&nbsp;        final int sizeB = dividerIndex + (intervals.size() - dividerIndex);</b>
+<b class="fc"><i class="no-highlight">992</i>&nbsp;        int aLower = 0;</b>
+<i class="no-highlight">993</i>&nbsp;
+<b class="fc"><i class="no-highlight">994</i>&nbsp;        int intervalB = dividerIndex;</b>
+<b class="fc"><i class="no-highlight">995</i>&nbsp;        int writePoint = 0;</b>
+<i class="no-highlight">996</i>&nbsp;
+<b class="fc"><i class="no-highlight">997</i>&nbsp;        int aUpperSize = sizeB;</b>
+<b class="fc"><i class="no-highlight">998</i>&nbsp;        int aUpper = sizeB;</b>
+<b class="fc"><i class="no-highlight">999</i>&nbsp;        long aLo = 0, aHi = 0, bLo = 0, bHi = 0;</b>
+<i class="no-highlight">1000</i>&nbsp;
+<b class="fc"><i class="no-highlight">1001</i>&nbsp;        while (aLower &lt; dividerIndex || aUpper &lt; aUpperSize || intervalB &lt; sizeB) {</b>
+<i class="no-highlight">1002</i>&nbsp;
+<i class="no-highlight">1003</i>&nbsp;            // This tries to get either interval from A or from B
+<i class="no-highlight">1004</i>&nbsp;            // where it&#39;s available
+<i class="no-highlight">1005</i>&nbsp;            // and union with last interval in writePoint position
+<b class="fc"><i class="no-highlight">1006</i>&nbsp;            boolean hasA = aLower &lt; dividerIndex || aUpper &lt; aUpperSize;</b>
+<b class="fc"><i class="no-highlight">1007</i>&nbsp;            if (hasA) {</b>
+<b class="fc"><i class="no-highlight">1008</i>&nbsp;                int intervalA = aUpper &lt; aUpperSize ? aUpper : aLower;</b>
+<b class="fc"><i class="no-highlight">1009</i>&nbsp;                aLo = intervals.getQuick(intervalA);</b>
+<b class="fc"><i class="no-highlight">1010</i>&nbsp;                aHi = intervals.getQuick(intervalA + 1);</b>
+<i class="no-highlight">1011</i>&nbsp;            }
+<i class="no-highlight">1012</i>&nbsp;
+<b class="fc"><i class="no-highlight">1013</i>&nbsp;            boolean hasB = intervalB &lt; sizeB;</b>
+<b class="fc"><i class="no-highlight">1014</i>&nbsp;            if (hasB) {</b>
+<b class="fc"><i class="no-highlight">1015</i>&nbsp;                bLo = intervals.getQuick(intervalB);</b>
+<b class="fc"><i class="no-highlight">1016</i>&nbsp;                bHi = intervals.getQuick(intervalB + 1);</b>
+<i class="no-highlight">1017</i>&nbsp;            }
+<i class="no-highlight">1018</i>&nbsp;
+<i class="no-highlight">1019</i>&nbsp;            long nextLo, nextHi;
+<i class="no-highlight">1020</i>&nbsp;
+<b class="fc"><i class="no-highlight">1021</i>&nbsp;            if (hasA) {</b>
+<b class="fc"><i class="no-highlight">1022</i>&nbsp;                if (hasB &amp;&amp; bLo &lt; aLo) {</b>
+<b class="fc"><i class="no-highlight">1023</i>&nbsp;                    nextLo = bLo;</b>
+<b class="fc"><i class="no-highlight">1024</i>&nbsp;                    nextHi = bHi;</b>
+<b class="fc"><i class="no-highlight">1025</i>&nbsp;                    intervalB += 2;</b>
+<i class="no-highlight">1026</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">1027</i>&nbsp;                    nextLo = aLo;</b>
+<b class="fc"><i class="no-highlight">1028</i>&nbsp;                    nextHi = aHi;</b>
+<b class="fc"><i class="no-highlight">1029</i>&nbsp;                    if (aUpper &lt; aUpperSize) {</b>
+<b class="fc"><i class="no-highlight">1030</i>&nbsp;                        aUpper += 2;</b>
+<i class="no-highlight">1031</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1032</i>&nbsp;                        aLower += 2;</b>
+<i class="no-highlight">1033</i>&nbsp;                    }
+<i class="no-highlight">1034</i>&nbsp;                }
+<i class="no-highlight">1035</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">1036</i>&nbsp;                nextLo = bLo;</b>
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;                nextHi = bHi;</b>
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;                intervalB += 2;</b>
+<i class="no-highlight">1039</i>&nbsp;            }
+<i class="no-highlight">1040</i>&nbsp;
+<b class="fc"><i class="no-highlight">1041</i>&nbsp;            if (writePoint &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1042</i>&nbsp;                long prevHi = intervals.getQuick(writePoint - 1);</b>
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;                if (nextLo &lt;= prevHi) {</b>
+<i class="no-highlight">1044</i>&nbsp;                    // Intersection with previously safed interval
+<b class="fc"><i class="no-highlight">1045</i>&nbsp;                    intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));</b>
+<b class="fc"><i class="no-highlight">1046</i>&nbsp;                    continue;</b>
+<i class="no-highlight">1047</i>&nbsp;                }
+<i class="no-highlight">1048</i>&nbsp;            }
+<i class="no-highlight">1049</i>&nbsp;
+<i class="no-highlight">1050</i>&nbsp;            // new interval to save
+<b class="fc"><i class="no-highlight">1051</i>&nbsp;            assert writePoint &lt;= aLower || writePoint &gt;= dividerIndex;</b>
+<b class="fc"><i class="no-highlight">1052</i>&nbsp;            if (writePoint == aLower &amp;&amp; aLower &lt; dividerIndex) {</b>
+<i class="no-highlight">1053</i>&nbsp;                // We cannot keep A position, it will be overwritten
+<i class="no-highlight">1054</i>&nbsp;                // Copy a point to A area instead
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;                intervals.add(</b>
+<b class="fc"><i class="no-highlight">1056</i>&nbsp;                        intervals.getQuick(writePoint),</b>
+<b class="fc"><i class="no-highlight">1057</i>&nbsp;                        intervals.getQuick(writePoint + 1)</b>
+<i class="no-highlight">1058</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">1059</i>&nbsp;                aUpperSize = intervals.size();</b>
+<b class="fc"><i class="no-highlight">1060</i>&nbsp;                aLower += 2;</b>
+<i class="no-highlight">1061</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1062</i>&nbsp;            intervals.setQuick(writePoint++, nextLo);</b>
+<b class="fc"><i class="no-highlight">1063</i>&nbsp;            intervals.setQuick(writePoint++, nextHi);</b>
+<b class="fc"><i class="no-highlight">1064</i>&nbsp;        }</b>
+<i class="no-highlight">1065</i>&nbsp;
+<b class="fc"><i class="no-highlight">1066</i>&nbsp;        intervals.setPos(writePoint);</b>
+<i class="no-highlight">1067</i>&nbsp;    }
+<i class="no-highlight">1068</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

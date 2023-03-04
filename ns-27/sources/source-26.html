@@ -1,0 +1,220 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > SymbolConstant</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.functions.constants</a>
+</div>
+
+<h1>Coverage Summary for Class: SymbolConstant (io.questdb.griffin.engine.functions.constants)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">SymbolConstant</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    90.9%
+  </span>
+  <span class="absValue">
+    (10/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    82.1%
+  </span>
+  <span class="absValue">
+    (23/28)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.functions.constants;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.SymbolTable;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.SqlKeywords;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.engine.functions.SymbolFunction;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.Chars;
+<i class="no-highlight">33</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">34</i>&nbsp;
+<i class="no-highlight">35</i>&nbsp;public class SymbolConstant extends SymbolFunction implements ConstantFunction {
+<b class="fc"><i class="no-highlight">36</i>&nbsp;    public static final SymbolConstant FALSE = new SymbolConstant(&quot;false&quot;, 0);</b>
+<b class="fc"><i class="no-highlight">37</i>&nbsp;    public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);</b>
+<b class="fc"><i class="no-highlight">38</i>&nbsp;    public static final SymbolConstant TRUE = new SymbolConstant(&quot;true&quot;, 0);</b>
+<i class="no-highlight">39</i>&nbsp;    private final int index;
+<i class="no-highlight">40</i>&nbsp;    private final String value;
+<i class="no-highlight">41</i>&nbsp;
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    public SymbolConstant(CharSequence value, int index) {</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;        if (value == null) {</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;            this.value = null;</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;            this.index = SymbolTable.VALUE_IS_NULL;</b>
+<i class="no-highlight">46</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">47</i>&nbsp;            if (Chars.startsWith(value, &#39;\&#39;&#39;)) {</b>
+<b class="nc"><i class="no-highlight">48</i>&nbsp;                this.value = Chars.toString(value, 1, value.length() - 1);</b>
+<i class="no-highlight">49</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;                this.value = Chars.toString(value);</b>
+<i class="no-highlight">51</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">52</i>&nbsp;            this.index = index;</b>
+<i class="no-highlight">53</i>&nbsp;        }
+<i class="no-highlight">54</i>&nbsp;    }
+<i class="no-highlight">55</i>&nbsp;
+<i class="no-highlight">56</i>&nbsp;    public static SymbolConstant newInstance(CharSequence value) {
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        if (value == null) {</b>
+<b class="nc"><i class="no-highlight">58</i>&nbsp;            return NULL;</b>
+<i class="no-highlight">59</i>&nbsp;        }
+<i class="no-highlight">60</i>&nbsp;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        if (SqlKeywords.isTrueKeyword(value)) {</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;            return TRUE;</b>
+<i class="no-highlight">63</i>&nbsp;        }
+<i class="no-highlight">64</i>&nbsp;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        if (SqlKeywords.isFalseKeyword(value)) {</b>
+<b class="nc"><i class="no-highlight">66</i>&nbsp;            return FALSE;</b>
+<i class="no-highlight">67</i>&nbsp;        }
+<i class="no-highlight">68</i>&nbsp;
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        return new SymbolConstant(Chars.toString(value), 0);</b>
+<i class="no-highlight">70</i>&nbsp;    }
+<i class="no-highlight">71</i>&nbsp;
+<i class="no-highlight">72</i>&nbsp;    @Override
+<i class="no-highlight">73</i>&nbsp;    public int getInt(Record rec) {
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        return index;</b>
+<i class="no-highlight">75</i>&nbsp;    }
+<i class="no-highlight">76</i>&nbsp;
+<i class="no-highlight">77</i>&nbsp;    @Override
+<i class="no-highlight">78</i>&nbsp;    public CharSequence getSymbol(Record rec) {
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        return value;</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    @Override
+<i class="no-highlight">83</i>&nbsp;    public CharSequence getSymbolB(Record rec) {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        return value;</b>
+<i class="no-highlight">85</i>&nbsp;    }
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;    @Override
+<i class="no-highlight">88</i>&nbsp;    public boolean isSymbolTableStatic() {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        return false;</b>
+<i class="no-highlight">90</i>&nbsp;    }
+<i class="no-highlight">91</i>&nbsp;
+<i class="no-highlight">92</i>&nbsp;    @Override
+<i class="no-highlight">93</i>&nbsp;    public @Nullable SymbolTable newSymbolTable() {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        return this;</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    @Override
+<i class="no-highlight">98</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        if (value == null) {</b>
+<b class="nc"><i class="no-highlight">100</i>&nbsp;            sink.val(&quot;null::symbol&quot;);</b>
+<i class="no-highlight">101</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            sink.val(&#39;\&#39;&#39;).val(value).val(&#39;\&#39;&#39;);</b>
+<i class="no-highlight">103</i>&nbsp;        }
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;    @Override
+<i class="no-highlight">107</i>&nbsp;    public CharSequence valueBOf(int key) {
+<b class="nc"><i class="no-highlight">108</i>&nbsp;        return value;</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    @Override
+<i class="no-highlight">112</i>&nbsp;    public CharSequence valueOf(int symbolKey) {
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        return value;</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

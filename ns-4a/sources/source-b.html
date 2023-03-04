@@ -1,0 +1,254 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TelemetryTask</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.tasks</a>
+</div>
+
+<h1>Coverage Summary for Class: TelemetryTask (io.questdb.tasks)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TelemetryTask</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    76.5%
+  </span>
+  <span class="absValue">
+    (13/17)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TelemetryTask$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TelemetryTask$1$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (9/9)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (11/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (24/28)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.tasks;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.Telemetry;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.TelemetryOrigin;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.TableWriter;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.ObjectFactory;
+<i class="no-highlight">35</i>&nbsp;
+<i class="no-highlight">36</i>&nbsp;public class TelemetryTask implements AbstractTelemetryTask {
+<i class="no-highlight">37</i>&nbsp;    public static final String TABLE_NAME = &quot;telemetry&quot;;
+<i class="no-highlight">38</i>&nbsp;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;    private static final Log LOG = LogFactory.getLog(TelemetryTask.class);</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    public static final Telemetry.TelemetryTypeBuilder&lt;TelemetryTask&gt; TELEMETRY = new Telemetry.TelemetryTypeBuilder&lt;TelemetryTask&gt;() {</b>
+<i class="no-highlight">41</i>&nbsp;        @Override
+<i class="no-highlight">42</i>&nbsp;        public Telemetry.TelemetryType&lt;TelemetryTask&gt; build(CairoConfiguration configuration) {
+<b class="fc"><i class="no-highlight">43</i>&nbsp;            return new Telemetry.TelemetryType&lt;TelemetryTask&gt;() {</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;                private final TelemetryTask systemStatusTask = new TelemetryTask();</b>
+<i class="no-highlight">45</i>&nbsp;
+<i class="no-highlight">46</i>&nbsp;                @Override
+<i class="no-highlight">47</i>&nbsp;                public String getCreateSql() {
+<i class="no-highlight">48</i>&nbsp;                    // Telemetry table will not have sys. prefix for compatibility.
+<b class="fc"><i class="no-highlight">49</i>&nbsp;                    return &quot;CREATE TABLE IF NOT EXISTS \&quot;&quot; + TABLE_NAME + &quot;\&quot; (&quot; +</b>
+<i class="no-highlight">50</i>&nbsp;                            &quot;created timestamp, &quot; +
+<i class="no-highlight">51</i>&nbsp;                            &quot;event short, &quot; +
+<i class="no-highlight">52</i>&nbsp;                            &quot;origin short&quot; +
+<i class="no-highlight">53</i>&nbsp;                            &quot;) timestamp(created)&quot;;
+<i class="no-highlight">54</i>&nbsp;                }
+<i class="no-highlight">55</i>&nbsp;
+<i class="no-highlight">56</i>&nbsp;                @Override
+<i class="no-highlight">57</i>&nbsp;                public String getTableName() {
+<b class="fc"><i class="no-highlight">58</i>&nbsp;                    return TABLE_NAME;</b>
+<i class="no-highlight">59</i>&nbsp;                }
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;                @Override
+<i class="no-highlight">62</i>&nbsp;                public ObjectFactory&lt;TelemetryTask&gt; getTaskFactory() {
+<b class="fc"><i class="no-highlight">63</i>&nbsp;                    return TelemetryTask::new;</b>
+<i class="no-highlight">64</i>&nbsp;                }
+<i class="no-highlight">65</i>&nbsp;
+<i class="no-highlight">66</i>&nbsp;                @Override
+<i class="no-highlight">67</i>&nbsp;                public void logStatus(TableWriter writer, short systemStatus, long micros) {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;                    systemStatusTask.origin = TelemetryOrigin.INTERNAL;</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;                    systemStatusTask.event = systemStatus;</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;                    systemStatusTask.writeTo(writer, micros);</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;                    writer.commit();</b>
+<i class="no-highlight">72</i>&nbsp;                }
+<i class="no-highlight">73</i>&nbsp;            };
+<i class="no-highlight">74</i>&nbsp;        }
+<i class="no-highlight">75</i>&nbsp;    };
+<i class="no-highlight">76</i>&nbsp;    private short event;
+<i class="no-highlight">77</i>&nbsp;    private short origin;
+<i class="no-highlight">78</i>&nbsp;
+<b class="fc"><i class="no-highlight">79</i>&nbsp;    private TelemetryTask() {</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    public static void store(Telemetry&lt;TelemetryTask&gt; telemetry, short origin, short event) {
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        final TelemetryTask task = telemetry.nextTask();</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        if (task != null) {</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;            task.origin = origin;</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;            task.event = event;</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;            telemetry.store();</b>
+<i class="no-highlight">88</i>&nbsp;        }
+<i class="no-highlight">89</i>&nbsp;    }
+<i class="no-highlight">90</i>&nbsp;
+<i class="no-highlight">91</i>&nbsp;    @Override
+<i class="no-highlight">92</i>&nbsp;    public void writeTo(TableWriter writer, long timestamp) {
+<i class="no-highlight">93</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;            final TableWriter.Row row = writer.newRow(timestamp);</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;            row.putShort(1, event);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;            row.putShort(2, origin);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            row.append();</b>
+<b class="nc"><i class="no-highlight">98</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="nc"><i class="no-highlight">99</i>&nbsp;            LOG.error().$(&quot;Could not insert a new &quot;).$(TABLE_NAME).$(&quot; row [errno=&quot;).$(e.getErrno())</b>
+<b class="nc"><i class="no-highlight">100</i>&nbsp;                    .$(&quot;, error=&quot;).$(e.getFlyweightMessage())</b>
+<b class="nc"><i class="no-highlight">101</i>&nbsp;                    .$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        }</b>
+<i class="no-highlight">103</i>&nbsp;    }
+<i class="no-highlight">104</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

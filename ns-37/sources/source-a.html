@@ -1,0 +1,429 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > GroupByNotKeyedVectorRecordCursorFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.groupby.vect</a>
+</div>
+
+<h1>Coverage Summary for Class: GroupByNotKeyedVectorRecordCursorFactory (io.questdb.griffin.engine.groupby.vect)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">GroupByNotKeyedVectorRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    88.9%
+  </span>
+  <span class="absValue">
+    (8/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.8%
+  </span>
+  <span class="absValue">
+    (30/31)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">GroupByNotKeyedVectorRecordCursorFactory$GroupByNotKeyedVectorRecordCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (8/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.8%
+  </span>
+  <span class="absValue">
+    (60/62)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    94.1%
+  </span>
+  <span class="absValue">
+    (16/17)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.8%
+  </span>
+  <span class="absValue">
+    (90/93)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.groupby.vect;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.MessageBus;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.AbstractRecordCursorFactory;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.DataUnavailableException;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.*;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.mp.RingQueue;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.mp.SOUnboundedCountDownLatch;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.mp.Sequence;
+<i class="no-highlight">42</i>&nbsp;import io.questdb.mp.Worker;
+<i class="no-highlight">43</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">44</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">45</i>&nbsp;import io.questdb.std.ObjectPool;
+<i class="no-highlight">46</i>&nbsp;import io.questdb.std.Transient;
+<i class="no-highlight">47</i>&nbsp;import io.questdb.tasks.VectorAggregateTask;
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+<i class="no-highlight">50</i>&nbsp;
+<i class="no-highlight">51</i>&nbsp;public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
+<i class="no-highlight">52</i>&nbsp;
+<b class="fc"><i class="no-highlight">53</i>&nbsp;    private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);</b>
+<i class="no-highlight">54</i>&nbsp;    private final ObjList&lt;VectorAggregateEntry&gt; activeEntries;
+<i class="no-highlight">55</i>&nbsp;    private final RecordCursorFactory base;
+<i class="no-highlight">56</i>&nbsp;    private final GroupByNotKeyedVectorRecordCursor cursor;
+<b class="fc"><i class="no-highlight">57</i>&nbsp;    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();</b>
+<i class="no-highlight">58</i>&nbsp;    private final ObjectPool&lt;VectorAggregateEntry&gt; entryPool;
+<i class="no-highlight">59</i>&nbsp;    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
+<i class="no-highlight">60</i>&nbsp;    private final ObjList&lt;VectorAggregateFunction&gt; vafList;
+<i class="no-highlight">61</i>&nbsp;
+<i class="no-highlight">62</i>&nbsp;    public GroupByNotKeyedVectorRecordCursorFactory(
+<i class="no-highlight">63</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">64</i>&nbsp;            RecordCursorFactory base,
+<i class="no-highlight">65</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">66</i>&nbsp;            @Transient ObjList&lt;VectorAggregateFunction&gt; vafList
+<i class="no-highlight">67</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        super(metadata);</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        this.entryPool = new ObjectPool&lt;&gt;(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        this.activeEntries = new ObjList&lt;&gt;(configuration.getGroupByPoolCapacity());</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        this.base = base;</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.vafList = new ObjList&lt;&gt;(vafList.size());</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        this.vafList.addAll(vafList);</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();</b>
+<i class="no-highlight">76</i>&nbsp;    }
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    @Override
+<i class="no-highlight">79</i>&nbsp;    public RecordCursorFactory getBaseFactory() {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        return base;</b>
+<i class="no-highlight">81</i>&nbsp;    }
+<i class="no-highlight">82</i>&nbsp;
+<i class="no-highlight">83</i>&nbsp;    @Override
+<i class="no-highlight">84</i>&nbsp;    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<i class="no-highlight">85</i>&nbsp;        // clear state of aggregate functions
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        for (int i = 0, n = vafList.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;            vafList.getQuick(i).clear();</b>
+<i class="no-highlight">88</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        return cursor.of(pageFrameCursor, executionContext.getMessageBus(), executionContext.getCircuitBreaker());</b>
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    @Override
+<i class="no-highlight">94</i>&nbsp;    public boolean recordCursorSupportsRandomAccess() {
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        return false;</b>
+<i class="no-highlight">96</i>&nbsp;    }
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    @Override
+<i class="no-highlight">99</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        sink.type(&quot;GroupBy&quot;);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        sink.meta(&quot;vectorized&quot;).val(true);</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        sink.optAttr(&quot;values&quot;, vafList, true);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        sink.child(base);</b>
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;    @Override
+<i class="no-highlight">107</i>&nbsp;    public boolean usesCompiledFilter() {
+<b class="nc"><i class="no-highlight">108</i>&nbsp;        return base.usesCompiledFilter();</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    static int getRunWhatsLeft(
+<i class="no-highlight">112</i>&nbsp;            int queuedCount,
+<i class="no-highlight">113</i>&nbsp;            int reclaimed,
+<i class="no-highlight">114</i>&nbsp;            int workerId,
+<i class="no-highlight">115</i>&nbsp;            ObjList&lt;VectorAggregateEntry&gt; activeEntries,
+<i class="no-highlight">116</i>&nbsp;            SOUnboundedCountDownLatch doneLatch,
+<i class="no-highlight">117</i>&nbsp;            Log log,
+<i class="no-highlight">118</i>&nbsp;            SqlExecutionCircuitBreaker circuitBreaker,
+<i class="no-highlight">119</i>&nbsp;            AtomicBooleanCircuitBreaker sharedCB
+<i class="no-highlight">120</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        for (int i = activeEntries.size() - 1; i &gt; -1 &amp;&amp; doneLatch.getCount() &gt; -queuedCount; i--) {</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;            if (circuitBreaker.checkIfTripped()) {</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                sharedCB.cancel();</b>
+<i class="no-highlight">124</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            if (activeEntries.getQuick(i).run(workerId)) {</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                reclaimed++;</b>
+<i class="no-highlight">127</i>&nbsp;            }
+<i class="no-highlight">128</i>&nbsp;        }
+<i class="no-highlight">129</i>&nbsp;
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        log.info().$(&quot;waiting for parts [queuedCount=&quot;).$(queuedCount).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        doneLatch.await(queuedCount);</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        return reclaimed;</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    @Override
+<i class="no-highlight">136</i>&nbsp;    protected void _close() {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        Misc.freeObjList(vafList);</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        Misc.free(base);</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    private class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {
+<i class="no-highlight">142</i>&nbsp;        private final Record recordA;
+<i class="no-highlight">143</i>&nbsp;        private boolean areFunctionsBuilt;
+<i class="no-highlight">144</i>&nbsp;        private MessageBus bus;
+<i class="no-highlight">145</i>&nbsp;        private SqlExecutionCircuitBreaker circuitBreaker;
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        private int countDown = 1;</b>
+<i class="no-highlight">147</i>&nbsp;        private PageFrameCursor pageFrameCursor;
+<i class="no-highlight">148</i>&nbsp;
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        public GroupByNotKeyedVectorRecordCursor(ObjList&lt;? extends Function&gt; functions) {</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;            this.recordA = new VirtualRecordNoRowid(functions);</b>
+<i class="no-highlight">151</i>&nbsp;        }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;        @Override
+<i class="no-highlight">154</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;            Misc.free(pageFrameCursor);</b>
+<i class="no-highlight">156</i>&nbsp;        }
+<i class="no-highlight">157</i>&nbsp;
+<i class="no-highlight">158</i>&nbsp;        @Override
+<i class="no-highlight">159</i>&nbsp;        public Record getRecord() {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;            return recordA;</b>
+<i class="no-highlight">161</i>&nbsp;        }
+<i class="no-highlight">162</i>&nbsp;
+<i class="no-highlight">163</i>&nbsp;        @Override
+<i class="no-highlight">164</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;            if (!areFunctionsBuilt) {</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                buildFunctions();</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                areFunctionsBuilt = true;</b>
+<i class="no-highlight">168</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">169</i>&nbsp;            return countDown-- &gt; 0;</b>
+<i class="no-highlight">170</i>&nbsp;        }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;        public GroupByNotKeyedVectorRecordCursor of(PageFrameCursor pageFrameCursor, MessageBus bus, SqlExecutionCircuitBreaker circuitBreaker) {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;            this.pageFrameCursor = pageFrameCursor;</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            this.bus = bus;</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;            this.circuitBreaker = circuitBreaker;</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            areFunctionsBuilt = false;</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;            return this;</b>
+<i class="no-highlight">178</i>&nbsp;        }
+<i class="no-highlight">179</i>&nbsp;
+<i class="no-highlight">180</i>&nbsp;        @Override
+<i class="no-highlight">181</i>&nbsp;        public long size() {
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            return 1;</b>
+<i class="no-highlight">183</i>&nbsp;        }
+<i class="no-highlight">184</i>&nbsp;
+<i class="no-highlight">185</i>&nbsp;        @Override
+<i class="no-highlight">186</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">187</i>&nbsp;            countDown = 1;</b>
+<i class="no-highlight">188</i>&nbsp;        }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;        private void buildFunctions() {
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            final int vafCount = vafList.size();</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            final RingQueue&lt;VectorAggregateTask&gt; queue = bus.getVectorAggregateQueue();</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            final Sequence pubSeq = bus.getVectorAggregatePubSeq();</b>
+<i class="no-highlight">194</i>&nbsp;
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            sharedCircuitBreaker.reset();</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;            entryPool.clear();</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            activeEntries.clear();</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;            int queuedCount = 0;</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;            int ownCount = 0;</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            int reclaimed = 0;</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            int total = 0;</b>
+<i class="no-highlight">202</i>&nbsp;
+<b class="fc"><i class="no-highlight">203</i>&nbsp;            doneLatch.reset();</b>
+<i class="no-highlight">204</i>&nbsp;
+<i class="no-highlight">205</i>&nbsp;            // check if this executed via worker pool
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            final Thread thread = Thread.currentThread();</b>
+<i class="no-highlight">207</i>&nbsp;            final int workerId;
+<b class="fc"><i class="no-highlight">208</i>&nbsp;            if (thread instanceof Worker) {</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                workerId = ((Worker) thread).getWorkerId();</b>
+<i class="no-highlight">210</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                workerId = 0;</b>
+<i class="no-highlight">212</i>&nbsp;            }
+<i class="no-highlight">213</i>&nbsp;
+<i class="no-highlight">214</i>&nbsp;            try {
+<i class="no-highlight">215</i>&nbsp;                PageFrame frame;
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                while ((frame = pageFrameCursor.next()) != null) {</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                    for (int i = 0; i &lt; vafCount; i++) {</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;                        final VectorAggregateFunction vaf = vafList.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;                        final int columnIndex = vaf.getColumnIndex();</b>
+<i class="no-highlight">220</i>&nbsp;                        // for functions like `count()`, that do not have arguments we are required to provide
+<i class="no-highlight">221</i>&nbsp;                        // count of rows in table in a form of &quot;pageSize &gt;&gt; shr&quot;. Since `vaf` doesn&#39;t provide column
+<i class="no-highlight">222</i>&nbsp;                        // this code used column 0. Assumption here that column 0 is fixed size.
+<i class="no-highlight">223</i>&nbsp;                        // This assumption only holds because our aggressive algorithm for &quot;top down columns&quot;, e.g.
+<i class="no-highlight">224</i>&nbsp;                        // the algorithm that forces page frame to provide only columns required by the select. At the time
+<i class="no-highlight">225</i>&nbsp;                        // of writing this code there is no way to return variable length column out of non-keyed aggregation
+<i class="no-highlight">226</i>&nbsp;                        // query. This might change if we introduce something like `first(string)`. When this happens we will
+<i class="no-highlight">227</i>&nbsp;                        // need to rethink our way of computing size for the count. This would be either type checking column
+<i class="no-highlight">228</i>&nbsp;                        // 0 and working out size differently or finding any fixed-size column and using that.
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                        final long pageAddress = columnIndex &gt; -1 ? frame.getPageAddress(columnIndex) : 0;</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                        final long pageSize = columnIndex &gt; -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                        final int colSizeShr = columnIndex &gt; -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                        long seq = pubSeq.next();</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                        if (seq &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</b>
+<i class="no-highlight">235</i>&nbsp;                            // diy the func
+<i class="no-highlight">236</i>&nbsp;                            // vaf need to know which column it is hitting in the frame and will need to
+<i class="no-highlight">237</i>&nbsp;                            // aggregate between frames until done
+<b class="nc"><i class="no-highlight">238</i>&nbsp;                            vaf.aggregate(pageAddress, pageSize, colSizeShr, workerId);</b>
+<b class="nc"><i class="no-highlight">239</i>&nbsp;                            ownCount++;</b>
+<i class="no-highlight">240</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                            final VectorAggregateEntry entry = entryPool.next();</b>
+<i class="no-highlight">242</i>&nbsp;                            // null pRosti means that we do not need keyed aggregation
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                            entry.of(</b>
+<i class="no-highlight">244</i>&nbsp;                                    queuedCount++,
+<i class="no-highlight">245</i>&nbsp;                                    vaf,
+<i class="no-highlight">246</i>&nbsp;                                    null,
+<i class="no-highlight">247</i>&nbsp;                                    0,
+<i class="no-highlight">248</i>&nbsp;                                    pageAddress,
+<i class="no-highlight">249</i>&nbsp;                                    pageSize,
+<i class="no-highlight">250</i>&nbsp;                                    colSizeShr,
+<i class="no-highlight">251</i>&nbsp;                                    doneLatch,
+<i class="no-highlight">252</i>&nbsp;                                    null,
+<i class="no-highlight">253</i>&nbsp;                                    null,
+<i class="no-highlight">254</i>&nbsp;                                    sharedCircuitBreaker
+<i class="no-highlight">255</i>&nbsp;                            );
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                            activeEntries.add(entry);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                            queue.get(seq).entry = entry;</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                            pubSeq.done(seq);</b>
+<i class="no-highlight">259</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                        total++;</b>
+<i class="no-highlight">261</i>&nbsp;                    }
+<i class="no-highlight">262</i>&nbsp;                }
+<i class="no-highlight">263</i>&nbsp;
+<b class="fc"><i class="no-highlight">264</i>&nbsp;                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;            } catch (DataUnavailableException e) {</b>
+<i class="no-highlight">266</i>&nbsp;                // We&#39;re not yet done, so no need to cancel the circuit breaker. 
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                throw e;</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;            } catch (Throwable e) {</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                sharedCircuitBreaker.cancel();</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                throw e;</b>
+<i class="no-highlight">271</i>&nbsp;            } finally {
+<i class="no-highlight">272</i>&nbsp;                // all done? great start consuming the queue we just published
+<i class="no-highlight">273</i>&nbsp;                // how do we get to the end? If we consume our own queue there is chance we will be consuming
+<i class="no-highlight">274</i>&nbsp;                // aggregation tasks not related to this execution (we work in concurrent environment)
+<i class="no-highlight">275</i>&nbsp;                // To deal with that we need to have our own checklist.
+<i class="no-highlight">276</i>&nbsp;
+<i class="no-highlight">277</i>&nbsp;                // start at the back to reduce chance of clashing
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                reclaimed = getRunWhatsLeft(</b>
+<i class="no-highlight">279</i>&nbsp;                        queuedCount,
+<i class="no-highlight">280</i>&nbsp;                        reclaimed,
+<i class="no-highlight">281</i>&nbsp;                        workerId,
+<i class="no-highlight">282</i>&nbsp;                        activeEntries,
+<i class="no-highlight">283</i>&nbsp;                        doneLatch,
+<i class="no-highlight">284</i>&nbsp;                        LOG,
+<i class="no-highlight">285</i>&nbsp;                        circuitBreaker,
+<i class="no-highlight">286</i>&nbsp;                        sharedCircuitBreaker
+<i class="no-highlight">287</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            }</b>
+<i class="no-highlight">289</i>&nbsp;
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            toTop();</b>
+<i class="no-highlight">291</i>&nbsp;
+<b class="fc"><i class="no-highlight">292</i>&nbsp;            LOG.info().$(&quot;done [total=&quot;).$(total)</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                    .$(&quot;, ownCount=&quot;).$(ownCount)</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                    .$(&quot;, reclaimed=&quot;).$(reclaimed)</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                    .$(&quot;, queuedCount=&quot;).$(queuedCount).I$();</b>
+<i class="no-highlight">296</i>&nbsp;        }
+<i class="no-highlight">297</i>&nbsp;    }
+<i class="no-highlight">298</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

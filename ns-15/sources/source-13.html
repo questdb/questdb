@@ -1,0 +1,812 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TableUpdateDetails</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.line.tcp</a>
+</div>
+
+<h1>Coverage Summary for Class: TableUpdateDetails (io.questdb.cutlass.line.tcp)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TableUpdateDetails</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.9%
+  </span>
+  <span class="absValue">
+    (31/32)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.5%
+  </span>
+  <span class="absValue">
+    (129/141)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TableUpdateDetails$ThreadLocalDetails</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (22/22)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.6%
+  </span>
+  <span class="absValue">
+    (152/159)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    98.1%
+  </span>
+  <span class="absValue">
+    (53/54)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    93.7%
+  </span>
+  <span class="absValue">
+    (281/300)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.line.tcp;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.SymbolTable;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.TableRecordMetadata;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.wal.MetadataService;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.datetime.millitime.MillisecondClock;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.str.ByteCharSequence;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.str.DirectByteCharSequence;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">41</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">44</i>&nbsp;
+<i class="no-highlight">45</i>&nbsp;import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
+<i class="no-highlight">46</i>&nbsp;import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+<i class="no-highlight">47</i>&nbsp;import static io.questdb.std.Chars.utf8ToUtf16;
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;public class TableUpdateDetails implements Closeable {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -&gt; SymbolTable.VALUE_NOT_FOUND;</b>
+<i class="no-highlight">52</i>&nbsp;    private final DefaultColumnTypes defaultColumnTypes;
+<i class="no-highlight">53</i>&nbsp;    private final long defaultCommitInterval;
+<i class="no-highlight">54</i>&nbsp;    private final long defaultMaxUncommittedRows;
+<i class="no-highlight">55</i>&nbsp;    private final CairoEngine engine;
+<i class="no-highlight">56</i>&nbsp;    private final ThreadLocalDetails[] localDetailsArray;
+<i class="no-highlight">57</i>&nbsp;    private final MillisecondClock millisecondClock;
+<i class="no-highlight">58</i>&nbsp;    private final ByteCharSequence tableNameUtf8;
+<i class="no-highlight">59</i>&nbsp;    private final TableToken tableToken;
+<i class="no-highlight">60</i>&nbsp;    private final int timestampIndex;
+<i class="no-highlight">61</i>&nbsp;    private final long writerTickRowsCountMod;
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    private boolean assignedToJob = false;</b>
+<i class="no-highlight">63</i>&nbsp;    // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
+<i class="no-highlight">64</i>&nbsp;    // multiple threads without synchronisation
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    private long eventsProcessedSinceReshuffle = 0;</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    private long lastMeasurementMillis = Long.MAX_VALUE;</b>
+<i class="no-highlight">67</i>&nbsp;    private MetadataService metadataService;
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    private int networkIOOwnerCount = 0;</b>
+<i class="no-highlight">69</i>&nbsp;    private long nextCommitTime;
+<i class="no-highlight">70</i>&nbsp;    private TableWriterAPI writerAPI;
+<i class="no-highlight">71</i>&nbsp;    private volatile boolean writerInError;
+<i class="no-highlight">72</i>&nbsp;    private int writerThreadId;
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    TableUpdateDetails(
+<i class="no-highlight">75</i>&nbsp;            LineTcpReceiverConfiguration configuration,
+<i class="no-highlight">76</i>&nbsp;            CairoEngine engine,
+<i class="no-highlight">77</i>&nbsp;            TableWriterAPI writer,
+<i class="no-highlight">78</i>&nbsp;            int writerThreadId,
+<i class="no-highlight">79</i>&nbsp;            NetworkIOJob[] netIoJobs,
+<i class="no-highlight">80</i>&nbsp;            DefaultColumnTypes defaultColumnTypes,
+<i class="no-highlight">81</i>&nbsp;            ByteCharSequence tableNameUtf8
+<b class="fc"><i class="no-highlight">82</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.writerThreadId = writerThreadId;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        this.engine = engine;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        this.defaultColumnTypes = defaultColumnTypes;</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        final int n = netIoJobs.length;</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        CairoConfiguration cairoConfiguration = engine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        this.millisecondClock = cairoConfiguration.getMillisecondClock();</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        this.defaultCommitInterval = configuration.getCommitIntervalDefault();</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        this.writerAPI = writer;</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        TableRecordMetadata tableMetadata = writer.getMetadata();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        this.timestampIndex = tableMetadata.getTimestampIndex();</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        this.tableToken = writer.getTableToken();</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        if (writer.supportsMultipleWriters()) {</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            metadataService = null;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;</b>
+<i class="no-highlight">99</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;            metadataService = (MetadataService) writer;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();</b>
+<i class="no-highlight">103</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        this.localDetailsArray = new ThreadLocalDetails[n];</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        for (int i = 0; i &lt; n; i++) {</b>
+<i class="no-highlight">106</i>&nbsp;            //noinspection resource
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            this.localDetailsArray[i] = new ThreadLocalDetails(</b>
+<i class="no-highlight">108</i>&nbsp;                    configuration,
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                    netIoJobs[i].getUnusedSymbolCaches(),</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                    writer.getMetadata().getColumnCount()</b>
+<i class="no-highlight">111</i>&nbsp;            );
+<i class="no-highlight">112</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        this.tableNameUtf8 = tableNameUtf8;</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;    public void addReference(int workerId) {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        if (!isWal()) {</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            networkIOOwnerCount++;</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;            LOG.info()</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                    .$(&quot;network IO thread using table [workerId=&quot;).$(workerId)</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                    .$(&quot;, tableName=&quot;).$(tableToken)</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                    .$(&quot;, nNetworkIoWorkers=&quot;).$(networkIOOwnerCount)</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                    .$(&#39;]&#39;).$();</b>
+<i class="no-highlight">124</i>&nbsp;        }
+<i class="no-highlight">125</i>&nbsp;    }
+<i class="no-highlight">126</i>&nbsp;
+<i class="no-highlight">127</i>&nbsp;    @Override
+<i class="no-highlight">128</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        synchronized (this) {</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;            closeNoLock();</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        }</b>
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    public void closeLocals() {
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        for (int n = 0; n &lt; localDetailsArray.length; n++) {</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;            LOG.info().$(&quot;closing table parsers [tableName=&quot;).$(tableToken).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;            localDetailsArray[n] = Misc.free(localDetailsArray[n]);</b>
+<i class="no-highlight">138</i>&nbsp;        }
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    public void closeNoLock() {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        if (writerThreadId != Integer.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;            LOG.info().$(&quot;closing table writer [tableName=&quot;).$(tableToken).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;            closeLocals();</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;            if (null != writerAPI) {</b>
+<i class="no-highlight">146</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                    if (!writerInError) {</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                        writerAPI.commit();</b>
+<i class="no-highlight">149</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                } catch (Throwable ex) {</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                    LOG.error().$(&quot;cannot commit writer transaction, rolling back before releasing it [table=&quot;).$(tableToken).$(&quot;,ex=&quot;).$(ex).I$();</b>
+<i class="no-highlight">152</i>&nbsp;                } finally {
+<i class="no-highlight">153</i>&nbsp;                    // returning to pool rolls back the transaction
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                    writerAPI = Misc.free(writerAPI);</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;                    metadataService = null;</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                }</b>
+<i class="no-highlight">157</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            writerThreadId = Integer.MIN_VALUE;</b>
+<i class="no-highlight">159</i>&nbsp;        }
+<i class="no-highlight">160</i>&nbsp;    }
+<i class="no-highlight">161</i>&nbsp;
+<i class="no-highlight">162</i>&nbsp;    public void commit(boolean withLag) throws CommitFailedException {
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        if (writerAPI.getUncommittedRowCount() &gt; 0) {</b>
+<i class="no-highlight">164</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;                LOG.debug().$(&quot;time-based commit &quot; + (withLag ? &quot;with lag &quot; : &quot;&quot;) + &quot;[rows=&quot;).$(writerAPI.getUncommittedRowCount()).$(&quot;, table=&quot;).$(tableToken).I$();</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                if (withLag) {</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                    writerAPI.ic();</b>
+<i class="no-highlight">168</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                    writerAPI.commit();</b>
+<i class="no-highlight">170</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">171</i>&nbsp;            } catch (Throwable ex) {</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                setWriterInError();</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;                LOG.error().$(&quot;could not commit [table=&quot;).$(tableToken).$(&quot;, e=&quot;).$(ex).I$();</b>
+<i class="no-highlight">174</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                    writerAPI.rollback();</b>
+<b class="nc"><i class="no-highlight">176</i>&nbsp;                } catch (Throwable th) {</b>
+<b class="nc"><i class="no-highlight">177</i>&nbsp;                    LOG.error().$(&quot;could not perform emergency rollback [table=&quot;).$(tableToken).$(&quot;, e=&quot;).$(th).I$();</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                throw CommitFailedException.instance(ex);</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;            }</b>
+<i class="no-highlight">181</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        if (isWal() &amp;&amp; tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            setWriterInError();</b>
+<i class="no-highlight">184</i>&nbsp;        }
+<i class="no-highlight">185</i>&nbsp;    }
+<i class="no-highlight">186</i>&nbsp;
+<i class="no-highlight">187</i>&nbsp;    public long getEventsProcessedSinceReshuffle() {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        return eventsProcessedSinceReshuffle;</b>
+<i class="no-highlight">189</i>&nbsp;    }
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;    public long getLastMeasurementMillis() {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        return lastMeasurementMillis;</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    public MillisecondClock getMillisecondClock() {
+<b class="nc"><i class="no-highlight">196</i>&nbsp;        return millisecondClock;</b>
+<i class="no-highlight">197</i>&nbsp;    }
+<i class="no-highlight">198</i>&nbsp;
+<i class="no-highlight">199</i>&nbsp;    public int getNetworkIOOwnerCount() {
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        return networkIOOwnerCount;</b>
+<i class="no-highlight">201</i>&nbsp;    }
+<i class="no-highlight">202</i>&nbsp;
+<i class="no-highlight">203</i>&nbsp;    public String getTableNameUtf16() {
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        return tableToken.getTableName();</b>
+<i class="no-highlight">205</i>&nbsp;    }
+<i class="no-highlight">206</i>&nbsp;
+<i class="no-highlight">207</i>&nbsp;    public ByteCharSequence getTableNameUtf8() {
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        return tableNameUtf8;</b>
+<i class="no-highlight">209</i>&nbsp;    }
+<i class="no-highlight">210</i>&nbsp;
+<i class="no-highlight">211</i>&nbsp;    public TableToken getTableToken() {
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        return tableToken;</b>
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    public int getWriterThreadId() {
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        return writerThreadId;</b>
+<i class="no-highlight">217</i>&nbsp;    }
+<i class="no-highlight">218</i>&nbsp;
+<i class="no-highlight">219</i>&nbsp;    public void incrementEventsProcessedSinceReshuffle() {
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        ++eventsProcessedSinceReshuffle;</b>
+<i class="no-highlight">221</i>&nbsp;    }
+<i class="no-highlight">222</i>&nbsp;
+<i class="no-highlight">223</i>&nbsp;    public boolean isAssignedToJob() {
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        return assignedToJob;</b>
+<i class="no-highlight">225</i>&nbsp;    }
+<i class="no-highlight">226</i>&nbsp;
+<i class="no-highlight">227</i>&nbsp;    public boolean isWal() {
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        return writerThreadId == -1;</b>
+<i class="no-highlight">229</i>&nbsp;    }
+<i class="no-highlight">230</i>&nbsp;
+<i class="no-highlight">231</i>&nbsp;    public boolean isWriterInError() {
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        return writerInError;</b>
+<i class="no-highlight">233</i>&nbsp;    }
+<i class="no-highlight">234</i>&nbsp;
+<i class="no-highlight">235</i>&nbsp;    public void removeReference(int workerId) {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        if (!isWal()) {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            networkIOOwnerCount--;</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;            localDetailsArray[workerId].clear();</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;            LOG.info()</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;                    .$(&quot;network IO thread released table [workerId=&quot;).$(workerId)</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                    .$(&quot;, tableName=&quot;).$(tableToken)</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                    .$(&quot;, nNetworkIoWorkers=&quot;).$(networkIOOwnerCount)</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">244</i>&nbsp;        }
+<i class="no-highlight">245</i>&nbsp;    }
+<i class="no-highlight">246</i>&nbsp;
+<i class="no-highlight">247</i>&nbsp;    public void setAssignedToJob(boolean assignedToJob) {
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        this.assignedToJob = assignedToJob;</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    public void setWriterInError() {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        writerInError = true;</b>
+<i class="no-highlight">253</i>&nbsp;    }
+<i class="no-highlight">254</i>&nbsp;
+<i class="no-highlight">255</i>&nbsp;    public void tick() {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        if (metadataService != null) {</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;            metadataService.tick();</b>
+<i class="no-highlight">258</i>&nbsp;        }
+<i class="no-highlight">259</i>&nbsp;    }
+<i class="no-highlight">260</i>&nbsp;
+<i class="no-highlight">261</i>&nbsp;    private long getCommitInterval() {
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        if (metadataService != null) {</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;            return metadataService.getCommitInterval();</b>
+<i class="no-highlight">264</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        return defaultCommitInterval;</b>
+<i class="no-highlight">266</i>&nbsp;    }
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;    private long getMetaMaxUncommittedRows() {
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        if (metadataService != null) {</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            return metadataService.getMetaMaxUncommittedRows();</b>
+<i class="no-highlight">271</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        return defaultMaxUncommittedRows;</b>
+<i class="no-highlight">273</i>&nbsp;    }
+<i class="no-highlight">274</i>&nbsp;
+<i class="no-highlight">275</i>&nbsp;    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
+<b class="fc"><i class="no-highlight">276</i>&nbsp;        if (wallClockMillis &lt; nextCommitTime) {</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            return nextCommitTime;</b>
+<i class="no-highlight">278</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        if (writerAPI != null) {</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            final long commitInterval = getCommitInterval();</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;            long start = millisecondClock.getTicks();</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;            commit(wallClockMillis - lastMeasurementMillis &lt; commitInterval);</b>
+<i class="no-highlight">283</i>&nbsp;            // Do not commit row by row if the commit takes longer than commitInterval.
+<i class="no-highlight">284</i>&nbsp;            // Exclude time to commit from the commit interval.
+<b class="fc"><i class="no-highlight">285</i>&nbsp;            nextCommitTime += commitInterval + millisecondClock.getTicks() - start;</b>
+<i class="no-highlight">286</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">287</i>&nbsp;        return nextCommitTime;</b>
+<i class="no-highlight">288</i>&nbsp;    }
+<i class="no-highlight">289</i>&nbsp;
+<i class="no-highlight">290</i>&nbsp;    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        final long rowsSinceCommit = writerAPI.getUncommittedRowCount();</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        if (rowsSinceCommit &lt; getMetaMaxUncommittedRows()) {</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;            if ((rowsSinceCommit &amp; writerTickRowsCountMod) == 0) {</b>
+<i class="no-highlight">294</i>&nbsp;                // Tick without commit. Some tick commands may force writer to commit though.
+<b class="nc"><i class="no-highlight">295</i>&nbsp;                tick();</b>
+<i class="no-highlight">296</i>&nbsp;            }
+<i class="no-highlight">297</i>&nbsp;            return;
+<i class="no-highlight">298</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        LOG.debug().$(&quot;max-uncommitted-rows commit with lag [&quot;).$(tableToken).I$();</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        nextCommitTime = millisecondClock.getTicks() + getCommitInterval();</b>
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            commit(true);</b>
+<b class="nc"><i class="no-highlight">304</i>&nbsp;        } catch (Throwable th) {</b>
+<b class="nc"><i class="no-highlight">305</i>&nbsp;            LOG.error()</b>
+<b class="nc"><i class="no-highlight">306</i>&nbsp;                    .$(&quot;could not commit line protocol measurement [tableName=&quot;).$(writerAPI.getTableToken())</b>
+<b class="nc"><i class="no-highlight">307</i>&nbsp;                    .$(&quot;, message=&quot;).$(th.getMessage())</b>
+<b class="nc"><i class="no-highlight">308</i>&nbsp;                    .$(th)</b>
+<b class="nc"><i class="no-highlight">309</i>&nbsp;                    .I$();</b>
+<b class="nc"><i class="no-highlight">310</i>&nbsp;            writerAPI.rollback();</b>
+<b class="nc"><i class="no-highlight">311</i>&nbsp;            throw CommitFailedException.instance(th);</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        }</b>
+<i class="no-highlight">313</i>&nbsp;
+<i class="no-highlight">314</i>&nbsp;        // Tick after commit.
+<b class="fc"><i class="no-highlight">315</i>&nbsp;        tick();</b>
+<i class="no-highlight">316</i>&nbsp;    }
+<i class="no-highlight">317</i>&nbsp;
+<i class="no-highlight">318</i>&nbsp;    ThreadLocalDetails getThreadLocalDetails(int workerId) {
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        lastMeasurementMillis = millisecondClock.getTicks();</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;        return localDetailsArray[workerId];</b>
+<i class="no-highlight">321</i>&nbsp;    }
+<i class="no-highlight">322</i>&nbsp;
+<i class="no-highlight">323</i>&nbsp;    int getTimestampIndex() {
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        return timestampIndex;</b>
+<i class="no-highlight">325</i>&nbsp;    }
+<i class="no-highlight">326</i>&nbsp;
+<i class="no-highlight">327</i>&nbsp;    TableWriterAPI getWriter() {
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        return writerAPI;</b>
+<i class="no-highlight">329</i>&nbsp;    }
+<i class="no-highlight">330</i>&nbsp;
+<i class="no-highlight">331</i>&nbsp;    void releaseWriter(boolean commit) {
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        if (writerAPI != null) {</b>
+<i class="no-highlight">333</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                if (commit) {</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                    LOG.debug().$(&quot;release commit [table=&quot;).$(tableToken).I$();</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                    writerAPI.commit();</b>
+<i class="no-highlight">337</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            } catch (Throwable ex) {</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;                LOG.error().$(&quot;writer commit fails, force closing it [table=&quot;).$(tableToken).$(&quot;,ex=&quot;).$(ex).I$();</b>
+<i class="no-highlight">340</i>&nbsp;            } finally {
+<i class="no-highlight">341</i>&nbsp;                // writer or FS can be in a bad state
+<i class="no-highlight">342</i>&nbsp;                // do not leave writer locked
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                writerAPI = Misc.free(writerAPI);</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                metadataService = null;</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;            }</b>
+<i class="no-highlight">346</i>&nbsp;        }
+<i class="no-highlight">347</i>&nbsp;    }
+<i class="no-highlight">348</i>&nbsp;
+<b class="fc"><i class="no-highlight">349</i>&nbsp;    public class ThreadLocalDetails implements Closeable {</b>
+<i class="no-highlight">350</i>&nbsp;        static final int COLUMN_NOT_FOUND = -1;
+<i class="no-highlight">351</i>&nbsp;        static final int DUPLICATED_COLUMN = -2;
+<i class="no-highlight">352</i>&nbsp;        // tracking of processed columns by their name, duplicates will be ignored
+<i class="no-highlight">353</i>&nbsp;        // columns end up in this set only if their index cannot be resolved, i.e. new columns
+<b class="fc"><i class="no-highlight">354</i>&nbsp;        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();</b>
+<i class="no-highlight">355</i>&nbsp;        // maps column names to their indexes
+<i class="no-highlight">356</i>&nbsp;        // keys are mangled strings created from the utf-8 encoded byte representations of the column names
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        private final ByteCharSequenceIntHashMap columnIndexByNameUtf8 = new ByteCharSequenceIntHashMap();</b>
+<i class="no-highlight">358</i>&nbsp;        // maps column names to their types
+<i class="no-highlight">359</i>&nbsp;        // will be populated for dynamically added columns only
+<b class="fc"><i class="no-highlight">360</i>&nbsp;        private final ByteCharSequenceIntHashMap columnTypeByNameUtf8 = new ByteCharSequenceIntHashMap();</b>
+<i class="no-highlight">361</i>&nbsp;        // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        private final IntList columnTypeMeta = new IntList();</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        private final IntList columnTypes = new IntList();</b>
+<i class="no-highlight">364</i>&nbsp;        private final LineTcpReceiverConfiguration configuration;
+<b class="fc"><i class="no-highlight">365</i>&nbsp;        private final Path path = new Path();</b>
+<i class="no-highlight">366</i>&nbsp;        // tracking of processed columns by their index, duplicates will be ignored
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        private final BoolList processedCols = new BoolList();</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        private final ObjList&lt;SymbolCache&gt; symbolCacheByColumnIndex = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        private final StringSink tempSink = new StringSink();</b>
+<i class="no-highlight">370</i>&nbsp;        private final ObjList&lt;SymbolCache&gt; unusedSymbolCaches;
+<b class="fc"><i class="no-highlight">371</i>&nbsp;        private boolean clean = true;</b>
+<i class="no-highlight">372</i>&nbsp;        private String colNameUtf16;
+<i class="no-highlight">373</i>&nbsp;        private ByteCharSequence colNameUtf8;
+<i class="no-highlight">374</i>&nbsp;        private int columnCount;
+<i class="no-highlight">375</i>&nbsp;        private TableRecordMetadata latestKnownMetadata;
+<i class="no-highlight">376</i>&nbsp;        private String symbolNameTemp;
+<i class="no-highlight">377</i>&nbsp;        private TxReader txReader;
+<i class="no-highlight">378</i>&nbsp;
+<i class="no-highlight">379</i>&nbsp;        ThreadLocalDetails(
+<i class="no-highlight">380</i>&nbsp;                LineTcpReceiverConfiguration lineTcpReceiverConfiguration,
+<i class="no-highlight">381</i>&nbsp;                ObjList&lt;SymbolCache&gt; unusedSymbolCaches,
+<i class="no-highlight">382</i>&nbsp;                int columnCount
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        ) {</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;            this.configuration = lineTcpReceiverConfiguration;</b>
+<i class="no-highlight">385</i>&nbsp;            // symbol caches are passed from the outside
+<i class="no-highlight">386</i>&nbsp;            // to provide global lifecycle management for when ThreadLocalDetails cease to exist
+<i class="no-highlight">387</i>&nbsp;            // the cache continue to live
+<b class="fc"><i class="no-highlight">388</i>&nbsp;            this.unusedSymbolCaches = unusedSymbolCaches;</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;            this.columnCount = columnCount;</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;            columnTypeMeta.add(0);</b>
+<i class="no-highlight">391</i>&nbsp;        }
+<i class="no-highlight">392</i>&nbsp;
+<i class="no-highlight">393</i>&nbsp;        @Override
+<i class="no-highlight">394</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">395</i>&nbsp;            Misc.freeObjList(symbolCacheByColumnIndex);</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;            Misc.free(path);</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;            txReader = Misc.free(txReader);</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;            latestKnownMetadata = Misc.free(latestKnownMetadata);</b>
+<i class="no-highlight">399</i>&nbsp;        }
+<i class="no-highlight">400</i>&nbsp;
+<i class="no-highlight">401</i>&nbsp;        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex) {
+<b class="fc"><i class="no-highlight">402</i>&nbsp;            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;                final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);</b>
+<b class="fc"><i class="no-highlight">404</i>&nbsp;                if (symbolNameTemp == null || symIndex &lt; 0) {</b>
+<i class="no-highlight">405</i>&nbsp;                    // looks like the column has just been added to the table, and
+<i class="no-highlight">406</i>&nbsp;                    // the reader is a bit behind and cannot see the column, yet
+<i class="no-highlight">407</i>&nbsp;                    // we will pass the symbol as string
+<b class="nc"><i class="no-highlight">408</i>&nbsp;                    return NOT_FOUND_LOOKUP;</b>
+<i class="no-highlight">409</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                final CairoConfiguration cairoConfiguration = engine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                path.of(cairoConfiguration.getRoot()).concat(tableToken);</b>
+<i class="no-highlight">412</i>&nbsp;                SymbolCache symCache;
+<b class="fc"><i class="no-highlight">413</i>&nbsp;                final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                if (lastUnusedSymbolCacheIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                    symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                    unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);</b>
+<i class="no-highlight">417</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                    symCache = new SymbolCache(configuration);</b>
+<i class="no-highlight">419</i>&nbsp;                }
+<i class="no-highlight">420</i>&nbsp;
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                if (this.clean) {</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                    if (this.txReader == null) {</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                        this.txReader = new TxReader(cairoConfiguration.getFilesFacade());</b>
+<i class="no-highlight">424</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                    int pathLen = path.length();</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                    path.trimTo(pathLen);</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                    this.clean = false;</b>
+<i class="no-highlight">429</i>&nbsp;                }
+<i class="no-highlight">430</i>&nbsp;
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                assert symIndex &lt;= colWriterIndex;</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;                symCache.of(</b>
+<i class="no-highlight">434</i>&nbsp;                        cairoConfiguration,
+<i class="no-highlight">435</i>&nbsp;                        writerAPI,
+<i class="no-highlight">436</i>&nbsp;                        colWriterIndex,
+<i class="no-highlight">437</i>&nbsp;                        path,
+<i class="no-highlight">438</i>&nbsp;                        symbolNameTemp,
+<i class="no-highlight">439</i>&nbsp;                        symIndex,
+<i class="no-highlight">440</i>&nbsp;                        txReader,
+<i class="no-highlight">441</i>&nbsp;                        columnNameTxn
+<i class="no-highlight">442</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                return symCache;</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;            }</b>
+<i class="no-highlight">446</i>&nbsp;        }
+<i class="no-highlight">447</i>&nbsp;
+<i class="no-highlight">448</i>&nbsp;        private int getColumnIndex0(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+<i class="no-highlight">449</i>&nbsp;            // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            final int index = addedColsUtf16.keyIndex(colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;            if (index &gt; -1) {</b>
+<i class="no-highlight">453</i>&nbsp;                // column has not been sent to the writer by name on this line before
+<i class="no-highlight">454</i>&nbsp;                // we can try to resolve column index using table reader
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;                int colWriterIndex = colIndex &lt; 0 ? colIndex : metadata.getWriterIndex(colIndex);</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                ByteCharSequence onHeapColNameUtf8 = ByteCharSequence.newInstance(colNameUtf8);</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;                if (colWriterIndex &gt; -1) {</b>
+<i class="no-highlight">459</i>&nbsp;                    // keys of this map will be checked against DirectByteCharSequence when get() is called
+<i class="no-highlight">460</i>&nbsp;                    // DirectByteCharSequence.equals() compares chars created from each byte, basically it
+<i class="no-highlight">461</i>&nbsp;                    // assumes that each char is encoded on a single byte (ASCII)
+<i class="no-highlight">462</i>&nbsp;                    // utf8BytesToString() is used here instead of a simple toString() call to make sure
+<i class="no-highlight">463</i>&nbsp;                    // column names with non-ASCII chars are handled properly
+<b class="fc"><i class="no-highlight">464</i>&nbsp;                    columnIndexByNameUtf8.put(onHeapColNameUtf8, colWriterIndex);</b>
+<i class="no-highlight">465</i>&nbsp;
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                    processedCols.extendAndReplace(colWriterIndex, true);</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                    return colWriterIndex;</b>
+<i class="no-highlight">468</i>&nbsp;                }
+<i class="no-highlight">469</i>&nbsp;                // cannot not resolve column index even from the reader
+<i class="no-highlight">470</i>&nbsp;                // column will be passed to the writer by name
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                this.colNameUtf16 = colNameUtf16.toString();</b>
+<b class="fc"><i class="no-highlight">472</i>&nbsp;                this.colNameUtf8 = onHeapColNameUtf8;</b>
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                addedColsUtf16.addAt(index, this.colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;                return COLUMN_NOT_FOUND;</b>
+<i class="no-highlight">475</i>&nbsp;            }
+<i class="no-highlight">476</i>&nbsp;            // column has been passed by name earlier on this event, duplicate should be skipped
+<b class="fc"><i class="no-highlight">477</i>&nbsp;            return DUPLICATED_COLUMN;</b>
+<i class="no-highlight">478</i>&nbsp;        }
+<i class="no-highlight">479</i>&nbsp;
+<i class="no-highlight">480</i>&nbsp;        private int getColumnWriterIndex(CharSequence colNameUtf16) {
+<b class="fc"><i class="no-highlight">481</i>&nbsp;            assert latestKnownMetadata != null;</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;            int colIndex = latestKnownMetadata.getColumnIndexQuiet(colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;            if (colIndex &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                return colIndex;</b>
+<i class="no-highlight">485</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">486</i>&nbsp;            int writerColIndex = latestKnownMetadata.getWriterIndex(colIndex);</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;            updateColumnTypeCache(colIndex, writerColIndex, latestKnownMetadata);</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;            return writerColIndex;</b>
+<i class="no-highlight">489</i>&nbsp;        }
+<i class="no-highlight">490</i>&nbsp;
+<i class="no-highlight">491</i>&nbsp;        private int resolveSymbolIndexAndName(TableRecordMetadata metadata, int colWriterIndex) {
+<b class="fc"><i class="no-highlight">492</i>&nbsp;            symbolNameTemp = null;</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;            int symIndex = -1;</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;            for (int i = 0, n = metadata.getColumnCount(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                if (metadata.getWriterIndex(i) == colWriterIndex) {</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;                    if (!ColumnType.isSymbol(metadata.getColumnType(i))) {</b>
+<b class="nc"><i class="no-highlight">497</i>&nbsp;                        return -1;</b>
+<i class="no-highlight">498</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                    symIndex++;</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                    symbolNameTemp = metadata.getColumnName(i);</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                    break;</b>
+<i class="no-highlight">502</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                if (ColumnType.isSymbol(metadata.getColumnType(i))) {</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                    symIndex++;</b>
+<i class="no-highlight">505</i>&nbsp;                }
+<i class="no-highlight">506</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">507</i>&nbsp;            return symIndex;</b>
+<i class="no-highlight">508</i>&nbsp;        }
+<i class="no-highlight">509</i>&nbsp;
+<i class="no-highlight">510</i>&nbsp;        private void updateColumnTypeCache(int colIndex, int writerColIndex, TableRecordMetadata metadata) {
+<b class="fc"><i class="no-highlight">511</i>&nbsp;            columnCount = metadata.getColumnCount();</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;            final int colType = metadata.getColumnType(colIndex);</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;            final int geoHashBits = ColumnType.getGeoHashBits(colType);</b>
+<b class="fc"><i class="no-highlight">514</i>&nbsp;            columnTypes.extendAndSet(writerColIndex, colType);</b>
+<b class="fc"><i class="no-highlight">515</i>&nbsp;            columnTypeMeta.extendAndSet(writerColIndex + 1,</b>
+<b class="fc"><i class="no-highlight">516</i>&nbsp;                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));</b>
+<i class="no-highlight">517</i>&nbsp;        }
+<i class="no-highlight">518</i>&nbsp;
+<i class="no-highlight">519</i>&nbsp;        void addColumnType(int colIndex, int colType) {
+<b class="fc"><i class="no-highlight">520</i>&nbsp;            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) colIndex));</b>
+<i class="no-highlight">521</i>&nbsp;        }
+<i class="no-highlight">522</i>&nbsp;
+<i class="no-highlight">523</i>&nbsp;        void clear() {
+<b class="fc"><i class="no-highlight">524</i>&nbsp;            columnIndexByNameUtf8.clear();</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;            columnTypeByNameUtf8.clear();</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;            for (int n = 0, sz = symbolCacheByColumnIndex.size(); n &lt; sz; n++) {</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;                SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);</b>
+<b class="fc"><i class="no-highlight">528</i>&nbsp;                if (null != symCache) {</b>
+<b class="fc"><i class="no-highlight">529</i>&nbsp;                    symCache.close();</b>
+<b class="fc"><i class="no-highlight">530</i>&nbsp;                    unusedSymbolCaches.add(symCache);</b>
+<i class="no-highlight">531</i>&nbsp;                }
+<i class="no-highlight">532</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">533</i>&nbsp;            symbolCacheByColumnIndex.clear();</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;            columnTypes.clear();</b>
+<b class="fc"><i class="no-highlight">535</i>&nbsp;            columnTypeMeta.clear();</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;            columnTypeMeta.add(0);</b>
+<b class="fc"><i class="no-highlight">537</i>&nbsp;            if (txReader != null) {</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;                txReader.clear();</b>
+<i class="no-highlight">539</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">540</i>&nbsp;            this.clean = true;</b>
+<b class="fc"><i class="no-highlight">541</i>&nbsp;            this.latestKnownMetadata = Misc.free(latestKnownMetadata);</b>
+<i class="no-highlight">542</i>&nbsp;        }
+<i class="no-highlight">543</i>&nbsp;
+<i class="no-highlight">544</i>&nbsp;        void clearColumnTypes() {
+<b class="fc"><i class="no-highlight">545</i>&nbsp;            columnTypes.clear();</b>
+<i class="no-highlight">546</i>&nbsp;        }
+<i class="no-highlight">547</i>&nbsp;
+<i class="no-highlight">548</i>&nbsp;        void clearProcessedColumns() {
+<b class="fc"><i class="no-highlight">549</i>&nbsp;            processedCols.setAll(columnCount, false);</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;            addedColsUtf16.clear();</b>
+<i class="no-highlight">551</i>&nbsp;        }
+<i class="no-highlight">552</i>&nbsp;
+<i class="no-highlight">553</i>&nbsp;        String getColNameUtf16() {
+<b class="fc"><i class="no-highlight">554</i>&nbsp;            assert colNameUtf16 != null;</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;            return colNameUtf16;</b>
+<i class="no-highlight">556</i>&nbsp;        }
+<i class="no-highlight">557</i>&nbsp;
+<i class="no-highlight">558</i>&nbsp;        ByteCharSequence getColNameUtf8() {
+<b class="fc"><i class="no-highlight">559</i>&nbsp;            assert colNameUtf8 != null;</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;            return colNameUtf8;</b>
+<i class="no-highlight">561</i>&nbsp;        }
+<i class="no-highlight">562</i>&nbsp;
+<i class="no-highlight">563</i>&nbsp;        // returns the column index for column name passed in colNameUtf8,
+<i class="no-highlight">564</i>&nbsp;        // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
+<i class="no-highlight">565</i>&nbsp;        // or DUPLICATED_COLUMN if the column has already been processed on the current event
+<i class="no-highlight">566</i>&nbsp;        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
+<b class="fc"><i class="no-highlight">567</i>&nbsp;            int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;            if (colWriterIndex &lt; 0) {</b>
+<i class="no-highlight">569</i>&nbsp;                // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
+<b class="fc"><i class="no-highlight">570</i>&nbsp;                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);</b>
+<b class="fc"><i class="no-highlight">571</i>&nbsp;                final int index = addedColsUtf16.keyIndex(colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">572</i>&nbsp;                if (index &gt; -1) {</b>
+<i class="no-highlight">573</i>&nbsp;                    // column has not been sent to the writer by name on this line before
+<i class="no-highlight">574</i>&nbsp;                    // we can try to resolve column index using table reader
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                    colWriterIndex = getColumnWriterIndex(colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                    ByteCharSequence onHeapColNameUtf8 = ByteCharSequence.newInstance(colNameUtf8);</b>
+<b class="fc"><i class="no-highlight">577</i>&nbsp;                    if (colWriterIndex &gt; -1) {</b>
+<i class="no-highlight">578</i>&nbsp;                        // keys of this map will be checked against DirectByteCharSequence when get() is called
+<i class="no-highlight">579</i>&nbsp;                        // DirectByteCharSequence.equals() compares chars created from each byte, basically it
+<i class="no-highlight">580</i>&nbsp;                        // assumes that each char is encoded on a single byte (ASCII)
+<i class="no-highlight">581</i>&nbsp;                        // utf8BytesToString() is used here instead of a simple toString() call to make sure
+<i class="no-highlight">582</i>&nbsp;                        // column names with non-ASCII chars are handled properly
+<b class="fc"><i class="no-highlight">583</i>&nbsp;                        columnIndexByNameUtf8.put(onHeapColNameUtf8, colWriterIndex);</b>
+<i class="no-highlight">584</i>&nbsp;                    } else {
+<i class="no-highlight">585</i>&nbsp;                        // cannot not resolve column index even from the reader
+<i class="no-highlight">586</i>&nbsp;                        // column will be passed to the writer by name
+<b class="fc"><i class="no-highlight">587</i>&nbsp;                        this.colNameUtf16 = colNameUtf16.toString();</b>
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                        this.colNameUtf8 = onHeapColNameUtf8;</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;                        addedColsUtf16.addAt(index, this.colNameUtf16);</b>
+<b class="fc"><i class="no-highlight">590</i>&nbsp;                        return COLUMN_NOT_FOUND;</b>
+<i class="no-highlight">591</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">592</i>&nbsp;                } else {</b>
+<i class="no-highlight">593</i>&nbsp;                    // column has been passed by name earlier on this event, duplicate should be skipped
+<b class="fc"><i class="no-highlight">594</i>&nbsp;                    return DUPLICATED_COLUMN;</b>
+<i class="no-highlight">595</i>&nbsp;                }
+<i class="no-highlight">596</i>&nbsp;            }
+<i class="no-highlight">597</i>&nbsp;
+<b class="fc"><i class="no-highlight">598</i>&nbsp;            if (processedCols.extendAndReplace(colWriterIndex, true)) {</b>
+<i class="no-highlight">599</i>&nbsp;                // column has been passed by index earlier on this event, duplicate should be skipped
+<b class="fc"><i class="no-highlight">600</i>&nbsp;                return DUPLICATED_COLUMN;</b>
+<i class="no-highlight">601</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">602</i>&nbsp;            return colWriterIndex;</b>
+<i class="no-highlight">603</i>&nbsp;        }
+<i class="no-highlight">604</i>&nbsp;
+<i class="no-highlight">605</i>&nbsp;        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+<b class="fc"><i class="no-highlight">606</i>&nbsp;            final int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);</b>
+<b class="fc"><i class="no-highlight">607</i>&nbsp;            if (colWriterIndex &lt; 0) {</b>
+<i class="no-highlight">608</i>&nbsp;                // Hot path optimisation to allow the body of the current method to be small
+<i class="no-highlight">609</i>&nbsp;                // enough for inlining. Rarely used code is extracted into a method call.
+<b class="fc"><i class="no-highlight">610</i>&nbsp;                return getColumnIndex0(colNameUtf8, hasNonAsciiChars, metadata);</b>
+<i class="no-highlight">611</i>&nbsp;            }
+<i class="no-highlight">612</i>&nbsp;
+<b class="fc"><i class="no-highlight">613</i>&nbsp;            if (processedCols.extendAndReplace(colWriterIndex, true)) {</b>
+<i class="no-highlight">614</i>&nbsp;                // column has been passed by index earlier on this event, duplicate should be skipped
+<b class="fc"><i class="no-highlight">615</i>&nbsp;                return DUPLICATED_COLUMN;</b>
+<i class="no-highlight">616</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">617</i>&nbsp;            return colWriterIndex;</b>
+<i class="no-highlight">618</i>&nbsp;        }
+<i class="no-highlight">619</i>&nbsp;
+<i class="no-highlight">620</i>&nbsp;        int getColumnType(int colIndex) {
+<b class="fc"><i class="no-highlight">621</i>&nbsp;            return columnTypes.getQuick(colIndex);</b>
+<i class="no-highlight">622</i>&nbsp;        }
+<i class="no-highlight">623</i>&nbsp;
+<i class="no-highlight">624</i>&nbsp;        int getColumnType(ByteCharSequence colName, byte entityType) {
+<b class="fc"><i class="no-highlight">625</i>&nbsp;            int colType = columnTypeByNameUtf8.get(colName);</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;            if (colType &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">627</i>&nbsp;                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];</b>
+<b class="fc"><i class="no-highlight">628</i>&nbsp;                columnTypeByNameUtf8.put(colName, colType);</b>
+<i class="no-highlight">629</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">630</i>&nbsp;            return colType;</b>
+<i class="no-highlight">631</i>&nbsp;        }
+<i class="no-highlight">632</i>&nbsp;
+<i class="no-highlight">633</i>&nbsp;        int getColumnTypeMeta(int colIndex) {
+<b class="fc"><i class="no-highlight">634</i>&nbsp;            return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1</b>
+<i class="no-highlight">635</i>&nbsp;        }
+<i class="no-highlight">636</i>&nbsp;
+<i class="no-highlight">637</i>&nbsp;        long getStructureVersion() {
+<b class="fc"><i class="no-highlight">638</i>&nbsp;            if (latestKnownMetadata != null) {</b>
+<b class="fc"><i class="no-highlight">639</i>&nbsp;                return latestKnownMetadata.getStructureVersion();</b>
+<i class="no-highlight">640</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">641</i>&nbsp;            return ANY_TABLE_VERSION;</b>
+<i class="no-highlight">642</i>&nbsp;        }
+<i class="no-highlight">643</i>&nbsp;
+<i class="no-highlight">644</i>&nbsp;        DirectByteSymbolLookup getSymbolLookup(int columnIndex) {
+<b class="fc"><i class="no-highlight">645</i>&nbsp;            if (columnIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">646</i>&nbsp;                SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);</b>
+<b class="fc"><i class="no-highlight">647</i>&nbsp;                if (symCache != null) {</b>
+<b class="fc"><i class="no-highlight">648</i>&nbsp;                    return symCache;</b>
+<i class="no-highlight">649</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">650</i>&nbsp;                return addSymbolCache(columnIndex);</b>
+<i class="no-highlight">651</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">652</i>&nbsp;            return NOT_FOUND_LOOKUP;</b>
+<i class="no-highlight">653</i>&nbsp;        }
+<i class="no-highlight">654</i>&nbsp;
+<i class="no-highlight">655</i>&nbsp;        void resetStateIfNecessary() {
+<i class="no-highlight">656</i>&nbsp;            // First, reset processed column tracking.
+<b class="fc"><i class="no-highlight">657</i>&nbsp;            clearProcessedColumns();</b>
+<i class="no-highlight">658</i>&nbsp;            // Second, check if writer&#39;s structure version has changed
+<i class="no-highlight">659</i>&nbsp;            // compared with the known metadata.
+<b class="fc"><i class="no-highlight">660</i>&nbsp;            if (latestKnownMetadata != null) {</b>
+<b class="fc"><i class="no-highlight">661</i>&nbsp;                long structureVersion = writerAPI.getStructureVersion();</b>
+<b class="fc"><i class="no-highlight">662</i>&nbsp;                if (latestKnownMetadata.getStructureVersion() != structureVersion) {</b>
+<i class="no-highlight">663</i>&nbsp;                    // clear() frees latestKnownMetadata and sets it to null
+<b class="fc"><i class="no-highlight">664</i>&nbsp;                    clear();</b>
+<i class="no-highlight">665</i>&nbsp;                }
+<i class="no-highlight">666</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">667</i>&nbsp;            if (latestKnownMetadata == null) {</b>
+<i class="no-highlight">668</i>&nbsp;                // Get the latest metadata.
+<i class="no-highlight">669</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">670</i>&nbsp;                    latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);</b>
+<b class="nc"><i class="no-highlight">671</i>&nbsp;                } catch (CairoException | TableReferenceOutOfDateException ex) {</b>
+<b class="nc"><i class="no-highlight">672</i>&nbsp;                    if (isWal()) {</b>
+<b class="nc"><i class="no-highlight">673</i>&nbsp;                        setWriterInError();</b>
+<i class="no-highlight">674</i>&nbsp;                    } else {
+<b class="nc"><i class="no-highlight">675</i>&nbsp;                        throw ex;</b>
+<i class="no-highlight">676</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">677</i>&nbsp;                }</b>
+<i class="no-highlight">678</i>&nbsp;            }
+<i class="no-highlight">679</i>&nbsp;        }
+<i class="no-highlight">680</i>&nbsp;    }
+<i class="no-highlight">681</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

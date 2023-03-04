@@ -1,0 +1,759 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > WriterPool</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.pool</a>
+</div>
+
+<h1>Coverage Summary for Class: WriterPool (io.questdb.cairo.pool)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">WriterPool</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (24/24)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    93.3%
+  </span>
+  <span class="absValue">
+    (222/238)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">WriterPool$Entry</td>
+<td class="coverageStat">
+  <span class="percent">
+    66.7%
+  </span>
+  <span class="absValue">
+    (2/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    58.3%
+  </span>
+  <span class="absValue">
+    (7/12)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    96.3%
+  </span>
+  <span class="absValue">
+    (26/27)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.6%
+  </span>
+  <span class="absValue">
+    (229/250)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.pool;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.MessageBus;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.Metrics;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.pool.ex.EntryLockedException;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.pool.ex.PoolClosedException;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.AsyncWriterCommand;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.log.LogRecord;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.ConcurrentHashMap;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.Os;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.datetime.microtime.MicrosecondClock;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">41</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">42</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">43</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">44</i>&nbsp;
+<i class="no-highlight">45</i>&nbsp;import java.util.Iterator;
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;/**
+<i class="no-highlight">48</i>&nbsp; * This class maintains cache of open writers to avoid OS overhead of
+<i class="no-highlight">49</i>&nbsp; * opening and closing files. While doing so it abides by the same
+<i class="no-highlight">50</i>&nbsp; * rule as non-pooled writers: there can only be one TableWriter instance
+<i class="no-highlight">51</i>&nbsp; * for any given table name.
+<i class="no-highlight">52</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">53</i>&nbsp; * This implementation is thread-safe. Writer allocated by one thread
+<i class="no-highlight">54</i>&nbsp; * cannot be used by any other threads until it is released. This factory
+<i class="no-highlight">55</i>&nbsp; * will be returning NULL when writer is already in use and cached
+<i class="no-highlight">56</i>&nbsp; * instance of writer otherwise. Writers are released back to pool via
+<i class="no-highlight">57</i>&nbsp; * standard writer.close() call.
+<i class="no-highlight">58</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">59</i>&nbsp; * Writers that have been idle for some time can be expunged from pool
+<i class="no-highlight">60</i>&nbsp; * by calling Job.run() method asynchronously. Pool implementation is
+<i class="no-highlight">61</i>&nbsp; * guaranteeing thread-safety of this method at all times.
+<i class="no-highlight">62</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">63</i>&nbsp; * This factory can be closed via close() call. This method is also
+<i class="no-highlight">64</i>&nbsp; * thread-safe and is guarantying that all open writers will be eventually
+<i class="no-highlight">65</i>&nbsp; * closed.
+<i class="no-highlight">66</i>&nbsp; */
+<b class="fc"><i class="no-highlight">67</i>&nbsp;public class WriterPool extends AbstractPool {</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    public static final String OWNERSHIP_REASON_NONE = null;</b>
+<i class="no-highlight">69</i>&nbsp;    public static final String OWNERSHIP_REASON_RELEASED = &quot;released&quot;;
+<i class="no-highlight">70</i>&nbsp;    public static final String OWNERSHIP_REASON_UNKNOWN = &quot;unknown&quot;;
+<i class="no-highlight">71</i>&nbsp;    static final String OWNERSHIP_REASON_MISSING = &quot;missing or owned by other process&quot;;
+<i class="no-highlight">72</i>&nbsp;    static final String OWNERSHIP_REASON_WRITER_ERROR = &quot;writer error&quot;;
+<b class="fc"><i class="no-highlight">73</i>&nbsp;    private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, &quot;owner&quot;);</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    private static final Log LOG = LogFactory.getLog(WriterPool.class);</b>
+<i class="no-highlight">75</i>&nbsp;    private static final long QUEUE_PROCESSING_OWNER = -2L;
+<i class="no-highlight">76</i>&nbsp;    private final MicrosecondClock clock;
+<i class="no-highlight">77</i>&nbsp;    private final CairoConfiguration configuration;
+<b class="fc"><i class="no-highlight">78</i>&nbsp;    private final ConcurrentHashMap&lt;Entry&gt; entries = new ConcurrentHashMap&lt;&gt;();</b>
+<i class="no-highlight">79</i>&nbsp;    @NotNull
+<i class="no-highlight">80</i>&nbsp;    private final MessageBus messageBus;
+<i class="no-highlight">81</i>&nbsp;    @NotNull
+<i class="no-highlight">82</i>&nbsp;    private final Metrics metrics;
+<i class="no-highlight">83</i>&nbsp;    private final CharSequence root;
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    /**
+<i class="no-highlight">86</i>&nbsp;     * Pool constructor. WriterPool root directory is passed via configuration.
+<i class="no-highlight">87</i>&nbsp;     *
+<i class="no-highlight">88</i>&nbsp;     * @param configuration configuration parameters.
+<i class="no-highlight">89</i>&nbsp;     * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
+<i class="no-highlight">90</i>&nbsp;     * @param metrics       metrics instance to be used by table writers.
+<i class="no-highlight">91</i>&nbsp;     */
+<i class="no-highlight">92</i>&nbsp;    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus, @NotNull Metrics metrics) {
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        super(configuration, configuration.getInactiveWriterTTL());</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        this.configuration = configuration;</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        this.messageBus = messageBus;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        this.clock = configuration.getMicrosecondClock();</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        this.root = configuration.getRoot();</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        this.metrics = metrics;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);</b>
+<i class="no-highlight">100</i>&nbsp;    }
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    /**
+<i class="no-highlight">103</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">104</i>&nbsp;     * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with &lt;b&gt;single
+<i class="no-highlight">105</i>&nbsp;     * writer model&lt;/b&gt; pool ensures there is single TableWriter instance for given table name. Table name is unique in
+<i class="no-highlight">106</i>&nbsp;     * context of &lt;b&gt;root&lt;/b&gt;, and pool instance covers single root.
+<i class="no-highlight">107</i>&nbsp;     * &lt;/p&gt;
+<i class="no-highlight">108</i>&nbsp;     * Exceptions thrown:
+<i class="no-highlight">109</i>&nbsp;     * &lt;ul&gt;
+<i class="no-highlight">110</i>&nbsp;     * &lt;li&gt;{@link EntryUnavailableException}: When TableWriter from this pool is used by another thread.
+<i class="no-highlight">111</i>&nbsp;     * In this case, application can retry getting writer from pool again at any time.&lt;/li&gt;
+<i class="no-highlight">112</i>&nbsp;     * &lt;li&gt;{@link CairoException}: When table is locked outside of pool, which includes same or different process.
+<i class="no-highlight">113</i>&nbsp;     * In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter.&lt;/li&gt;
+<i class="no-highlight">114</i>&nbsp;     * &lt;/ul&gt;
+<i class="no-highlight">115</i>&nbsp;     *
+<i class="no-highlight">116</i>&nbsp;     * @param tableToken name of the table
+<i class="no-highlight">117</i>&nbsp;     * @param lockReason description of where or why lock is held
+<i class="no-highlight">118</i>&nbsp;     * @return cached TableWriter instance.
+<i class="no-highlight">119</i>&nbsp;     */
+<i class="no-highlight">120</i>&nbsp;    public TableWriter get(TableToken tableToken, String lockReason) {
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        return get(tableToken, lockReason, true);</b>
+<i class="no-highlight">122</i>&nbsp;    }
+<i class="no-highlight">123</i>&nbsp;
+<i class="no-highlight">124</i>&nbsp;    public TableWriter get(TableToken tableToken, String lockReason, boolean logBusy) {
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        return getWriterEntry(tableToken, lockReason, null, logBusy);</b>
+<i class="no-highlight">126</i>&nbsp;    }
+<i class="no-highlight">127</i>&nbsp;
+<i class="no-highlight">128</i>&nbsp;    /**
+<i class="no-highlight">129</i>&nbsp;     * Counts busy writers in pool.
+<i class="no-highlight">130</i>&nbsp;     *
+<i class="no-highlight">131</i>&nbsp;     * @return number of busy writer instances.
+<i class="no-highlight">132</i>&nbsp;     */
+<i class="no-highlight">133</i>&nbsp;    @TestOnly
+<i class="no-highlight">134</i>&nbsp;    public int getBusyCount() {
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        int count = 0;</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        for (Entry e : entries.values()) {</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;            if (e.owner != UNALLOCATED) {</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                count++;</b>
+<i class="no-highlight">139</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        return count;</b>
+<i class="no-highlight">142</i>&nbsp;    }
+<i class="no-highlight">143</i>&nbsp;
+<i class="no-highlight">144</i>&nbsp;    /**
+<i class="no-highlight">145</i>&nbsp;     * Returns writer from the pool or sends writer command
+<i class="no-highlight">146</i>&nbsp;     *
+<i class="no-highlight">147</i>&nbsp;     * @param tableToken         name of the table
+<i class="no-highlight">148</i>&nbsp;     * @param lockReason         reason for the action
+<i class="no-highlight">149</i>&nbsp;     * @param asyncWriterCommand command to write to TableWriterTask
+<i class="no-highlight">150</i>&nbsp;     * @return null if command is published or TableWriter instance if writer is available
+<i class="no-highlight">151</i>&nbsp;     */
+<i class="no-highlight">152</i>&nbsp;    public TableWriter getWriterOrPublishCommand(
+<i class="no-highlight">153</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">154</i>&nbsp;            String lockReason,
+<i class="no-highlight">155</i>&nbsp;            @NotNull AsyncWriterCommand asyncWriterCommand
+<i class="no-highlight">156</i>&nbsp;    ) {
+<i class="no-highlight">157</i>&nbsp;        while (true) {
+<i class="no-highlight">158</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                return getWriterEntry(tableToken, lockReason, asyncWriterCommand, true);</b>
+<b class="nc"><i class="no-highlight">160</i>&nbsp;            } catch (EntryUnavailableException ex) {</b>
+<i class="no-highlight">161</i>&nbsp;                // means retry in this context
+<b class="nc"><i class="no-highlight">162</i>&nbsp;            }</b>
+<i class="no-highlight">163</i>&nbsp;        }
+<i class="no-highlight">164</i>&nbsp;    }
+<i class="no-highlight">165</i>&nbsp;
+<i class="no-highlight">166</i>&nbsp;    /**
+<i class="no-highlight">167</i>&nbsp;     * Locks writer. Locking operation is always non-blocking. Lock is usually successful
+<i class="no-highlight">168</i>&nbsp;     * when writer is in pool or owned by calling thread, in which case
+<i class="no-highlight">169</i>&nbsp;     * writer instance is closed. Lock will also succeed when writer does not exist.
+<i class="no-highlight">170</i>&nbsp;     * This will prevent from writer being created before it is unlocked.
+<i class="no-highlight">171</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">172</i>&nbsp;     * Lock fails immediately with {@link EntryUnavailableException} when writer is used by another thread and with
+<i class="no-highlight">173</i>&nbsp;     * {@link PoolClosedException} when pool is closed.
+<i class="no-highlight">174</i>&nbsp;     * &lt;/p&gt;
+<i class="no-highlight">175</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">176</i>&nbsp;     * Lock is beneficial before table directory is renamed or deleted.
+<i class="no-highlight">177</i>&nbsp;     * &lt;/p&gt;
+<i class="no-highlight">178</i>&nbsp;     *
+<i class="no-highlight">179</i>&nbsp;     * @param tableToken table name
+<i class="no-highlight">180</i>&nbsp;     * @param lockReason description of where or why lock is held
+<i class="no-highlight">181</i>&nbsp;     * @return lock reason as String
+<i class="no-highlight">182</i>&nbsp;     */
+<i class="no-highlight">183</i>&nbsp;    public String lock(TableToken tableToken, String lockReason) {
+<b class="fc"><i class="no-highlight">184</i>&nbsp;        checkClosed();</b>
+<i class="no-highlight">185</i>&nbsp;
+<b class="fc"><i class="no-highlight">186</i>&nbsp;        long thread = Thread.currentThread().getId();</b>
+<i class="no-highlight">187</i>&nbsp;
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        Entry e = entries.get(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        if (e == null) {</b>
+<i class="no-highlight">190</i>&nbsp;            // We are racing to create new writer!
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            e = new Entry(clock.getTicks());</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            Entry other = entries.putIfAbsent(tableToken.getDirName(), e);</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            if (other == null) {</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;                if (lockAndNotify(thread, e, tableToken, lockReason)) {</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                    return OWNERSHIP_REASON_NONE;</b>
+<i class="no-highlight">196</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                    entries.remove(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                    return reinterpretOwnershipReason(e.ownershipReason);</b>
+<i class="no-highlight">199</i>&nbsp;                }
+<i class="no-highlight">200</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">201</i>&nbsp;                e = other;</b>
+<i class="no-highlight">202</i>&nbsp;            }
+<i class="no-highlight">203</i>&nbsp;        }
+<i class="no-highlight">204</i>&nbsp;
+<i class="no-highlight">205</i>&nbsp;        // try to change owner
+<b class="fc"><i class="no-highlight">206</i>&nbsp;        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| (e.owner == thread)*/)) {</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;            if (lockAndNotify(thread, e, tableToken, lockReason)) {</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                return OWNERSHIP_REASON_NONE;</b>
+<i class="no-highlight">210</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">211</i>&nbsp;            return reinterpretOwnershipReason(e.ownershipReason);</b>
+<i class="no-highlight">212</i>&nbsp;        }
+<i class="no-highlight">213</i>&nbsp;
+<b class="fc"><i class="no-highlight">214</i>&nbsp;        LOG.error().$(&quot;could not lock, busy [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, owner=&quot;).$(e.owner).$(&quot;, thread=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY);</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        return reinterpretOwnershipReason(e.ownershipReason);</b>
+<i class="no-highlight">217</i>&nbsp;    }
+<i class="no-highlight">218</i>&nbsp;
+<i class="no-highlight">219</i>&nbsp;    public int size() {
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        return entries.size();</b>
+<i class="no-highlight">221</i>&nbsp;    }
+<i class="no-highlight">222</i>&nbsp;
+<i class="no-highlight">223</i>&nbsp;    public void unlock(TableToken tableToken) {
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        unlock(tableToken, null, false);</b>
+<i class="no-highlight">225</i>&nbsp;    }
+<i class="no-highlight">226</i>&nbsp;
+<i class="no-highlight">227</i>&nbsp;    public void unlock(TableToken tableToken, @Nullable TableWriter writer, boolean newTable) {
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        long thread = Thread.currentThread().getId();</b>
+<i class="no-highlight">229</i>&nbsp;
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        Entry e = entries.get(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        if (e == null) {</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED);</b>
+<i class="no-highlight">233</i>&nbsp;            return;
+<i class="no-highlight">234</i>&nbsp;        }
+<i class="no-highlight">235</i>&nbsp;
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        if (e.owner == thread) {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            if (e.writer != null) {</b>
+<i class="no-highlight">238</i>&nbsp;                // When entry is locked, writer must be null, however if writer is not null,
+<i class="no-highlight">239</i>&nbsp;                // calling thread must be trying to unlock writer that hasn&#39;t been locked.
+<i class="no-highlight">240</i>&nbsp;                // This qualifies for &quot;illegal state&quot;.
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED);</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                throw CairoException.critical(0).put(&quot;Writer &quot;).put(tableToken.getDirName()).put(&quot; is not locked&quot;);</b>
+<i class="no-highlight">243</i>&nbsp;            }
+<i class="no-highlight">244</i>&nbsp;
+<b class="fc"><i class="no-highlight">245</i>&nbsp;            if (newTable) {</b>
+<i class="no-highlight">246</i>&nbsp;                // Note that the TableUtils.createTable method will create files, but on some OS&#39;s these files
+<i class="no-highlight">247</i>&nbsp;                // will not immediately become visible on all threads, only in this thread will they definitely
+<i class="no-highlight">248</i>&nbsp;                // be visible. To prevent spurious file system errors (or even allowing the same table to be
+<i class="no-highlight">249</i>&nbsp;                // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                assert writer == null &amp;&amp; e.lockFd != -1;</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;                LOG.info().$(&quot;created [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;                writer = new TableWriter(configuration, tableToken, messageBus, null, false, e, root, metrics);</b>
+<i class="no-highlight">253</i>&nbsp;            }
+<i class="no-highlight">254</i>&nbsp;
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            if (writer == null) {</b>
+<i class="no-highlight">256</i>&nbsp;                // unlock must remove entry because pool does not deal with null writer
+<i class="no-highlight">257</i>&nbsp;
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                if (e.lockFd != -1) {</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                    Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                    TableUtils.lockName(path);</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                    if (!ff.closeRemove(e.lockFd, path)) {</b>
+<b class="nc"><i class="no-highlight">262</i>&nbsp;                        LOG.error().$(&quot;could not remove [file=&quot;).$(path).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">263</i>&nbsp;                    }
+<i class="no-highlight">264</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                entries.remove(tableToken.getDirName());</b>
+<i class="no-highlight">266</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                e.writer = writer;</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;                writer.setLifecycleManager(e);</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                writer.transferLock(e.lockFd);</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                e.lockFd = -1;</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                e.ownershipReason = OWNERSHIP_REASON_NONE;</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);</b>
+<i class="no-highlight">274</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED);</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            LOG.debug().$(&quot;unlocked [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(thread).I$();</b>
+<i class="no-highlight">277</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;            throw CairoException.critical(0).put(&quot;Not lock owner of &quot;).put(tableToken.getDirName());</b>
+<i class="no-highlight">280</i>&nbsp;        }
+<i class="no-highlight">281</i>&nbsp;    }
+<i class="no-highlight">282</i>&nbsp;
+<i class="no-highlight">283</i>&nbsp;    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
+<i class="no-highlight">284</i>&nbsp;        TableWriter writer;
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        while ((writer = e.writer) == null &amp;&amp; e.owner != UNALLOCATED) {</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;            Os.pause();</b>
+<i class="no-highlight">287</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        if (writer == null) {</b>
+<i class="no-highlight">289</i>&nbsp;            // Retry from very beginning
+<b class="nc"><i class="no-highlight">290</i>&nbsp;            throw EntryUnavailableException.instance(&quot;please retry&quot;);</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<i class="no-highlight">292</i>&nbsp;        // Mark command as being executed asynchronously and publish it.
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        asyncWriterCommand.startAsync();</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;        writer.publishAsyncWriterCommand(asyncWriterCommand);</b>
+<i class="no-highlight">295</i>&nbsp;
+<i class="no-highlight">296</i>&nbsp;        // Make sure writer does not go to the pool with command in the queue
+<i class="no-highlight">297</i>&nbsp;        // Wait until writer is either in the pool or out
+<b class="fc"><i class="no-highlight">298</i>&nbsp;        while (e.owner == QUEUE_PROCESSING_OWNER) {</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;            Os.pause();</b>
+<i class="no-highlight">300</i>&nbsp;        }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;        // If the writer is suddenly in the pool, lock it and call tick to process command queue
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {</b>
+<i class="no-highlight">304</i>&nbsp;            // Writer became available straight after setting items in the queue.
+<i class="no-highlight">305</i>&nbsp;            // Don&#39;t leave it unprocessed
+<i class="no-highlight">306</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                writer.tick(true);</b>
+<i class="no-highlight">308</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                Unsafe.cas(e, ENTRY_OWNER, thread, UNALLOCATED);</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            }</b>
+<i class="no-highlight">311</i>&nbsp;        }
+<i class="no-highlight">312</i>&nbsp;    }
+<i class="no-highlight">313</i>&nbsp;
+<i class="no-highlight">314</i>&nbsp;    private void assertLockReasonIsNone(String lockReason) {
+<i class="no-highlight">315</i>&nbsp;        //noinspection StringEquality
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        if (lockReason == OWNERSHIP_REASON_NONE) {</b>
+<b class="nc"><i class="no-highlight">317</i>&nbsp;            throw new NullPointerException();</b>
+<i class="no-highlight">318</i>&nbsp;        }
+<i class="no-highlight">319</i>&nbsp;    }
+<i class="no-highlight">320</i>&nbsp;
+<i class="no-highlight">321</i>&nbsp;    private void checkClosed() {
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        if (isClosed()) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            LOG.info().$(&quot;is closed&quot;).$();</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;            throw PoolClosedException.INSTANCE;</b>
+<i class="no-highlight">325</i>&nbsp;        }
+<i class="no-highlight">326</i>&nbsp;    }
+<i class="no-highlight">327</i>&nbsp;
+<i class="no-highlight">328</i>&nbsp;    private TableWriter checkClosedAndGetWriter(TableToken tableToken, Entry e, String lockReason) {
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        assertLockReasonIsNone(lockReason);</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        if (isClosed()) {</b>
+<i class="no-highlight">331</i>&nbsp;            // pool closed, but we somehow managed to lock writer
+<i class="no-highlight">332</i>&nbsp;            // make sure that interceptor cleared to allow calling thread close writer normally
+<b class="nc"><i class="no-highlight">333</i>&nbsp;            LOG.info().$(&#39;\&#39;&#39;).utf8(tableToken.getDirName()).$(&quot;&#39; born free&quot;).$();</b>
+<b class="nc"><i class="no-highlight">334</i>&nbsp;            return e.goodbye();</b>
+<i class="no-highlight">335</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">336</i>&nbsp;        e.ownershipReason = lockReason;</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        e.writer.updateTableToken(tableToken);</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        return logAndReturn(e, PoolListener.EV_GET);</b>
+<i class="no-highlight">339</i>&nbsp;    }
+<i class="no-highlight">340</i>&nbsp;
+<i class="no-highlight">341</i>&nbsp;    private void closeWriter(long thread, Entry e, short ev, int reason) {
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        TableWriter w = e.writer;</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        if (w != null) {</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            TableToken name = e.writer.getTableToken();</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;            w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;            w.close();</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;            e.writer = null;</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;            e.ownershipReason = OWNERSHIP_REASON_RELEASED;</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;            LOG.info().$(&quot;closed [table=`&quot;).utf8(name.getDirName()).$(&quot;`, reason=&quot;).$(PoolConstants.closeReasonText(reason)).$(&quot;, by=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;            notifyListener(thread, name, ev);</b>
+<i class="no-highlight">351</i>&nbsp;        }
+<i class="no-highlight">352</i>&nbsp;    }
+<i class="no-highlight">353</i>&nbsp;
+<i class="no-highlight">354</i>&nbsp;    private TableWriter createWriter(TableToken tableToken, Entry e, long thread, String lockReason) {
+<i class="no-highlight">355</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">356</i>&nbsp;            checkClosed();</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;            LOG.info().$(&quot;open [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;            e.writer = new TableWriter(configuration, tableToken, messageBus, null, true, e, root, metrics);</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;            e.ownershipReason = lockReason;</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;            return logAndReturn(e, PoolListener.EV_CREATE);</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;        } catch (CairoException ex) {</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;            LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;            record.$(&quot;could not open [table=`&quot;).utf8(tableToken.getTableName())</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                    .$(&quot;`, thread=&quot;).$(e.owner)</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                    .$(&quot;, ex=&quot;).utf8(ex.getFlyweightMessage())</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                    .$(&quot;, errno=&quot;).$(ex.getErrno())</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                    .$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;            e.ex = ex;</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;            e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            e.owner = UNALLOCATED;</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;            notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;            throw ex;</b>
+<i class="no-highlight">373</i>&nbsp;        }
+<i class="no-highlight">374</i>&nbsp;    }
+<i class="no-highlight">375</i>&nbsp;
+<i class="no-highlight">376</i>&nbsp;    private TableWriter getWriterEntry(
+<i class="no-highlight">377</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">378</i>&nbsp;            String lockReason,
+<i class="no-highlight">379</i>&nbsp;            @Nullable AsyncWriterCommand asyncWriterCommand,
+<i class="no-highlight">380</i>&nbsp;            boolean logBusy
+<i class="no-highlight">381</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        assert null != lockReason;</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        checkClosed();</b>
+<i class="no-highlight">384</i>&nbsp;
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        long thread = Thread.currentThread().getId();</b>
+<i class="no-highlight">386</i>&nbsp;
+<i class="no-highlight">387</i>&nbsp;        while (true) {
+<b class="fc"><i class="no-highlight">388</i>&nbsp;            Entry e = entries.get(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;            if (e == null) {</b>
+<i class="no-highlight">390</i>&nbsp;                // We are racing to create new writer!
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                e = new Entry(clock.getTicks());</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                Entry other = entries.putIfAbsent(tableToken.getDirName(), e);</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;                if (other == null) {</b>
+<i class="no-highlight">394</i>&nbsp;                    // race won
+<b class="fc"><i class="no-highlight">395</i>&nbsp;                    return createWriter(tableToken, e, thread, lockReason);</b>
+<i class="no-highlight">396</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">397</i>&nbsp;                    e = other;</b>
+<i class="no-highlight">398</i>&nbsp;                }
+<i class="no-highlight">399</i>&nbsp;            }
+<i class="no-highlight">400</i>&nbsp;
+<b class="fc"><i class="no-highlight">401</i>&nbsp;            long owner = e.owner;</b>
+<i class="no-highlight">402</i>&nbsp;            // try to change owner
+<b class="fc"><i class="no-highlight">403</i>&nbsp;            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {</b>
+<i class="no-highlight">404</i>&nbsp;                // in an extreme race condition it is possible that e.writer will be null
+<i class="no-highlight">405</i>&nbsp;                // in this case behaviour should be identical to entry missing entirely
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                if (e.writer == null) {</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                    return createWriter(tableToken, e, thread, lockReason);</b>
+<i class="no-highlight">408</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                return checkClosedAndGetWriter(tableToken, e, lockReason);</b>
+<i class="no-highlight">410</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                if (owner &lt; 0) {</b>
+<i class="no-highlight">412</i>&nbsp;                    // writer is about to be released from the pool by release method.
+<i class="no-highlight">413</i>&nbsp;                    // try again, it should become available soon.
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                    Os.pause();</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                    continue;</b>
+<i class="no-highlight">416</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                if (owner == thread) {</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                    if (e.lockFd != -1L) {</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                        throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));</b>
+<i class="no-highlight">420</i>&nbsp;                    }
+<i class="no-highlight">421</i>&nbsp;
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                    if (e.ex != null) {</b>
+<b class="nc"><i class="no-highlight">423</i>&nbsp;                        notifyListener(thread, tableToken, PoolListener.EV_EX_RESEND);</b>
+<i class="no-highlight">424</i>&nbsp;                        // this writer failed to allocate by this very thread
+<i class="no-highlight">425</i>&nbsp;                        // ensure consistent response
+<b class="nc"><i class="no-highlight">426</i>&nbsp;                        entries.remove(tableToken.getDirName());</b>
+<b class="nc"><i class="no-highlight">427</i>&nbsp;                        throw e.ex;</b>
+<i class="no-highlight">428</i>&nbsp;                    }
+<i class="no-highlight">429</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                if (asyncWriterCommand != null) {</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                    addCommandToWriterQueue(e, asyncWriterCommand, thread);</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                    return null;</b>
+<i class="no-highlight">433</i>&nbsp;                }
+<i class="no-highlight">434</i>&nbsp;
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                String reason = reinterpretOwnershipReason(e.ownershipReason);</b>
+<i class="no-highlight">436</i>&nbsp;
+<b class="fc"><i class="no-highlight">437</i>&nbsp;                if (logBusy) {</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                    LOG.info().$(&quot;busy [table=`&quot;).utf8(tableToken.getDirName())</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                            .$(&quot;`, owner=&quot;).$(owner)</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;                            .$(&quot;, thread=&quot;).$(thread)</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;                            .$(&quot;, reason=&quot;).$(reason)</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                            .I$();</b>
+<i class="no-highlight">443</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                throw EntryUnavailableException.instance(reason);</b>
+<i class="no-highlight">445</i>&nbsp;            }
+<i class="no-highlight">446</i>&nbsp;        }
+<i class="no-highlight">447</i>&nbsp;    }
+<i class="no-highlight">448</i>&nbsp;
+<i class="no-highlight">449</i>&nbsp;    private boolean lockAndNotify(long thread, Entry e, TableToken tableToken, String lockReason) {
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        assertLockReasonIsNone(lockReason);</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        TableUtils.lockName(path);</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;        e.lockFd = TableUtils.lock(ff, path);</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        if (e.lockFd == -1) {</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;            LOG.error().$(&quot;could not lock [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;            e.ownershipReason = OWNERSHIP_REASON_MISSING;</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;            e.owner = UNALLOCATED;</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;            return false;</b>
+<i class="no-highlight">459</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">460</i>&nbsp;        LOG.debug().$(&quot;locked [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;        notifyListener(thread, tableToken, PoolListener.EV_LOCK_SUCCESS);</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;        e.ownershipReason = lockReason;</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;        return true;</b>
+<i class="no-highlight">464</i>&nbsp;    }
+<i class="no-highlight">465</i>&nbsp;
+<i class="no-highlight">466</i>&nbsp;    private TableWriter logAndReturn(Entry e, short event) {
+<b class="fc"><i class="no-highlight">467</i>&nbsp;        LOG.info().$(&quot;&gt;&gt; [table=`&quot;).utf8(e.writer.getTableToken().getDirName()).$(&quot;`, thread=&quot;).$(e.owner).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;        notifyListener(e.owner, e.writer.getTableToken(), event);</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;        return e.writer;</b>
+<i class="no-highlight">470</i>&nbsp;    }
+<i class="no-highlight">471</i>&nbsp;
+<i class="no-highlight">472</i>&nbsp;    private String reinterpretOwnershipReason(String providedReason) {
+<i class="no-highlight">473</i>&nbsp;        // we cannot always guarantee that ownership reason is set
+<i class="no-highlight">474</i>&nbsp;        // allocating writer and setting &quot;reason&quot; are non-atomic
+<i class="no-highlight">475</i>&nbsp;        // therefore we could be in a situation where we can be confident writer is locked
+<i class="no-highlight">476</i>&nbsp;        // but reason has not yet caught up. In this case we do not really know the reason
+<i class="no-highlight">477</i>&nbsp;        // but not to confuse the caller, we have to provide a non-null value
+<i class="no-highlight">478</i>&nbsp;        //noinspection StringEquality
+<b class="fc"><i class="no-highlight">479</i>&nbsp;        return providedReason == OWNERSHIP_REASON_NONE ? OWNERSHIP_REASON_UNKNOWN : providedReason;</b>
+<i class="no-highlight">480</i>&nbsp;    }
+<i class="no-highlight">481</i>&nbsp;
+<i class="no-highlight">482</i>&nbsp;    private boolean returnToPool(Entry e) {
+<b class="fc"><i class="no-highlight">483</i>&nbsp;        final long thread = Thread.currentThread().getId();</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;        final TableToken tableToken = e.writer.getTableToken();</b>
+<i class="no-highlight">485</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">486</i>&nbsp;            e.writer.rollback();</b>
+<i class="no-highlight">487</i>&nbsp;
+<b class="fc"><i class="no-highlight">488</i>&nbsp;            if (e.owner != UNALLOCATED) {</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;                e.owner = QUEUE_PROCESSING_OWNER;</b>
+<i class="no-highlight">490</i>&nbsp;            }
+<i class="no-highlight">491</i>&nbsp;            // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
+<b class="fc"><i class="no-highlight">492</i>&nbsp;            e.writer.tick(true);</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        } catch (Throwable ex) {</b>
+<i class="no-highlight">494</i>&nbsp;            // We are here because of a systemic issues of some kind
+<i class="no-highlight">495</i>&nbsp;            // one of the known issues is &quot;disk is full&quot; so we could not roll back properly.
+<i class="no-highlight">496</i>&nbsp;            // In this case we just close TableWriter
+<b class="fc"><i class="no-highlight">497</i>&nbsp;            entries.remove(tableToken.getDirName());</b>
+<b class="fc"><i class="no-highlight">498</i>&nbsp;            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;            return true;</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;        }</b>
+<i class="no-highlight">501</i>&nbsp;
+<b class="fc"><i class="no-highlight">502</i>&nbsp;        if (e.owner != UNALLOCATED) {</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;            LOG.info().$(&quot;&lt;&lt; [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(thread).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">504</i>&nbsp;
+<b class="fc"><i class="no-highlight">505</i>&nbsp;            e.ownershipReason = OWNERSHIP_REASON_NONE;</b>
+<b class="fc"><i class="no-highlight">506</i>&nbsp;            e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;            Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">508</i>&nbsp;            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);</b>
+<i class="no-highlight">509</i>&nbsp;
+<b class="fc"><i class="no-highlight">510</i>&nbsp;            if (isClosed()) {</b>
+<i class="no-highlight">511</i>&nbsp;                // when pool is closed it could be busy releasing writer
+<i class="no-highlight">512</i>&nbsp;                // to avoid race condition try to grab the writer before declaring it a
+<i class="no-highlight">513</i>&nbsp;                // free agent
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {</b>
+<b class="fc"><i class="no-highlight">515</i>&nbsp;                    e.writer = null;</b>
+<b class="fc"><i class="no-highlight">516</i>&nbsp;                    notifyListener(thread, tableToken, PoolListener.EV_OUT_OF_POOL_CLOSE);</b>
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                    return false;</b>
+<i class="no-highlight">518</i>&nbsp;                }
+<i class="no-highlight">519</i>&nbsp;            }
+<i class="no-highlight">520</i>&nbsp;
+<b class="fc"><i class="no-highlight">521</i>&nbsp;            notifyListener(thread, tableToken, PoolListener.EV_RETURN);</b>
+<i class="no-highlight">522</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">523</i>&nbsp;            LOG.critical().$(&quot;orphaned [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`]&quot;).$();</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;            notifyListener(thread, tableToken, PoolListener.EV_UNEXPECTED_CLOSE);</b>
+<i class="no-highlight">525</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        return true;</b>
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;    /**
+<i class="no-highlight">530</i>&nbsp;     * Closes writer pool. When pool is closed only writers that are in pool are proactively released. Writers that
+<i class="no-highlight">531</i>&nbsp;     * are outside of pool will close when their close() method is invoked.
+<i class="no-highlight">532</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">533</i>&nbsp;     * After pool is closed it will notify listener with #EV_POOL_CLOSED event.
+<i class="no-highlight">534</i>&nbsp;     * &lt;/p&gt;
+<i class="no-highlight">535</i>&nbsp;     */
+<i class="no-highlight">536</i>&nbsp;    @Override
+<i class="no-highlight">537</i>&nbsp;    protected void closePool() {
+<b class="fc"><i class="no-highlight">538</i>&nbsp;        super.closePool();</b>
+<b class="fc"><i class="no-highlight">539</i>&nbsp;        LOG.info().$(&quot;closed&quot;).$();</b>
+<i class="no-highlight">540</i>&nbsp;    }
+<i class="no-highlight">541</i>&nbsp;
+<i class="no-highlight">542</i>&nbsp;    int countFreeWriters() {
+<b class="fc"><i class="no-highlight">543</i>&nbsp;        int count = 0;</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;        for (Entry e : entries.values()) {</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;            final long owner = e.owner;</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;            if (owner == UNALLOCATED) {</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                count++;</b>
+<i class="no-highlight">548</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                LOG.info().$(&quot;&#39;&quot;).utf8(e.writer.getTableToken().getDirName()).$(&quot;&#39; is still busy [owner=&quot;).$(owner).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">550</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">551</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;        return count;</b>
+<i class="no-highlight">553</i>&nbsp;    }
+<i class="no-highlight">554</i>&nbsp;
+<i class="no-highlight">555</i>&nbsp;    @Override
+<i class="no-highlight">556</i>&nbsp;    protected boolean releaseAll(long deadline) {
+<b class="fc"><i class="no-highlight">557</i>&nbsp;        long thread = Thread.currentThread().getId();</b>
+<b class="fc"><i class="no-highlight">558</i>&nbsp;        boolean removed = false;</b>
+<i class="no-highlight">559</i>&nbsp;        final int reason;
+<i class="no-highlight">560</i>&nbsp;
+<b class="fc"><i class="no-highlight">561</i>&nbsp;        if (deadline == Long.MAX_VALUE) {</b>
+<b class="fc"><i class="no-highlight">562</i>&nbsp;            reason = PoolConstants.CR_POOL_CLOSE;</b>
+<i class="no-highlight">563</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">564</i>&nbsp;            reason = PoolConstants.CR_IDLE;</b>
+<i class="no-highlight">565</i>&nbsp;        }
+<i class="no-highlight">566</i>&nbsp;
+<b class="fc"><i class="no-highlight">567</i>&nbsp;        Iterator&lt;Entry&gt; iterator = entries.values().iterator();</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;        while (iterator.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;            Entry e = iterator.next();</b>
+<i class="no-highlight">570</i>&nbsp;            // lastReleaseTime is volatile, which makes
+<i class="no-highlight">571</i>&nbsp;            // order of conditions important
+<b class="fc"><i class="no-highlight">572</i>&nbsp;            if ((deadline &gt; e.lastReleaseTime &amp;&amp; e.owner == UNALLOCATED)) {</b>
+<i class="no-highlight">573</i>&nbsp;                // looks like this writer is unallocated and can be released
+<i class="no-highlight">574</i>&nbsp;                // Lock with negative 3-based owner thread id to indicate it&#39;s that next
+<i class="no-highlight">575</i>&nbsp;                // allocating thread can wait until the entry is released.
+<i class="no-highlight">576</i>&nbsp;                // Avoid negative thread id clashing with UNALLOCATED and QUEUE_PROCESSING values
+<b class="fc"><i class="no-highlight">577</i>&nbsp;                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 3)) {</b>
+<i class="no-highlight">578</i>&nbsp;                    // lock successful
+<b class="fc"><i class="no-highlight">579</i>&nbsp;                    closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);</b>
+<b class="fc"><i class="no-highlight">580</i>&nbsp;                    iterator.remove();</b>
+<b class="fc"><i class="no-highlight">581</i>&nbsp;                    removed = true;</b>
+<i class="no-highlight">582</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">583</i>&nbsp;            } else if (e.lockFd != -1 &amp;&amp; deadline == Long.MAX_VALUE) {</b>
+<i class="no-highlight">584</i>&nbsp;                // do not release locks unless pool is shutting down, which is
+<i class="no-highlight">585</i>&nbsp;                // indicated via deadline to be Long.MAX_VALUE
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                if (ff.close(e.lockFd)) {</b>
+<b class="fc"><i class="no-highlight">587</i>&nbsp;                    e.lockFd = -1;</b>
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                    iterator.remove();</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;                    removed = true;</b>
+<i class="no-highlight">590</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">591</i>&nbsp;            } else if (e.ex != null) {</b>
+<b class="nc"><i class="no-highlight">592</i>&nbsp;                LOG.info().$(&quot;purging entry for failed to allocate writer&quot;).$();</b>
+<b class="nc"><i class="no-highlight">593</i>&nbsp;                iterator.remove();</b>
+<b class="nc"><i class="no-highlight">594</i>&nbsp;                removed = true;</b>
+<i class="no-highlight">595</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">596</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">597</i>&nbsp;        return removed;</b>
+<i class="no-highlight">598</i>&nbsp;    }
+<i class="no-highlight">599</i>&nbsp;
+<i class="no-highlight">600</i>&nbsp;    private class Entry implements LifecycleManager {
+<b class="fc"><i class="no-highlight">601</i>&nbsp;        private CairoException ex = null;</b>
+<i class="no-highlight">602</i>&nbsp;        // time writer was last released
+<i class="no-highlight">603</i>&nbsp;        private volatile long lastReleaseTime;
+<b class="fc"><i class="no-highlight">604</i>&nbsp;        private volatile int lockFd = -1;</b>
+<i class="no-highlight">605</i>&nbsp;        // owner thread id or -1 if writer is available for hire
+<b class="fc"><i class="no-highlight">606</i>&nbsp;        private volatile long owner = Thread.currentThread().getId();</b>
+<b class="fc"><i class="no-highlight">607</i>&nbsp;        private volatile String ownershipReason = OWNERSHIP_REASON_NONE;</b>
+<i class="no-highlight">608</i>&nbsp;        private TableWriter writer;
+<i class="no-highlight">609</i>&nbsp;
+<b class="fc"><i class="no-highlight">610</i>&nbsp;        public Entry(long lastReleaseTime) {</b>
+<b class="fc"><i class="no-highlight">611</i>&nbsp;            this.lastReleaseTime = lastReleaseTime;</b>
+<i class="no-highlight">612</i>&nbsp;        }
+<i class="no-highlight">613</i>&nbsp;
+<i class="no-highlight">614</i>&nbsp;        @Override
+<i class="no-highlight">615</i>&nbsp;        public boolean close() {
+<b class="fc"><i class="no-highlight">616</i>&nbsp;            return !WriterPool.this.returnToPool(this);</b>
+<i class="no-highlight">617</i>&nbsp;        }
+<i class="no-highlight">618</i>&nbsp;
+<i class="no-highlight">619</i>&nbsp;        public TableWriter goodbye() {
+<b class="nc"><i class="no-highlight">620</i>&nbsp;            TableWriter w = writer;</b>
+<b class="nc"><i class="no-highlight">621</i>&nbsp;            if (writer != null) {</b>
+<b class="nc"><i class="no-highlight">622</i>&nbsp;                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);</b>
+<b class="nc"><i class="no-highlight">623</i>&nbsp;                writer = null;</b>
+<i class="no-highlight">624</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">625</i>&nbsp;            return w;</b>
+<i class="no-highlight">626</i>&nbsp;        }
+<i class="no-highlight">627</i>&nbsp;    }
+<i class="no-highlight">628</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,492 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > PageAddressCacheRecord</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.sql</a>
+</div>
+
+<h1>Coverage Summary for Class: PageAddressCacheRecord (io.questdb.cairo.sql)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">PageAddressCacheRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (37/37)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    82.4%
+  </span>
+  <span class="absValue">
+    (145/176)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.sql;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.TableUtils;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.vm.NullMemoryMR;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCR;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">34</i>&nbsp;
+<i class="no-highlight">35</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;public class PageAddressCacheRecord implements Record, Closeable {
+<i class="no-highlight">38</i>&nbsp;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;    private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();</b>
+<b class="fc"><i class="no-highlight">41</i>&nbsp;    private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    private final Long256Impl long256A = new Long256Impl();</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private final Long256Impl long256B = new Long256Impl();</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    private final ObjList&lt;SymbolTable&gt; symbolTableCache = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">45</i>&nbsp;    private int frameIndex;
+<i class="no-highlight">46</i>&nbsp;    private PageAddressCache pageAddressCache;
+<i class="no-highlight">47</i>&nbsp;    private long rowIndex;
+<i class="no-highlight">48</i>&nbsp;    // Makes it possible to determine real row id, not one relative to page.
+<i class="no-highlight">49</i>&nbsp;    private SymbolTableSource symbolTableSource;
+<i class="no-highlight">50</i>&nbsp;
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    public PageAddressCacheRecord(PageAddressCacheRecord other) {</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        this.symbolTableSource = other.symbolTableSource;</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        this.pageAddressCache = other.pageAddressCache;</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        this.frameIndex = other.frameIndex;</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        this.rowIndex = other.rowIndex;</b>
+<i class="no-highlight">56</i>&nbsp;    }
+<i class="no-highlight">57</i>&nbsp;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    public PageAddressCacheRecord() {</b>
+<i class="no-highlight">59</i>&nbsp;    }
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;    @Override
+<i class="no-highlight">62</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        Misc.freeObjListIfCloseable(symbolTableCache);</b>
+<i class="no-highlight">64</i>&nbsp;    }
+<i class="no-highlight">65</i>&nbsp;
+<i class="no-highlight">66</i>&nbsp;    @Override
+<i class="no-highlight">67</i>&nbsp;    public BinarySequence getBin(int columnIndex) {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        if (dataPageAddress == 0) {</b>
+<b class="nc"><i class="no-highlight">70</i>&nbsp;            return NullMemoryMR.INSTANCE.getBin(0);</b>
+<i class="no-highlight">71</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        final long pageLimit = pageAddressCache.getPageSize(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        return getBin(dataPageAddress, offset, pageLimit, bsview);</b>
+<i class="no-highlight">76</i>&nbsp;    }
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    @Override
+<i class="no-highlight">79</i>&nbsp;    public long getBinLen(int columnIndex) {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        if (dataPageAddress == 0) {</b>
+<b class="nc"><i class="no-highlight">82</i>&nbsp;            return NullMemoryMR.INSTANCE.getBinLen(0);</b>
+<i class="no-highlight">83</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        return Unsafe.getUnsafe().getLong(dataPageAddress + offset);</b>
+<i class="no-highlight">87</i>&nbsp;    }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;    @Override
+<i class="no-highlight">90</i>&nbsp;    public boolean getBool(int columnIndex) {
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">93</i>&nbsp;            return NullMemoryMR.INSTANCE.getBool(0);</b>
+<i class="no-highlight">94</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES) == 1;</b>
+<i class="no-highlight">96</i>&nbsp;    }
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    @Override
+<i class="no-highlight">99</i>&nbsp;    public byte getByte(int columnIndex) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">102</i>&nbsp;            return NullMemoryMR.INSTANCE.getByte(0);</b>
+<i class="no-highlight">103</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);</b>
+<i class="no-highlight">105</i>&nbsp;    }
+<i class="no-highlight">106</i>&nbsp;
+<i class="no-highlight">107</i>&nbsp;    @Override
+<i class="no-highlight">108</i>&nbsp;    public char getChar(int columnIndex) {
+<b class="fc"><i class="no-highlight">109</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">111</i>&nbsp;            return NullMemoryMR.INSTANCE.getChar(0);</b>
+<i class="no-highlight">112</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        return Unsafe.getUnsafe().getChar(address + rowIndex * Character.BYTES);</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;    @Override
+<i class="no-highlight">117</i>&nbsp;    public double getDouble(int columnIndex) {
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        if (address == 0) {</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;            return NullMemoryMR.INSTANCE.getDouble(0);</b>
+<i class="no-highlight">121</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        return Unsafe.getUnsafe().getDouble(address + rowIndex * Double.BYTES);</b>
+<i class="no-highlight">123</i>&nbsp;    }
+<i class="no-highlight">124</i>&nbsp;
+<i class="no-highlight">125</i>&nbsp;    @Override
+<i class="no-highlight">126</i>&nbsp;    public float getFloat(int columnIndex) {
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">129</i>&nbsp;            return NullMemoryMR.INSTANCE.getFloat(0);</b>
+<i class="no-highlight">130</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        return Unsafe.getUnsafe().getFloat(address + rowIndex * Float.BYTES);</b>
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    @Override
+<i class="no-highlight">135</i>&nbsp;    public byte getGeoByte(int columnIndex) {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">138</i>&nbsp;            return NullMemoryMR.INSTANCE.getByte(0);</b>
+<i class="no-highlight">139</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);</b>
+<i class="no-highlight">141</i>&nbsp;    }
+<i class="no-highlight">142</i>&nbsp;
+<i class="no-highlight">143</i>&nbsp;    @Override
+<i class="no-highlight">144</i>&nbsp;    public int getGeoInt(int columnIndex) {
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">147</i>&nbsp;            return NullMemoryMR.INSTANCE.getInt(0);</b>
+<i class="no-highlight">148</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);</b>
+<i class="no-highlight">150</i>&nbsp;    }
+<i class="no-highlight">151</i>&nbsp;
+<i class="no-highlight">152</i>&nbsp;    @Override
+<i class="no-highlight">153</i>&nbsp;    public long getGeoLong(int columnIndex) {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">156</i>&nbsp;            return NullMemoryMR.INSTANCE.getLong(0);</b>
+<i class="no-highlight">157</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    @Override
+<i class="no-highlight">162</i>&nbsp;    public short getGeoShort(int columnIndex) {
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">165</i>&nbsp;            return NullMemoryMR.INSTANCE.getShort(0);</b>
+<i class="no-highlight">166</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    @Override
+<i class="no-highlight">171</i>&nbsp;    public int getInt(int columnIndex) {
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        if (address == 0) {</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            return NullMemoryMR.INSTANCE.getInt(0);</b>
+<i class="no-highlight">175</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    @Override
+<i class="no-highlight">180</i>&nbsp;    public long getLong(int columnIndex) {
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        if (address == 0) {</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            return NullMemoryMR.INSTANCE.getLong(0);</b>
+<i class="no-highlight">184</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);</b>
+<i class="no-highlight">186</i>&nbsp;    }
+<i class="no-highlight">187</i>&nbsp;
+<i class="no-highlight">188</i>&nbsp;    @Override
+<i class="no-highlight">189</i>&nbsp;    public long getLong128Hi(int col) {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        long address = pageAddressCache.getPageAddress(frameIndex, col);</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">192</i>&nbsp;            return NullMemoryMR.INSTANCE.getLong128Hi(0);</b>
+<i class="no-highlight">193</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        return Unsafe.getUnsafe().getLong(address + rowIndex * Long128.BYTES + Long.BYTES);</b>
+<i class="no-highlight">195</i>&nbsp;    }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;    @Override
+<i class="no-highlight">198</i>&nbsp;    public long getLong128Lo(int col) {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        long address = pageAddressCache.getPageAddress(frameIndex, col);</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">201</i>&nbsp;            return NullMemoryMR.INSTANCE.getLong128Lo(0);</b>
+<i class="no-highlight">202</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        return Unsafe.getUnsafe().getLong(address + rowIndex * Long128.BYTES);</b>
+<i class="no-highlight">204</i>&nbsp;    }
+<i class="no-highlight">205</i>&nbsp;
+<i class="no-highlight">206</i>&nbsp;    @Override
+<i class="no-highlight">207</i>&nbsp;    public void getLong256(int columnIndex, CharSink sink) {
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">210</i>&nbsp;            NullMemoryMR.INSTANCE.getLong256(0, sink);</b>
+<i class="no-highlight">211</i>&nbsp;            return;
+<i class="no-highlight">212</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">213</i>&nbsp;        getLong256(address + rowIndex * Long256.BYTES, sink);</b>
+<i class="no-highlight">214</i>&nbsp;    }
+<i class="no-highlight">215</i>&nbsp;
+<i class="no-highlight">216</i>&nbsp;    @Override
+<i class="no-highlight">217</i>&nbsp;    public Long256 getLong256A(int columnIndex) {
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        getLong256(columnIndex, long256A);</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        return long256A;</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    @Override
+<i class="no-highlight">223</i>&nbsp;    public Long256 getLong256B(int columnIndex) {
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        getLong256(columnIndex, long256B);</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        return long256B;</b>
+<i class="no-highlight">226</i>&nbsp;    }
+<i class="no-highlight">227</i>&nbsp;
+<i class="no-highlight">228</i>&nbsp;    @Override
+<i class="no-highlight">229</i>&nbsp;    public long getRowId() {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        return Rows.toRowID(frameIndex, rowIndex);</b>
+<i class="no-highlight">231</i>&nbsp;    }
+<i class="no-highlight">232</i>&nbsp;
+<i class="no-highlight">233</i>&nbsp;    @Override
+<i class="no-highlight">234</i>&nbsp;    public short getShort(int columnIndex) {
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        if (address == 0) {</b>
+<b class="nc"><i class="no-highlight">237</i>&nbsp;            return NullMemoryMR.INSTANCE.getShort(0);</b>
+<i class="no-highlight">238</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);</b>
+<i class="no-highlight">240</i>&nbsp;    }
+<i class="no-highlight">241</i>&nbsp;
+<i class="no-highlight">242</i>&nbsp;    @Override
+<i class="no-highlight">243</i>&nbsp;    public CharSequence getStr(int columnIndex) {
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        if (dataPageAddress == 0) {</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;            return NullMemoryMR.INSTANCE.getStr(0);</b>
+<i class="no-highlight">247</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        return getStr(dataPageAddress, offset, size, csview);</b>
+<i class="no-highlight">252</i>&nbsp;    }
+<i class="no-highlight">253</i>&nbsp;
+<i class="no-highlight">254</i>&nbsp;    @Override
+<i class="no-highlight">255</i>&nbsp;    public CharSequence getStrB(int columnIndex) {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        if (dataPageAddress == 0) {</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            return NullMemoryMR.INSTANCE.getStr2(0);</b>
+<i class="no-highlight">259</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        return getStr(dataPageAddress, offset, size, csview2);</b>
+<i class="no-highlight">264</i>&nbsp;    }
+<i class="no-highlight">265</i>&nbsp;
+<i class="no-highlight">266</i>&nbsp;    @Override
+<i class="no-highlight">267</i>&nbsp;    public int getStrLen(int columnIndex) {
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        if (dataPageAddress == 0) {</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            return NullMemoryMR.INSTANCE.getStrLen(0);</b>
+<i class="no-highlight">271</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        return Unsafe.getUnsafe().getInt(dataPageAddress + offset);</b>
+<i class="no-highlight">275</i>&nbsp;    }
+<i class="no-highlight">276</i>&nbsp;
+<i class="no-highlight">277</i>&nbsp;    @Override
+<i class="no-highlight">278</i>&nbsp;    public CharSequence getSym(int columnIndex) {
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        int key = NullMemoryMR.INSTANCE.getInt(0);</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        if (address != 0) {</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;            key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);</b>
+<i class="no-highlight">283</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        return getSymbolTable(columnIndex).valueOf(key);</b>
+<i class="no-highlight">285</i>&nbsp;    }
+<i class="no-highlight">286</i>&nbsp;
+<i class="no-highlight">287</i>&nbsp;    @Override
+<i class="no-highlight">288</i>&nbsp;    public CharSequence getSymB(int columnIndex) {
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        final int key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        return getSymbolTable(columnIndex).valueBOf(key);</b>
+<i class="no-highlight">292</i>&nbsp;    }
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;    @Override
+<i class="no-highlight">295</i>&nbsp;    public long getUpdateRowId() {
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        return pageAddressCache.toTableRowID(frameIndex, rowIndex);</b>
+<i class="no-highlight">297</i>&nbsp;    }
+<i class="no-highlight">298</i>&nbsp;
+<i class="no-highlight">299</i>&nbsp;    public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        this.symbolTableSource = symbolTableSource;</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        this.pageAddressCache = pageAddressCache;</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        frameIndex = 0;</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        rowIndex = 0;</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        Misc.freeObjListIfCloseable(symbolTableCache);</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        symbolTableCache.clear();</b>
+<i class="no-highlight">306</i>&nbsp;    }
+<i class="no-highlight">307</i>&nbsp;
+<i class="no-highlight">308</i>&nbsp;    public void setFrameIndex(int frameIndex) {
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        this.frameIndex = frameIndex;</b>
+<i class="no-highlight">310</i>&nbsp;    }
+<i class="no-highlight">311</i>&nbsp;
+<i class="no-highlight">312</i>&nbsp;    public void setRowIndex(long rowIndex) {
+<b class="fc"><i class="no-highlight">313</i>&nbsp;        this.rowIndex = rowIndex;</b>
+<i class="no-highlight">314</i>&nbsp;    }
+<i class="no-highlight">315</i>&nbsp;
+<i class="no-highlight">316</i>&nbsp;    private BinarySequence getBin(long base, long offset, long pageLimit, MemoryCR.ByteSequenceView view) {
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        final long address = base + offset;</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;        final long len = Unsafe.getUnsafe().getLong(address);</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        if (len != TableUtils.NULL_LEN) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;            if (len + Long.BYTES + offset &lt;= pageLimit) {</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                return view.of(address + Long.BYTES, len);</b>
+<i class="no-highlight">322</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">323</i>&nbsp;            throw CairoException.critical(0)</b>
+<b class="nc"><i class="no-highlight">324</i>&nbsp;                    .put(&quot;Bin is outside of file boundary [offset=&quot;)</b>
+<b class="nc"><i class="no-highlight">325</i>&nbsp;                    .put(offset)</b>
+<b class="nc"><i class="no-highlight">326</i>&nbsp;                    .put(&quot;, len=&quot;)</b>
+<b class="nc"><i class="no-highlight">327</i>&nbsp;                    .put(len)</b>
+<b class="nc"><i class="no-highlight">328</i>&nbsp;                    .put(&quot;, pageLimit=&quot;)</b>
+<b class="nc"><i class="no-highlight">329</i>&nbsp;                    .put(pageLimit)</b>
+<b class="nc"><i class="no-highlight">330</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">331</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        return null;</b>
+<i class="no-highlight">333</i>&nbsp;    }
+<i class="no-highlight">334</i>&nbsp;
+<i class="no-highlight">335</i>&nbsp;    private CharSequence getStr(long base, long offset, long size, MemoryCR.CharSequenceView view) {
+<b class="fc"><i class="no-highlight">336</i>&nbsp;        final long address = base + offset;</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        final int len = Unsafe.getUnsafe().getInt(address);</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        if (len != TableUtils.NULL_LEN) {</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;            if (len + 4 + offset &lt;= size) {</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                return view.of(address + Vm.STRING_LENGTH_BYTES, len);</b>
+<i class="no-highlight">341</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">342</i>&nbsp;            throw CairoException.critical(0)</b>
+<b class="nc"><i class="no-highlight">343</i>&nbsp;                    .put(&quot;String is outside of file boundary [offset=&quot;)</b>
+<b class="nc"><i class="no-highlight">344</i>&nbsp;                    .put(offset)</b>
+<b class="nc"><i class="no-highlight">345</i>&nbsp;                    .put(&quot;, len=&quot;)</b>
+<b class="nc"><i class="no-highlight">346</i>&nbsp;                    .put(len)</b>
+<b class="nc"><i class="no-highlight">347</i>&nbsp;                    .put(&quot;, size=&quot;)</b>
+<b class="nc"><i class="no-highlight">348</i>&nbsp;                    .put(size)</b>
+<b class="nc"><i class="no-highlight">349</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">350</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        return null;</b>
+<i class="no-highlight">352</i>&nbsp;    }
+<i class="no-highlight">353</i>&nbsp;
+<i class="no-highlight">354</i>&nbsp;    private SymbolTable getSymbolTable(int columnIndex) {
+<b class="fc"><i class="no-highlight">355</i>&nbsp;        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;        if (symbolTable == null) {</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;            symbolTable = symbolTableSource.newSymbolTable(columnIndex);</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;            symbolTableCache.extendAndSet(columnIndex, symbolTable);</b>
+<i class="no-highlight">359</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">360</i>&nbsp;        return symbolTable;</b>
+<i class="no-highlight">361</i>&nbsp;    }
+<i class="no-highlight">362</i>&nbsp;
+<i class="no-highlight">363</i>&nbsp;    void getLong256(long offset, CharSink sink) {
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        final long addr = offset + Long.BYTES * 4;</b>
+<i class="no-highlight">365</i>&nbsp;        final long a, b, c, d;
+<b class="fc"><i class="no-highlight">366</i>&nbsp;        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        Numbers.appendLong256(a, b, c, d, sink);</b>
+<i class="no-highlight">371</i>&nbsp;    }
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;    void getLong256(int columnIndex, Long256Acceptor sink) {
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        if (columnAddress == 0) {</b>
+<b class="nc"><i class="no-highlight">376</i>&nbsp;            NullMemoryMR.INSTANCE.getLong256(0, sink);</b>
+<i class="no-highlight">377</i>&nbsp;            return;
+<i class="no-highlight">378</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        final long addr = columnAddress + rowIndex * Long256.BYTES + Long.BYTES * 4;</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        sink.setAll(</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                Unsafe.getUnsafe().getLong(addr - Long.BYTES)</b>
+<i class="no-highlight">385</i>&nbsp;        );
+<i class="no-highlight">386</i>&nbsp;    }
+<i class="no-highlight">387</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

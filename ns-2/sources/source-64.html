@@ -1,0 +1,1516 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TableUtils</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: TableUtils (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TableUtils</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.9%
+  </span>
+  <span class="absValue">
+    (89/90)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.6%
+  </span>
+  <span class="absValue">
+    (504/550)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TableUtils$FailureCloseable</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    98.9%
+  </span>
+  <span class="absValue">
+    (89/90)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.6%
+  </span>
+  <span class="absValue">
+    (504/550)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.MessageBus;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.SymbolTable;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.vm.api.*;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.AnyRecordMetadata;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.FunctionParser;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.griffin.model.ExpressionNode;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.griffin.model.QueryModel;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.mp.MPSequence;
+<i class="no-highlight">42</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">43</i>&nbsp;import io.questdb.std.datetime.millitime.MillisecondClock;
+<i class="no-highlight">44</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">45</i>&nbsp;import io.questdb.std.str.LPSZ;
+<i class="no-highlight">46</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">47</i>&nbsp;import io.questdb.tasks.O3PartitionPurgeTask;
+<i class="no-highlight">48</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">49</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">50</i>&nbsp;
+<i class="no-highlight">51</i>&nbsp;import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+<i class="no-highlight">52</i>&nbsp;import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+<i class="no-highlight">53</i>&nbsp;
+<b class="fc"><i class="no-highlight">54</i>&nbsp;public final class TableUtils {</b>
+<i class="no-highlight">55</i>&nbsp;    public static final int ANY_TABLE_ID = -1;
+<i class="no-highlight">56</i>&nbsp;    public static final int ANY_TABLE_VERSION = -1;
+<i class="no-highlight">57</i>&nbsp;    public static final String ATTACHABLE_DIR_MARKER = &quot;.attachable&quot;;
+<i class="no-highlight">58</i>&nbsp;    public static final long COLUMN_NAME_TXN_NONE = -1L;
+<i class="no-highlight">59</i>&nbsp;    public static final String COLUMN_VERSION_FILE_NAME = &quot;_cv&quot;;
+<i class="no-highlight">60</i>&nbsp;    public static final String DEFAULT_PARTITION_NAME = &quot;default&quot;;
+<i class="no-highlight">61</i>&nbsp;    public static final String DETACHED_DIR_MARKER = &quot;.detached&quot;;
+<i class="no-highlight">62</i>&nbsp;    public static final String FILE_SUFFIX_D = &quot;.d&quot;;
+<i class="no-highlight">63</i>&nbsp;    public static final String FILE_SUFFIX_I = &quot;.i&quot;;
+<i class="no-highlight">64</i>&nbsp;    public static final int INITIAL_TXN = 0;
+<i class="no-highlight">65</i>&nbsp;    public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);</b>
+<i class="no-highlight">67</i>&nbsp;    public static final long META_COLUMN_DATA_SIZE = 32;
+<i class="no-highlight">68</i>&nbsp;    public static final String META_FILE_NAME = &quot;_meta&quot;;
+<i class="no-highlight">69</i>&nbsp;    public static final long META_OFFSET_COLUMN_TYPES = 128;
+<i class="no-highlight">70</i>&nbsp;    public static final long META_OFFSET_COUNT = 0;
+<i class="no-highlight">71</i>&nbsp;    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+<i class="no-highlight">72</i>&nbsp;    public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
+<i class="no-highlight">73</i>&nbsp;    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
+<i class="no-highlight">74</i>&nbsp;    public static final long META_OFFSET_TABLE_ID = 16;
+<i class="no-highlight">75</i>&nbsp;    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+<i class="no-highlight">76</i>&nbsp;    public static final long META_OFFSET_VERSION = 12;
+<i class="no-highlight">77</i>&nbsp;    public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
+<i class="no-highlight">78</i>&nbsp;    public static final int NULL_LEN = -1;
+<i class="no-highlight">79</i>&nbsp;    public static final String SNAPSHOT_META_FILE_NAME = &quot;_snapshot&quot;;
+<i class="no-highlight">80</i>&nbsp;    public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = &quot;.r&quot;;
+<i class="no-highlight">81</i>&nbsp;    public static final char SYSTEM_TABLE_NAME_SUFFIX = &#39;~&#39;;
+<i class="no-highlight">82</i>&nbsp;    public static final int TABLE_DOES_NOT_EXIST = 1;
+<i class="no-highlight">83</i>&nbsp;    public static final int TABLE_EXISTS = 0;
+<i class="no-highlight">84</i>&nbsp;    public static final String TABLE_NAME_FILE = &quot;_name&quot;;
+<i class="no-highlight">85</i>&nbsp;    public static final int TABLE_RESERVED = 2;
+<i class="no-highlight">86</i>&nbsp;    public static final int TABLE_TYPE_NON_WAL = 0;
+<i class="no-highlight">87</i>&nbsp;    public static final int TABLE_TYPE_WAL = 1;
+<i class="no-highlight">88</i>&nbsp;    public static final String TAB_INDEX_FILE_NAME = &quot;_tab_index.d&quot;;
+<i class="no-highlight">89</i>&nbsp;    public static final String TXN_FILE_NAME = &quot;_txn&quot;;
+<i class="no-highlight">90</i>&nbsp;    public static final String TXN_SCOREBOARD_FILE_NAME = &quot;_txn_scoreboard&quot;;
+<i class="no-highlight">91</i>&nbsp;    // transaction file structure
+<i class="no-highlight">92</i>&nbsp;    public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
+<i class="no-highlight">93</i>&nbsp;    public static final long TX_BASE_OFFSET_VERSION_64 = 0;
+<i class="no-highlight">94</i>&nbsp;    public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
+<i class="no-highlight">95</i>&nbsp;    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
+<i class="no-highlight">96</i>&nbsp;    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
+<i class="no-highlight">97</i>&nbsp;    public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
+<i class="no-highlight">98</i>&nbsp;    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
+<i class="no-highlight">99</i>&nbsp;    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
+<b class="fc"><i class="no-highlight">100</i>&nbsp;    public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);</b>
+<i class="no-highlight">101</i>&nbsp;    public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
+<i class="no-highlight">102</i>&nbsp;    public static final long TX_OFFSET_TXN_64 = 0;
+<i class="no-highlight">103</i>&nbsp;    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
+<i class="no-highlight">104</i>&nbsp;    public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
+<i class="no-highlight">105</i>&nbsp;    public static final long TX_OFFSET_MIN_TIMESTAMP_64 = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
+<i class="no-highlight">106</i>&nbsp;    public static final long TX_OFFSET_MAX_TIMESTAMP_64 = TX_OFFSET_MIN_TIMESTAMP_64 + 8;
+<i class="no-highlight">107</i>&nbsp;    public static final long TX_OFFSET_STRUCT_VERSION_64 = TX_OFFSET_MAX_TIMESTAMP_64 + 8;
+<i class="no-highlight">108</i>&nbsp;    public static final long TX_OFFSET_DATA_VERSION_64 = TX_OFFSET_STRUCT_VERSION_64 + 8;
+<i class="no-highlight">109</i>&nbsp;    public static final long TX_OFFSET_PARTITION_TABLE_VERSION_64 = TX_OFFSET_DATA_VERSION_64 + 8;
+<i class="no-highlight">110</i>&nbsp;    public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
+<i class="no-highlight">111</i>&nbsp;    public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
+<i class="no-highlight">112</i>&nbsp;    public static final long TX_OFFSET_SEQ_TXN_64 = TX_OFFSET_TRUNCATE_VERSION_64 + 8;
+<i class="no-highlight">113</i>&nbsp;    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
+<i class="no-highlight">114</i>&nbsp;    public static final String UPGRADE_FILE_NAME = &quot;_upgrade.d&quot;;
+<i class="no-highlight">115</i>&nbsp;    static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+<i class="no-highlight">116</i>&nbsp;    static final int META_FLAG_BIT_INDEXED = 1;
+<i class="no-highlight">117</i>&nbsp;    static final int META_FLAG_BIT_NOT_INDEXED = 0;
+<i class="no-highlight">118</i>&nbsp;    static final int META_FLAG_BIT_SEQUENTIAL = 1 &lt;&lt; 1;
+<i class="no-highlight">119</i>&nbsp;    // INT - symbol map count, this is a variable part of transaction file
+<i class="no-highlight">120</i>&nbsp;    // below this offset we will have INT values for symbol map size
+<i class="no-highlight">121</i>&nbsp;    static final long META_OFFSET_PARTITION_BY = 4;
+<i class="no-highlight">122</i>&nbsp;    static final String META_PREV_FILE_NAME = &quot;_meta.prev&quot;;
+<i class="no-highlight">123</i>&nbsp;    /**
+<i class="no-highlight">124</i>&nbsp;     * TXN file structure
+<i class="no-highlight">125</i>&nbsp;     * struct {
+<i class="no-highlight">126</i>&nbsp;     * long txn;
+<i class="no-highlight">127</i>&nbsp;     * long transient_row_count; // rows count in last partition
+<i class="no-highlight">128</i>&nbsp;     * long fixed_row_count; // row count in table excluding count in last partition
+<i class="no-highlight">129</i>&nbsp;     * long max_timestamp; // last timestamp written to table
+<i class="no-highlight">130</i>&nbsp;     * long struct_version; // data structure version; whenever columns added or removed this version changes.
+<i class="no-highlight">131</i>&nbsp;     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
+<i class="no-highlight">132</i>&nbsp;     * long txn_check; // same as txn - sanity check for concurrent reads and writes
+<i class="no-highlight">133</i>&nbsp;     * int  map_writer_count; // symbol writer count
+<i class="no-highlight">134</i>&nbsp;     * int  map_writer_position[map_writer_count]; // position of each of map writers
+<i class="no-highlight">135</i>&nbsp;     * }
+<i class="no-highlight">136</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">137</i>&nbsp;     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
+<i class="no-highlight">138</i>&nbsp;     */
+<i class="no-highlight">139</i>&nbsp;
+<i class="no-highlight">140</i>&nbsp;    static final String META_SWAP_FILE_NAME = &quot;_meta.swp&quot;;
+<b class="fc"><i class="no-highlight">141</i>&nbsp;    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);</b>
+<i class="no-highlight">142</i>&nbsp;    static final String TODO_FILE_NAME = &quot;_todo_&quot;;
+<i class="no-highlight">143</i>&nbsp;    static final byte TODO_RESTORE_META = 2;
+<i class="no-highlight">144</i>&nbsp;    static final byte TODO_TRUNCATE = 1;
+<b class="fc"><i class="no-highlight">145</i>&nbsp;    private final static Log LOG = LogFactory.getLog(TableUtils.class);</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;    private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;    private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);</b>
+<i class="no-highlight">149</i>&nbsp;    private static final int MIN_SYMBOL_CAPACITY = 2;
+<i class="no-highlight">150</i>&nbsp;
+<i class="no-highlight">151</i>&nbsp;    private TableUtils() {
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    public static void allocateDiskSpace(FilesFacade ff, int fd, long size) {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        if (ff.length(fd) &lt; size &amp;&amp; !ff.allocate(fd, size)) {</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;No space left [size=&quot;).put(size).put(&quot;, fd=&quot;).put(fd).put(&#39;]&#39;);</b>
+<i class="no-highlight">157</i>&nbsp;        }
+<i class="no-highlight">158</i>&nbsp;    }
+<i class="no-highlight">159</i>&nbsp;
+<i class="no-highlight">160</i>&nbsp;    public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        path.concat(columnName).put(&quot;.c&quot;);</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        if (columnNameTxn &gt; COLUMN_NAME_TXN_NONE) {</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;            path.put(&#39;.&#39;).put(columnNameTxn);</b>
+<i class="no-highlight">168</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        return path.$();</b>
+<i class="no-highlight">170</i>&nbsp;    }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;    public static long checkMemSize(MemoryMR metaMem, long minSize) {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        final long memSize = metaMem.size();</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        if (memSize &lt; minSize) {</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;            throw CairoException.critical(0).put(&quot;File is too small, size=&quot;).put(memSize).put(&quot;, required=&quot;).put(minSize);</b>
+<i class="no-highlight">176</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        return memSize;</b>
+<i class="no-highlight">178</i>&nbsp;    }
+<i class="no-highlight">179</i>&nbsp;
+<i class="no-highlight">180</i>&nbsp;    public static int compressColumnCount(RecordMetadata metadata) {
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        int count = 0;</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        for (int i = 0, n = metadata.getColumnCount(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            if (metadata.getColumnType(i) &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                count++;</b>
+<i class="no-highlight">185</i>&nbsp;            }
+<i class="no-highlight">186</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">187</i>&nbsp;        return count;</b>
+<i class="no-highlight">188</i>&nbsp;    }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;    public static void createColumnVersionFile(MemoryMARW mem) {
+<i class="no-highlight">191</i>&nbsp;        // Create page of 0s for Column Version file &quot;_cv&quot;
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        mem.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE);</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        mem.zero();</b>
+<i class="no-highlight">195</i>&nbsp;    }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;    public static void createConvertFile(FilesFacade ff, Path path, byte walFlag) {
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        long addr = 0;</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        int fd = -1;</b>
+<i class="no-highlight">200</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            fd = ff.openRW(path.concat(CONVERT_FILE_NAME).$(), CairoConfiguration.O_NONE);</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            if (fd &lt; 1) {</b>
+<b class="nc"><i class="no-highlight">203</i>&nbsp;                throw CairoException.critical(ff.errno()).put(&quot;Could not open file [path=&quot;).put(path).put(&#39;]&#39;);</b>
+<i class="no-highlight">204</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">205</i>&nbsp;            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            if (addr &lt; 1) {</b>
+<b class="nc"><i class="no-highlight">207</i>&nbsp;                throw CairoException.critical(ff.errno()).put(&quot;Could not allocate 1 byte&quot;);</b>
+<i class="no-highlight">208</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">209</i>&nbsp;            Unsafe.getUnsafe().putByte(addr, walFlag);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;            ff.write(fd, addr, Byte.BYTES, 0);</b>
+<i class="no-highlight">211</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">212</i>&nbsp;            if (addr &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);</b>
+<i class="no-highlight">214</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">215</i>&nbsp;            ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        }</b>
+<i class="no-highlight">217</i>&nbsp;    }
+<i class="no-highlight">218</i>&nbsp;
+<i class="no-highlight">219</i>&nbsp;    @NotNull
+<i class="no-highlight">220</i>&nbsp;    public static Function createCursorFunction(
+<i class="no-highlight">221</i>&nbsp;            FunctionParser functionParser,
+<i class="no-highlight">222</i>&nbsp;            @NotNull QueryModel model,
+<i class="no-highlight">223</i>&nbsp;            @NotNull SqlExecutionContext executionContext
+<i class="no-highlight">224</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        final ExpressionNode tableNameExpr = model.getTableNameExpr();</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        final Function function = functionParser.parseFunction(</b>
+<i class="no-highlight">227</i>&nbsp;                tableNameExpr,
+<i class="no-highlight">228</i>&nbsp;                AnyRecordMetadata.INSTANCE,
+<i class="no-highlight">229</i>&nbsp;                executionContext
+<i class="no-highlight">230</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        if (!ColumnType.isCursor(function.getType())) {</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            throw SqlException.$(tableNameExpr.position, &quot;function must return CURSOR&quot;);</b>
+<i class="no-highlight">233</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">234</i>&nbsp;        return function;</b>
+<i class="no-highlight">235</i>&nbsp;    }
+<i class="no-highlight">236</i>&nbsp;
+<i class="no-highlight">237</i>&nbsp;    public static void createTable(
+<i class="no-highlight">238</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">239</i>&nbsp;            MemoryMARW memory,
+<i class="no-highlight">240</i>&nbsp;            Path path,
+<i class="no-highlight">241</i>&nbsp;            TableStructure structure,
+<i class="no-highlight">242</i>&nbsp;            int tableId,
+<i class="no-highlight">243</i>&nbsp;            CharSequence dirName
+<i class="no-highlight">244</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, dirName);</b>
+<i class="no-highlight">246</i>&nbsp;    }
+<i class="no-highlight">247</i>&nbsp;
+<i class="no-highlight">248</i>&nbsp;    public static void createTable(
+<i class="no-highlight">249</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">250</i>&nbsp;            MemoryMARW memory,
+<i class="no-highlight">251</i>&nbsp;            Path path,
+<i class="no-highlight">252</i>&nbsp;            TableStructure structure,
+<i class="no-highlight">253</i>&nbsp;            int tableVersion,
+<i class="no-highlight">254</i>&nbsp;            int tableId,
+<i class="no-highlight">255</i>&nbsp;            CharSequence dirName
+<i class="no-highlight">256</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        final FilesFacade ff = configuration.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        final CharSequence root = configuration.getRoot();</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        final int mkDirMode = configuration.getMkDirMode();</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);</b>
+<i class="no-highlight">261</i>&nbsp;    }
+<i class="no-highlight">262</i>&nbsp;
+<i class="no-highlight">263</i>&nbsp;    public static void createTable(
+<i class="no-highlight">264</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">265</i>&nbsp;            CharSequence root,
+<i class="no-highlight">266</i>&nbsp;            int mkDirMode,
+<i class="no-highlight">267</i>&nbsp;            MemoryMARW memory,
+<i class="no-highlight">268</i>&nbsp;            Path path,
+<i class="no-highlight">269</i>&nbsp;            TableStructure structure,
+<i class="no-highlight">270</i>&nbsp;            int tableVersion,
+<i class="no-highlight">271</i>&nbsp;            int tableId,
+<i class="no-highlight">272</i>&nbsp;            CharSequence dirName
+<i class="no-highlight">273</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);</b>
+<i class="no-highlight">275</i>&nbsp;    }
+<i class="no-highlight">276</i>&nbsp;
+<i class="no-highlight">277</i>&nbsp;    public static void createTable(
+<i class="no-highlight">278</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">279</i>&nbsp;            CharSequence root,
+<i class="no-highlight">280</i>&nbsp;            int mkDirMode,
+<i class="no-highlight">281</i>&nbsp;            MemoryMARW memory,
+<i class="no-highlight">282</i>&nbsp;            Path path,
+<i class="no-highlight">283</i>&nbsp;            CharSequence tableDir,
+<i class="no-highlight">284</i>&nbsp;            TableStructure structure,
+<i class="no-highlight">285</i>&nbsp;            int tableVersion,
+<i class="no-highlight">286</i>&nbsp;            int tableId
+<i class="no-highlight">287</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        LOG.debug().$(&quot;create table [name=&quot;).$(tableDir).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        path.of(root).concat(tableDir);</b>
+<i class="no-highlight">290</i>&nbsp;
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;could not create [dir=&quot;).put(path).put(&#39;]&#39;);</b>
+<i class="no-highlight">293</i>&nbsp;        }
+<i class="no-highlight">294</i>&nbsp;
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        final int rootLen = path.length();</b>
+<i class="no-highlight">296</i>&nbsp;
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;        try (MemoryMARW mem = memory) {</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            mem.jumpTo(0);</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            final int count = structure.getColumnCount();</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            mem.putInt(count);</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;            mem.putInt(structure.getPartitionBy());</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;            int timestampIndex = structure.getTimestampIndex();</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            assert timestampIndex == -1 ||</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                    (timestampIndex &gt;= 0 &amp;&amp; timestampIndex &lt; count &amp;&amp; structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            mem.putInt(timestampIndex);</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;            mem.putInt(tableVersion);</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            mem.putInt(tableId);</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            mem.putInt(structure.getMaxUncommittedRows());</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;            mem.putLong(structure.getO3MaxLag());</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;            mem.putLong(0); // Structure version.</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;            mem.putInt(structure.isWalEnabled() ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);</b>
+<i class="no-highlight">316</i>&nbsp;
+<b class="fc"><i class="no-highlight">317</i>&nbsp;            assert count &gt; 0;</b>
+<i class="no-highlight">318</i>&nbsp;
+<b class="fc"><i class="no-highlight">319</i>&nbsp;            for (int i = 0; i &lt; count; i++) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                mem.putInt(structure.getColumnType(i));</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                long flags = 0;</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                if (structure.isIndexed(i)) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                    flags |= META_FLAG_BIT_INDEXED;</b>
+<i class="no-highlight">324</i>&nbsp;                }
+<i class="no-highlight">325</i>&nbsp;
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                if (structure.isSequential(i)) {</b>
+<b class="nc"><i class="no-highlight">327</i>&nbsp;                    flags |= META_FLAG_BIT_SEQUENTIAL;</b>
+<i class="no-highlight">328</i>&nbsp;                }
+<i class="no-highlight">329</i>&nbsp;
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                mem.putLong(flags);</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;                mem.putInt(structure.getIndexBlockCapacity(i));</b>
+<i class="no-highlight">332</i>&nbsp;                // reserved
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                mem.skip(16);</b>
+<i class="no-highlight">334</i>&nbsp;            }
+<i class="no-highlight">335</i>&nbsp;
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            for (int i = 0; i &lt; count; i++) {</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                mem.putStr(structure.getColumnName(i));</b>
+<i class="no-highlight">338</i>&nbsp;            }
+<i class="no-highlight">339</i>&nbsp;
+<i class="no-highlight">340</i>&nbsp;            // create symbol maps
+<b class="fc"><i class="no-highlight">341</i>&nbsp;            int symbolMapCount = 0;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;            for (int i = 0; i &lt; count; i++) {</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                if (ColumnType.isSymbol(structure.getColumnType(i))) {</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                    createSymbolMapFiles(</b>
+<i class="no-highlight">345</i>&nbsp;                            ff,
+<i class="no-highlight">346</i>&nbsp;                            mem,
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                            path.trimTo(rootLen),</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;                            structure.getColumnName(i),</b>
+<i class="no-highlight">349</i>&nbsp;                            COLUMN_NAME_TXN_NONE,
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                            structure.getSymbolCapacity(i),</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                            structure.getSymbolCacheFlag(i)</b>
+<i class="no-highlight">352</i>&nbsp;                    );
+<b class="fc"><i class="no-highlight">353</i>&nbsp;                    symbolMapCount++;</b>
+<i class="no-highlight">354</i>&nbsp;                }
+<i class="no-highlight">355</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">356</i>&nbsp;            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);</b>
+<i class="no-highlight">358</i>&nbsp;
+<b class="fc"><i class="no-highlight">359</i>&nbsp;            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;            createColumnVersionFile(mem);</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;            mem.close();</b>
+<i class="no-highlight">362</i>&nbsp;
+<b class="fc"><i class="no-highlight">363</i>&nbsp;            resetTodoLog(ff, path, rootLen, mem);</b>
+<i class="no-highlight">364</i>&nbsp;            // allocate txn scoreboard
+<b class="fc"><i class="no-highlight">365</i>&nbsp;            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();</b>
+<i class="no-highlight">366</i>&nbsp;
+<b class="fc"><i class="no-highlight">367</i>&nbsp;            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;            createTableNameFile(mem, getTableNameFromDirName(tableDir));</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        } finally {</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            if (dirFd &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                if (ff.fsync(dirFd) != 0) {</b>
+<b class="nc"><i class="no-highlight">372</i>&nbsp;                    LOG.error()</b>
+<b class="nc"><i class="no-highlight">373</i>&nbsp;                            .$(&quot;could not fsync [fd=&quot;).$(dirFd)</b>
+<b class="nc"><i class="no-highlight">374</i>&nbsp;                            .$(&quot;, errno=&quot;).$(ff.errno())</b>
+<b class="nc"><i class="no-highlight">375</i>&nbsp;                            .I$();</b>
+<i class="no-highlight">376</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                ff.close(dirFd);</b>
+<i class="no-highlight">378</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">379</i>&nbsp;        }</b>
+<i class="no-highlight">380</i>&nbsp;    }
+<i class="no-highlight">381</i>&nbsp;
+<i class="no-highlight">382</i>&nbsp;    public static long createTransitionIndex(
+<i class="no-highlight">383</i>&nbsp;            MemoryR masterMeta,
+<i class="no-highlight">384</i>&nbsp;            AbstractRecordMetadata slaveMeta
+<i class="no-highlight">385</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        int slaveColumnCount = slaveMeta.columnCount;</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;        int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);</b>
+<i class="no-highlight">388</i>&nbsp;        final long pTransitionIndex;
+<b class="fc"><i class="no-highlight">389</i>&nbsp;        final int size = 8 + masterColumnCount * 8;</b>
+<i class="no-highlight">390</i>&nbsp;
+<b class="fc"><i class="no-highlight">391</i>&nbsp;        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_TABLE_READER);</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;        Unsafe.getUnsafe().putInt(index, size);</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;        index += 8;</b>
+<i class="no-highlight">394</i>&nbsp;
+<i class="no-highlight">395</i>&nbsp;        // index structure is
+<i class="no-highlight">396</i>&nbsp;        // [action: int, copy from:int]
+<i class="no-highlight">397</i>&nbsp;
+<i class="no-highlight">398</i>&nbsp;        // action: if -1 then current column in slave is deleted or renamed, else it&#39;s reused
+<i class="no-highlight">399</i>&nbsp;        // &quot;copy from&quot; &gt;= 0 indicates that column is to be copied from slave position
+<i class="no-highlight">400</i>&nbsp;        // &quot;copy from&quot; &lt; 0  indicates that column is new and should be taken from updated metadata position
+<i class="no-highlight">401</i>&nbsp;        // &quot;copy from&quot; == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
+<i class="no-highlight">402</i>&nbsp;
+<b class="fc"><i class="no-highlight">403</i>&nbsp;        long offset = getColumnNameOffset(masterColumnCount);</b>
+<b class="fc"><i class="no-highlight">404</i>&nbsp;        int slaveIndex = 0;</b>
+<b class="fc"><i class="no-highlight">405</i>&nbsp;        int shiftLeft = 0;</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;        for (int masterIndex = 0; masterIndex &lt; masterColumnCount; masterIndex++) {</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;            CharSequence name = masterMeta.getStr(offset);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;            offset += Vm.getStorageLength(name);</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            int masterColumnType = getColumnType(masterMeta, masterIndex);</b>
+<i class="no-highlight">410</i>&nbsp;
+<b class="fc"><i class="no-highlight">411</i>&nbsp;            if (slaveIndex &lt; slaveColumnCount) {</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                int existingWriterIndex = slaveMeta.getWriterIndex(slaveIndex);</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;                if (existingWriterIndex &gt; masterIndex) {</b>
+<i class="no-highlight">414</i>&nbsp;                    // This column must be deleted so existing dense columns do not contain it
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                    assert masterColumnType &lt; 0;</b>
+<i class="no-highlight">416</i>&nbsp;                    continue;
+<i class="no-highlight">417</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                assert existingWriterIndex == masterIndex;</b>
+<i class="no-highlight">419</i>&nbsp;            }
+<i class="no-highlight">420</i>&nbsp;
+<b class="fc"><i class="no-highlight">421</i>&nbsp;            int outIndex = slaveIndex - shiftLeft;</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;            if (masterColumnType &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                shiftLeft++; // Deleted in master</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                if (slaveIndex &lt; slaveColumnCount) {</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);</b>
+<i class="no-highlight">427</i>&nbsp;                }
+<i class="no-highlight">428</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                if (</b>
+<i class="no-highlight">430</i>&nbsp;                        slaveIndex &lt; slaveColumnCount
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                                &amp;&amp; isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                                &amp;&amp; Chars.equals(name, slaveMeta.getColumnName(slaveIndex))</b>
+<i class="no-highlight">433</i>&nbsp;                ) {
+<i class="no-highlight">434</i>&nbsp;                    // reuse
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;                    if (slaveIndex &gt; outIndex) {</b>
+<i class="no-highlight">437</i>&nbsp;                        // mark to do nothing with existing column, this may be overwritten later
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);</b>
+<i class="no-highlight">439</i>&nbsp;                    }
+<i class="no-highlight">440</i>&nbsp;                } else {
+<i class="no-highlight">441</i>&nbsp;                    // new
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                    if (slaveIndex &lt; slaveColumnCount) {</b>
+<i class="no-highlight">443</i>&nbsp;                        // free
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);</b>
+<i class="no-highlight">445</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">446</i>&nbsp;                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);</b>
+<i class="no-highlight">447</i>&nbsp;                }
+<i class="no-highlight">448</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">449</i>&nbsp;            slaveIndex++;</b>
+<i class="no-highlight">450</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        Unsafe.getUnsafe().putInt(pTransitionIndex + 4, slaveIndex - shiftLeft);</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        return pTransitionIndex;</b>
+<i class="no-highlight">453</i>&nbsp;    }
+<i class="no-highlight">454</i>&nbsp;
+<i class="no-highlight">455</i>&nbsp;    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+<b class="fc"><i class="no-highlight">456</i>&nbsp;        txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, seqTxn, dataVersion, partitionTableVersion, structureVersion, columnVersion, truncateVersion);</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);</b>
+<i class="no-highlight">461</i>&nbsp;    }
+<i class="no-highlight">462</i>&nbsp;
+<i class="no-highlight">463</i>&nbsp;    public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
+<b class="fc"><i class="no-highlight">464</i>&nbsp;        path.concat(columnName).put(FILE_SUFFIX_D);</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        if (columnTxn &gt; COLUMN_NAME_TXN_NONE) {</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;            path.put(&#39;.&#39;).put(columnTxn);</b>
+<i class="no-highlight">467</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">468</i>&nbsp;        return path.$();</b>
+<i class="no-highlight">469</i>&nbsp;    }
+<i class="no-highlight">470</i>&nbsp;
+<i class="no-highlight">471</i>&nbsp;    public static LPSZ dFile(Path path, CharSequence columnName) {
+<b class="fc"><i class="no-highlight">472</i>&nbsp;        return dFile(path, columnName, COLUMN_NAME_TXN_NONE);</b>
+<i class="no-highlight">473</i>&nbsp;    }
+<i class="no-highlight">474</i>&nbsp;
+<i class="no-highlight">475</i>&nbsp;    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
+<b class="fc"><i class="no-highlight">476</i>&nbsp;        return exists(ff, path, root, name, 0, name.length());</b>
+<i class="no-highlight">477</i>&nbsp;    }
+<i class="no-highlight">478</i>&nbsp;
+<i class="no-highlight">479</i>&nbsp;    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
+<b class="fc"><i class="no-highlight">480</i>&nbsp;        path.of(root).concat(name, lo, hi).$();</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;        if (ff.exists(path)) {</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                return TABLE_EXISTS;</b>
+<i class="no-highlight">484</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">485</i>&nbsp;                return TABLE_RESERVED;</b>
+<i class="no-highlight">486</i>&nbsp;            }
+<i class="no-highlight">487</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">488</i>&nbsp;            return TABLE_DOES_NOT_EXIST;</b>
+<i class="no-highlight">489</i>&nbsp;        }
+<i class="no-highlight">490</i>&nbsp;    }
+<i class="no-highlight">491</i>&nbsp;
+<i class="no-highlight">492</i>&nbsp;    public static void freeTransitionIndex(long address) {
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        if (address == 0) {</b>
+<i class="no-highlight">494</i>&nbsp;            return;
+<i class="no-highlight">495</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">496</i>&nbsp;        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);</b>
+<i class="no-highlight">497</i>&nbsp;    }
+<i class="no-highlight">498</i>&nbsp;
+<i class="no-highlight">499</i>&nbsp;    public static int getColumnCount(MemoryMR metaMem, long offset) {
+<b class="fc"><i class="no-highlight">500</i>&nbsp;        final int columnCount = metaMem.getInt(offset);</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;        if (columnCount &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">502</i>&nbsp;            throw validationException(metaMem).put(&quot;Incorrect columnCount: &quot;).put(columnCount);</b>
+<i class="no-highlight">503</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">504</i>&nbsp;        return columnCount;</b>
+<i class="no-highlight">505</i>&nbsp;    }
+<i class="no-highlight">506</i>&nbsp;
+<i class="no-highlight">507</i>&nbsp;    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+<b class="fc"><i class="no-highlight">508</i>&nbsp;        final int strLength = getInt(metaMem, memSize, offset);</b>
+<b class="fc"><i class="no-highlight">509</i>&nbsp;        if (strLength == TableUtils.NULL_LEN) {</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;            throw validationException(metaMem).put(&quot;NULL column name at [&quot;).put(columnIndex).put(&#39;]&#39;);</b>
+<i class="no-highlight">511</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">512</i>&nbsp;        return getCharSequence(metaMem, memSize, offset, strLength);</b>
+<i class="no-highlight">513</i>&nbsp;    }
+<i class="no-highlight">514</i>&nbsp;
+<i class="no-highlight">515</i>&nbsp;    public static long getColumnNameOffset(int columnCount) {
+<b class="fc"><i class="no-highlight">516</i>&nbsp;        return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;</b>
+<i class="no-highlight">517</i>&nbsp;    }
+<i class="no-highlight">518</i>&nbsp;
+<i class="no-highlight">519</i>&nbsp;    public static int getColumnType(MemoryR metaMem, int columnIndex) {
+<b class="fc"><i class="no-highlight">520</i>&nbsp;        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);</b>
+<i class="no-highlight">521</i>&nbsp;    }
+<i class="no-highlight">522</i>&nbsp;
+<i class="no-highlight">523</i>&nbsp;    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+<b class="fc"><i class="no-highlight">524</i>&nbsp;        final int type = getInt(metaMem, memSize, offset);</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;        if (type &gt;= 0 &amp;&amp; ColumnType.sizeOf(type) == -1) {</b>
+<b class="nc"><i class="no-highlight">526</i>&nbsp;            throw validationException(metaMem).put(&quot;Invalid column type &quot;).put(type).put(&quot; at [&quot;).put(columnIndex).put(&#39;]&#39;);</b>
+<i class="no-highlight">527</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">528</i>&nbsp;        return type;</b>
+<i class="no-highlight">529</i>&nbsp;    }
+<i class="no-highlight">530</i>&nbsp;
+<i class="no-highlight">531</i>&nbsp;    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
+<b class="nc"><i class="no-highlight">532</i>&nbsp;        return getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolWriterCount), index);</b>
+<i class="no-highlight">533</i>&nbsp;    }
+<i class="no-highlight">534</i>&nbsp;
+<i class="no-highlight">535</i>&nbsp;    public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
+<b class="fc"><i class="no-highlight">536</i>&nbsp;        return partitionTableOffset + 4 + index * 8L;</b>
+<i class="no-highlight">537</i>&nbsp;    }
+<i class="no-highlight">538</i>&nbsp;
+<i class="no-highlight">539</i>&nbsp;    public static long getPartitionTableSizeOffset(int symbolWriterCount) {
+<b class="fc"><i class="no-highlight">540</i>&nbsp;        return getSymbolWriterIndexOffset(symbolWriterCount);</b>
+<i class="no-highlight">541</i>&nbsp;    }
+<i class="no-highlight">542</i>&nbsp;
+<i class="no-highlight">543</i>&nbsp;    public static long getSymbolWriterIndexOffset(int index) {
+<b class="fc"><i class="no-highlight">544</i>&nbsp;        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;</b>
+<i class="no-highlight">545</i>&nbsp;    }
+<i class="no-highlight">546</i>&nbsp;
+<i class="no-highlight">547</i>&nbsp;    public static long getSymbolWriterTransientIndexOffset(int index) {
+<b class="fc"><i class="no-highlight">548</i>&nbsp;        return getSymbolWriterIndexOffset(index) + Integer.BYTES;</b>
+<i class="no-highlight">549</i>&nbsp;    }
+<i class="no-highlight">550</i>&nbsp;
+<i class="no-highlight">551</i>&nbsp;    @NotNull
+<i class="no-highlight">552</i>&nbsp;    public static String getTableDir(boolean mangleDirNames, @NotNull String tableName, int tableId, boolean isWal) {
+<b class="fc"><i class="no-highlight">553</i>&nbsp;        String dirName = tableName;</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;        if (isWal) {</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;</b>
+<b class="fc"><i class="no-highlight">556</i>&nbsp;            dirName += tableId;</b>
+<b class="fc"><i class="no-highlight">557</i>&nbsp;        } else if (mangleDirNames) {</b>
+<b class="fc"><i class="no-highlight">558</i>&nbsp;            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;</b>
+<i class="no-highlight">559</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">560</i>&nbsp;        return dirName;</b>
+<i class="no-highlight">561</i>&nbsp;    }
+<i class="no-highlight">562</i>&nbsp;
+<i class="no-highlight">563</i>&nbsp;    public static CharSequence getTableNameFromDirName(CharSequence privateName) {
+<b class="fc"><i class="no-highlight">564</i>&nbsp;        int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;        if (suffixIndex == -1) {</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;            return privateName;</b>
+<i class="no-highlight">567</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">568</i>&nbsp;        return Chars.toString(privateName).substring(0, suffixIndex);</b>
+<i class="no-highlight">569</i>&nbsp;    }
+<i class="no-highlight">570</i>&nbsp;
+<i class="no-highlight">571</i>&nbsp;    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+<b class="fc"><i class="no-highlight">572</i>&nbsp;        final int timestampIndex = metaMem.getInt(offset);</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;        if (timestampIndex &lt; -1 || timestampIndex &gt;= columnCount) {</b>
+<b class="fc"><i class="no-highlight">574</i>&nbsp;            throw validationException(metaMem).put(&quot;Timestamp index is outside of range, timestampIndex=&quot;).put(timestampIndex);</b>
+<i class="no-highlight">575</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">576</i>&nbsp;        return timestampIndex;</b>
+<i class="no-highlight">577</i>&nbsp;    }
+<i class="no-highlight">578</i>&nbsp;
+<i class="no-highlight">579</i>&nbsp;    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
+<i class="no-highlight">580</i>&nbsp;        // This is temporary solution until we can get multiple version of metadata not overwriting each other
+<b class="fc"><i class="no-highlight">581</i>&nbsp;        if (ex.errnoReadPathDoesNotExist()) {</b>
+<b class="fc"><i class="no-highlight">582</i>&nbsp;            if (millisecondClock.getTicks() &lt; deadline) {</b>
+<b class="fc"><i class="no-highlight">583</i>&nbsp;                LOG.info().$(&quot;error reloading metadata [table=&quot;).utf8(tableName)</b>
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                        .$(&quot;, errno=&quot;).$(ex.getErrno())</b>
+<b class="fc"><i class="no-highlight">585</i>&nbsp;                        .$(&quot;, error=&quot;).utf8(ex.getFlyweightMessage()).I$();</b>
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                Os.pause();</b>
+<i class="no-highlight">587</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                LOG.error().$(&quot;metadata read timeout [timeout=&quot;).$(spinLockTimeout).utf8(&quot;μs]&quot;).$();</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;                throw CairoException.critical(ex.getErrno()).put(&quot;Metadata read timeout. Last error: &quot;).put(ex.getFlyweightMessage());</b>
+<i class="no-highlight">590</i>&nbsp;            }
+<i class="no-highlight">591</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">592</i>&nbsp;            throw ex;</b>
+<i class="no-highlight">593</i>&nbsp;        }
+<i class="no-highlight">594</i>&nbsp;    }
+<i class="no-highlight">595</i>&nbsp;
+<i class="no-highlight">596</i>&nbsp;    public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
+<b class="fc"><i class="no-highlight">597</i>&nbsp;        path.concat(columnName).put(FILE_SUFFIX_I);</b>
+<b class="fc"><i class="no-highlight">598</i>&nbsp;        if (columnTxn &gt; COLUMN_NAME_TXN_NONE) {</b>
+<b class="fc"><i class="no-highlight">599</i>&nbsp;            path.put(&#39;.&#39;).put(columnTxn);</b>
+<i class="no-highlight">600</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">601</i>&nbsp;        return path.$();</b>
+<i class="no-highlight">602</i>&nbsp;    }
+<i class="no-highlight">603</i>&nbsp;
+<i class="no-highlight">604</i>&nbsp;    public static LPSZ iFile(Path path, CharSequence columnName) {
+<b class="fc"><i class="no-highlight">605</i>&nbsp;        return iFile(path, columnName, COLUMN_NAME_TXN_NONE);</b>
+<i class="no-highlight">606</i>&nbsp;    }
+<i class="no-highlight">607</i>&nbsp;
+<i class="no-highlight">608</i>&nbsp;    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
+<b class="fc"><i class="no-highlight">609</i>&nbsp;        int l = seq.length();</b>
+<b class="fc"><i class="no-highlight">610</i>&nbsp;        if (l &gt; fsFileNameLimit) {</b>
+<i class="no-highlight">611</i>&nbsp;            // Most file systems don&#39;t support files name longer than 255 bytes
+<b class="fc"><i class="no-highlight">612</i>&nbsp;            return false;</b>
+<i class="no-highlight">613</i>&nbsp;        }
+<i class="no-highlight">614</i>&nbsp;
+<b class="fc"><i class="no-highlight">615</i>&nbsp;        for (int i = 0; i &lt; l; i++) {</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;            char c = seq.charAt(i);</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;            switch (c) {</b>
+<i class="no-highlight">618</i>&nbsp;                case &#39;?&#39;:
+<i class="no-highlight">619</i>&nbsp;                case &#39;.&#39;:
+<i class="no-highlight">620</i>&nbsp;                case &#39;,&#39;:
+<i class="no-highlight">621</i>&nbsp;                case &#39;\&#39;&#39;:
+<i class="no-highlight">622</i>&nbsp;                case &#39;\&quot;&#39;:
+<i class="no-highlight">623</i>&nbsp;                case &#39;\\&#39;:
+<i class="no-highlight">624</i>&nbsp;                case &#39;/&#39;:
+<i class="no-highlight">625</i>&nbsp;                case &#39;:&#39;:
+<i class="no-highlight">626</i>&nbsp;                case &#39;)&#39;:
+<i class="no-highlight">627</i>&nbsp;                case &#39;(&#39;:
+<i class="no-highlight">628</i>&nbsp;                case &#39;+&#39;:
+<i class="no-highlight">629</i>&nbsp;                case &#39;-&#39;:
+<i class="no-highlight">630</i>&nbsp;                case &#39;*&#39;:
+<i class="no-highlight">631</i>&nbsp;                case &#39;%&#39;:
+<i class="no-highlight">632</i>&nbsp;                case &#39;~&#39;:
+<i class="no-highlight">633</i>&nbsp;                case &#39;\u0000&#39;: // Control characters
+<i class="no-highlight">634</i>&nbsp;                case &#39;\u0001&#39;:
+<i class="no-highlight">635</i>&nbsp;                case &#39;\u0002&#39;:
+<i class="no-highlight">636</i>&nbsp;                case &#39;\u0003&#39;:
+<i class="no-highlight">637</i>&nbsp;                case &#39;\u0004&#39;:
+<i class="no-highlight">638</i>&nbsp;                case &#39;\u0005&#39;:
+<i class="no-highlight">639</i>&nbsp;                case &#39;\u0006&#39;:
+<i class="no-highlight">640</i>&nbsp;                case &#39;\u0007&#39;:
+<i class="no-highlight">641</i>&nbsp;                case &#39;\u0008&#39;:
+<i class="no-highlight">642</i>&nbsp;                case &#39;\u0009&#39;:
+<i class="no-highlight">643</i>&nbsp;                case &#39;\u000B&#39;:
+<i class="no-highlight">644</i>&nbsp;                case &#39;\u000c&#39;:
+<i class="no-highlight">645</i>&nbsp;                case &#39;\n&#39;:
+<i class="no-highlight">646</i>&nbsp;                case &#39;\r&#39;:
+<i class="no-highlight">647</i>&nbsp;                case &#39;\u000e&#39;:
+<i class="no-highlight">648</i>&nbsp;                case &#39;\u000f&#39;:
+<i class="no-highlight">649</i>&nbsp;                case &#39;\u007f&#39;:
+<i class="no-highlight">650</i>&nbsp;                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+<b class="fc"><i class="no-highlight">651</i>&nbsp;                    return false;</b>
+<i class="no-highlight">652</i>&nbsp;                default:
+<i class="no-highlight">653</i>&nbsp;                    break;
+<i class="no-highlight">654</i>&nbsp;            }
+<i class="no-highlight">655</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">656</i>&nbsp;        return l &gt; 0;</b>
+<i class="no-highlight">657</i>&nbsp;    }
+<i class="no-highlight">658</i>&nbsp;
+<i class="no-highlight">659</i>&nbsp;    public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
+<b class="fc"><i class="no-highlight">660</i>&nbsp;        int l = tableName.length();</b>
+<b class="fc"><i class="no-highlight">661</i>&nbsp;        if (l &gt; fsFileNameLimit) {</b>
+<i class="no-highlight">662</i>&nbsp;            // Most file systems don&#39;t support files name longer than 255 bytes
+<b class="fc"><i class="no-highlight">663</i>&nbsp;            return false;</b>
+<i class="no-highlight">664</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">665</i>&nbsp;        for (int i = 0; i &lt; l; i++) {</b>
+<b class="fc"><i class="no-highlight">666</i>&nbsp;            char c = tableName.charAt(i);</b>
+<b class="fc"><i class="no-highlight">667</i>&nbsp;            switch (c) {</b>
+<i class="no-highlight">668</i>&nbsp;                case &#39;.&#39;:
+<b class="fc"><i class="no-highlight">669</i>&nbsp;                    if (i == 0 || i == l - 1 || tableName.charAt(i - 1) == &#39;.&#39;) {</b>
+<i class="no-highlight">670</i>&nbsp;                        // Single dot in the middle is allowed only
+<i class="no-highlight">671</i>&nbsp;                        // Starting from . hides directory in Linux
+<i class="no-highlight">672</i>&nbsp;                        // Ending . can be trimmed by some Windows versions / file systems
+<i class="no-highlight">673</i>&nbsp;                        // Double, triple dot look suspicious
+<i class="no-highlight">674</i>&nbsp;                        // Single dot allowed as compatibility,
+<i class="no-highlight">675</i>&nbsp;                        // when someone uploads &#39;file_name.csv&#39; the file name used as the table name
+<b class="fc"><i class="no-highlight">676</i>&nbsp;                        return false;</b>
+<i class="no-highlight">677</i>&nbsp;                    }
+<i class="no-highlight">678</i>&nbsp;                    break;
+<i class="no-highlight">679</i>&nbsp;                case &#39;?&#39;:
+<i class="no-highlight">680</i>&nbsp;                case &#39;,&#39;:
+<i class="no-highlight">681</i>&nbsp;                case &#39;\&#39;&#39;:
+<i class="no-highlight">682</i>&nbsp;                case &#39;\&quot;&#39;:
+<i class="no-highlight">683</i>&nbsp;                case &#39;\\&#39;:
+<i class="no-highlight">684</i>&nbsp;                case &#39;/&#39;:
+<i class="no-highlight">685</i>&nbsp;                case &#39;:&#39;:
+<i class="no-highlight">686</i>&nbsp;                case &#39;)&#39;:
+<i class="no-highlight">687</i>&nbsp;                case &#39;(&#39;:
+<i class="no-highlight">688</i>&nbsp;                case &#39;+&#39;:
+<i class="no-highlight">689</i>&nbsp;                case &#39;*&#39;:
+<i class="no-highlight">690</i>&nbsp;                case &#39;%&#39;:
+<i class="no-highlight">691</i>&nbsp;                case &#39;~&#39;:
+<i class="no-highlight">692</i>&nbsp;                case &#39;\u0000&#39;:  // Control characters
+<i class="no-highlight">693</i>&nbsp;                case &#39;\u0001&#39;:
+<i class="no-highlight">694</i>&nbsp;                case &#39;\u0002&#39;:
+<i class="no-highlight">695</i>&nbsp;                case &#39;\u0003&#39;:
+<i class="no-highlight">696</i>&nbsp;                case &#39;\u0004&#39;:
+<i class="no-highlight">697</i>&nbsp;                case &#39;\u0005&#39;:
+<i class="no-highlight">698</i>&nbsp;                case &#39;\u0006&#39;:
+<i class="no-highlight">699</i>&nbsp;                case &#39;\u0007&#39;:
+<i class="no-highlight">700</i>&nbsp;                case &#39;\u0008&#39;:
+<i class="no-highlight">701</i>&nbsp;                case &#39;\u0009&#39;:
+<i class="no-highlight">702</i>&nbsp;                case &#39;\u000B&#39;:
+<i class="no-highlight">703</i>&nbsp;                case &#39;\u000c&#39;:
+<i class="no-highlight">704</i>&nbsp;                case &#39;\r&#39;:
+<i class="no-highlight">705</i>&nbsp;                case &#39;\n&#39;:
+<i class="no-highlight">706</i>&nbsp;                case &#39;\u000e&#39;:
+<i class="no-highlight">707</i>&nbsp;                case &#39;\u000f&#39;:
+<i class="no-highlight">708</i>&nbsp;                case &#39;\u007f&#39;:
+<i class="no-highlight">709</i>&nbsp;                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+<b class="fc"><i class="no-highlight">710</i>&nbsp;                    return false;</b>
+<i class="no-highlight">711</i>&nbsp;            }
+<i class="no-highlight">712</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">713</i>&nbsp;        return tableName.length() &gt; 0 &amp;&amp; tableName.charAt(0) != &#39; &#39; &amp;&amp; tableName.charAt(l - 1) != &#39; &#39;;</b>
+<i class="no-highlight">714</i>&nbsp;    }
+<i class="no-highlight">715</i>&nbsp;
+<i class="no-highlight">716</i>&nbsp;    public static int lock(FilesFacade ff, Path path, boolean verbose) {
+<b class="fc"><i class="no-highlight">717</i>&nbsp;        final int fd = ff.openRW(path, CairoConfiguration.O_NONE);</b>
+<b class="fc"><i class="no-highlight">718</i>&nbsp;        if (fd == -1) {</b>
+<b class="fc"><i class="no-highlight">719</i>&nbsp;            if (verbose) {</b>
+<b class="fc"><i class="no-highlight">720</i>&nbsp;                LOG.error().$(&quot;cannot open &#39;&quot;).utf8(path).$(&quot;&#39; to lock [errno=&quot;).$(ff.errno()).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">721</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">722</i>&nbsp;            return -1;</b>
+<i class="no-highlight">723</i>&nbsp;        }
+<i class="no-highlight">724</i>&nbsp;
+<b class="fc"><i class="no-highlight">725</i>&nbsp;        if (ff.lock(fd) != 0) {</b>
+<b class="fc"><i class="no-highlight">726</i>&nbsp;            if (verbose) {</b>
+<b class="fc"><i class="no-highlight">727</i>&nbsp;                LOG.error().$(&quot;cannot lock &#39;&quot;).utf8(path).$(&quot;&#39; [errno=&quot;).$(ff.errno()).$(&quot;, fd=&quot;).$(fd).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">728</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">729</i>&nbsp;            ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">730</i>&nbsp;            return -1;</b>
+<i class="no-highlight">731</i>&nbsp;        }
+<i class="no-highlight">732</i>&nbsp;
+<b class="fc"><i class="no-highlight">733</i>&nbsp;        if (verbose) {</b>
+<b class="fc"><i class="no-highlight">734</i>&nbsp;            LOG.info().$(&quot;locked &#39;&quot;).utf8(path).$(&quot;&#39; [fd=&quot;).$(fd).I$();</b>
+<i class="no-highlight">735</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">736</i>&nbsp;        return fd;</b>
+<i class="no-highlight">737</i>&nbsp;    }
+<i class="no-highlight">738</i>&nbsp;
+<i class="no-highlight">739</i>&nbsp;    public static int lock(FilesFacade ff, Path path) {
+<b class="fc"><i class="no-highlight">740</i>&nbsp;        return lock(ff, path, true);</b>
+<i class="no-highlight">741</i>&nbsp;    }
+<i class="no-highlight">742</i>&nbsp;
+<i class="no-highlight">743</i>&nbsp;    public static void lockName(Path path) {
+<b class="fc"><i class="no-highlight">744</i>&nbsp;        path.put(&quot;.lock&quot;).$();</b>
+<i class="no-highlight">745</i>&nbsp;    }
+<i class="no-highlight">746</i>&nbsp;
+<i class="no-highlight">747</i>&nbsp;    public static long mapRO(FilesFacade ff, int fd, long size, int memoryTag) {
+<b class="fc"><i class="no-highlight">748</i>&nbsp;        return mapRO(ff, fd, size, 0, memoryTag);</b>
+<i class="no-highlight">749</i>&nbsp;    }
+<i class="no-highlight">750</i>&nbsp;
+<i class="no-highlight">751</i>&nbsp;    /**
+<i class="no-highlight">752</i>&nbsp;     * Maps a file in read-only mode.
+<i class="no-highlight">753</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">754</i>&nbsp;     * Important note. Linux requires the offset to be page aligned.
+<i class="no-highlight">755</i>&nbsp;     *
+<i class="no-highlight">756</i>&nbsp;     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+<i class="no-highlight">757</i>&nbsp;     * @param fd        file descriptor, previously provided by one of openFile() functions
+<i class="no-highlight">758</i>&nbsp;     * @param size      size of the mapped file region
+<i class="no-highlight">759</i>&nbsp;     * @param offset    offset in file to begin mapping
+<i class="no-highlight">760</i>&nbsp;     * @param memoryTag bucket to trace memory allocation calls
+<i class="no-highlight">761</i>&nbsp;     * @return read-only memory address
+<i class="no-highlight">762</i>&nbsp;     */
+<i class="no-highlight">763</i>&nbsp;    public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+<b class="fc"><i class="no-highlight">764</i>&nbsp;        assert fd != -1;</b>
+<b class="fc"><i class="no-highlight">765</i>&nbsp;        assert offset % ff.getPageSize() == 0;</b>
+<b class="fc"><i class="no-highlight">766</i>&nbsp;        final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);</b>
+<b class="fc"><i class="no-highlight">767</i>&nbsp;        if (address == FilesFacade.MAP_FAILED) {</b>
+<b class="fc"><i class="no-highlight">768</i>&nbsp;            throw CairoException.critical(ff.errno())</b>
+<b class="fc"><i class="no-highlight">769</i>&nbsp;                    .put(&quot;could not mmap &quot;)</b>
+<b class="fc"><i class="no-highlight">770</i>&nbsp;                    .put(&quot; [size=&quot;).put(size)</b>
+<b class="fc"><i class="no-highlight">771</i>&nbsp;                    .put(&quot;, offset=&quot;).put(offset)</b>
+<b class="fc"><i class="no-highlight">772</i>&nbsp;                    .put(&quot;, fd=&quot;).put(fd)</b>
+<b class="fc"><i class="no-highlight">773</i>&nbsp;                    .put(&quot;, memUsed=&quot;).put(Unsafe.getMemUsed())</b>
+<b class="fc"><i class="no-highlight">774</i>&nbsp;                    .put(&quot;, fileLen=&quot;).put(ff.length(fd))</b>
+<b class="fc"><i class="no-highlight">775</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">776</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">777</i>&nbsp;        return address;</b>
+<i class="no-highlight">778</i>&nbsp;    }
+<i class="no-highlight">779</i>&nbsp;
+<i class="no-highlight">780</i>&nbsp;    public static long mapRW(FilesFacade ff, int fd, long size, int memoryTag) {
+<b class="fc"><i class="no-highlight">781</i>&nbsp;        return mapRW(ff, fd, size, 0, memoryTag);</b>
+<i class="no-highlight">782</i>&nbsp;    }
+<i class="no-highlight">783</i>&nbsp;
+<i class="no-highlight">784</i>&nbsp;    /**
+<i class="no-highlight">785</i>&nbsp;     * Maps a file in read-write mode.
+<i class="no-highlight">786</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">787</i>&nbsp;     * Important note. Linux requires the offset to be page aligned.
+<i class="no-highlight">788</i>&nbsp;     *
+<i class="no-highlight">789</i>&nbsp;     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+<i class="no-highlight">790</i>&nbsp;     * @param fd        file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+<i class="no-highlight">791</i>&nbsp;     * @param size      size of the mapped file region
+<i class="no-highlight">792</i>&nbsp;     * @param offset    offset in file to begin mapping
+<i class="no-highlight">793</i>&nbsp;     * @param memoryTag bucket to trace memory allocation calls
+<i class="no-highlight">794</i>&nbsp;     * @return read-write memory address
+<i class="no-highlight">795</i>&nbsp;     */
+<i class="no-highlight">796</i>&nbsp;    public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+<b class="fc"><i class="no-highlight">797</i>&nbsp;        assert fd != -1;</b>
+<b class="fc"><i class="no-highlight">798</i>&nbsp;        assert offset % ff.getPageSize() == 0;</b>
+<b class="fc"><i class="no-highlight">799</i>&nbsp;        allocateDiskSpace(ff, fd, size + offset);</b>
+<b class="fc"><i class="no-highlight">800</i>&nbsp;        long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);</b>
+<b class="fc"><i class="no-highlight">801</i>&nbsp;        if (addr &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">802</i>&nbsp;            return addr;</b>
+<i class="no-highlight">803</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">804</i>&nbsp;        int errno = ff.errno();</b>
+<b class="fc"><i class="no-highlight">805</i>&nbsp;        if (Os.type != Os.WINDOWS || errno != 112) {</b>
+<b class="fc"><i class="no-highlight">806</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;could not mmap column [fd=&quot;).put(fd).put(&quot;, size=&quot;).put(size).put(&#39;]&#39;);</b>
+<i class="no-highlight">807</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">808</i>&nbsp;        throw CairoException.critical(ff.errno()).put(&quot;No space left [size=&quot;).put(size).put(&quot;, fd=&quot;).put(fd).put(&#39;]&#39;);</b>
+<i class="no-highlight">809</i>&nbsp;    }
+<i class="no-highlight">810</i>&nbsp;
+<i class="no-highlight">811</i>&nbsp;    public static long mapRWOrClose(FilesFacade ff, int fd, long size, int memoryTag) {
+<i class="no-highlight">812</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">813</i>&nbsp;            return TableUtils.mapRW(ff, fd, size, memoryTag);</b>
+<b class="nc"><i class="no-highlight">814</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="nc"><i class="no-highlight">815</i>&nbsp;            ff.close(fd);</b>
+<b class="nc"><i class="no-highlight">816</i>&nbsp;            throw e;</b>
+<i class="no-highlight">817</i>&nbsp;        }
+<i class="no-highlight">818</i>&nbsp;    }
+<i class="no-highlight">819</i>&nbsp;
+<i class="no-highlight">820</i>&nbsp;    public static long mremap(
+<i class="no-highlight">821</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">822</i>&nbsp;            int fd,
+<i class="no-highlight">823</i>&nbsp;            long prevAddress,
+<i class="no-highlight">824</i>&nbsp;            long prevSize,
+<i class="no-highlight">825</i>&nbsp;            long newSize,
+<i class="no-highlight">826</i>&nbsp;            int mapMode,
+<i class="no-highlight">827</i>&nbsp;            int memoryTag
+<i class="no-highlight">828</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">829</i>&nbsp;        return mremap(ff, fd, prevAddress, prevSize, newSize, 0L, mapMode, memoryTag);</b>
+<i class="no-highlight">830</i>&nbsp;    }
+<i class="no-highlight">831</i>&nbsp;
+<i class="no-highlight">832</i>&nbsp;    public static long mremap(
+<i class="no-highlight">833</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">834</i>&nbsp;            int fd,
+<i class="no-highlight">835</i>&nbsp;            long prevAddress,
+<i class="no-highlight">836</i>&nbsp;            long prevSize,
+<i class="no-highlight">837</i>&nbsp;            long newSize,
+<i class="no-highlight">838</i>&nbsp;            long offset,
+<i class="no-highlight">839</i>&nbsp;            int mapMode,
+<i class="no-highlight">840</i>&nbsp;            int memoryTag
+<i class="no-highlight">841</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">842</i>&nbsp;        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);</b>
+<b class="fc"><i class="no-highlight">843</i>&nbsp;        if (page == FilesFacade.MAP_FAILED) {</b>
+<b class="fc"><i class="no-highlight">844</i>&nbsp;            int errno = ff.errno();</b>
+<i class="no-highlight">845</i>&nbsp;            // Closing memory will truncate size to current append offset.
+<i class="no-highlight">846</i>&nbsp;            // Since the failed resize can occur before append offset can be
+<i class="no-highlight">847</i>&nbsp;            // explicitly set, we must assume that file size should be
+<i class="no-highlight">848</i>&nbsp;            // equal to previous memory size
+<b class="fc"><i class="no-highlight">849</i>&nbsp;            throw CairoException.critical(errno).put(&quot;could not remap file [previousSize=&quot;).put(prevSize).put(&quot;, newSize=&quot;).put(newSize).put(&quot;, offset=&quot;).put(offset).put(&quot;, fd=&quot;).put(fd).put(&#39;]&#39;);</b>
+<i class="no-highlight">850</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">851</i>&nbsp;        return page;</b>
+<i class="no-highlight">852</i>&nbsp;    }
+<i class="no-highlight">853</i>&nbsp;
+<i class="no-highlight">854</i>&nbsp;    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+<b class="fc"><i class="no-highlight">855</i>&nbsp;        path.concat(columnName).put(&quot;.o&quot;);</b>
+<b class="fc"><i class="no-highlight">856</i>&nbsp;        if (columnNameTxn &gt; COLUMN_NAME_TXN_NONE) {</b>
+<b class="fc"><i class="no-highlight">857</i>&nbsp;            path.put(&#39;.&#39;).put(columnNameTxn);</b>
+<i class="no-highlight">858</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">859</i>&nbsp;        return path.$();</b>
+<i class="no-highlight">860</i>&nbsp;    }
+<i class="no-highlight">861</i>&nbsp;
+<i class="no-highlight">862</i>&nbsp;    public static void oldPartitionName(Path path, long txn) {
+<b class="fc"><i class="no-highlight">863</i>&nbsp;        path.put(&quot;-x-&quot;).put(txn);</b>
+<i class="no-highlight">864</i>&nbsp;    }
+<i class="no-highlight">865</i>&nbsp;
+<i class="no-highlight">866</i>&nbsp;    public static int openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+<b class="fc"><i class="no-highlight">867</i>&nbsp;        return openRW(ff, path, LOG, opts);</b>
+<i class="no-highlight">868</i>&nbsp;    }
+<i class="no-highlight">869</i>&nbsp;
+<i class="no-highlight">870</i>&nbsp;    public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+<b class="fc"><i class="no-highlight">871</i>&nbsp;        final int rootLen = path.length();</b>
+<b class="fc"><i class="no-highlight">872</i>&nbsp;        path.concat(fileName).$();</b>
+<i class="no-highlight">873</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">874</i>&nbsp;            return TableUtils.openRO(ff, path, log);</b>
+<i class="no-highlight">875</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">876</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="nc"><i class="no-highlight">877</i>&nbsp;        }</b>
+<i class="no-highlight">878</i>&nbsp;    }
+<i class="no-highlight">879</i>&nbsp;
+<i class="no-highlight">880</i>&nbsp;    public static int openRO(FilesFacade ff, LPSZ path, Log log) {
+<b class="fc"><i class="no-highlight">881</i>&nbsp;        final int fd = ff.openRO(path);</b>
+<b class="fc"><i class="no-highlight">882</i>&nbsp;        if (fd &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">883</i>&nbsp;            log.debug().$(&quot;open [file=&quot;).$(path).$(&quot;, fd=&quot;).$(fd).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">884</i>&nbsp;            return fd;</b>
+<i class="no-highlight">885</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">886</i>&nbsp;        throw CairoException.critical(ff.errno()).put(&quot;could not open read-only [file=&quot;).put(path).put(&#39;]&#39;);</b>
+<i class="no-highlight">887</i>&nbsp;    }
+<i class="no-highlight">888</i>&nbsp;
+<i class="no-highlight">889</i>&nbsp;    public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+<b class="fc"><i class="no-highlight">890</i>&nbsp;        final int fd = ff.openRW(path, opts);</b>
+<b class="fc"><i class="no-highlight">891</i>&nbsp;        if (fd &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">892</i>&nbsp;            log.debug().$(&quot;open [file=&quot;).$(path).$(&quot;, fd=&quot;).$(fd).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">893</i>&nbsp;            return fd;</b>
+<i class="no-highlight">894</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">895</i>&nbsp;        throw CairoException.critical(ff.errno()).put(&quot;could not open read-write [file=&quot;).put(path).put(&#39;]&#39;);</b>
+<i class="no-highlight">896</i>&nbsp;    }
+<i class="no-highlight">897</i>&nbsp;
+<i class="no-highlight">898</i>&nbsp;    public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
+<b class="fc"><i class="no-highlight">899</i>&nbsp;        path.concat(fileName).$();</b>
+<i class="no-highlight">900</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">901</i>&nbsp;            metaMem.smallFile(ff, path, memoryTag);</b>
+<i class="no-highlight">902</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">903</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">904</i>&nbsp;        }</b>
+<i class="no-highlight">905</i>&nbsp;    }
+<i class="no-highlight">906</i>&nbsp;
+<i class="no-highlight">907</i>&nbsp;    public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
+<i class="no-highlight">908</i>&nbsp;        // Update name in _name file.
+<i class="no-highlight">909</i>&nbsp;        // This is potentially racy but the file only read on startup when the tables.d file is missing 
+<i class="no-highlight">910</i>&nbsp;        // so very limited circumstances.
+<b class="fc"><i class="no-highlight">911</i>&nbsp;        Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();</b>
+<b class="fc"><i class="no-highlight">912</i>&nbsp;        memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);</b>
+<b class="fc"><i class="no-highlight">913</i>&nbsp;        memory.jumpTo(0);</b>
+<b class="fc"><i class="no-highlight">914</i>&nbsp;        createTableNameFile(memory, newTableToken.getTableName());</b>
+<b class="fc"><i class="no-highlight">915</i>&nbsp;        memory.close(true, Vm.TRUNCATE_TO_POINTER);</b>
+<i class="no-highlight">916</i>&nbsp;    }
+<i class="no-highlight">917</i>&nbsp;
+<i class="no-highlight">918</i>&nbsp;    public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
+<b class="fc"><i class="no-highlight">919</i>&nbsp;        if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {</b>
+<b class="nc"><i class="no-highlight">920</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;Cannot read: &quot;).put(path);</b>
+<i class="no-highlight">921</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">922</i>&nbsp;        return Unsafe.getUnsafe().getInt(tempMem8b);</b>
+<i class="no-highlight">923</i>&nbsp;    }
+<i class="no-highlight">924</i>&nbsp;
+<i class="no-highlight">925</i>&nbsp;    public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+<b class="fc"><i class="no-highlight">926</i>&nbsp;        final int fd = TableUtils.openRO(ff, path, LOG);</b>
+<i class="no-highlight">927</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">928</i>&nbsp;            return readLongOrFail(ff, fd, offset, tempMem8b, path);</b>
+<i class="no-highlight">929</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">930</i>&nbsp;            ff.close(fd);</b>
+<b class="nc"><i class="no-highlight">931</i>&nbsp;        }</b>
+<i class="no-highlight">932</i>&nbsp;    }
+<i class="no-highlight">933</i>&nbsp;
+<i class="no-highlight">934</i>&nbsp;    public static long readLongOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, @Nullable Path path) {
+<b class="fc"><i class="no-highlight">935</i>&nbsp;        if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {</b>
+<b class="nc"><i class="no-highlight">936</i>&nbsp;            if (path != null) {</b>
+<b class="nc"><i class="no-highlight">937</i>&nbsp;                throw CairoException.critical(ff.errno()).put(&quot;could not read long [path=&quot;).put(path).put(&quot;, fd=&quot;).put(fd).put(&quot;, offset=&quot;).put(offset);</b>
+<i class="no-highlight">938</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">939</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;could not read long [fd=&quot;).put(fd).put(&quot;, offset=&quot;).put(offset);</b>
+<i class="no-highlight">940</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">941</i>&nbsp;        return Unsafe.getUnsafe().getLong(tempMem8b);</b>
+<i class="no-highlight">942</i>&nbsp;    }
+<i class="no-highlight">943</i>&nbsp;
+<i class="no-highlight">944</i>&nbsp;    public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
+<b class="fc"><i class="no-highlight">945</i>&nbsp;        int fd = -1;</b>
+<i class="no-highlight">946</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">947</i>&nbsp;            path.concat(TableUtils.TABLE_NAME_FILE).$();</b>
+<b class="fc"><i class="no-highlight">948</i>&nbsp;            fd = ff.openRO(path);</b>
+<b class="fc"><i class="no-highlight">949</i>&nbsp;            if (fd &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">950</i>&nbsp;                return null;</b>
+<i class="no-highlight">951</i>&nbsp;            }
+<i class="no-highlight">952</i>&nbsp;
+<b class="fc"><i class="no-highlight">953</i>&nbsp;            long fileLen = ff.length(fd);</b>
+<b class="fc"><i class="no-highlight">954</i>&nbsp;            if (fileLen &gt; Integer.BYTES) {</b>
+<b class="fc"><i class="no-highlight">955</i>&nbsp;                int charLen = ff.readNonNegativeInt(fd, 0);</b>
+<b class="fc"><i class="no-highlight">956</i>&nbsp;                if (charLen * 2L + Integer.BYTES != fileLen - 1) {</b>
+<b class="fc"><i class="no-highlight">957</i>&nbsp;                    LOG.error().$(&quot;invalid table name file [path=&quot;).$(path).$(&quot;, headerLen=&quot;).$(charLen).$(&quot;, fileLen=&quot;).$(fileLen).I$();</b>
+<b class="fc"><i class="no-highlight">958</i>&nbsp;                    return null;</b>
+<i class="no-highlight">959</i>&nbsp;                }
+<i class="no-highlight">960</i>&nbsp;
+<b class="fc"><i class="no-highlight">961</i>&nbsp;                mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">962</i>&nbsp;                return Chars.toString(mem.getStr(0));</b>
+<i class="no-highlight">963</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">964</i>&nbsp;                LOG.error().$(&quot;invalid table name file [path=&quot;).$(path).$(&quot;, fileLen=&quot;).$(fileLen).I$();</b>
+<b class="nc"><i class="no-highlight">965</i>&nbsp;                return null;</b>
+<i class="no-highlight">966</i>&nbsp;            }
+<i class="no-highlight">967</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">968</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">969</i>&nbsp;            ff.close(fd);</b>
+<b class="nc"><i class="no-highlight">970</i>&nbsp;        }</b>
+<i class="no-highlight">971</i>&nbsp;    }
+<i class="no-highlight">972</i>&nbsp;
+<i class="no-highlight">973</i>&nbsp;    public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
+<b class="fc"><i class="no-highlight">974</i>&nbsp;        if (ff.exists(path) &amp;&amp; !ff.closeRemove(fd, path)) {</b>
+<b class="fc"><i class="no-highlight">975</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;Cannot remove &quot;).put(path);</b>
+<i class="no-highlight">976</i>&nbsp;        }
+<i class="no-highlight">977</i>&nbsp;    }
+<i class="no-highlight">978</i>&nbsp;
+<i class="no-highlight">979</i>&nbsp;    public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
+<b class="fc"><i class="no-highlight">980</i>&nbsp;        if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {</b>
+<b class="fc"><i class="no-highlight">981</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;could not rename &quot;).put(src).put(&quot; -&gt; &quot;).put(dst);</b>
+<i class="no-highlight">982</i>&nbsp;        }
+<i class="no-highlight">983</i>&nbsp;    }
+<i class="no-highlight">984</i>&nbsp;
+<i class="no-highlight">985</i>&nbsp;    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
+<b class="fc"><i class="no-highlight">986</i>&nbsp;        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">987</i>&nbsp;        mem.jumpTo(0);</b>
+<b class="fc"><i class="no-highlight">988</i>&nbsp;        mem.putLong(24, 0); // txn check</b>
+<b class="fc"><i class="no-highlight">989</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">990</i>&nbsp;        mem.putLong(8, 0); // hashLo</b>
+<b class="fc"><i class="no-highlight">991</i>&nbsp;        mem.putLong(16, 0); // hashHi</b>
+<b class="fc"><i class="no-highlight">992</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">993</i>&nbsp;        mem.putLong(0, 0); // txn</b>
+<b class="fc"><i class="no-highlight">994</i>&nbsp;        mem.putLong(32, 0); // count</b>
+<b class="fc"><i class="no-highlight">995</i>&nbsp;        mem.jumpTo(40);</b>
+<i class="no-highlight">996</i>&nbsp;    }
+<i class="no-highlight">997</i>&nbsp;
+<i class="no-highlight">998</i>&nbsp;    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+<i class="no-highlight">999</i>&nbsp;        // txn to let readers know table is being reset
+<b class="fc"><i class="no-highlight">1000</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);</b>
+<i class="no-highlight">1001</i>&nbsp;
+<i class="no-highlight">1002</i>&nbsp;        // transient row count
+<b class="fc"><i class="no-highlight">1003</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, 0);</b>
+<i class="no-highlight">1004</i>&nbsp;        // fixed row count
+<b class="fc"><i class="no-highlight">1005</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, 0);</b>
+<i class="no-highlight">1006</i>&nbsp;        // min timestamp value in table
+<b class="fc"><i class="no-highlight">1007</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, Long.MAX_VALUE);</b>
+<i class="no-highlight">1008</i>&nbsp;        // max timestamp value in table
+<b class="fc"><i class="no-highlight">1009</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, Long.MIN_VALUE);</b>
+<i class="no-highlight">1010</i>&nbsp;        // structure version
+<b class="fc"><i class="no-highlight">1011</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);</b>
+<i class="no-highlight">1012</i>&nbsp;        // data version
+<b class="fc"><i class="no-highlight">1013</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);</b>
+<i class="no-highlight">1014</i>&nbsp;        // partition table version
+<b class="fc"><i class="no-highlight">1015</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);</b>
+<i class="no-highlight">1016</i>&nbsp;        // column version
+<b class="fc"><i class="no-highlight">1017</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);</b>
+<i class="no-highlight">1018</i>&nbsp;        // truncate version
+<b class="fc"><i class="no-highlight">1019</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);</b>
+<i class="no-highlight">1020</i>&nbsp;        // sequencer txn
+<b class="fc"><i class="no-highlight">1021</i>&nbsp;        txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);</b>
+<i class="no-highlight">1022</i>&nbsp;
+<b class="fc"><i class="no-highlight">1023</i>&nbsp;        txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);</b>
+<b class="fc"><i class="no-highlight">1024</i>&nbsp;        for (int i = 0; i &lt; symbolMapCount; i++) {</b>
+<b class="fc"><i class="no-highlight">1025</i>&nbsp;            long offset = getSymbolWriterIndexOffset(i);</b>
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;            txMem.putInt(baseOffset + offset, 0);</b>
+<b class="fc"><i class="no-highlight">1027</i>&nbsp;            offset += Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">1028</i>&nbsp;            txMem.putInt(baseOffset + offset, 0);</b>
+<i class="no-highlight">1029</i>&nbsp;        }
+<i class="no-highlight">1030</i>&nbsp;
+<i class="no-highlight">1031</i>&nbsp;        // partition update count
+<b class="fc"><i class="no-highlight">1032</i>&nbsp;        txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);</b>
+<i class="no-highlight">1033</i>&nbsp;    }
+<i class="no-highlight">1034</i>&nbsp;
+<i class="no-highlight">1035</i>&nbsp;    public static void safeReadTxn(TxReader txReader, MillisecondClock clock, long spinLockTimeout) {
+<b class="fc"><i class="no-highlight">1036</i>&nbsp;        long deadline = clock.getTicks() + spinLockTimeout;</b>
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;        if (txReader.unsafeReadVersion() == txReader.getVersion()) {</b>
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;            LOG.debug().$(&quot;checked clean txn, version &quot;).$(txReader.getVersion()).$(&quot;, txn=&quot;).$(txReader.getTxn()).$();</b>
+<i class="no-highlight">1039</i>&nbsp;            return;
+<i class="no-highlight">1040</i>&nbsp;        }
+<i class="no-highlight">1041</i>&nbsp;
+<i class="no-highlight">1042</i>&nbsp;        while (true) {
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;            if (txReader.unsafeLoadAll()) {</b>
+<b class="fc"><i class="no-highlight">1044</i>&nbsp;                LOG.debug().$(&quot;loaded clean txn, version &quot;).$(txReader.getVersion())</b>
+<b class="fc"><i class="no-highlight">1045</i>&nbsp;                        .$(&quot;, offset=&quot;).$(txReader.getBaseOffset())</b>
+<b class="fc"><i class="no-highlight">1046</i>&nbsp;                        .$(&quot;, size=&quot;).$(txReader.getRecordSize())</b>
+<b class="fc"><i class="no-highlight">1047</i>&nbsp;                        .$(&quot;, txn=&quot;).$(txReader.getTxn()).$();</b>
+<i class="no-highlight">1048</i>&nbsp;                // All good, snapshot read
+<i class="no-highlight">1049</i>&nbsp;                return;
+<i class="no-highlight">1050</i>&nbsp;            }
+<i class="no-highlight">1051</i>&nbsp;            // This is unlucky, sequences have changed while we were reading transaction data
+<i class="no-highlight">1052</i>&nbsp;            // We must discard and try again
+<b class="fc"><i class="no-highlight">1053</i>&nbsp;            if (clock.getTicks() &gt; deadline) {</b>
+<b class="nc"><i class="no-highlight">1054</i>&nbsp;                LOG.error().$(&quot;tx read timeout [timeout=&quot;).$(spinLockTimeout).utf8(&quot;ms]&quot;).$();</b>
+<b class="nc"><i class="no-highlight">1055</i>&nbsp;                throw CairoException.critical(0).put(&quot;Transaction read timeout&quot;);</b>
+<i class="no-highlight">1056</i>&nbsp;            }
+<i class="no-highlight">1057</i>&nbsp;
+<b class="fc"><i class="no-highlight">1058</i>&nbsp;            LOG.debug().$(&quot;loaded __dirty__ txn, version &quot;).$(txReader.getVersion()).$();</b>
+<b class="fc"><i class="no-highlight">1059</i>&nbsp;            Os.pause();</b>
+<i class="no-highlight">1060</i>&nbsp;        }
+<i class="no-highlight">1061</i>&nbsp;    }
+<i class="no-highlight">1062</i>&nbsp;
+<i class="no-highlight">1063</i>&nbsp;    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, TableToken tableName, int partitionBy) {
+<b class="fc"><i class="no-highlight">1064</i>&nbsp;        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();</b>
+<i class="no-highlight">1065</i>&nbsp;        while (true) {
+<b class="fc"><i class="no-highlight">1066</i>&nbsp;            long cursor = seq.next();</b>
+<b class="fc"><i class="no-highlight">1067</i>&nbsp;            if (cursor &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">1068</i>&nbsp;                O3PartitionPurgeTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);</b>
+<b class="fc"><i class="no-highlight">1069</i>&nbsp;                task.of(tableName, partitionBy);</b>
+<b class="fc"><i class="no-highlight">1070</i>&nbsp;                seq.done(cursor);</b>
+<b class="fc"><i class="no-highlight">1071</i>&nbsp;                return true;</b>
+<b class="fc"><i class="no-highlight">1072</i>&nbsp;            } else if (cursor == -1) {</b>
+<b class="fc"><i class="no-highlight">1073</i>&nbsp;                return false;</b>
+<i class="no-highlight">1074</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">1075</i>&nbsp;            Os.pause();</b>
+<b class="nc"><i class="no-highlight">1076</i>&nbsp;        }</b>
+<i class="no-highlight">1077</i>&nbsp;    }
+<i class="no-highlight">1078</i>&nbsp;
+<i class="no-highlight">1079</i>&nbsp;    public static void setNull(int columnType, long addr, long count) {
+<b class="fc"><i class="no-highlight">1080</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">1081</i>&nbsp;            case ColumnType.BOOLEAN:
+<i class="no-highlight">1082</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">1083</i>&nbsp;                Vect.memset(addr, count, 0);</b>
+<b class="fc"><i class="no-highlight">1084</i>&nbsp;                break;</b>
+<i class="no-highlight">1085</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">1086</i>&nbsp;                Vect.memset(addr, count, GeoHashes.BYTE_NULL);</b>
+<b class="fc"><i class="no-highlight">1087</i>&nbsp;                break;</b>
+<i class="no-highlight">1088</i>&nbsp;            case ColumnType.CHAR:
+<i class="no-highlight">1089</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">1090</i>&nbsp;                Vect.setMemoryShort(addr, (short) 0, count);</b>
+<b class="fc"><i class="no-highlight">1091</i>&nbsp;                break;</b>
+<i class="no-highlight">1092</i>&nbsp;            case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">1093</i>&nbsp;                Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);</b>
+<b class="fc"><i class="no-highlight">1094</i>&nbsp;                break;</b>
+<i class="no-highlight">1095</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">1096</i>&nbsp;                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);</b>
+<b class="fc"><i class="no-highlight">1097</i>&nbsp;                break;</b>
+<i class="no-highlight">1098</i>&nbsp;            case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">1099</i>&nbsp;                Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);</b>
+<b class="fc"><i class="no-highlight">1100</i>&nbsp;                break;</b>
+<i class="no-highlight">1101</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">1102</i>&nbsp;                Vect.setMemoryFloat(addr, Float.NaN, count);</b>
+<b class="fc"><i class="no-highlight">1103</i>&nbsp;                break;</b>
+<i class="no-highlight">1104</i>&nbsp;            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">1105</i>&nbsp;                Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count);</b>
+<b class="fc"><i class="no-highlight">1106</i>&nbsp;                break;</b>
+<i class="no-highlight">1107</i>&nbsp;            case ColumnType.LONG:
+<i class="no-highlight">1108</i>&nbsp;            case ColumnType.DATE:
+<i class="no-highlight">1109</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">1110</i>&nbsp;                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);</b>
+<b class="fc"><i class="no-highlight">1111</i>&nbsp;                break;</b>
+<i class="no-highlight">1112</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">1113</i>&nbsp;                Vect.setMemoryLong(addr, GeoHashes.NULL, count);</b>
+<b class="fc"><i class="no-highlight">1114</i>&nbsp;                break;</b>
+<i class="no-highlight">1115</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">1116</i>&nbsp;                Vect.setMemoryDouble(addr, Double.NaN, count);</b>
+<b class="fc"><i class="no-highlight">1117</i>&nbsp;                break;</b>
+<i class="no-highlight">1118</i>&nbsp;            case ColumnType.LONG256:
+<i class="no-highlight">1119</i>&nbsp;                // Long256 is null when all 4 longs are NaNs
+<b class="fc"><i class="no-highlight">1120</i>&nbsp;                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);</b>
+<b class="fc"><i class="no-highlight">1121</i>&nbsp;                break;</b>
+<i class="no-highlight">1122</i>&nbsp;            case ColumnType.LONG128:
+<i class="no-highlight">1123</i>&nbsp;                // fall through
+<i class="no-highlight">1124</i>&nbsp;            case ColumnType.UUID:
+<i class="no-highlight">1125</i>&nbsp;                // Long128 and UUID are null when all 2 longs are NaNs
+<b class="fc"><i class="no-highlight">1126</i>&nbsp;                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);</b>
+<b class="fc"><i class="no-highlight">1127</i>&nbsp;                break;</b>
+<i class="no-highlight">1128</i>&nbsp;            default:
+<i class="no-highlight">1129</i>&nbsp;                break;
+<i class="no-highlight">1130</i>&nbsp;        }
+<i class="no-highlight">1131</i>&nbsp;    }
+<i class="no-highlight">1132</i>&nbsp;
+<i class="no-highlight">1133</i>&nbsp;    /**
+<i class="no-highlight">1134</i>&nbsp;     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+<i class="no-highlight">1135</i>&nbsp;     * and the partition version.
+<i class="no-highlight">1136</i>&nbsp;     *
+<i class="no-highlight">1137</i>&nbsp;     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
+<i class="no-highlight">1138</i>&nbsp;     * @param tableRootLen     Trim to this length to go back to the root path of the table
+<i class="no-highlight">1139</i>&nbsp;     * @param partitionBy      Partitioning scheme
+<i class="no-highlight">1140</i>&nbsp;     * @param timestamp        A timestamp in the partition
+<i class="no-highlight">1141</i>&nbsp;     * @param partitionNameTxn Partition txn suffix
+<i class="no-highlight">1142</i>&nbsp;     */
+<i class="no-highlight">1143</i>&nbsp;    public static void setPathForPartition(
+<i class="no-highlight">1144</i>&nbsp;            Path tablePath,
+<i class="no-highlight">1145</i>&nbsp;            int tableRootLen,
+<i class="no-highlight">1146</i>&nbsp;            int partitionBy,
+<i class="no-highlight">1147</i>&nbsp;            long timestamp,
+<i class="no-highlight">1148</i>&nbsp;            long partitionNameTxn
+<i class="no-highlight">1149</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">1150</i>&nbsp;        tablePath.trimTo(tableRootLen);</b>
+<b class="fc"><i class="no-highlight">1151</i>&nbsp;        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);</b>
+<b class="fc"><i class="no-highlight">1152</i>&nbsp;        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);</b>
+<i class="no-highlight">1153</i>&nbsp;    }
+<i class="no-highlight">1154</i>&nbsp;
+<i class="no-highlight">1155</i>&nbsp;    /**
+<i class="no-highlight">1156</i>&nbsp;     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
+<i class="no-highlight">1157</i>&nbsp;     *
+<i class="no-highlight">1158</i>&nbsp;     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
+<i class="no-highlight">1159</i>&nbsp;     * @param partitionBy           Partitioning scheme
+<i class="no-highlight">1160</i>&nbsp;     * @param timestamp             A timestamp in the partition
+<i class="no-highlight">1161</i>&nbsp;     * @param calculatePartitionMax flag when caller is going to use the return value of this method
+<i class="no-highlight">1162</i>&nbsp;     * @return The last timestamp in the partition
+<i class="no-highlight">1163</i>&nbsp;     */
+<i class="no-highlight">1164</i>&nbsp;    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+<b class="fc"><i class="no-highlight">1165</i>&nbsp;        return PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);</b>
+<i class="no-highlight">1166</i>&nbsp;    }
+<i class="no-highlight">1167</i>&nbsp;
+<i class="no-highlight">1168</i>&nbsp;    public static int toIndexKey(int symbolKey) {
+<b class="fc"><i class="no-highlight">1169</i>&nbsp;        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;</b>
+<i class="no-highlight">1170</i>&nbsp;    }
+<i class="no-highlight">1171</i>&nbsp;
+<i class="no-highlight">1172</i>&nbsp;    public static void txnPartition(CharSink path, long txn) {
+<b class="fc"><i class="no-highlight">1173</i>&nbsp;        path.put(&#39;.&#39;).put(txn);</b>
+<i class="no-highlight">1174</i>&nbsp;    }
+<i class="no-highlight">1175</i>&nbsp;
+<i class="no-highlight">1176</i>&nbsp;    public static void txnPartitionConditionally(CharSink path, long txn) {
+<b class="fc"><i class="no-highlight">1177</i>&nbsp;        if (txn &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">1178</i>&nbsp;            txnPartition(path, txn);</b>
+<i class="no-highlight">1179</i>&nbsp;        }
+<i class="no-highlight">1180</i>&nbsp;    }
+<i class="no-highlight">1181</i>&nbsp;
+<i class="no-highlight">1182</i>&nbsp;    public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
+<b class="fc"><i class="no-highlight">1183</i>&nbsp;        if (indexValueBlockSize &lt; MIN_INDEX_VALUE_BLOCK_SIZE) {</b>
+<b class="fc"><i class="no-highlight">1184</i>&nbsp;            throw SqlException.$(position, &quot;min index block capacity is &quot;).put(MIN_INDEX_VALUE_BLOCK_SIZE);</b>
+<i class="no-highlight">1185</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1186</i>&nbsp;        if (indexValueBlockSize &gt; MAX_INDEX_VALUE_BLOCK_SIZE) {</b>
+<b class="fc"><i class="no-highlight">1187</i>&nbsp;            throw SqlException.$(position, &quot;max index block capacity is &quot;).put(MAX_INDEX_VALUE_BLOCK_SIZE);</b>
+<i class="no-highlight">1188</i>&nbsp;        }
+<i class="no-highlight">1189</i>&nbsp;    }
+<i class="no-highlight">1190</i>&nbsp;
+<i class="no-highlight">1191</i>&nbsp;    public static void validateMeta(
+<i class="no-highlight">1192</i>&nbsp;            MemoryMR metaMem,
+<i class="no-highlight">1193</i>&nbsp;            LowerCaseCharSequenceIntHashMap nameIndex,
+<i class="no-highlight">1194</i>&nbsp;            int expectedVersion
+<i class="no-highlight">1195</i>&nbsp;    ) {
+<i class="no-highlight">1196</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">1197</i>&nbsp;            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);</b>
+<b class="fc"><i class="no-highlight">1198</i>&nbsp;            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);</b>
+<b class="fc"><i class="no-highlight">1199</i>&nbsp;            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);</b>
+<i class="no-highlight">1200</i>&nbsp;
+<b class="fc"><i class="no-highlight">1201</i>&nbsp;            long offset = getColumnNameOffset(columnCount);</b>
+<b class="fc"><i class="no-highlight">1202</i>&nbsp;            if (memSize &lt; offset) {</b>
+<b class="fc"><i class="no-highlight">1203</i>&nbsp;                throw validationException(metaMem).put(&quot;File is too small, column types are missing &quot;).put(memSize);</b>
+<i class="no-highlight">1204</i>&nbsp;            }
+<i class="no-highlight">1205</i>&nbsp;
+<i class="no-highlight">1206</i>&nbsp;            // validate designated timestamp column
+<b class="fc"><i class="no-highlight">1207</i>&nbsp;            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);</b>
+<b class="fc"><i class="no-highlight">1208</i>&nbsp;            if (timestampIndex != -1) {</b>
+<b class="fc"><i class="no-highlight">1209</i>&nbsp;                final int timestampType = getColumnType(metaMem, timestampIndex);</b>
+<b class="fc"><i class="no-highlight">1210</i>&nbsp;                if (!ColumnType.isTimestamp(timestampType)) {</b>
+<b class="fc"><i class="no-highlight">1211</i>&nbsp;                    throw validationException(metaMem).put(&quot;Timestamp column must be TIMESTAMP, but found &quot;).put(ColumnType.nameOf(timestampType));</b>
+<i class="no-highlight">1212</i>&nbsp;                }
+<i class="no-highlight">1213</i>&nbsp;            }
+<i class="no-highlight">1214</i>&nbsp;
+<i class="no-highlight">1215</i>&nbsp;            // validate column types and index attributes
+<b class="fc"><i class="no-highlight">1216</i>&nbsp;            for (int i = 0; i &lt; columnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">1217</i>&nbsp;                final int type = Math.abs(getColumnType(metaMem, i));</b>
+<b class="fc"><i class="no-highlight">1218</i>&nbsp;                if (ColumnType.sizeOf(type) == -1) {</b>
+<b class="fc"><i class="no-highlight">1219</i>&nbsp;                    throw validationException(metaMem).put(&quot;Invalid column type &quot;).put(type).put(&quot; at [&quot;).put(i).put(&#39;]&#39;);</b>
+<i class="no-highlight">1220</i>&nbsp;                }
+<i class="no-highlight">1221</i>&nbsp;
+<b class="fc"><i class="no-highlight">1222</i>&nbsp;                if (isColumnIndexed(metaMem, i)) {</b>
+<b class="fc"><i class="no-highlight">1223</i>&nbsp;                    if (!ColumnType.isSymbol(type)) {</b>
+<b class="fc"><i class="no-highlight">1224</i>&nbsp;                        throw validationException(metaMem).put(&quot;Index flag is only supported for SYMBOL&quot;).put(&quot; at [&quot;).put(i).put(&#39;]&#39;);</b>
+<i class="no-highlight">1225</i>&nbsp;                    }
+<i class="no-highlight">1226</i>&nbsp;
+<b class="fc"><i class="no-highlight">1227</i>&nbsp;                    if (getIndexBlockCapacity(metaMem, i) &lt; 2) {</b>
+<b class="fc"><i class="no-highlight">1228</i>&nbsp;                        throw validationException(metaMem).put(&quot;Invalid index value block capacity &quot;).put(getIndexBlockCapacity(metaMem, i)).put(&quot; at [&quot;).put(i).put(&#39;]&#39;);</b>
+<i class="no-highlight">1229</i>&nbsp;                    }
+<i class="no-highlight">1230</i>&nbsp;                }
+<i class="no-highlight">1231</i>&nbsp;            }
+<i class="no-highlight">1232</i>&nbsp;
+<i class="no-highlight">1233</i>&nbsp;            // validate column names
+<b class="fc"><i class="no-highlight">1234</i>&nbsp;            int denseCount = 0;</b>
+<b class="fc"><i class="no-highlight">1235</i>&nbsp;            for (int i = 0; i &lt; columnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">1236</i>&nbsp;                final CharSequence name = getColumnName(metaMem, memSize, offset, i);</b>
+<b class="fc"><i class="no-highlight">1237</i>&nbsp;                if (getColumnType(metaMem, i) &lt; 0 || nameIndex.put(name, denseCount++)) {</b>
+<b class="fc"><i class="no-highlight">1238</i>&nbsp;                    offset += Vm.getStorageLength(name);</b>
+<i class="no-highlight">1239</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">1240</i>&nbsp;                    throw validationException(metaMem).put(&quot;Duplicate column [name=&quot;).put(name).put(&quot;] at &quot;).put(i);</b>
+<i class="no-highlight">1241</i>&nbsp;                }
+<i class="no-highlight">1242</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1243</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="fc"><i class="no-highlight">1244</i>&nbsp;            nameIndex.clear();</b>
+<b class="fc"><i class="no-highlight">1245</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">1246</i>&nbsp;        }</b>
+<i class="no-highlight">1247</i>&nbsp;    }
+<i class="no-highlight">1248</i>&nbsp;
+<i class="no-highlight">1249</i>&nbsp;    public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+<b class="fc"><i class="no-highlight">1250</i>&nbsp;        final int metaVersion = metaMem.getInt(metaVersionOffset);</b>
+<b class="fc"><i class="no-highlight">1251</i>&nbsp;        if (expectedVersion != metaVersion) {</b>
+<b class="nc"><i class="no-highlight">1252</i>&nbsp;            throw validationException(metaMem)</b>
+<b class="nc"><i class="no-highlight">1253</i>&nbsp;                    .put(&quot;Metadata version does not match runtime version [expected=&quot;).put(expectedVersion)</b>
+<b class="nc"><i class="no-highlight">1254</i>&nbsp;                    .put(&quot;, actual=&quot;).put(metaVersion)</b>
+<b class="nc"><i class="no-highlight">1255</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">1256</i>&nbsp;        }
+<i class="no-highlight">1257</i>&nbsp;    }
+<i class="no-highlight">1258</i>&nbsp;
+<i class="no-highlight">1259</i>&nbsp;    public static void validateSymbolCapacity(int position, int symbolCapacity) throws SqlException {
+<b class="fc"><i class="no-highlight">1260</i>&nbsp;        if (symbolCapacity &lt; MIN_SYMBOL_CAPACITY) {</b>
+<b class="fc"><i class="no-highlight">1261</i>&nbsp;            throw SqlException.$(position, &quot;min symbol capacity is &quot;).put(MIN_SYMBOL_CAPACITY);</b>
+<i class="no-highlight">1262</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1263</i>&nbsp;        if (symbolCapacity &gt; MAX_SYMBOL_CAPACITY) {</b>
+<b class="fc"><i class="no-highlight">1264</i>&nbsp;            throw SqlException.$(position, &quot;max symbol capacity is &quot;).put(MAX_SYMBOL_CAPACITY);</b>
+<i class="no-highlight">1265</i>&nbsp;        }
+<i class="no-highlight">1266</i>&nbsp;    }
+<i class="no-highlight">1267</i>&nbsp;
+<i class="no-highlight">1268</i>&nbsp;    public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
+<b class="fc"><i class="no-highlight">1269</i>&nbsp;        if (cache &amp;&amp; symbolCapacity &gt; MAX_SYMBOL_CAPACITY_CACHED) {</b>
+<b class="fc"><i class="no-highlight">1270</i>&nbsp;            throw SqlException.$(cacheKeywordPosition, &quot;max cached symbol capacity is &quot;).put(MAX_SYMBOL_CAPACITY_CACHED);</b>
+<i class="no-highlight">1271</i>&nbsp;        }
+<i class="no-highlight">1272</i>&nbsp;    }
+<i class="no-highlight">1273</i>&nbsp;
+<i class="no-highlight">1274</i>&nbsp;    public static CairoException validationException(MemoryMR mem) {
+<b class="fc"><i class="no-highlight">1275</i>&nbsp;        return CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;Invalid metadata at fd=&quot;).put(mem.getFd()).put(&quot;. &quot;);</b>
+<i class="no-highlight">1276</i>&nbsp;    }
+<i class="no-highlight">1277</i>&nbsp;
+<i class="no-highlight">1278</i>&nbsp;    public static void writeIntOrFail(FilesFacade ff, int fd, long offset, int value, long tempMem8b, Path path) {
+<b class="fc"><i class="no-highlight">1279</i>&nbsp;        Unsafe.getUnsafe().putInt(tempMem8b, value);</b>
+<b class="fc"><i class="no-highlight">1280</i>&nbsp;        if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {</b>
+<b class="nc"><i class="no-highlight">1281</i>&nbsp;            throw CairoException.critical(ff.errno())</b>
+<b class="nc"><i class="no-highlight">1282</i>&nbsp;                    .put(&quot;could not write 8 bytes [path=&quot;).put(path)</b>
+<b class="nc"><i class="no-highlight">1283</i>&nbsp;                    .put(&quot;, fd=&quot;).put(fd)</b>
+<b class="nc"><i class="no-highlight">1284</i>&nbsp;                    .put(&quot;, offset=&quot;).put(offset)</b>
+<b class="nc"><i class="no-highlight">1285</i>&nbsp;                    .put(&quot;, value=&quot;).put(value)</b>
+<b class="nc"><i class="no-highlight">1286</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">1287</i>&nbsp;        }
+<i class="no-highlight">1288</i>&nbsp;    }
+<i class="no-highlight">1289</i>&nbsp;
+<i class="no-highlight">1290</i>&nbsp;    public static void writeLongOrFail(FilesFacade ff, int fd, long offset, long value, long tempMem8b, Path path) {
+<b class="fc"><i class="no-highlight">1291</i>&nbsp;        Unsafe.getUnsafe().putLong(tempMem8b, value);</b>
+<b class="fc"><i class="no-highlight">1292</i>&nbsp;        if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {</b>
+<b class="nc"><i class="no-highlight">1293</i>&nbsp;            throw CairoException.critical(ff.errno())</b>
+<b class="nc"><i class="no-highlight">1294</i>&nbsp;                    .put(&quot;could not write 8 bytes [path=&quot;).put(path)</b>
+<b class="nc"><i class="no-highlight">1295</i>&nbsp;                    .put(&quot;, fd=&quot;).put(fd)</b>
+<b class="nc"><i class="no-highlight">1296</i>&nbsp;                    .put(&quot;, offset=&quot;).put(offset)</b>
+<b class="nc"><i class="no-highlight">1297</i>&nbsp;                    .put(&quot;, value=&quot;).put(value)</b>
+<b class="nc"><i class="no-highlight">1298</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">1299</i>&nbsp;        }
+<i class="no-highlight">1300</i>&nbsp;    }
+<i class="no-highlight">1301</i>&nbsp;
+<i class="no-highlight">1302</i>&nbsp;    private static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+<b class="fc"><i class="no-highlight">1303</i>&nbsp;        mem.putStr(charSequence);</b>
+<b class="fc"><i class="no-highlight">1304</i>&nbsp;        mem.putByte((byte) 0);</b>
+<b class="fc"><i class="no-highlight">1305</i>&nbsp;        mem.close(true, Vm.TRUNCATE_TO_POINTER);</b>
+<i class="no-highlight">1306</i>&nbsp;    }
+<i class="no-highlight">1307</i>&nbsp;
+<i class="no-highlight">1308</i>&nbsp;    private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
+<b class="fc"><i class="no-highlight">1309</i>&nbsp;        if (strLength &lt; 1 || strLength &gt; 255) {</b>
+<i class="no-highlight">1310</i>&nbsp;            // EXT4 and many others do not allow file name length &gt; 255 bytes
+<b class="fc"><i class="no-highlight">1311</i>&nbsp;            throw validationException(metaMem).put(&quot;String length of &quot;).put(strLength).put(&quot; is invalid at offset &quot;).put(offset);</b>
+<i class="no-highlight">1312</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1313</i>&nbsp;        final long storageLength = Vm.getStorageLength(strLength);</b>
+<b class="fc"><i class="no-highlight">1314</i>&nbsp;        if (offset + storageLength &gt; memSize) {</b>
+<b class="nc"><i class="no-highlight">1315</i>&nbsp;            throw CairoException.critical(0).put(&quot;File is too small, size=&quot;).put(memSize).put(&quot;, required=&quot;).put(offset + storageLength);</b>
+<i class="no-highlight">1316</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1317</i>&nbsp;        return metaMem.getStr(offset);</b>
+<i class="no-highlight">1318</i>&nbsp;    }
+<i class="no-highlight">1319</i>&nbsp;
+<i class="no-highlight">1320</i>&nbsp;    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
+<b class="fc"><i class="no-highlight">1321</i>&nbsp;        if (memSize &lt; offset + Integer.BYTES) {</b>
+<b class="fc"><i class="no-highlight">1322</i>&nbsp;            throw CairoException.critical(0).put(&quot;File is too small, size=&quot;).put(memSize).put(&quot;, required=&quot;).put(offset + Integer.BYTES);</b>
+<i class="no-highlight">1323</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1324</i>&nbsp;        return metaMem.getInt(offset);</b>
+<i class="no-highlight">1325</i>&nbsp;    }
+<i class="no-highlight">1326</i>&nbsp;
+<i class="no-highlight">1327</i>&nbsp;    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+<b class="fc"><i class="no-highlight">1328</i>&nbsp;        if (ff.mkdirs(path, mkDirMode) != 0) {</b>
+<b class="fc"><i class="no-highlight">1329</i>&nbsp;            throw CairoException.critical(ff.errno()).put(&quot;could not create directories [file=&quot;).put(path).put(&#39;]&#39;);</b>
+<i class="no-highlight">1330</i>&nbsp;        }
+<i class="no-highlight">1331</i>&nbsp;    }
+<i class="no-highlight">1332</i>&nbsp;
+<i class="no-highlight">1333</i>&nbsp;    static long getColumnFlags(MemoryR metaMem, int columnIndex) {
+<b class="fc"><i class="no-highlight">1334</i>&nbsp;        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);</b>
+<i class="no-highlight">1335</i>&nbsp;    }
+<i class="no-highlight">1336</i>&nbsp;
+<i class="no-highlight">1337</i>&nbsp;    static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
+<b class="fc"><i class="no-highlight">1338</i>&nbsp;        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);</b>
+<i class="no-highlight">1339</i>&nbsp;    }
+<i class="no-highlight">1340</i>&nbsp;
+<i class="no-highlight">1341</i>&nbsp;    static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
+<b class="fc"><i class="no-highlight">1342</i>&nbsp;        return (getColumnFlags(metaMem, columnIndex) &amp; META_FLAG_BIT_INDEXED) != 0;</b>
+<i class="no-highlight">1343</i>&nbsp;    }
+<i class="no-highlight">1344</i>&nbsp;
+<i class="no-highlight">1345</i>&nbsp;    static boolean isSequential(MemoryR metaMem, int columnIndex) {
+<b class="fc"><i class="no-highlight">1346</i>&nbsp;        return (getColumnFlags(metaMem, columnIndex) &amp; META_FLAG_BIT_SEQUENTIAL) != 0;</b>
+<i class="no-highlight">1347</i>&nbsp;    }
+<i class="no-highlight">1348</i>&nbsp;
+<i class="no-highlight">1349</i>&nbsp;    static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
+<i class="no-highlight">1350</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">1351</i>&nbsp;            path.concat(META_SWAP_FILE_NAME).$();</b>
+<b class="fc"><i class="no-highlight">1352</i>&nbsp;            int l = path.length();</b>
+<b class="fc"><i class="no-highlight">1353</i>&nbsp;            int index = 0;</b>
+<i class="no-highlight">1354</i>&nbsp;            do {
+<b class="fc"><i class="no-highlight">1355</i>&nbsp;                if (index &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1356</i>&nbsp;                    path.trimTo(l).put(&#39;.&#39;).put(index);</b>
+<b class="fc"><i class="no-highlight">1357</i>&nbsp;                    path.$();</b>
+<i class="no-highlight">1358</i>&nbsp;                }
+<i class="no-highlight">1359</i>&nbsp;
+<b class="fc"><i class="no-highlight">1360</i>&nbsp;                if (!ff.exists(path) || ff.remove(path)) {</b>
+<i class="no-highlight">1361</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">1362</i>&nbsp;                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</b>
+<b class="fc"><i class="no-highlight">1363</i>&nbsp;                        mem.jumpTo(0);</b>
+<b class="fc"><i class="no-highlight">1364</i>&nbsp;                        return index;</b>
+<b class="fc"><i class="no-highlight">1365</i>&nbsp;                    } catch (CairoException e) {</b>
+<i class="no-highlight">1366</i>&nbsp;                        // right, cannot open file for some reason?
+<b class="fc"><i class="no-highlight">1367</i>&nbsp;                        LOG.error()</b>
+<b class="fc"><i class="no-highlight">1368</i>&nbsp;                                .$(&quot;could not open swap [file=&quot;).$(path)</b>
+<b class="fc"><i class="no-highlight">1369</i>&nbsp;                                .$(&quot;, errno=&quot;).$(e.getErrno())</b>
+<b class="fc"><i class="no-highlight">1370</i>&nbsp;                                .$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">1371</i>&nbsp;                    }</b>
+<i class="no-highlight">1372</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">1373</i>&nbsp;                    LOG.error()</b>
+<b class="fc"><i class="no-highlight">1374</i>&nbsp;                            .$(&quot;could not remove swap [file=&quot;).$(path)</b>
+<b class="fc"><i class="no-highlight">1375</i>&nbsp;                            .$(&quot;, errno=&quot;).$(ff.errno())</b>
+<b class="fc"><i class="no-highlight">1376</i>&nbsp;                            .$(&#39;]&#39;).$();</b>
+<i class="no-highlight">1377</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1378</i>&nbsp;            } while (++index &lt; retryCount);</b>
+<b class="fc"><i class="no-highlight">1379</i>&nbsp;            throw CairoException.critical(0).put(&quot;Cannot open indexed file. Max number of attempts reached [&quot;).put(index).put(&quot;]. Last file tried: &quot;).put(path);</b>
+<i class="no-highlight">1380</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">1381</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">1382</i>&nbsp;        }</b>
+<i class="no-highlight">1383</i>&nbsp;    }
+<i class="no-highlight">1384</i>&nbsp;
+<i class="no-highlight">1385</i>&nbsp;    static void openMetaSwapFileByIndex(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int swapIndex) {
+<i class="no-highlight">1386</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">1387</i>&nbsp;            path.concat(META_SWAP_FILE_NAME);</b>
+<b class="fc"><i class="no-highlight">1388</i>&nbsp;            if (swapIndex &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">1389</i>&nbsp;                path.put(&#39;.&#39;).put(swapIndex);</b>
+<i class="no-highlight">1390</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1391</i>&nbsp;            path.$();</b>
+<b class="fc"><i class="no-highlight">1392</i>&nbsp;            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</b>
+<i class="no-highlight">1393</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">1394</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">1395</i>&nbsp;        }</b>
+<i class="no-highlight">1396</i>&nbsp;    }
+<i class="no-highlight">1397</i>&nbsp;
+<i class="no-highlight">1398</i>&nbsp;    public interface FailureCloseable {
+<i class="no-highlight">1399</i>&nbsp;        void close(long prevSize);
+<i class="no-highlight">1400</i>&nbsp;    }
+<i class="no-highlight">1401</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

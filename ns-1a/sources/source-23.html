@@ -1,0 +1,795 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > UpdateOperatorImpl</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin</a>
+</div>
+
+<h1>Coverage Summary for Class: UpdateOperatorImpl (io.questdb.griffin)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">UpdateOperatorImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (15/15)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.9%
+  </span>
+  <span class="absValue">
+    (284/290)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.MessageBus;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.*;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCM;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCMARW;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCMR;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.engine.ops.UpdateOperation;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;import static io.questdb.cairo.ColumnType.isVariableLength;
+<i class="no-highlight">42</i>&nbsp;import static io.questdb.cairo.TableUtils.dFile;
+<i class="no-highlight">43</i>&nbsp;import static io.questdb.cairo.TableUtils.iFile;
+<i class="no-highlight">44</i>&nbsp;
+<b class="fc"><i class="no-highlight">45</i>&nbsp;public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseable, UpdateOperator {</b>
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);</b>
+<i class="no-highlight">47</i>&nbsp;    private final long dataAppendPageSize;
+<b class="fc"><i class="no-highlight">48</i>&nbsp;    private final ObjList&lt;MemoryCMARW&gt; dstColumns = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">49</i>&nbsp;    private final long fileOpenOpts;
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    private final ObjList&lt;MemoryCMR&gt; srcColumns = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">51</i>&nbsp;    private IndexBuilder indexBuilder;
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    public UpdateOperatorImpl(
+<i class="no-highlight">54</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">55</i>&nbsp;            MessageBus messageBus,
+<i class="no-highlight">56</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">57</i>&nbsp;            Path path,
+<i class="no-highlight">58</i>&nbsp;            int rootLen
+<i class="no-highlight">59</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        super(LOG, configuration, messageBus, tableWriter, path, rootLen);</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        this.indexBuilder = new IndexBuilder();</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        this.dataAppendPageSize = configuration.getDataAppendPageSize();</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        this.fileOpenOpts = configuration.getWriterFileOpenOpts();</b>
+<i class="no-highlight">64</i>&nbsp;    }
+<i class="no-highlight">65</i>&nbsp;
+<i class="no-highlight">66</i>&nbsp;    @Override
+<i class="no-highlight">67</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        indexBuilder = Misc.free(indexBuilder);</b>
+<i class="no-highlight">69</i>&nbsp;    }
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
+<i class="no-highlight">72</i>&nbsp;
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        TableToken tableToken = tableWriter.getTableToken();</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        LOG.info().$(&quot;updating [table=&quot;).$(tableToken).$(&quot; instance=&quot;).$(op.getCorrelationId()).I$();</b>
+<i class="no-highlight">75</i>&nbsp;
+<i class="no-highlight">76</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">77</i>&nbsp;            final int tableId = op.getTableId();</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;            final long tableVersion = op.getTableVersion();</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;            final RecordCursorFactory factory = op.getFactory();</b>
+<i class="no-highlight">80</i>&nbsp;
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            cleanupColumnVersions.clear();</b>
+<i class="no-highlight">82</i>&nbsp;
+<b class="fc"><i class="no-highlight">83</i>&nbsp;            if (tableWriter.inTransaction()) {</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;                LOG.info().$(&quot;committing current transaction before UPDATE execution [table=&quot;).$(tableToken).$(&quot; instance=&quot;).$(op.getCorrelationId()).I$();</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;                tableWriter.commit();</b>
+<i class="no-highlight">86</i>&nbsp;            }
+<i class="no-highlight">87</i>&nbsp;
+<b class="fc"><i class="no-highlight">88</i>&nbsp;            final TableRecordMetadata tableMetadata = tableWriter.getMetadata();</b>
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;            // Check that table structure hasn&#39;t changed between planning and executing the UPDATE
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            if (tableMetadata.getTableId() != tableId || tableWriter.getStructureVersion() != tableVersion) {</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;                throw TableReferenceOutOfDateException.of(tableToken, tableId, tableMetadata.getTableId(),</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;                        tableVersion, tableWriter.getStructureVersion());</b>
+<i class="no-highlight">94</i>&nbsp;            }
+<i class="no-highlight">95</i>&nbsp;
+<i class="no-highlight">96</i>&nbsp;            // Select the rows to be updated
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            final RecordMetadata updateMetadata = factory.getMetadata();</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;            final int affectedColumnCount = updateMetadata.getColumnCount();</b>
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;            // Build index column map from table to update to values returned from the update statement row cursors
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            updateColumnIndexes.clear();</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            for (int i = 0; i &lt; affectedColumnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                CharSequence columnName = updateMetadata.getColumnName(i);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;                int tableColumnIndex = tableMetadata.getColumnIndex(columnName);</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                assert tableColumnIndex &gt;= 0;</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;                updateColumnIndexes.add(tableColumnIndex);</b>
+<i class="no-highlight">107</i>&nbsp;            }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;            // Create update memory list of all columns to be updated
+<b class="fc"><i class="no-highlight">110</i>&nbsp;            configureColumns(tableMetadata, affectedColumnCount);</b>
+<i class="no-highlight">111</i>&nbsp;
+<i class="no-highlight">112</i>&nbsp;            // Start execution frame by frame
+<i class="no-highlight">113</i>&nbsp;            // Partition to update
+<b class="fc"><i class="no-highlight">114</i>&nbsp;            int partitionIndex = -1;</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;            long rowsUpdated = 0;</b>
+<i class="no-highlight">116</i>&nbsp;
+<i class="no-highlight">117</i>&nbsp;            // Update may be queued and requester already disconnected, force check someone still waits for it
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            op.forceTestTimeout();</b>
+<i class="no-highlight">119</i>&nbsp;            // Row by row updates for now
+<i class="no-highlight">120</i>&nbsp;            // This should happen parallel per file (partition and column)
+<b class="fc"><i class="no-highlight">121</i>&nbsp;            try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                Record masterRecord = recordCursor.getRecord();</b>
+<i class="no-highlight">123</i>&nbsp;
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                long prevRow = 0;</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                long minRow = -1L;</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                long lastRowId = Long.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                while (recordCursor.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                    long rowId = masterRecord.getUpdateRowId();</b>
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;                    // Some joins expand results set and returns same row multiple times
+<b class="fc"><i class="no-highlight">131</i>&nbsp;                    if (rowId == lastRowId) {</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                        continue;</b>
+<i class="no-highlight">133</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                    if (rowId &lt; lastRowId) {</b>
+<i class="no-highlight">135</i>&nbsp;                        // We&#39;re assuming, but not enforcing the fact that
+<i class="no-highlight">136</i>&nbsp;                        // factory produces rows in incrementing order.
+<b class="nc"><i class="no-highlight">137</i>&nbsp;                        throw CairoException.critical(0).put(&quot;Update statement generated invalid query plan. Rows are not returned in order.&quot;);</b>
+<i class="no-highlight">138</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">139</i>&nbsp;                    lastRowId = rowId;</b>
+<i class="no-highlight">140</i>&nbsp;
+<b class="fc"><i class="no-highlight">141</i>&nbsp;                    final int rowPartitionIndex = Rows.toPartitionIndex(rowId);</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                    final long currentRow = Rows.toLocalRowID(rowId);</b>
+<i class="no-highlight">143</i>&nbsp;
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                    if (rowPartitionIndex != partitionIndex) {</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;                            throw CairoException.critical(0)</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                                    .put(&quot;cannot update read-only partition [table=&quot;).put(tableToken.getTableName())</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                                    .put(&quot;, partitionTimestamp=&quot;).ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">150</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                        if (partitionIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;                            LOG.info()</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;                                    .$(&quot;updating partition [partitionIndex=&quot;).$(partitionIndex)</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                                    .$(&quot;, rowPartitionIndex=&quot;).$(rowPartitionIndex)</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;                                    .$(&quot;, rowPartitionTs=&quot;).$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                                    .$(&quot;, affectedColumnCount=&quot;).$(affectedColumnCount)</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                                    .$(&quot;, prevRow=&quot;).$(prevRow)</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;                                    .$(&quot;, minRow=&quot;).$(minRow)</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                                    .I$();</b>
+<i class="no-highlight">160</i>&nbsp;
+<b class="fc"><i class="no-highlight">161</i>&nbsp;                            copyColumns(</b>
+<i class="no-highlight">162</i>&nbsp;                                    partitionIndex,
+<i class="no-highlight">163</i>&nbsp;                                    affectedColumnCount,
+<i class="no-highlight">164</i>&nbsp;                                    prevRow,
+<i class="no-highlight">165</i>&nbsp;                                    minRow
+<i class="no-highlight">166</i>&nbsp;                            );
+<i class="no-highlight">167</i>&nbsp;
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                            updateEffectiveColumnTops(</b>
+<i class="no-highlight">169</i>&nbsp;                                    tableWriter,
+<i class="no-highlight">170</i>&nbsp;                                    partitionIndex,
+<i class="no-highlight">171</i>&nbsp;                                    updateColumnIndexes,
+<i class="no-highlight">172</i>&nbsp;                                    affectedColumnCount,
+<i class="no-highlight">173</i>&nbsp;                                    minRow
+<i class="no-highlight">174</i>&nbsp;                            );
+<i class="no-highlight">175</i>&nbsp;
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);</b>
+<i class="no-highlight">177</i>&nbsp;                        }
+<i class="no-highlight">178</i>&nbsp;
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                        openColumns(srcColumns, rowPartitionIndex, false);</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                        openColumns(dstColumns, rowPartitionIndex, true);</b>
+<i class="no-highlight">181</i>&nbsp;
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                        partitionIndex = rowPartitionIndex;</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                        prevRow = 0;</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                        minRow = currentRow;</b>
+<i class="no-highlight">185</i>&nbsp;                    }
+<i class="no-highlight">186</i>&nbsp;
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                    appendRowUpdate(</b>
+<i class="no-highlight">188</i>&nbsp;                            rowPartitionIndex,
+<i class="no-highlight">189</i>&nbsp;                            affectedColumnCount,
+<i class="no-highlight">190</i>&nbsp;                            prevRow,
+<i class="no-highlight">191</i>&nbsp;                            currentRow,
+<i class="no-highlight">192</i>&nbsp;                            masterRecord,
+<i class="no-highlight">193</i>&nbsp;                            minRow
+<i class="no-highlight">194</i>&nbsp;                    );
+<i class="no-highlight">195</i>&nbsp;
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                    prevRow = currentRow + 1;</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                    rowsUpdated++;</b>
+<i class="no-highlight">198</i>&nbsp;
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                    op.testTimeout();</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                }</b>
+<i class="no-highlight">201</i>&nbsp;
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                if (partitionIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);</b>
+<i class="no-highlight">204</i>&nbsp;
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                    updateEffectiveColumnTops(</b>
+<i class="no-highlight">206</i>&nbsp;                            tableWriter,
+<i class="no-highlight">207</i>&nbsp;                            partitionIndex,
+<i class="no-highlight">208</i>&nbsp;                            updateColumnIndexes,
+<i class="no-highlight">209</i>&nbsp;                            affectedColumnCount,
+<i class="no-highlight">210</i>&nbsp;                            minRow
+<i class="no-highlight">211</i>&nbsp;                    );
+<i class="no-highlight">212</i>&nbsp;
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);</b>
+<i class="no-highlight">214</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">215</i>&nbsp;            } finally {</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                Misc.freeObjList(srcColumns);</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                Misc.freeObjList(dstColumns);</b>
+<i class="no-highlight">218</i>&nbsp;                // todo: we are opening columns incrementally, e.g. if we don&#39;t have enough objects
+<i class="no-highlight">219</i>&nbsp;                //   but here we&#39;re always clearing columns, making incremental &quot;open&quot; pointless
+<i class="no-highlight">220</i>&nbsp;                //   perhaps we should keep N column object max to kick around ?
+<b class="fc"><i class="no-highlight">221</i>&nbsp;                srcColumns.clear();</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                dstColumns.clear();</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;            }</b>
+<i class="no-highlight">224</i>&nbsp;
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            if (partitionIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;                op.forceTestTimeout();</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                tableWriter.commit();</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                tableWriter.openLastPartition();</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                purgeOldColumnVersions();</b>
+<i class="no-highlight">230</i>&nbsp;            }
+<i class="no-highlight">231</i>&nbsp;
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            LOG.info().$(&quot;update finished [table=&quot;).$(tableToken)</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                    .$(&quot;, instance=&quot;).$(op.getCorrelationId())</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                    .$(&quot;, updated=&quot;).$(rowsUpdated)</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;                    .$(&quot;, txn=&quot;).$(tableWriter.getTxn())</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">237</i>&nbsp;
+<b class="fc"><i class="no-highlight">238</i>&nbsp;            return rowsUpdated;</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        } catch (TableReferenceOutOfDateException e) {</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;            throw e;</b>
+<b class="nc"><i class="no-highlight">241</i>&nbsp;        } catch (SqlException e) {</b>
+<b class="nc"><i class="no-highlight">242</i>&nbsp;            throw CairoException.critical(0).put(&quot;could not apply update on SPI side [e=&quot;).put((CharSequence) e).put(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        } catch (Throwable th) {</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;            LOG.error().$(&quot;could not update&quot;).$(th).$();</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;            throw th;</b>
+<i class="no-highlight">246</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">247</i>&nbsp;            op.closeWriter();</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        }</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    private static long calculatedEffectiveColumnTop(long firstUpdatedPartitionRowId, long columnTop) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        if (columnTop &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;            return Math.min(firstUpdatedPartitionRowId, columnTop);</b>
+<i class="no-highlight">254</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">255</i>&nbsp;        return firstUpdatedPartitionRowId;</b>
+<i class="no-highlight">256</i>&nbsp;    }
+<i class="no-highlight">257</i>&nbsp;
+<i class="no-highlight">258</i>&nbsp;    private static void fillUpdatesGapWithNull(
+<i class="no-highlight">259</i>&nbsp;            int columnType,
+<i class="no-highlight">260</i>&nbsp;            long fromRow, // inclusive
+<i class="no-highlight">261</i>&nbsp;            long toRow, // exclusive
+<i class="no-highlight">262</i>&nbsp;            MemoryCMARW dstFixMem,
+<i class="no-highlight">263</i>&nbsp;            MemoryCMARW dstVarMem,
+<i class="no-highlight">264</i>&nbsp;            int shl
+<i class="no-highlight">265</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        final short columnTag = ColumnType.tagOf(columnType);</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        switch (columnTag) {</b>
+<i class="no-highlight">268</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                for (long row = fromRow; row &lt; toRow; row++) {</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                    dstFixMem.putLong(dstVarMem.putNullStr());</b>
+<i class="no-highlight">271</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                break;</b>
+<i class="no-highlight">273</i>&nbsp;            case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                for (long row = fromRow; row &lt; toRow; row++) {</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                    dstFixMem.putLong(dstVarMem.putNullBin());</b>
+<i class="no-highlight">276</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                break;</b>
+<i class="no-highlight">278</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                final long rowCount = toRow - fromRow;</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                TableUtils.setNull(</b>
+<i class="no-highlight">281</i>&nbsp;                        columnType,
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                        dstFixMem.appendAddressFor(rowCount &lt;&lt; shl),</b>
+<i class="no-highlight">283</i>&nbsp;                        rowCount
+<i class="no-highlight">284</i>&nbsp;                );
+<i class="no-highlight">285</i>&nbsp;                break;
+<i class="no-highlight">286</i>&nbsp;        }
+<i class="no-highlight">287</i>&nbsp;    }
+<i class="no-highlight">288</i>&nbsp;
+<i class="no-highlight">289</i>&nbsp;    private static int getFixedColumnSize(int columnType) {
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        if (isVariableLength(columnType)) {</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;            return 3;</b>
+<i class="no-highlight">292</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        return ColumnType.pow2SizeOf(columnType);</b>
+<i class="no-highlight">294</i>&nbsp;    }
+<i class="no-highlight">295</i>&nbsp;
+<i class="no-highlight">296</i>&nbsp;    private static void updateEffectiveColumnTops(
+<i class="no-highlight">297</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">298</i>&nbsp;            int partitionIndex,
+<i class="no-highlight">299</i>&nbsp;            IntList updateColumnIndexes,
+<i class="no-highlight">300</i>&nbsp;            int columnCount,
+<i class="no-highlight">301</i>&nbsp;            long firstUpdatedPartitionRowId
+<i class="no-highlight">302</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);</b>
+<i class="no-highlight">304</i>&nbsp;
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        for (int columnIndex = 0; columnIndex &lt; columnCount; columnIndex++) {</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, columnTop);</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;            if (effectiveColumnTop &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop);</b>
+<i class="no-highlight">311</i>&nbsp;            }
+<i class="no-highlight">312</i>&nbsp;        }
+<i class="no-highlight">313</i>&nbsp;    }
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;    private void appendRowUpdate(
+<i class="no-highlight">316</i>&nbsp;            int rowPartitionIndex,
+<i class="no-highlight">317</i>&nbsp;            int affectedColumnCount,
+<i class="no-highlight">318</i>&nbsp;            long prevRow,
+<i class="no-highlight">319</i>&nbsp;            long currentRow,
+<i class="no-highlight">320</i>&nbsp;            Record masterRecord,
+<i class="no-highlight">321</i>&nbsp;            long firstUpdatedRowId
+<i class="no-highlight">322</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        final TableRecordMetadata tableMetadata = tableWriter.getMetadata();</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        final long partitionTimestamp = tableWriter.getPartitionTimestamp(rowPartitionIndex);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        for (int i = 0; i &lt; affectedColumnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;            MemoryCMR srcFixMem = srcColumns.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;            MemoryCMARW dstFixMem = dstColumns.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;            MemoryCMR srcVarMem = srcColumns.get(2 * i + 1);</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;            MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);</b>
+<i class="no-highlight">330</i>&nbsp;
+<b class="fc"><i class="no-highlight">331</i>&nbsp;            final int columnIndex = updateColumnIndexes.get(i);</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;            final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            final int columnType = tableMetadata.getColumnType(columnIndex);</b>
+<i class="no-highlight">335</i>&nbsp;
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            if (currentRow &gt; prevRow) {</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                copyColumn(</b>
+<i class="no-highlight">338</i>&nbsp;                        prevRow,
+<i class="no-highlight">339</i>&nbsp;                        currentRow,
+<i class="no-highlight">340</i>&nbsp;                        srcFixMem,
+<i class="no-highlight">341</i>&nbsp;                        srcVarMem,
+<i class="no-highlight">342</i>&nbsp;                        dstFixMem,
+<i class="no-highlight">343</i>&nbsp;                        dstVarMem,
+<i class="no-highlight">344</i>&nbsp;                        newColumnTop,
+<i class="no-highlight">345</i>&nbsp;                        oldColumnTop,
+<i class="no-highlight">346</i>&nbsp;                        columnType
+<i class="no-highlight">347</i>&nbsp;                );
+<i class="no-highlight">348</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">349</i>&nbsp;            switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">350</i>&nbsp;                case ColumnType.INT:
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                    dstFixMem.putInt(masterRecord.getInt(i));</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                    break;</b>
+<i class="no-highlight">353</i>&nbsp;                case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                    dstFixMem.putFloat(masterRecord.getFloat(i));</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                    break;</b>
+<i class="no-highlight">356</i>&nbsp;                case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                    dstFixMem.putLong(masterRecord.getLong(i));</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                    break;</b>
+<i class="no-highlight">359</i>&nbsp;                case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                    dstFixMem.putLong(masterRecord.getTimestamp(i));</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                    break;</b>
+<i class="no-highlight">362</i>&nbsp;                case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                    dstFixMem.putLong(masterRecord.getDate(i));</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                    break;</b>
+<i class="no-highlight">365</i>&nbsp;                case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                    dstFixMem.putDouble(masterRecord.getDouble(i));</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                    break;</b>
+<i class="no-highlight">368</i>&nbsp;                case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                    dstFixMem.putShort(masterRecord.getShort(i));</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                    break;</b>
+<i class="no-highlight">371</i>&nbsp;                case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                    dstFixMem.putChar(masterRecord.getChar(i));</b>
+<b class="fc"><i class="no-highlight">373</i>&nbsp;                    break;</b>
+<i class="no-highlight">374</i>&nbsp;                case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                    dstFixMem.putByte(masterRecord.getByte(i));</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;                    break;</b>
+<i class="no-highlight">377</i>&nbsp;                case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                    dstFixMem.putBool(masterRecord.getBool(i));</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                    break;</b>
+<i class="no-highlight">380</i>&nbsp;                case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                    dstFixMem.putByte(masterRecord.getGeoByte(i));</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                    break;</b>
+<i class="no-highlight">383</i>&nbsp;                case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                    dstFixMem.putShort(masterRecord.getGeoShort(i));</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                    break;</b>
+<i class="no-highlight">386</i>&nbsp;                case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                    dstFixMem.putInt(masterRecord.getGeoInt(i));</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                    break;</b>
+<i class="no-highlight">389</i>&nbsp;                case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">390</i>&nbsp;                    dstFixMem.putLong(masterRecord.getGeoLong(i));</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                    break;</b>
+<i class="no-highlight">392</i>&nbsp;                case ColumnType.SYMBOL:
+<i class="no-highlight">393</i>&nbsp;                    // Use special method to write new symbol values
+<i class="no-highlight">394</i>&nbsp;                    // which does not update _txn file transient symbol counts
+<i class="no-highlight">395</i>&nbsp;                    // so that if update fails and rolled back ILP will not use &quot;dirty&quot; symbol indexes
+<i class="no-highlight">396</i>&nbsp;                    // pre-looked up during update run to insert rows
+<b class="fc"><i class="no-highlight">397</i>&nbsp;                    dstFixMem.putInt(</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSym(i))</b>
+<i class="no-highlight">399</i>&nbsp;                    );
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                    break;</b>
+<i class="no-highlight">401</i>&nbsp;                case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;                    break;</b>
+<i class="no-highlight">404</i>&nbsp;                case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">405</i>&nbsp;                    dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                    break;</b>
+<i class="no-highlight">407</i>&nbsp;                case ColumnType.LONG128:
+<i class="no-highlight">408</i>&nbsp;                    // fall-through
+<i class="no-highlight">409</i>&nbsp;                case ColumnType.UUID:
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                    dstFixMem.putLong(masterRecord.getLong128Lo(i));</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                    dstFixMem.putLong(masterRecord.getLong128Hi(i));</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                    break;</b>
+<i class="no-highlight">413</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">414</i>&nbsp;                    throw CairoException.nonCritical()</b>
+<b class="nc"><i class="no-highlight">415</i>&nbsp;                            .put(&quot;Column type &quot;).put(ColumnType.nameOf(columnType))</b>
+<b class="nc"><i class="no-highlight">416</i>&nbsp;                            .put(&quot; not supported for updates&quot;);</b>
+<i class="no-highlight">417</i>&nbsp;            }
+<i class="no-highlight">418</i>&nbsp;        }
+<i class="no-highlight">419</i>&nbsp;    }
+<i class="no-highlight">420</i>&nbsp;
+<i class="no-highlight">421</i>&nbsp;    private void configureColumns(RecordMetadata metadata, int columnCount) {
+<b class="fc"><i class="no-highlight">422</i>&nbsp;        for (int i = dstColumns.size(); i &lt; columnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;            int columnType = metadata.getColumnType(updateColumnIndexes.get(i));</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;            switch (columnType) {</b>
+<i class="no-highlight">425</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                    srcColumns.add(Vm.getCMRInstance());</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                    srcColumns.add(null);</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                    dstColumns.add(Vm.getCMARWInstance());</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                    dstColumns.add(null);</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                    break;</b>
+<i class="no-highlight">431</i>&nbsp;                case ColumnType.STRING:
+<i class="no-highlight">432</i>&nbsp;                case ColumnType.BINARY:
+<i class="no-highlight">433</i>&nbsp;                    // Primary and secondary
+<b class="fc"><i class="no-highlight">434</i>&nbsp;                    srcColumns.add(Vm.getCMRInstance());</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                    srcColumns.add(Vm.getCMRInstance());</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;                    dstColumns.add(Vm.getCMARWInstance());</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;                    dstColumns.add(Vm.getCMARWInstance());</b>
+<i class="no-highlight">438</i>&nbsp;                    break;
+<i class="no-highlight">439</i>&nbsp;            }
+<i class="no-highlight">440</i>&nbsp;        }
+<i class="no-highlight">441</i>&nbsp;    }
+<i class="no-highlight">442</i>&nbsp;
+<i class="no-highlight">443</i>&nbsp;    private void copyColumn(
+<i class="no-highlight">444</i>&nbsp;            long prevRow,
+<i class="no-highlight">445</i>&nbsp;            long maxRow,
+<i class="no-highlight">446</i>&nbsp;            MemoryCMR srcFixMem,
+<i class="no-highlight">447</i>&nbsp;            MemoryCMR srcVarMem,
+<i class="no-highlight">448</i>&nbsp;            MemoryCMARW dstFixMem,
+<i class="no-highlight">449</i>&nbsp;            MemoryCMARW dstVarMem,
+<i class="no-highlight">450</i>&nbsp;            long newColumnTop,
+<i class="no-highlight">451</i>&nbsp;            long oldColumnTop,
+<i class="no-highlight">452</i>&nbsp;            int columnType
+<i class="no-highlight">453</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        assert newColumnTop &lt;= oldColumnTop || oldColumnTop &lt; 0;</b>
+<i class="no-highlight">455</i>&nbsp;
+<b class="fc"><i class="no-highlight">456</i>&nbsp;        final int shl = getFixedColumnSize(columnType);</b>
+<i class="no-highlight">457</i>&nbsp;
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        if (oldColumnTop == -1 &amp;&amp; prevRow &gt; 0) {</b>
+<i class="no-highlight">459</i>&nbsp;            // Column did not exist at the partition
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            fillUpdatesGapWithNull(columnType, prevRow, maxRow, dstFixMem, dstVarMem, shl);</b>
+<i class="no-highlight">461</i>&nbsp;        }
+<i class="no-highlight">462</i>&nbsp;
+<b class="fc"><i class="no-highlight">463</i>&nbsp;        if (oldColumnTop == 0) {</b>
+<i class="no-highlight">464</i>&nbsp;            // Column fully exists in the partition
+<b class="fc"><i class="no-highlight">465</i>&nbsp;            copyValues(</b>
+<i class="no-highlight">466</i>&nbsp;                    prevRow,
+<i class="no-highlight">467</i>&nbsp;                    maxRow,
+<i class="no-highlight">468</i>&nbsp;                    srcFixMem,
+<i class="no-highlight">469</i>&nbsp;                    srcVarMem,
+<i class="no-highlight">470</i>&nbsp;                    dstFixMem,
+<i class="no-highlight">471</i>&nbsp;                    dstVarMem,
+<i class="no-highlight">472</i>&nbsp;                    columnType,
+<i class="no-highlight">473</i>&nbsp;                    shl
+<i class="no-highlight">474</i>&nbsp;            );
+<i class="no-highlight">475</i>&nbsp;        }
+<i class="no-highlight">476</i>&nbsp;
+<b class="fc"><i class="no-highlight">477</i>&nbsp;        if (oldColumnTop &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">478</i>&nbsp;            if (prevRow &gt;= oldColumnTop) {</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                copyValues(</b>
+<i class="no-highlight">480</i>&nbsp;                        prevRow - oldColumnTop,
+<i class="no-highlight">481</i>&nbsp;                        maxRow - oldColumnTop,
+<i class="no-highlight">482</i>&nbsp;                        srcFixMem,
+<i class="no-highlight">483</i>&nbsp;                        srcVarMem, dstFixMem,
+<i class="no-highlight">484</i>&nbsp;                        dstVarMem,
+<i class="no-highlight">485</i>&nbsp;                        columnType,
+<i class="no-highlight">486</i>&nbsp;                        shl
+<i class="no-highlight">487</i>&nbsp;                );
+<i class="no-highlight">488</i>&nbsp;            } else {
+<i class="no-highlight">489</i>&nbsp;                // prevRow &lt; oldColumnTop
+<b class="fc"><i class="no-highlight">490</i>&nbsp;                if (maxRow &lt;= oldColumnTop) {</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                    if (prevRow &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                        fillUpdatesGapWithNull(</b>
+<i class="no-highlight">493</i>&nbsp;                                columnType,
+<i class="no-highlight">494</i>&nbsp;                                prevRow,
+<i class="no-highlight">495</i>&nbsp;                                maxRow,
+<i class="no-highlight">496</i>&nbsp;                                dstFixMem,
+<i class="no-highlight">497</i>&nbsp;                                dstVarMem,
+<i class="no-highlight">498</i>&nbsp;                                shl
+<i class="no-highlight">499</i>&nbsp;                        );
+<i class="no-highlight">500</i>&nbsp;                    }
+<i class="no-highlight">501</i>&nbsp;                } else {
+<i class="no-highlight">502</i>&nbsp;                    // prevRow &lt; oldColumnTop &amp;&amp;  oldColumnTop &lt; maxRow
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                    if (prevRow &gt; newColumnTop) {</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                        fillUpdatesGapWithNull(</b>
+<i class="no-highlight">505</i>&nbsp;                                columnType,
+<i class="no-highlight">506</i>&nbsp;                                prevRow,
+<i class="no-highlight">507</i>&nbsp;                                oldColumnTop,
+<i class="no-highlight">508</i>&nbsp;                                dstFixMem,
+<i class="no-highlight">509</i>&nbsp;                                dstVarMem,
+<i class="no-highlight">510</i>&nbsp;                                shl
+<i class="no-highlight">511</i>&nbsp;                        );
+<i class="no-highlight">512</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                    copyValues(</b>
+<i class="no-highlight">514</i>&nbsp;                            0,
+<i class="no-highlight">515</i>&nbsp;                            maxRow - oldColumnTop,
+<i class="no-highlight">516</i>&nbsp;                            srcFixMem,
+<i class="no-highlight">517</i>&nbsp;                            srcVarMem,
+<i class="no-highlight">518</i>&nbsp;                            dstFixMem,
+<i class="no-highlight">519</i>&nbsp;                            dstVarMem,
+<i class="no-highlight">520</i>&nbsp;                            columnType,
+<i class="no-highlight">521</i>&nbsp;                            shl
+<i class="no-highlight">522</i>&nbsp;                    );
+<i class="no-highlight">523</i>&nbsp;                }
+<i class="no-highlight">524</i>&nbsp;            }
+<i class="no-highlight">525</i>&nbsp;        }
+<i class="no-highlight">526</i>&nbsp;    }
+<i class="no-highlight">527</i>&nbsp;
+<i class="no-highlight">528</i>&nbsp;    private void copyColumns(int partitionIndex, int affectedColumnCount, long prevRow, long minRow) {
+<b class="fc"><i class="no-highlight">529</i>&nbsp;        final TableRecordMetadata tableMetadata = tableWriter.getMetadata();</b>
+<b class="fc"><i class="no-highlight">530</i>&nbsp;        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);</b>
+<b class="fc"><i class="no-highlight">531</i>&nbsp;        final long maxRow = tableWriter.getPartitionSize(partitionIndex);</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;        for (int i = 0; i &lt; affectedColumnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">533</i>&nbsp;            MemoryCMR srcFixMem = srcColumns.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;            MemoryCMR srcVarMem = srcColumns.get(2 * i + 1);</b>
+<b class="fc"><i class="no-highlight">535</i>&nbsp;            MemoryCMARW dstFixMem = dstColumns.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;            MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);</b>
+<i class="no-highlight">537</i>&nbsp;
+<b class="fc"><i class="no-highlight">538</i>&nbsp;            final int columnIndex = updateColumnIndexes.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">539</i>&nbsp;            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;            final long newColumnTop = calculatedEffectiveColumnTop(minRow, oldColumnTop);</b>
+<b class="fc"><i class="no-highlight">541</i>&nbsp;            final int columnType = tableMetadata.getColumnType(columnIndex);</b>
+<i class="no-highlight">542</i>&nbsp;
+<b class="fc"><i class="no-highlight">543</i>&nbsp;            if (maxRow &gt; prevRow) {</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;                copyColumn(</b>
+<i class="no-highlight">545</i>&nbsp;                        prevRow,
+<i class="no-highlight">546</i>&nbsp;                        maxRow,
+<i class="no-highlight">547</i>&nbsp;                        srcFixMem,
+<i class="no-highlight">548</i>&nbsp;                        srcVarMem,
+<i class="no-highlight">549</i>&nbsp;                        dstFixMem,
+<i class="no-highlight">550</i>&nbsp;                        dstVarMem,
+<i class="no-highlight">551</i>&nbsp;                        newColumnTop,
+<i class="no-highlight">552</i>&nbsp;                        oldColumnTop,
+<i class="no-highlight">553</i>&nbsp;                        columnType
+<i class="no-highlight">554</i>&nbsp;                );
+<i class="no-highlight">555</i>&nbsp;            }
+<i class="no-highlight">556</i>&nbsp;        }
+<i class="no-highlight">557</i>&nbsp;    }
+<i class="no-highlight">558</i>&nbsp;
+<i class="no-highlight">559</i>&nbsp;    private void copyValues(
+<i class="no-highlight">560</i>&nbsp;            long fromRowId,
+<i class="no-highlight">561</i>&nbsp;            long toRowId,
+<i class="no-highlight">562</i>&nbsp;            MemoryCMR srcFixMem,
+<i class="no-highlight">563</i>&nbsp;            MemoryCMR srcVarMem,
+<i class="no-highlight">564</i>&nbsp;            MemoryCMARW dstFixMem,
+<i class="no-highlight">565</i>&nbsp;            MemoryCMARW dstVarMem,
+<i class="no-highlight">566</i>&nbsp;            int columnType,
+<i class="no-highlight">567</i>&nbsp;            int shl
+<i class="no-highlight">568</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">569</i>&nbsp;        long address = srcFixMem.addressOf(fromRowId &lt;&lt; shl);</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">571</i>&nbsp;            case ColumnType.STRING:
+<i class="no-highlight">572</i>&nbsp;            case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">573</i>&nbsp;                long varStartOffset = srcFixMem.getLong(fromRowId * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">574</i>&nbsp;                long varEndOffset = srcFixMem.getLong((toRowId) * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                long varAddress = srcVarMem.addressOf(varStartOffset);</b>
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                long copyToOffset = dstVarMem.getAppendOffset();</b>
+<b class="fc"><i class="no-highlight">577</i>&nbsp;                dstVarMem.putBlockOfBytes(varAddress, varEndOffset - varStartOffset);</b>
+<b class="fc"><i class="no-highlight">578</i>&nbsp;                dstFixMem.extend((toRowId + 1) &lt;&lt; shl);</b>
+<b class="fc"><i class="no-highlight">579</i>&nbsp;                Vect.shiftCopyFixedSizeColumnData(</b>
+<i class="no-highlight">580</i>&nbsp;                        varStartOffset - copyToOffset,
+<i class="no-highlight">581</i>&nbsp;                        address + Long.BYTES,
+<i class="no-highlight">582</i>&nbsp;                        0,
+<i class="no-highlight">583</i>&nbsp;                        toRowId - fromRowId - 1,
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                        dstFixMem.getAppendAddress()</b>
+<i class="no-highlight">585</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                dstFixMem.jumpTo((toRowId + 1) &lt;&lt; shl);</b>
+<b class="fc"><i class="no-highlight">587</i>&nbsp;                break;</b>
+<i class="no-highlight">588</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">589</i>&nbsp;                dstFixMem.putBlockOfBytes(address, (toRowId - fromRowId) &lt;&lt; shl);</b>
+<i class="no-highlight">590</i>&nbsp;                break;
+<i class="no-highlight">591</i>&nbsp;        }
+<i class="no-highlight">592</i>&nbsp;    }
+<i class="no-highlight">593</i>&nbsp;
+<i class="no-highlight">594</i>&nbsp;    private void openColumns(ObjList&lt;? extends MemoryCM&gt; columns, int partitionIndex, boolean forWrite) {
+<b class="fc"><i class="no-highlight">595</i>&nbsp;        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;        long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);</b>
+<b class="fc"><i class="no-highlight">597</i>&nbsp;        RecordMetadata metadata = tableWriter.getMetadata();</b>
+<i class="no-highlight">598</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">599</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">600</i>&nbsp;            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);</b>
+<b class="fc"><i class="no-highlight">601</i>&nbsp;            TableUtils.txnPartitionConditionally(path, partitionNameTxn);</b>
+<b class="fc"><i class="no-highlight">602</i>&nbsp;            int pathTrimToLen = path.length();</b>
+<b class="fc"><i class="no-highlight">603</i>&nbsp;            for (int i = 0, n = updateColumnIndexes.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;                int columnIndex = updateColumnIndexes.get(i);</b>
+<b class="fc"><i class="no-highlight">605</i>&nbsp;                CharSequence name = metadata.getColumnName(columnIndex);</b>
+<b class="fc"><i class="no-highlight">606</i>&nbsp;                int columnType = metadata.getColumnType(columnIndex);</b>
+<i class="no-highlight">607</i>&nbsp;
+<b class="fc"><i class="no-highlight">608</i>&nbsp;                final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);</b>
+<i class="no-highlight">609</i>&nbsp;
+<b class="fc"><i class="no-highlight">610</i>&nbsp;                if (forWrite) {</b>
+<b class="fc"><i class="no-highlight">611</i>&nbsp;                    long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);</b>
+<b class="fc"><i class="no-highlight">612</i>&nbsp;                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);</b>
+<b class="fc"><i class="no-highlight">613</i>&nbsp;                    if (columnTop &gt; -1) {</b>
+<i class="no-highlight">614</i>&nbsp;                        // columnTop == -1 means column did not exist at the partition
+<b class="fc"><i class="no-highlight">615</i>&nbsp;                        cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);</b>
+<i class="no-highlight">616</i>&nbsp;                    }
+<i class="no-highlight">617</i>&nbsp;                }
+<i class="no-highlight">618</i>&nbsp;
+<b class="fc"><i class="no-highlight">619</i>&nbsp;                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);</b>
+<b class="fc"><i class="no-highlight">620</i>&nbsp;                if (isVariableLength(columnType)) {</b>
+<b class="fc"><i class="no-highlight">621</i>&nbsp;                    MemoryCMR colMemIndex = (MemoryCMR) columns.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">622</i>&nbsp;                    colMemIndex.close();</b>
+<b class="fc"><i class="no-highlight">623</i>&nbsp;                    assert !colMemIndex.isOpen();</b>
+<b class="fc"><i class="no-highlight">624</i>&nbsp;                    MemoryCMR colMemVar = (MemoryCMR) columns.get(2 * i + 1);</b>
+<b class="fc"><i class="no-highlight">625</i>&nbsp;                    colMemVar.close();</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;                    assert !colMemVar.isOpen();</b>
+<i class="no-highlight">627</i>&nbsp;
+<b class="fc"><i class="no-highlight">628</i>&nbsp;                    if (forWrite || columnTop != -1) {</b>
+<b class="fc"><i class="no-highlight">629</i>&nbsp;                        colMemIndex.of(</b>
+<i class="no-highlight">630</i>&nbsp;                                ff,
+<b class="fc"><i class="no-highlight">631</i>&nbsp;                                iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),</b>
+<i class="no-highlight">632</i>&nbsp;                                dataAppendPageSize,
+<i class="no-highlight">633</i>&nbsp;                                -1,
+<i class="no-highlight">634</i>&nbsp;                                MemoryTag.MMAP_UPDATE,
+<i class="no-highlight">635</i>&nbsp;                                fileOpenOpts
+<i class="no-highlight">636</i>&nbsp;                        );
+<b class="fc"><i class="no-highlight">637</i>&nbsp;                        colMemVar.of(</b>
+<i class="no-highlight">638</i>&nbsp;                                ff,
+<b class="fc"><i class="no-highlight">639</i>&nbsp;                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),</b>
+<i class="no-highlight">640</i>&nbsp;                                dataAppendPageSize,
+<i class="no-highlight">641</i>&nbsp;                                -1,
+<i class="no-highlight">642</i>&nbsp;                                MemoryTag.MMAP_UPDATE,
+<i class="no-highlight">643</i>&nbsp;                                fileOpenOpts
+<i class="no-highlight">644</i>&nbsp;                        );
+<i class="no-highlight">645</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">646</i>&nbsp;                } else {</b>
+<b class="fc"><i class="no-highlight">647</i>&nbsp;                    MemoryCMR colMem = (MemoryCMR) columns.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">648</i>&nbsp;                    colMem.close();</b>
+<b class="fc"><i class="no-highlight">649</i>&nbsp;                    assert !colMem.isOpen();</b>
+<i class="no-highlight">650</i>&nbsp;
+<b class="fc"><i class="no-highlight">651</i>&nbsp;                    if (forWrite || columnTop != -1) {</b>
+<b class="fc"><i class="no-highlight">652</i>&nbsp;                        colMem.of(</b>
+<i class="no-highlight">653</i>&nbsp;                                ff,
+<b class="fc"><i class="no-highlight">654</i>&nbsp;                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),</b>
+<i class="no-highlight">655</i>&nbsp;                                dataAppendPageSize,
+<i class="no-highlight">656</i>&nbsp;                                -1,
+<i class="no-highlight">657</i>&nbsp;                                MemoryTag.MMAP_UPDATE,
+<i class="no-highlight">658</i>&nbsp;                                fileOpenOpts
+<i class="no-highlight">659</i>&nbsp;                        );
+<i class="no-highlight">660</i>&nbsp;                    }
+<i class="no-highlight">661</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">662</i>&nbsp;                if (forWrite) {</b>
+<b class="fc"><i class="no-highlight">663</i>&nbsp;                    if (isVariableLength(columnType)) {</b>
+<b class="fc"><i class="no-highlight">664</i>&nbsp;                        ((MemoryCMARW) columns.get(2 * i)).putLong(0);</b>
+<i class="no-highlight">665</i>&nbsp;                    }
+<i class="no-highlight">666</i>&nbsp;                }
+<i class="no-highlight">667</i>&nbsp;            }
+<i class="no-highlight">668</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">669</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">670</i>&nbsp;        }</b>
+<i class="no-highlight">671</i>&nbsp;    }
+<i class="no-highlight">672</i>&nbsp;
+<i class="no-highlight">673</i>&nbsp;    private void rebuildIndexes(
+<i class="no-highlight">674</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">675</i>&nbsp;            TableRecordMetadata tableMetadata,
+<i class="no-highlight">676</i>&nbsp;            TableWriter tableWriter
+<i class="no-highlight">677</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">678</i>&nbsp;        int pathTrimToLen = path.length();</b>
+<b class="fc"><i class="no-highlight">679</i>&nbsp;        indexBuilder.of(path.trimTo(rootLen), configuration);</b>
+<b class="fc"><i class="no-highlight">680</i>&nbsp;        for (int i = 0, n = updateColumnIndexes.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">681</i>&nbsp;            int columnIndex = updateColumnIndexes.get(i);</b>
+<b class="fc"><i class="no-highlight">682</i>&nbsp;            if (tableMetadata.isColumnIndexed(columnIndex)) {</b>
+<b class="fc"><i class="no-highlight">683</i>&nbsp;                CharSequence colName = tableMetadata.getColumnName(columnIndex);</b>
+<b class="fc"><i class="no-highlight">684</i>&nbsp;                indexBuilder.reindexAfterUpdate(partitionTimestamp, colName, tableWriter);</b>
+<i class="no-highlight">685</i>&nbsp;            }
+<i class="no-highlight">686</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">687</i>&nbsp;        indexBuilder.clear();</b>
+<b class="fc"><i class="no-highlight">688</i>&nbsp;        path.trimTo(pathTrimToLen);</b>
+<i class="no-highlight">689</i>&nbsp;    }
+<i class="no-highlight">690</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

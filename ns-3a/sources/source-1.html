@@ -1,0 +1,593 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > LimitedSizeLongTreeChain</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.orderby</a>
+</div>
+
+<h1>Coverage Summary for Class: LimitedSizeLongTreeChain (io.questdb.griffin.engine.orderby)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">LimitedSizeLongTreeChain</td>
+<td class="coverageStat">
+  <span class="percent">
+    95%
+  </span>
+  <span class="absValue">
+    (19/20)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.2%
+  </span>
+  <span class="absValue">
+    (146/155)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">LimitedSizeLongTreeChain$TreeCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (20/20)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">LimitedSizeLongTreeChain$ValuePrinter</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/1)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    92.6%
+  </span>
+  <span class="absValue">
+    (25/27)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.3%
+  </span>
+  <span class="absValue">
+    (166/176)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.orderby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.Reopenable;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.vm.api.MemoryARW;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.engine.AbstractRedBlackTree;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.engine.RecordComparator;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.LongList;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.MemoryTag;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">38</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;/**
+<i class="no-highlight">41</i>&nbsp; * LongTreeChain with a size limit - used to keep only the necessary records
+<i class="no-highlight">42</i>&nbsp; * instead of whole result set for queries with &quot;limit L | limit L, H&quot;  clause.
+<i class="no-highlight">43</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">44</i>&nbsp; * 1. &quot;limit L&quot; means we only need to keep :
+<i class="no-highlight">45</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">46</i>&nbsp; * L &amp;gt;=0 - first L records
+<i class="no-highlight">47</i>&nbsp; * L &amp;lt; 0 - last L records
+<i class="no-highlight">48</i>&nbsp; * 2. &quot;limit L, H&quot; means we need to keep :
+<i class="no-highlight">49</i>&nbsp; * L &amp;lt; 0          - last  L records (but skip last H records, if H &amp;gt;=0 then don&#39;t skip anything    )
+<i class="no-highlight">50</i>&nbsp; * L &amp;gt;= 0, H &amp;gt;= 0 - first H records (but skip first L later, if H &amp;lt;= L then return empty set)
+<i class="no-highlight">51</i>&nbsp; * L &amp;gt;= 0, H &amp;lt; 0  - we can&#39;t optimize this case (because it spans from record L-th from the beginning up to
+<i class="no-highlight">52</i>&nbsp; * H-th from the end, and we don&#39;t  ) and need to revert to default behavior -
+<i class="no-highlight">53</i>&nbsp; * produce the whole set and skip.
+<i class="no-highlight">54</i>&nbsp; * &lt;/p&gt;
+<i class="no-highlight">55</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">56</i>&nbsp; * TreeChain stores repeating values (rowids) on valueChain as a linked list :
+<i class="no-highlight">57</i>&nbsp; * [latest rowid, offset to next] -&amp;gt; [old rowid, offset to next] -&amp;gt; [oldest rowid, -1L ]
+<i class="no-highlight">58</i>&nbsp; * -1L marks end of current node&#39;s value chain .
+<i class="no-highlight">59</i>&nbsp; * -2  marks an unused element on the value chain list for the current tree node
+<i class="no-highlight">60</i>&nbsp; * but should only happen once . It&#39;s meant to limit value chain allocations on delete/insert.
+<i class="no-highlight">61</i>&nbsp; * &lt;/p&gt;
+<i class="no-highlight">62</i>&nbsp; */
+<b class="fc"><i class="no-highlight">63</i>&nbsp;public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {</b>
+<i class="no-highlight">64</i>&nbsp;    //value marks end of value chain 
+<i class="no-highlight">65</i>&nbsp;    private static final long CHAIN_END = -1;
+<i class="no-highlight">66</i>&nbsp;
+<i class="no-highlight">67</i>&nbsp;    //marks value chain entry as unused (belonging to a node on the freelist)
+<i class="no-highlight">68</i>&nbsp;    //it&#39;s meant to avoid unnecessary reallocations when removing nodes and adding nodes  
+<i class="no-highlight">69</i>&nbsp;    private static final long FREE_SLOT = -2L;
+<i class="no-highlight">70</i>&nbsp;    //LIFO list of free blocks to reuse, allocated on the value chain
+<i class="no-highlight">71</i>&nbsp;    private final LongList chainFreeList;
+<b class="fc"><i class="no-highlight">72</i>&nbsp;    private final LimitedSizeLongTreeChain.TreeCursor cursor = new LimitedSizeLongTreeChain.TreeCursor();</b>
+<i class="no-highlight">73</i>&nbsp;    //LIFO list of nodes to reuse, instead of releasing and reallocating
+<i class="no-highlight">74</i>&nbsp;    private final LongList freeList;
+<i class="no-highlight">75</i>&nbsp;    //firstN - keep &lt;first-&gt;N&gt; set , otherwise keep &lt;last-N-&gt;last&gt; set
+<i class="no-highlight">76</i>&nbsp;    private final boolean isFirstN;
+<i class="no-highlight">77</i>&nbsp;    //maximum number of values tree can store (including repeating values)
+<i class="no-highlight">78</i>&nbsp;    private final long maxValues; //-1 means &#39;almost&#39; unlimited
+<i class="no-highlight">79</i>&nbsp;    private final MemoryARW valueChain;
+<i class="no-highlight">80</i>&nbsp;    //number of all values stored in tree (including repeating ones)
+<b class="fc"><i class="no-highlight">81</i>&nbsp;    private long currentValues = 0;</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;    private long minMaxNode = -1;</b>
+<i class="no-highlight">83</i>&nbsp;    //for fast filtering out of records in here we store rowId of :
+<i class="no-highlight">84</i>&nbsp;    // - record with max value for firstN/bottomN query
+<i class="no-highlight">85</i>&nbsp;    // - record with min value for lastN/topN query
+<b class="fc"><i class="no-highlight">86</i>&nbsp;    private long minMaxRowId = -1;</b>
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isfirstN, long maxValues) {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        super(keyPageSize, keyMaxPages);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_TREE_CHAIN);</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        this.freeList = new LongList();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        this.chainFreeList = new LongList();</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        this.isFirstN = isfirstN;</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        this.maxValues = maxValues;</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    @Override
+<i class="no-highlight">98</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        super.clear();</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        this.valueChain.jumpTo(0);</b>
+<i class="no-highlight">101</i>&nbsp;
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        minMaxRowId = -1;</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        minMaxNode = -1;</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        currentValues = 0;</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        freeList.clear();</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        chainFreeList.clear();</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        cursor.clear();</b>
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    @Override
+<i class="no-highlight">111</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        clear();</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        super.close();</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        Misc.free(valueChain);</b>
+<i class="no-highlight">115</i>&nbsp;    }
+<i class="no-highlight">116</i>&nbsp;
+<i class="no-highlight">117</i>&nbsp;    //returns address of node containing searchRecord; otherwise returns -1
+<i class="no-highlight">118</i>&nbsp;    public long find(Record searchedRecord,
+<i class="no-highlight">119</i>&nbsp;                     RecordCursor sourceCursor,
+<i class="no-highlight">120</i>&nbsp;                     Record placeholder,
+<i class="no-highlight">121</i>&nbsp;                     RecordComparator comparator) {
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        comparator.setLeft(searchedRecord);</b>
+<i class="no-highlight">123</i>&nbsp;
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        if (root == -1) {</b>
+<b class="nc"><i class="no-highlight">125</i>&nbsp;            return -1L;</b>
+<i class="no-highlight">126</i>&nbsp;        }
+<i class="no-highlight">127</i>&nbsp;
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        long p = root;</b>
+<i class="no-highlight">129</i>&nbsp;        int cmp;
+<i class="no-highlight">130</i>&nbsp;        do {
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            sourceCursor.recordAt(placeholder, valueChain.getLong(refOf(p)));</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;            cmp = comparator.compare(placeholder);</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;            if (cmp &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                p = leftOf(p);</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;            } else if (cmp &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                p = rightOf(p);</b>
+<i class="no-highlight">137</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                return p;</b>
+<i class="no-highlight">139</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        } while (p &gt; -1);</b>
+<i class="no-highlight">141</i>&nbsp;
+<b class="nc"><i class="no-highlight">142</i>&nbsp;        return -1;</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    public LimitedSizeLongTreeChain.TreeCursor getCursor() {
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        cursor.toTop();</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        return cursor;</b>
+<i class="no-highlight">148</i>&nbsp;    }
+<i class="no-highlight">149</i>&nbsp;
+<i class="no-highlight">150</i>&nbsp;    @TestOnly
+<i class="no-highlight">151</i>&nbsp;    public void print(CharSink sink) {
+<b class="nc"><i class="no-highlight">152</i>&nbsp;        print(sink, null);</b>
+<i class="no-highlight">153</i>&nbsp;    }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    //prints tree in-order, horizontally
+<i class="no-highlight">156</i>&nbsp;    public void print(CharSink sink, ValuePrinter printer) {
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        if (root == EMPTY) {</b>
+<b class="nc"><i class="no-highlight">158</i>&nbsp;            sink.put(&quot;[EMPTY TREE]&quot;);</b>
+<i class="no-highlight">159</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;            if (printer == null) {</b>
+<b class="nc"><i class="no-highlight">161</i>&nbsp;                printer = ValuePrinter::toRowId;</b>
+<i class="no-highlight">162</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            printTree(sink, root, 0, false, printer);</b>
+<i class="no-highlight">164</i>&nbsp;        }
+<i class="no-highlight">165</i>&nbsp;    }
+<i class="no-highlight">166</i>&nbsp;
+<i class="no-highlight">167</i>&nbsp;    public void put(
+<i class="no-highlight">168</i>&nbsp;            Record leftRecord,
+<i class="no-highlight">169</i>&nbsp;            RecordCursor sourceCursor,
+<i class="no-highlight">170</i>&nbsp;            Record rightRecord,
+<i class="no-highlight">171</i>&nbsp;            RecordComparator comparator
+<i class="no-highlight">172</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        if (maxValues == 0) {</b>
+<i class="no-highlight">174</i>&nbsp;            return;
+<i class="no-highlight">175</i>&nbsp;        }
+<i class="no-highlight">176</i>&nbsp;
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        comparator.setLeft(leftRecord);</b>
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;        //if maxValues &lt; 0 then there&#39;s no limit (unless there&#39;s more than 2^64 records, which is unlikely)
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        if (maxValues == currentValues) {</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            sourceCursor.recordAt(rightRecord, minMaxRowId);</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            int cmp = comparator.compare(rightRecord);</b>
+<i class="no-highlight">183</i>&nbsp;
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            if (isFirstN &amp;&amp; cmp &gt;= 0) {//bigger than max for firstN/bottomN</b>
+<i class="no-highlight">185</i>&nbsp;                return;
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            } else if (!isFirstN &amp;&amp; cmp &lt;= 0) { //smaller than min for lastN/topN</b>
+<i class="no-highlight">187</i>&nbsp;                return;
+<i class="no-highlight">188</i>&nbsp;            } else { //record has to be inserted so we&#39;ve to remove current minMax
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                removeAndCache(minMaxNode);</b>
+<i class="no-highlight">190</i>&nbsp;            }
+<i class="no-highlight">191</i>&nbsp;        }
+<i class="no-highlight">192</i>&nbsp;
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        if (root == EMPTY) {</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            putParent(leftRecord.getRowId());</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            minMaxNode = root;</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;            minMaxRowId = leftRecord.getRowId();</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            currentValues++;</b>
+<i class="no-highlight">198</i>&nbsp;            return;
+<i class="no-highlight">199</i>&nbsp;        }
+<i class="no-highlight">200</i>&nbsp;
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        long p = root;</b>
+<i class="no-highlight">202</i>&nbsp;        long parent;
+<i class="no-highlight">203</i>&nbsp;        int cmp;
+<i class="no-highlight">204</i>&nbsp;        do {
+<b class="fc"><i class="no-highlight">205</i>&nbsp;            parent = p;</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            final long r = refOf(p);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            sourceCursor.recordAt(rightRecord, valueChain.getLong(r));</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;            cmp = comparator.compare(rightRecord);</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;            if (cmp &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                p = leftOf(p);</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;            } else if (cmp &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;                p = rightOf(p);</b>
+<i class="no-highlight">213</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                setRef(p, appendValue(leftRecord.getRowId(), r)); //appends value to chain, minmax shouldn&#39;t change</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                if (minMaxRowId == -1) {</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                    refreshMinMaxNode();</b>
+<i class="no-highlight">217</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">218</i>&nbsp;                currentValues++;</b>
+<i class="no-highlight">219</i>&nbsp;                return;
+<i class="no-highlight">220</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        } while (p &gt; -1);</b>
+<i class="no-highlight">222</i>&nbsp;
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        p = allocateBlock(parent, leftRecord.getRowId());</b>
+<i class="no-highlight">224</i>&nbsp;
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        if (cmp &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;            setLeft(parent, p);</b>
+<i class="no-highlight">227</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">228</i>&nbsp;            setRight(parent, p);</b>
+<i class="no-highlight">229</i>&nbsp;        }
+<i class="no-highlight">230</i>&nbsp;
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        fixInsert(p);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        refreshMinMaxNode();</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        currentValues++;</b>
+<i class="no-highlight">234</i>&nbsp;    }
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;    @Override
+<i class="no-highlight">237</i>&nbsp;    public long size() {
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        return currentValues;</b>
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    private long appendValue(long value, long prevValueOffset) {
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        final long offset = valueChain.getAppendOffset();</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        valueChain.putLong128(value, prevValueOffset);</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        return offset;</b>
+<i class="no-highlight">245</i>&nbsp;    }
+<i class="no-highlight">246</i>&nbsp;
+<i class="no-highlight">247</i>&nbsp;    private void clearBlock(long position) {
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        setParent(position, -1);</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        setLeft(position, -1);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        setRight(position, -1);</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        setColor(position, BLACK);</b>
+<i class="no-highlight">252</i>&nbsp;        //assume there&#39;s only one value in the chain (otherwise node shouldn&#39;t be deleted)
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        long refOffset = refOf(position);</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        assert valueChain.getLong(refOffset + 8) == CHAIN_END;</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;        valueChain.putLong(refOffset, FREE_SLOT);</b>
+<i class="no-highlight">256</i>&nbsp;    }
+<i class="no-highlight">257</i>&nbsp;
+<i class="no-highlight">258</i>&nbsp;    private int getChainLength(long chainStart) {
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        int counter = 1;</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        long nextOffset = valueChain.getLong(chainStart + 8);</b>
+<i class="no-highlight">261</i>&nbsp;
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        while (nextOffset != EMPTY) {</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;            nextOffset = valueChain.getLong(nextOffset + 8);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;            counter++;</b>
+<i class="no-highlight">265</i>&nbsp;        }
+<i class="no-highlight">266</i>&nbsp;
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        return counter;</b>
+<i class="no-highlight">268</i>&nbsp;    }
+<i class="no-highlight">269</i>&nbsp;
+<i class="no-highlight">270</i>&nbsp;    private boolean hasMoreThanOneValue(long position) {
+<b class="fc"><i class="no-highlight">271</i>&nbsp;        long ref = refOf(position);</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        long previousOffset = valueChain.getLong(ref + 8);</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        return previousOffset != CHAIN_END;</b>
+<i class="no-highlight">274</i>&nbsp;    }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;    private void refreshMinMaxNode() {
+<i class="no-highlight">277</i>&nbsp;        long p;
+<i class="no-highlight">278</i>&nbsp;
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        if (isFirstN) {</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            p = findMaxNode();</b>
+<i class="no-highlight">281</i>&nbsp;        } else {//lastN/topN
+<b class="fc"><i class="no-highlight">282</i>&nbsp;            p = findMinNode();</b>
+<i class="no-highlight">283</i>&nbsp;        }
+<i class="no-highlight">284</i>&nbsp;
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        minMaxNode = p;</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        minMaxRowId = valueChain.getLong(refOf(p));</b>
+<i class="no-highlight">287</i>&nbsp;    }
+<i class="no-highlight">288</i>&nbsp;
+<i class="no-highlight">289</i>&nbsp;    private void removeMostRecentChainValue(long node) {
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        long ref = refOf(node);</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        long previousOffset = valueChain.getLong(ref + 8);</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        setRef(node, previousOffset);</b>
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;        //clear both rowid slot and rext value offset
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        valueChain.putLong(ref, -1L);</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        valueChain.putLong(ref + 8, -1L);</b>
+<i class="no-highlight">297</i>&nbsp;
+<b class="fc"><i class="no-highlight">298</i>&nbsp;        chainFreeList.add(ref);</b>
+<i class="no-highlight">299</i>&nbsp;    }
+<i class="no-highlight">300</i>&nbsp;
+<i class="no-highlight">301</i>&nbsp;    //if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
+<i class="no-highlight">302</i>&nbsp;    protected long allocateBlock(long parent, long recordRowId) {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        if (freeList.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;            long freeNode = freeList.get(freeList.size() - 1);</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;            freeList.removeIndex(freeList.size() - 1);</b>
+<i class="no-highlight">306</i>&nbsp;
+<b class="fc"><i class="no-highlight">307</i>&nbsp;            setParent(freeNode, parent);</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;            valueChain.putLong(refOf(freeNode), recordRowId);</b>
+<i class="no-highlight">309</i>&nbsp;
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            return freeNode;</b>
+<i class="no-highlight">311</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">312</i>&nbsp;            long newNode = super.allocateBlock();</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;            setParent(newNode, parent);</b>
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;            long chainOffset;
+<i class="no-highlight">316</i>&nbsp;
+<b class="fc"><i class="no-highlight">317</i>&nbsp;            if (chainFreeList.size() &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">318</i>&nbsp;                chainOffset = chainFreeList.get(chainFreeList.size() - 1);</b>
+<b class="nc"><i class="no-highlight">319</i>&nbsp;                chainFreeList.removeIndex(chainFreeList.size() - 1);</b>
+<b class="nc"><i class="no-highlight">320</i>&nbsp;                valueChain.putLong(chainOffset, recordRowId);</b>
+<b class="nc"><i class="no-highlight">321</i>&nbsp;                valueChain.putLong(chainOffset + 8, CHAIN_END);</b>
+<i class="no-highlight">322</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                chainOffset = appendValue(recordRowId, CHAIN_END);</b>
+<i class="no-highlight">324</i>&nbsp;            }
+<i class="no-highlight">325</i>&nbsp;
+<b class="fc"><i class="no-highlight">326</i>&nbsp;            setRef(newNode, chainOffset);</b>
+<i class="no-highlight">327</i>&nbsp;
+<b class="fc"><i class="no-highlight">328</i>&nbsp;            return newNode;</b>
+<i class="no-highlight">329</i>&nbsp;        }
+<i class="no-highlight">330</i>&nbsp;    }
+<i class="no-highlight">331</i>&nbsp;
+<i class="no-highlight">332</i>&nbsp;    void printTree(CharSink sink, long node, int level, boolean isLeft, ValuePrinter printer) {
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        byte color = colorOf(node);</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;        long valueOffset = refOf(node);</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;        long value = valueChain.getLong(valueOffset);</b>
+<i class="no-highlight">336</i>&nbsp;
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        for (int i = 1; i &lt; level; i++) {</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            sink.put(&#39; &#39;).put(&#39; &#39;);</b>
+<i class="no-highlight">339</i>&nbsp;        }
+<i class="no-highlight">340</i>&nbsp;
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        if (level &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;            sink.put(&#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;            sink.put(isLeft ? &#39;L&#39; : &#39;R&#39;);</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            sink.put(&#39;-&#39;);</b>
+<i class="no-highlight">345</i>&nbsp;        }
+<i class="no-highlight">346</i>&nbsp;
+<b class="fc"><i class="no-highlight">347</i>&nbsp;        sink.put(&#39;[&#39;);</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;        sink.put(color == RED ? &quot;Red&quot; : color == BLACK ? &quot;Black&quot; : &quot;Unkown_Color&quot;);</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        sink.put(&#39;,&#39;);</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;        sink.put(printer.toString(value));</b>
+<i class="no-highlight">351</i>&nbsp;
+<b class="fc"><i class="no-highlight">352</i>&nbsp;        int chainLength = getChainLength(valueOffset);</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;        if (chainLength &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;            sink.put(&#39;(&#39;).put(chainLength).put(&#39;)&#39;);</b>
+<i class="no-highlight">355</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">356</i>&nbsp;        sink.put(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        sink.put(&#39;\n&#39;);</b>
+<i class="no-highlight">358</i>&nbsp;
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        if (leftOf(node) != EMPTY) {</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;            printTree(sink, leftOf(node), level + 1, true, printer);</b>
+<i class="no-highlight">361</i>&nbsp;        }
+<i class="no-highlight">362</i>&nbsp;
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        if (rightOf(node) != EMPTY) {</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;            printTree(sink, rightOf(node), level + 1, false, printer);</b>
+<i class="no-highlight">365</i>&nbsp;        }
+<i class="no-highlight">366</i>&nbsp;    }
+<i class="no-highlight">367</i>&nbsp;
+<i class="no-highlight">368</i>&nbsp;    @Override
+<i class="no-highlight">369</i>&nbsp;    protected void putParent(long value) {
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        root = allocateBlock(-1, value);</b>
+<i class="no-highlight">371</i>&nbsp;    }
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;    //remove node and put on freelist (if holds only one value in chain)
+<i class="no-highlight">374</i>&nbsp;    protected void removeAndCache(long node) {
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        if (hasMoreThanOneValue(node)) {</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;            removeMostRecentChainValue(node);//don&#39;t change minmax</b>
+<i class="no-highlight">377</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">378</i>&nbsp;            long nodeToRemove = super.remove(node);</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;            clearBlock(nodeToRemove);</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations</b>
+<i class="no-highlight">381</i>&nbsp;
+<b class="fc"><i class="no-highlight">382</i>&nbsp;            minMaxRowId = -1;//re-compute after inserting, there&#39;s no point doing it now</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;            minMaxNode = -1;</b>
+<i class="no-highlight">384</i>&nbsp;        }
+<i class="no-highlight">385</i>&nbsp;
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        currentValues--;</b>
+<i class="no-highlight">387</i>&nbsp;    }
+<i class="no-highlight">388</i>&nbsp;
+<i class="no-highlight">389</i>&nbsp;    @FunctionalInterface
+<i class="no-highlight">390</i>&nbsp;    public interface ValuePrinter {
+<i class="no-highlight">391</i>&nbsp;        static String toRowId(long rowid) {
+<b class="nc"><i class="no-highlight">392</i>&nbsp;            return String.valueOf(rowid);</b>
+<i class="no-highlight">393</i>&nbsp;        }
+<i class="no-highlight">394</i>&nbsp;
+<i class="no-highlight">395</i>&nbsp;        String toString(long rowid);
+<i class="no-highlight">396</i>&nbsp;    }
+<i class="no-highlight">397</i>&nbsp;
+<b class="fc"><i class="no-highlight">398</i>&nbsp;    public class TreeCursor {</b>
+<i class="no-highlight">399</i>&nbsp;
+<i class="no-highlight">400</i>&nbsp;        private long chainCurrent;
+<i class="no-highlight">401</i>&nbsp;        private long treeCurrent;
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">404</i>&nbsp;            treeCurrent = 0;</b>
+<b class="fc"><i class="no-highlight">405</i>&nbsp;            chainCurrent = 0;</b>
+<i class="no-highlight">406</i>&nbsp;        }
+<i class="no-highlight">407</i>&nbsp;
+<i class="no-highlight">408</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            if (chainCurrent != -1) {</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                return true;</b>
+<i class="no-highlight">411</i>&nbsp;            }
+<i class="no-highlight">412</i>&nbsp;
+<b class="fc"><i class="no-highlight">413</i>&nbsp;            treeCurrent = successor(treeCurrent);</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;            if (treeCurrent == -1) {</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                return false;</b>
+<i class="no-highlight">416</i>&nbsp;            }
+<i class="no-highlight">417</i>&nbsp;
+<b class="fc"><i class="no-highlight">418</i>&nbsp;            chainCurrent = refOf(treeCurrent);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;            return true;</b>
+<i class="no-highlight">420</i>&nbsp;        }
+<i class="no-highlight">421</i>&nbsp;
+<i class="no-highlight">422</i>&nbsp;        public long next() {
+<b class="fc"><i class="no-highlight">423</i>&nbsp;            long result = chainCurrent;</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;            chainCurrent = valueChain.getLong(chainCurrent + 8);</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;            return valueChain.getLong(result);</b>
+<i class="no-highlight">426</i>&nbsp;        }
+<i class="no-highlight">427</i>&nbsp;
+<i class="no-highlight">428</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">429</i>&nbsp;            setup();</b>
+<i class="no-highlight">430</i>&nbsp;        }
+<i class="no-highlight">431</i>&nbsp;
+<i class="no-highlight">432</i>&nbsp;        private void setup() {
+<b class="fc"><i class="no-highlight">433</i>&nbsp;            long p = root;</b>
+<b class="fc"><i class="no-highlight">434</i>&nbsp;            if (p != -1) {</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                while (leftOf(p) != -1) {</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;                    p = leftOf(p);</b>
+<i class="no-highlight">437</i>&nbsp;                }
+<i class="no-highlight">438</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">439</i>&nbsp;            treeCurrent = p;</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;            chainCurrent = refOf(treeCurrent);</b>
+<i class="no-highlight">441</i>&nbsp;        }
+<i class="no-highlight">442</i>&nbsp;    }
+<i class="no-highlight">443</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

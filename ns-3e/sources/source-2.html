@@ -1,0 +1,1359 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > CompiledFilterIRSerializer</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.jit</a>
+</div>
+
+<h1>Coverage Summary for Class: CompiledFilterIRSerializer (io.questdb.jit)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">CompiledFilterIRSerializer</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (31/31)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    90.6%
+  </span>
+  <span class="absValue">
+    (357/394)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">CompiledFilterIRSerializer$PredicateContext</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (10/10)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.3%
+  </span>
+  <span class="absValue">
+    (81/85)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">CompiledFilterIRSerializer$PredicateType</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">CompiledFilterIRSerializer$SqlWrapperException</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">CompiledFilterIRSerializer$TypesObserver</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (7/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.3%
+  </span>
+  <span class="absValue">
+    (41/43)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (51/51)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.8%
+  </span>
+  <span class="absValue">
+    (483/526)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;package io.questdb.jit;
+<i class="no-highlight">25</i>&nbsp;
+<i class="no-highlight">26</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.GeoHashes;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.*;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCARW;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.*;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.model.ExpressionNode;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import java.util.Arrays;
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;/**
+<i class="no-highlight">42</i>&nbsp; * Intermediate representation (IR) serializer for filters (think, WHERE clause)
+<i class="no-highlight">43</i>&nbsp; * to be used in SQL JIT compiler.
+<i class="no-highlight">44</i>&nbsp; *
+<i class="no-highlight">45</i>&nbsp; * &lt;pre&gt;
+<i class="no-highlight">46</i>&nbsp; * IR instruction format:
+<i class="no-highlight">47</i>&nbsp; * | opcode | options | payload |
+<i class="no-highlight">48</i>&nbsp; * | int    | int     | long    |
+<i class="no-highlight">49</i>&nbsp; * &lt;/pre&gt;
+<i class="no-highlight">50</i>&nbsp; */
+<b class="fc"><i class="no-highlight">51</i>&nbsp;public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {</b>
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    static final int ADD = 14;  // a + b
+<i class="no-highlight">54</i>&nbsp;    static final int AND = 6;   // a &amp;&amp; b
+<i class="no-highlight">55</i>&nbsp;    static final int DIV = 17;  // a / b
+<i class="no-highlight">56</i>&nbsp;    static final int EQ = 8;   // a == b
+<i class="no-highlight">57</i>&nbsp;    static final int F4_TYPE = 3;
+<i class="no-highlight">58</i>&nbsp;    static final int F8_TYPE = 5;
+<i class="no-highlight">59</i>&nbsp;    static final int GE = 13;  // a &gt;= b
+<i class="no-highlight">60</i>&nbsp;    static final int GT = 12;  // a &gt;  b
+<i class="no-highlight">61</i>&nbsp;    // Options:
+<i class="no-highlight">62</i>&nbsp;    // Data types
+<i class="no-highlight">63</i>&nbsp;    static final int I1_TYPE = 0;
+<i class="no-highlight">64</i>&nbsp;    static final int I2_TYPE = 1;
+<i class="no-highlight">65</i>&nbsp;    static final int I4_TYPE = 2;
+<i class="no-highlight">66</i>&nbsp;    static final int I8_TYPE = 4;
+<i class="no-highlight">67</i>&nbsp;    // Constants
+<i class="no-highlight">68</i>&nbsp;    static final int IMM = 1;
+<i class="no-highlight">69</i>&nbsp;    static final int LE = 11;  // a &lt;= b
+<i class="no-highlight">70</i>&nbsp;    static final int LT = 10;  // a &lt;  b
+<i class="no-highlight">71</i>&nbsp;    // Columns
+<i class="no-highlight">72</i>&nbsp;    static final int MEM = 2;
+<i class="no-highlight">73</i>&nbsp;    static final int MUL = 16;  // a * b
+<i class="no-highlight">74</i>&nbsp;    static final int NE = 9;   // a != b
+<i class="no-highlight">75</i>&nbsp;    // Operator codes
+<i class="no-highlight">76</i>&nbsp;    static final int NEG = 4;   // -a
+<i class="no-highlight">77</i>&nbsp;    static final int NOT = 5;   // !a
+<i class="no-highlight">78</i>&nbsp;    static final int OR = 7;   // a || b
+<i class="no-highlight">79</i>&nbsp;    // Opcodes:
+<i class="no-highlight">80</i>&nbsp;    // Return code. Breaks the loop
+<i class="no-highlight">81</i>&nbsp;    static final int RET = 0; // ret
+<i class="no-highlight">82</i>&nbsp;    static final int SUB = 15;  // a - b
+<i class="no-highlight">83</i>&nbsp;    // Stub value for opcodes and options
+<i class="no-highlight">84</i>&nbsp;    static final int UNDEFINED_CODE = -1;
+<i class="no-highlight">85</i>&nbsp;    // Bind variables and deferred symbols
+<i class="no-highlight">86</i>&nbsp;    static final int VAR = 3;
+<i class="no-highlight">87</i>&nbsp;    // contains &lt;memory_offset, constant_node&gt; pairs for backfilling purposes
+<b class="fc"><i class="no-highlight">88</i>&nbsp;    private final LongObjHashMap&lt;ExpressionNode&gt; backfillNodes = new LongObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;    private final PredicateContext predicateContext = new PredicateContext();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();</b>
+<i class="no-highlight">91</i>&nbsp;    private ObjList&lt;Function&gt; bindVarFunctions;
+<i class="no-highlight">92</i>&nbsp;    private SqlExecutionContext executionContext;
+<i class="no-highlight">93</i>&nbsp;    // internal flag used to forcefully enable scalar mode based on filter&#39;s contents
+<i class="no-highlight">94</i>&nbsp;    private boolean forceScalarMode;
+<i class="no-highlight">95</i>&nbsp;    private MemoryCARW memory;
+<b class="fc"><i class="no-highlight">96</i>&nbsp;    private final LongObjHashMap.LongObjConsumer&lt;ExpressionNode&gt; backfillNodeConsumer = this::backfillNode;</b>
+<i class="no-highlight">97</i>&nbsp;    private RecordMetadata metadata;
+<i class="no-highlight">98</i>&nbsp;    private PageFrameCursor pageFrameCursor;
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;    @Override
+<i class="no-highlight">101</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        memory = null;</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        metadata = null;</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        pageFrameCursor = null;</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        forceScalarMode = false;</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        predicateContext.clear();</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        backfillNodes.clear();</b>
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    @Override
+<i class="no-highlight">111</i>&nbsp;    public boolean descend(ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        if (node.token == null) {</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                    .put(&quot;non-null token expected: &quot;)</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                    .put(node.token);</b>
+<i class="no-highlight">116</i>&nbsp;        }
+<i class="no-highlight">117</i>&nbsp;
+<i class="no-highlight">118</i>&nbsp;        // Check if we&#39;re at the start of an arithmetic expression
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        predicateContext.onNodeDescended(node);</b>
+<i class="no-highlight">120</i>&nbsp;
+<i class="no-highlight">121</i>&nbsp;        // Look ahead for negative const
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        if (node.type == ExpressionNode.OPERATION &amp;&amp; node.paramCount == 1 &amp;&amp; Chars.equals(node.token, &quot;-&quot;)) {</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;            if (nextNode != null &amp;&amp; nextNode.paramCount == 0 &amp;&amp; nextNode.type == ExpressionNode.CONSTANT) {</b>
+<i class="no-highlight">125</i>&nbsp;                // Store negation node for later backfilling
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                serializeConstantStub(node);</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                return false;</b>
+<i class="no-highlight">128</i>&nbsp;            }
+<i class="no-highlight">129</i>&nbsp;        }
+<i class="no-highlight">130</i>&nbsp;
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        return true;</b>
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    public CompiledFilterIRSerializer of(
+<i class="no-highlight">135</i>&nbsp;            MemoryCARW memory,
+<i class="no-highlight">136</i>&nbsp;            SqlExecutionContext executionContext,
+<i class="no-highlight">137</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">138</i>&nbsp;            PageFrameCursor pageFrameCursor,
+<i class="no-highlight">139</i>&nbsp;            ObjList&lt;Function&gt; bindVarFunctions
+<i class="no-highlight">140</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        this.memory = memory;</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        this.executionContext = executionContext;</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        this.metadata = metadata;</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        this.pageFrameCursor = pageFrameCursor;</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        this.bindVarFunctions = bindVarFunctions;</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        return this;</b>
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    /**
+<i class="no-highlight">150</i>&nbsp;     * Writes IR of the filter described by the given expression tree to memory.
+<i class="no-highlight">151</i>&nbsp;     *
+<i class="no-highlight">152</i>&nbsp;     * @param node       filter expression tree&#39;s root node.
+<i class="no-highlight">153</i>&nbsp;     * @param scalar     set use only scalar instruction set execution hint in the returned options.
+<i class="no-highlight">154</i>&nbsp;     * @param debug      set enable debug flag in the returned options.
+<i class="no-highlight">155</i>&nbsp;     * @param nullChecks a flag for JIT, allowing or disallowing generation of null check
+<i class="no-highlight">156</i>&nbsp;     * @return JIT compiler options stored in a single int in the following way:
+<i class="no-highlight">157</i>&nbsp;     * &lt;ul&gt;
+<i class="no-highlight">158</i>&nbsp;     * &lt;li&gt;1 LSB - debug flag&lt;/li&gt;
+<i class="no-highlight">159</i>&nbsp;     * &lt;li&gt;2-3 LSBs - filter&#39;s arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B&lt;/li&gt;
+<i class="no-highlight">160</i>&nbsp;     * &lt;li&gt;4-5 LSBs - filter&#39;s execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes&lt;/li&gt;
+<i class="no-highlight">161</i>&nbsp;     * &lt;li&gt;6 LSB - flag to include null checks for column values into compiled filter&lt;/li&gt;
+<i class="no-highlight">162</i>&nbsp;     * &lt;/ul&gt;
+<i class="no-highlight">163</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">164</i>&nbsp;     * Examples:
+<i class="no-highlight">165</i>&nbsp;     * &lt;ul&gt;
+<i class="no-highlight">166</i>&nbsp;     * &lt;li&gt;00000000 00000000 00000000 00010100 - 4B, mixed types, debug off, null checks disabled&lt;/li&gt;
+<i class="no-highlight">167</i>&nbsp;     * &lt;li&gt;00000000 00000000 00000000 00100111 - 8B, scalar, debug on, null checks enabled&lt;/li&gt;
+<i class="no-highlight">168</i>&nbsp;     * &lt;/ul&gt;
+<i class="no-highlight">169</i>&nbsp;     * @throws SqlException thrown when IR serialization failed.
+<i class="no-highlight">170</i>&nbsp;     */
+<i class="no-highlight">171</i>&nbsp;    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        traverseAlgo.traverse(node, this);</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        putOperator(RET);</b>
+<i class="no-highlight">174</i>&nbsp;
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        TypesObserver typesObserver = predicateContext.globalTypesObserver;</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        int options = debug ? 1 : 0;</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        int typeSize = typesObserver.maxSize();</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        if (typeSize &gt; 0) {</b>
+<i class="no-highlight">179</i>&nbsp;            // typeSize is 2^n, so number of trailing zeros is equal to log2
+<b class="fc"><i class="no-highlight">180</i>&nbsp;            int log2 = Integer.numberOfTrailingZeros(typeSize);</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            options = options | (log2 &lt;&lt; 1);</b>
+<i class="no-highlight">182</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        if (!scalar &amp;&amp; !forceScalarMode) {</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;            options = options | (executionHint &lt;&lt; 3);</b>
+<i class="no-highlight">186</i>&nbsp;        }
+<i class="no-highlight">187</i>&nbsp;
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        options = options | ((nullChecks ? 1 : 0) &lt;&lt; 5);</b>
+<i class="no-highlight">189</i>&nbsp;
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        return options;</b>
+<i class="no-highlight">191</i>&nbsp;    }
+<i class="no-highlight">192</i>&nbsp;
+<i class="no-highlight">193</i>&nbsp;    @Override
+<i class="no-highlight">194</i>&nbsp;    public void visit(ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">195</i>&nbsp;        int argCount = node.paramCount;</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        if (argCount == 0) {</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            switch (node.type) {</b>
+<i class="no-highlight">198</i>&nbsp;                case ExpressionNode.LITERAL:
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                    serializeColumn(node.position, node.token);</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                    break;</b>
+<i class="no-highlight">201</i>&nbsp;                case ExpressionNode.BIND_VARIABLE:
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                    serializeBindVariable(node);</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    break;</b>
+<i class="no-highlight">204</i>&nbsp;                case ExpressionNode.CONSTANT:
+<i class="no-highlight">205</i>&nbsp;                    // Write stub values to be backfilled later
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                    serializeConstantStub(node);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                    break;</b>
+<i class="no-highlight">208</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                    throw SqlException.position(node.position)</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                            .put(&quot;unsupported token: &quot;)</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                            .put(node.token);</b>
+<i class="no-highlight">212</i>&nbsp;            }
+<i class="no-highlight">213</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            serializeOperator(node.position, node.token, argCount);</b>
+<i class="no-highlight">215</i>&nbsp;        }
+<i class="no-highlight">216</i>&nbsp;
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        boolean predicateLeft = predicateContext.onNodeVisited(node);</b>
+<i class="no-highlight">218</i>&nbsp;
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        if (predicateLeft) {</b>
+<i class="no-highlight">220</i>&nbsp;            // We&#39;re out of a predicate
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;            // Force scalar mode if the predicate had byte or short arithmetic operations.
+<i class="no-highlight">223</i>&nbsp;            // That&#39;s because SIMD mode uses byte/short-sized overflows for arithmetic
+<i class="no-highlight">224</i>&nbsp;            // calculations instead of implicit upcast to int done by *.sql.Function classes.
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            forceScalarMode |=</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;                    predicateContext.hasArithmeticOperations &amp;&amp; predicateContext.localTypesObserver.maxSize() &lt;= 2;</b>
+<i class="no-highlight">227</i>&nbsp;
+<i class="no-highlight">228</i>&nbsp;            // Then backfill constants and symbol bind variables and clean up
+<i class="no-highlight">229</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                backfillNodes.forEach(backfillNodeConsumer);</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                backfillNodes.clear();</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            } catch (SqlWrapperException e) {</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                throw e.wrappedException;</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;            }</b>
+<i class="no-highlight">235</i>&nbsp;        }
+<i class="no-highlight">236</i>&nbsp;    }
+<i class="no-highlight">237</i>&nbsp;
+<i class="no-highlight">238</i>&nbsp;    private static byte bindVariableTypeCode(int columnTypeTag) {
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        switch (columnTypeTag) {</b>
+<i class="no-highlight">240</i>&nbsp;            case ColumnType.BOOLEAN:
+<i class="no-highlight">241</i>&nbsp;            case ColumnType.BYTE:
+<i class="no-highlight">242</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                return I1_TYPE;</b>
+<i class="no-highlight">244</i>&nbsp;            case ColumnType.SHORT:
+<i class="no-highlight">245</i>&nbsp;            case ColumnType.GEOSHORT:
+<i class="no-highlight">246</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                return I2_TYPE;</b>
+<i class="no-highlight">248</i>&nbsp;            case ColumnType.INT:
+<i class="no-highlight">249</i>&nbsp;            case ColumnType.GEOINT:
+<i class="no-highlight">250</i>&nbsp;            case ColumnType.STRING: // symbol variables are represented with string type
+<b class="fc"><i class="no-highlight">251</i>&nbsp;                return I4_TYPE;</b>
+<i class="no-highlight">252</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                return F4_TYPE;</b>
+<i class="no-highlight">254</i>&nbsp;            case ColumnType.LONG:
+<i class="no-highlight">255</i>&nbsp;            case ColumnType.GEOLONG:
+<i class="no-highlight">256</i>&nbsp;            case ColumnType.DATE:
+<i class="no-highlight">257</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                return I8_TYPE;</b>
+<i class="no-highlight">259</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                return F8_TYPE;</b>
+<i class="no-highlight">261</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">262</i>&nbsp;                return UNDEFINED_CODE;</b>
+<i class="no-highlight">263</i>&nbsp;        }
+<i class="no-highlight">264</i>&nbsp;    }
+<i class="no-highlight">265</i>&nbsp;
+<i class="no-highlight">266</i>&nbsp;    private static int columnTypeCode(int columnTypeTag) {
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        switch (columnTypeTag) {</b>
+<i class="no-highlight">268</i>&nbsp;            case ColumnType.BOOLEAN:
+<i class="no-highlight">269</i>&nbsp;            case ColumnType.BYTE:
+<i class="no-highlight">270</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                return I1_TYPE;</b>
+<i class="no-highlight">272</i>&nbsp;            case ColumnType.SHORT:
+<i class="no-highlight">273</i>&nbsp;            case ColumnType.GEOSHORT:
+<i class="no-highlight">274</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                return I2_TYPE;</b>
+<i class="no-highlight">276</i>&nbsp;            case ColumnType.INT:
+<i class="no-highlight">277</i>&nbsp;            case ColumnType.GEOINT:
+<i class="no-highlight">278</i>&nbsp;            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                return I4_TYPE;</b>
+<i class="no-highlight">280</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">281</i>&nbsp;                return F4_TYPE;</b>
+<i class="no-highlight">282</i>&nbsp;            case ColumnType.LONG:
+<i class="no-highlight">283</i>&nbsp;            case ColumnType.GEOLONG:
+<i class="no-highlight">284</i>&nbsp;            case ColumnType.DATE:
+<i class="no-highlight">285</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                return I8_TYPE;</b>
+<i class="no-highlight">287</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">288</i>&nbsp;                return F8_TYPE;</b>
+<i class="no-highlight">289</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">290</i>&nbsp;                return UNDEFINED_CODE;</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<i class="no-highlight">292</i>&nbsp;    }
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;    private static boolean isArithmeticOperation(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        final CharSequence token = node.token;</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        if (node.paramCount &lt; 2) {</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;            return false;</b>
+<i class="no-highlight">298</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        if (Chars.equals(token, &quot;+&quot;)) {</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            return true;</b>
+<i class="no-highlight">301</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        if (Chars.equals(token, &quot;-&quot;)) {</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            return true;</b>
+<i class="no-highlight">304</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        if (Chars.equals(token, &quot;*&quot;)) {</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            return true;</b>
+<i class="no-highlight">307</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">308</i>&nbsp;        return Chars.equals(token, &quot;/&quot;);</b>
+<i class="no-highlight">309</i>&nbsp;    }
+<i class="no-highlight">310</i>&nbsp;
+<i class="no-highlight">311</i>&nbsp;    private static boolean isTopLevelOperation(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        final CharSequence token = node.token;</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;        if (SqlKeywords.isNotKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;            return true;</b>
+<i class="no-highlight">315</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        if (node.paramCount &lt; 2) {</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;            return false;</b>
+<i class="no-highlight">318</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        if (Chars.equals(token, &quot;=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;            return true;</b>
+<i class="no-highlight">321</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        if (Chars.equals(token, &quot;&lt;&gt;&quot;) || Chars.equals(token, &quot;!=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            return true;</b>
+<i class="no-highlight">324</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        if (Chars.equals(token, &quot;&lt;&quot;)) {</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;            return true;</b>
+<i class="no-highlight">327</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        if (Chars.equals(token, &quot;&lt;=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;            return true;</b>
+<i class="no-highlight">330</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        if (Chars.equals(token, &quot;&gt;&quot;)) {</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;            return true;</b>
+<i class="no-highlight">333</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">334</i>&nbsp;        return Chars.equals(token, &quot;&gt;=&quot;);</b>
+<i class="no-highlight">335</i>&nbsp;    }
+<i class="no-highlight">336</i>&nbsp;
+<i class="no-highlight">337</i>&nbsp;    private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        int position = node.position;</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;        CharSequence token = node.token;</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;        boolean negate = false;</b>
+<i class="no-highlight">341</i>&nbsp;        // Check for negation case
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        if (node.type == ExpressionNode.OPERATION) {</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            if (nextNode != null) {</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                position = nextNode.position;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                token = nextNode.token;</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                negate = true;</b>
+<i class="no-highlight">348</i>&nbsp;            }
+<i class="no-highlight">349</i>&nbsp;        }
+<i class="no-highlight">350</i>&nbsp;
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        serializeConstant(offset, position, token, negate);</b>
+<i class="no-highlight">352</i>&nbsp;    }
+<i class="no-highlight">353</i>&nbsp;
+<i class="no-highlight">354</i>&nbsp;    private void backfillNode(long key, ExpressionNode value) {
+<i class="no-highlight">355</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">356</i>&nbsp;            switch (value.type) {</b>
+<i class="no-highlight">357</i>&nbsp;                case ExpressionNode.CONSTANT:
+<i class="no-highlight">358</i>&nbsp;                case ExpressionNode.OPERATION: // constant negation case
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                    backfillConstant(key, value);</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                    break;</b>
+<i class="no-highlight">361</i>&nbsp;                case ExpressionNode.BIND_VARIABLE:
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                    backfillSymbolBindVariable(key, value);</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                    break;</b>
+<i class="no-highlight">364</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">365</i>&nbsp;                    throw SqlException.position(value.position)</b>
+<b class="nc"><i class="no-highlight">366</i>&nbsp;                            .put(&quot;unexpected backfill token: &quot;)</b>
+<b class="nc"><i class="no-highlight">367</i>&nbsp;                            .put(value.token);</b>
+<i class="no-highlight">368</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        } catch (SqlException e) {</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            throw new SqlWrapperException(e);</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;        }</b>
+<i class="no-highlight">372</i>&nbsp;    }
+<i class="no-highlight">373</i>&nbsp;
+<i class="no-highlight">374</i>&nbsp;    private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        if (predicateContext.symbolColumnIndex == -1) {</b>
+<b class="nc"><i class="no-highlight">376</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="nc"><i class="no-highlight">377</i>&nbsp;                    .put(&quot;symbol column index is missing for bind variable: &quot;)</b>
+<b class="nc"><i class="no-highlight">378</i>&nbsp;                    .put(node.token);</b>
+<i class="no-highlight">379</i>&nbsp;        }
+<i class="no-highlight">380</i>&nbsp;
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        Function varFunction = getBindVariableFunction(node.position, node.token);</b>
+<i class="no-highlight">382</i>&nbsp;
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        final int columnType = varFunction.getType();</b>
+<i class="no-highlight">384</i>&nbsp;        // Treat string bind variable to be of symbol type
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        if (columnType != ColumnType.STRING) {</b>
+<b class="nc"><i class="no-highlight">386</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="nc"><i class="no-highlight">387</i>&nbsp;                    .put(&quot;unexpected symbol bind variable type: &quot;)</b>
+<b class="nc"><i class="no-highlight">388</i>&nbsp;                    .put(ColumnType.nameOf(columnType));</b>
+<i class="no-highlight">389</i>&nbsp;        }
+<i class="no-highlight">390</i>&nbsp;
+<b class="fc"><i class="no-highlight">391</i>&nbsp;        int typeCode = bindVariableTypeCode(columnType);</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;        if (typeCode == UNDEFINED_CODE) {</b>
+<b class="nc"><i class="no-highlight">393</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="nc"><i class="no-highlight">394</i>&nbsp;                    .put(&quot;unsupported bind variable type: &quot;)</b>
+<b class="nc"><i class="no-highlight">395</i>&nbsp;                    .put(ColumnType.nameOf(columnType));</b>
+<i class="no-highlight">396</i>&nbsp;        }
+<i class="no-highlight">397</i>&nbsp;
+<b class="fc"><i class="no-highlight">398</i>&nbsp;        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;        int index = bindVarFunctions.size() - 1;</b>
+<i class="no-highlight">400</i>&nbsp;
+<b class="fc"><i class="no-highlight">401</i>&nbsp;        putOperand(offset, VAR, typeCode, index);</b>
+<i class="no-highlight">402</i>&nbsp;    }
+<i class="no-highlight">403</i>&nbsp;
+<i class="no-highlight">404</i>&nbsp;    private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
+<i class="no-highlight">405</i>&nbsp;        Function varFunction;
+<i class="no-highlight">406</i>&nbsp;
+<b class="fc"><i class="no-highlight">407</i>&nbsp;        if (token.charAt(0) == &#39;:&#39;) {</b>
+<i class="no-highlight">408</i>&nbsp;            // name bind variable case
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            Function bindFunction = getBindVariableService().getFunction(token);</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;            if (bindFunction == null) {</b>
+<b class="nc"><i class="no-highlight">411</i>&nbsp;                throw SqlException.position(position).put(&quot;failed to find function for bind variable: &quot;).put(token);</b>
+<i class="no-highlight">412</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">413</i>&nbsp;            varFunction = new NamedParameterLinkFunction(Chars.toString(token), bindFunction.getType());</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;        } else {</b>
+<i class="no-highlight">415</i>&nbsp;            // indexed bind variable case
+<i class="no-highlight">416</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                final int variableIndex = Numbers.parseInt(token, 1, token.length());</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                if (variableIndex &lt; 1) {</b>
+<b class="nc"><i class="no-highlight">419</i>&nbsp;                    throw SqlException.$(position, &quot;invalid bind variable index [value=&quot;).put(variableIndex).put(&#39;]&#39;);</b>
+<i class="no-highlight">420</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                Function bindFunction = getBindVariableService().getFunction(variableIndex - 1);</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                if (bindFunction == null) {</b>
+<b class="nc"><i class="no-highlight">423</i>&nbsp;                    throw SqlException.position(position).put(&quot;failed to find function for bind variable: &quot;).put(token);</b>
+<i class="no-highlight">424</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                varFunction = new IndexedParameterLinkFunction(</b>
+<i class="no-highlight">426</i>&nbsp;                        variableIndex - 1,
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                        bindFunction.getType(),</b>
+<i class="no-highlight">428</i>&nbsp;                        position);
+<i class="no-highlight">429</i>&nbsp;
+<b class="nc"><i class="no-highlight">430</i>&nbsp;            } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">431</i>&nbsp;                throw SqlException.$(position, &quot;invalid bind variable index [value=&quot;).put(token).put(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;            }</b>
+<i class="no-highlight">433</i>&nbsp;        }
+<i class="no-highlight">434</i>&nbsp;
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        return varFunction;</b>
+<i class="no-highlight">436</i>&nbsp;    }
+<i class="no-highlight">437</i>&nbsp;
+<i class="no-highlight">438</i>&nbsp;    private BindVariableService getBindVariableService() throws SqlException {
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        final BindVariableService bindVariableService = executionContext.getBindVariableService();</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;        if (bindVariableService == null) {</b>
+<b class="nc"><i class="no-highlight">441</i>&nbsp;            throw SqlException.$(0, &quot;bind variable service is not provided&quot;);</b>
+<i class="no-highlight">442</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">443</i>&nbsp;        return bindVariableService;</b>
+<i class="no-highlight">444</i>&nbsp;    }
+<i class="no-highlight">445</i>&nbsp;
+<i class="no-highlight">446</i>&nbsp;    private boolean isBooleanColumn(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">447</i>&nbsp;        if (node.type != ExpressionNode.LITERAL) {</b>
+<b class="fc"><i class="no-highlight">448</i>&nbsp;            return false;</b>
+<i class="no-highlight">449</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        int index = metadata.getColumnIndexQuiet(node.token);</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        if (index == -1) {</b>
+<b class="nc"><i class="no-highlight">452</i>&nbsp;            return false;</b>
+<i class="no-highlight">453</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        final int columnType = metadata.getColumnType(index);</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;        final int columnTypeTag = ColumnType.tagOf(columnType);</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;        return columnTypeTag == ColumnType.BOOLEAN;</b>
+<i class="no-highlight">457</i>&nbsp;    }
+<i class="no-highlight">458</i>&nbsp;
+<i class="no-highlight">459</i>&nbsp;    private boolean isTopLevelBooleanColumn(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">460</i>&nbsp;        if (node.type == ExpressionNode.LITERAL &amp;&amp; isBooleanColumn(node)) {</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;            return true;</b>
+<i class="no-highlight">462</i>&nbsp;        }
+<i class="no-highlight">463</i>&nbsp;        // Lookahead for &quot;not boolean_column&quot; case
+<b class="fc"><i class="no-highlight">464</i>&nbsp;        final CharSequence token = node.token;</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        if (SqlKeywords.isNotKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;            ExpressionNode columnNode = node.lhs != null ? node.lhs : node.rhs;</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;            return columnNode != null &amp;&amp; isBooleanColumn(columnNode);</b>
+<i class="no-highlight">468</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">469</i>&nbsp;        return false;</b>
+<i class="no-highlight">470</i>&nbsp;    }
+<i class="no-highlight">471</i>&nbsp;
+<i class="no-highlight">472</i>&nbsp;    private void putDoubleOperand(long offset, int type, double payload) {
+<b class="fc"><i class="no-highlight">473</i>&nbsp;        memory.putInt(offset, CompiledFilterIRSerializer.IMM);</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;        memory.putInt(offset + Integer.BYTES, type);</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;        memory.putDouble(offset + 2 * Integer.BYTES, payload);</b>
+<i class="no-highlight">476</i>&nbsp;    }
+<i class="no-highlight">477</i>&nbsp;
+<i class="no-highlight">478</i>&nbsp;    private void putOperand(int opcode, int type, long payload) {
+<b class="fc"><i class="no-highlight">479</i>&nbsp;        memory.putInt(opcode);</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;        memory.putInt(type);</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;        memory.putLong(payload);</b>
+<i class="no-highlight">482</i>&nbsp;    }
+<i class="no-highlight">483</i>&nbsp;
+<i class="no-highlight">484</i>&nbsp;    private void putOperand(long offset, int opcode, int type, long payload) {
+<b class="fc"><i class="no-highlight">485</i>&nbsp;        memory.putInt(offset, opcode);</b>
+<b class="fc"><i class="no-highlight">486</i>&nbsp;        memory.putInt(offset + Integer.BYTES, type);</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;        memory.putLong(offset + 2 * Integer.BYTES, payload);</b>
+<i class="no-highlight">488</i>&nbsp;    }
+<i class="no-highlight">489</i>&nbsp;
+<i class="no-highlight">490</i>&nbsp;    private void putOperator(int opcode) {
+<b class="fc"><i class="no-highlight">491</i>&nbsp;        memory.putInt(opcode);</b>
+<i class="no-highlight">492</i>&nbsp;        // pad unused fields with zeros
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        memory.putInt(0);</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;        memory.putLong(0L);</b>
+<i class="no-highlight">495</i>&nbsp;    }
+<i class="no-highlight">496</i>&nbsp;
+<i class="no-highlight">497</i>&nbsp;    private void serializeBindVariable(final ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">498</i>&nbsp;        if (!predicateContext.isActive()) {</b>
+<b class="nc"><i class="no-highlight">499</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="nc"><i class="no-highlight">500</i>&nbsp;                    .put(&quot;bind variable outside of predicate: &quot;)</b>
+<b class="nc"><i class="no-highlight">501</i>&nbsp;                    .put(node.token);</b>
+<i class="no-highlight">502</i>&nbsp;        }
+<i class="no-highlight">503</i>&nbsp;
+<b class="fc"><i class="no-highlight">504</i>&nbsp;        Function varFunction = getBindVariableFunction(node.position, node.token);</b>
+<i class="no-highlight">505</i>&nbsp;
+<b class="fc"><i class="no-highlight">506</i>&nbsp;        final int columnType = varFunction.getType();</b>
+<i class="no-highlight">507</i>&nbsp;        // Treat string bind variable to be of symbol type
+<b class="fc"><i class="no-highlight">508</i>&nbsp;        if (columnType == ColumnType.STRING) {</b>
+<i class="no-highlight">509</i>&nbsp;            // We&#39;re going to backfill this variable later since we may
+<i class="no-highlight">510</i>&nbsp;            // not have symbol column index at this point
+<b class="fc"><i class="no-highlight">511</i>&nbsp;            long offset = memory.getAppendOffset();</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;            backfillNodes.put(offset, node);</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);</b>
+<i class="no-highlight">514</i>&nbsp;            return;
+<i class="no-highlight">515</i>&nbsp;        }
+<i class="no-highlight">516</i>&nbsp;
+<b class="fc"><i class="no-highlight">517</i>&nbsp;        final int columnTypeTag = ColumnType.tagOf(columnType);</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;        int typeCode = bindVariableTypeCode(columnTypeTag);</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;        if (typeCode == UNDEFINED_CODE) {</b>
+<b class="nc"><i class="no-highlight">520</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="nc"><i class="no-highlight">521</i>&nbsp;                    .put(&quot;unsupported bind variable type: &quot;)</b>
+<b class="nc"><i class="no-highlight">522</i>&nbsp;                    .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">523</i>&nbsp;        }
+<i class="no-highlight">524</i>&nbsp;
+<b class="fc"><i class="no-highlight">525</i>&nbsp;        bindVarFunctions.add(varFunction);</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        int index = bindVarFunctions.size() - 1;</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;        putOperand(VAR, typeCode, index);</b>
+<i class="no-highlight">528</i>&nbsp;    }
+<i class="no-highlight">529</i>&nbsp;
+<i class="no-highlight">530</i>&nbsp;    private void serializeColumn(int position, final CharSequence token) throws SqlException {
+<b class="fc"><i class="no-highlight">531</i>&nbsp;        if (!predicateContext.isActive()) {</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;            throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">533</i>&nbsp;                    .put(&quot;non-boolean column outside of predicate: &quot;)</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;                    .put(token);</b>
+<i class="no-highlight">535</i>&nbsp;        }
+<i class="no-highlight">536</i>&nbsp;
+<b class="fc"><i class="no-highlight">537</i>&nbsp;        final int index = metadata.getColumnIndexQuiet(token);</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;        if (index == -1) {</b>
+<b class="nc"><i class="no-highlight">539</i>&nbsp;            throw SqlException.invalidColumn(position, token);</b>
+<i class="no-highlight">540</i>&nbsp;        }
+<i class="no-highlight">541</i>&nbsp;
+<b class="fc"><i class="no-highlight">542</i>&nbsp;        final int columnType = metadata.getColumnType(index);</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;        final int columnTypeTag = ColumnType.tagOf(columnType);</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;        int typeCode = columnTypeCode(columnTypeTag);</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;        if (typeCode == UNDEFINED_CODE) {</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;            throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                    .put(&quot;unsupported column type: &quot;)</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                    .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">549</i>&nbsp;        }
+<i class="no-highlight">550</i>&nbsp;
+<i class="no-highlight">551</i>&nbsp;        // In case of a top level boolean column, expand it to &quot;boolean_column = true&quot; expression.
+<b class="fc"><i class="no-highlight">552</i>&nbsp;        if (predicateContext.singleBooleanColumn &amp;&amp; columnTypeTag == ColumnType.BOOLEAN) {</b>
+<i class="no-highlight">553</i>&nbsp;            // &quot;true&quot; constant
+<b class="fc"><i class="no-highlight">554</i>&nbsp;            putOperand(IMM, I1_TYPE, 1);</b>
+<i class="no-highlight">555</i>&nbsp;            // column
+<b class="fc"><i class="no-highlight">556</i>&nbsp;            putOperand(MEM, typeCode, index);</b>
+<i class="no-highlight">557</i>&nbsp;            // =
+<b class="fc"><i class="no-highlight">558</i>&nbsp;            putOperator(EQ);</b>
+<i class="no-highlight">559</i>&nbsp;            return;
+<i class="no-highlight">560</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">561</i>&nbsp;        putOperand(MEM, typeCode, index);</b>
+<i class="no-highlight">562</i>&nbsp;    }
+<i class="no-highlight">563</i>&nbsp;
+<i class="no-highlight">564</i>&nbsp;    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
+<b class="fc"><i class="no-highlight">565</i>&nbsp;        final int len = token.length();</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;        final int typeCode = predicateContext.localTypesObserver.constantTypeCode();</b>
+<b class="fc"><i class="no-highlight">567</i>&nbsp;        if (typeCode == UNDEFINED_CODE) {</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;            throw SqlException.position(position).put(&quot;all constants expression: &quot;).put(token);</b>
+<i class="no-highlight">569</i>&nbsp;        }
+<i class="no-highlight">570</i>&nbsp;
+<b class="fc"><i class="no-highlight">571</i>&nbsp;        if (SqlKeywords.isNullKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">572</i>&nbsp;            boolean geoHashExpression = PredicateType.GEO_HASH == predicateContext.type;</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;            serializeNull(offset, position, typeCode, geoHashExpression);</b>
+<i class="no-highlight">574</i>&nbsp;            return;
+<i class="no-highlight">575</i>&nbsp;        }
+<i class="no-highlight">576</i>&nbsp;
+<b class="fc"><i class="no-highlight">577</i>&nbsp;        if (PredicateType.SYMBOL == predicateContext.type) {</b>
+<b class="fc"><i class="no-highlight">578</i>&nbsp;            serializeSymbolConstant(offset, position, token);</b>
+<i class="no-highlight">579</i>&nbsp;            return;
+<i class="no-highlight">580</i>&nbsp;        }
+<i class="no-highlight">581</i>&nbsp;
+<b class="fc"><i class="no-highlight">582</i>&nbsp;        if (Chars.isQuoted(token)) {</b>
+<b class="fc"><i class="no-highlight">583</i>&nbsp;            if (PredicateType.CHAR != predicateContext.type) {</b>
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                throw SqlException.position(position).put(&quot;char constant in non-char expression: &quot;).put(token);</b>
+<i class="no-highlight">585</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">586</i>&nbsp;            if (len == 3) {</b>
+<i class="no-highlight">587</i>&nbsp;                // this is &#39;x&#39; - char
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                putOperand(offset, IMM, I2_TYPE, token.charAt(1));</b>
+<i class="no-highlight">589</i>&nbsp;                return;
+<i class="no-highlight">590</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">591</i>&nbsp;            throw SqlException.position(position).put(&quot;unsupported string constant: &quot;).put(token);</b>
+<i class="no-highlight">592</i>&nbsp;        }
+<i class="no-highlight">593</i>&nbsp;
+<b class="fc"><i class="no-highlight">594</i>&nbsp;        if (SqlKeywords.isTrueKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">595</i>&nbsp;            if (PredicateType.BOOLEAN != predicateContext.type) {</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;                throw SqlException.position(position).put(&quot;boolean constant in non-boolean expression: &quot;).put(token);</b>
+<i class="no-highlight">597</i>&nbsp;            }
+<i class="no-highlight">598</i>&nbsp;
+<b class="fc"><i class="no-highlight">599</i>&nbsp;            putOperand(offset, IMM, I1_TYPE, 1);</b>
+<i class="no-highlight">600</i>&nbsp;            return;
+<i class="no-highlight">601</i>&nbsp;        }
+<i class="no-highlight">602</i>&nbsp;
+<b class="fc"><i class="no-highlight">603</i>&nbsp;        if (SqlKeywords.isFalseKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;            if (PredicateType.BOOLEAN != predicateContext.type) {</b>
+<b class="fc"><i class="no-highlight">605</i>&nbsp;                throw SqlException.position(position).put(&quot;boolean constant in non-boolean expression: &quot;).put(token);</b>
+<i class="no-highlight">606</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">607</i>&nbsp;            putOperand(offset, IMM, I1_TYPE, 0);</b>
+<i class="no-highlight">608</i>&nbsp;            return;
+<i class="no-highlight">609</i>&nbsp;        }
+<i class="no-highlight">610</i>&nbsp;
+<b class="fc"><i class="no-highlight">611</i>&nbsp;        if (len &gt; 1 &amp;&amp; token.charAt(0) == &#39;#&#39;) {</b>
+<b class="fc"><i class="no-highlight">612</i>&nbsp;            if (PredicateType.GEO_HASH != predicateContext.type) {</b>
+<b class="nc"><i class="no-highlight">613</i>&nbsp;                throw SqlException.position(position).put(&quot;geo hash constant in non-geo hash expression: &quot;).put(token);</b>
+<i class="no-highlight">614</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">615</i>&nbsp;            ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;            if (geoConstant != null) {</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;                serializeGeoHash(offset, position, geoConstant, typeCode);</b>
+<i class="no-highlight">618</i>&nbsp;                return;
+<i class="no-highlight">619</i>&nbsp;            }
+<i class="no-highlight">620</i>&nbsp;        }
+<i class="no-highlight">621</i>&nbsp;
+<b class="fc"><i class="no-highlight">622</i>&nbsp;        if (PredicateType.NUMERIC != predicateContext.type) {</b>
+<b class="fc"><i class="no-highlight">623</i>&nbsp;            throw SqlException.position(position).put(&quot;numeric constant in non-numeric expression: &quot;).put(token);</b>
+<i class="no-highlight">624</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">625</i>&nbsp;        if (predicateContext.localTypesObserver.hasMixedSizes()) {</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;            serializeUntypedNumber(offset, position, token, negated);</b>
+<i class="no-highlight">627</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">628</i>&nbsp;            serializeNumber(offset, position, token, typeCode, negated);</b>
+<i class="no-highlight">629</i>&nbsp;        }
+<i class="no-highlight">630</i>&nbsp;    }
+<i class="no-highlight">631</i>&nbsp;
+<i class="no-highlight">632</i>&nbsp;    private void serializeConstantStub(final ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">633</i>&nbsp;        if (!predicateContext.isActive()) {</b>
+<b class="fc"><i class="no-highlight">634</i>&nbsp;            throw SqlException.position(node.position)</b>
+<b class="fc"><i class="no-highlight">635</i>&nbsp;                    .put(&quot;constant outside of predicate: &quot;)</b>
+<b class="fc"><i class="no-highlight">636</i>&nbsp;                    .put(node.token);</b>
+<i class="no-highlight">637</i>&nbsp;        }
+<i class="no-highlight">638</i>&nbsp;
+<b class="fc"><i class="no-highlight">639</i>&nbsp;        long offset = memory.getAppendOffset();</b>
+<b class="fc"><i class="no-highlight">640</i>&nbsp;        backfillNodes.put(offset, node);</b>
+<b class="fc"><i class="no-highlight">641</i>&nbsp;        putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);</b>
+<i class="no-highlight">642</i>&nbsp;    }
+<i class="no-highlight">643</i>&nbsp;
+<i class="no-highlight">644</i>&nbsp;    private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {
+<i class="no-highlight">645</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">646</i>&nbsp;            switch (typeCode) {</b>
+<i class="no-highlight">647</i>&nbsp;                case I1_TYPE:
+<b class="fc"><i class="no-highlight">648</i>&nbsp;                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoByte(null));</b>
+<b class="fc"><i class="no-highlight">649</i>&nbsp;                    break;</b>
+<i class="no-highlight">650</i>&nbsp;                case I2_TYPE:
+<b class="fc"><i class="no-highlight">651</i>&nbsp;                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoShort(null));</b>
+<b class="fc"><i class="no-highlight">652</i>&nbsp;                    break;</b>
+<i class="no-highlight">653</i>&nbsp;                case I4_TYPE:
+<b class="fc"><i class="no-highlight">654</i>&nbsp;                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoInt(null));</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;                    break;</b>
+<i class="no-highlight">656</i>&nbsp;                case I8_TYPE:
+<b class="fc"><i class="no-highlight">657</i>&nbsp;                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoLong(null));</b>
+<b class="fc"><i class="no-highlight">658</i>&nbsp;                    break;</b>
+<i class="no-highlight">659</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">660</i>&nbsp;                    throw SqlException.position(position).put(&quot;unexpected type code for geo hash: &quot;).put(typeCode);</b>
+<i class="no-highlight">661</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        } catch (UnsupportedOperationException e) {</b>
+<b class="fc"><i class="no-highlight">663</i>&nbsp;            throw SqlException.position(position).put(&quot;unexpected type for geo hash: &quot;).put(typeCode);</b>
+<b class="fc"><i class="no-highlight">664</i>&nbsp;        }</b>
+<i class="no-highlight">665</i>&nbsp;    }
+<i class="no-highlight">666</i>&nbsp;
+<i class="no-highlight">667</i>&nbsp;    private void serializeNull(long offset, int position, int typeCode, boolean geoHashPredicate) throws SqlException {
+<b class="fc"><i class="no-highlight">668</i>&nbsp;        switch (typeCode) {</b>
+<i class="no-highlight">669</i>&nbsp;            case I1_TYPE:
+<b class="fc"><i class="no-highlight">670</i>&nbsp;                if (!geoHashPredicate) {</b>
+<b class="fc"><i class="no-highlight">671</i>&nbsp;                    throw SqlException.position(position).put(&quot;byte type is not nullable&quot;);</b>
+<i class="no-highlight">672</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">673</i>&nbsp;                putOperand(offset, IMM, typeCode, GeoHashes.BYTE_NULL);</b>
+<b class="fc"><i class="no-highlight">674</i>&nbsp;                break;</b>
+<i class="no-highlight">675</i>&nbsp;            case I2_TYPE:
+<b class="fc"><i class="no-highlight">676</i>&nbsp;                if (!geoHashPredicate) {</b>
+<b class="fc"><i class="no-highlight">677</i>&nbsp;                    throw SqlException.position(position).put(&quot;short type is not nullable&quot;);</b>
+<i class="no-highlight">678</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">679</i>&nbsp;                putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);</b>
+<b class="fc"><i class="no-highlight">680</i>&nbsp;                break;</b>
+<i class="no-highlight">681</i>&nbsp;            case I4_TYPE:
+<b class="fc"><i class="no-highlight">682</i>&nbsp;                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.INT_NULL : Numbers.INT_NaN);</b>
+<b class="fc"><i class="no-highlight">683</i>&nbsp;                break;</b>
+<i class="no-highlight">684</i>&nbsp;            case I8_TYPE:
+<b class="fc"><i class="no-highlight">685</i>&nbsp;                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.NULL : Numbers.LONG_NaN);</b>
+<b class="fc"><i class="no-highlight">686</i>&nbsp;                break;</b>
+<i class="no-highlight">687</i>&nbsp;            case F4_TYPE:
+<b class="fc"><i class="no-highlight">688</i>&nbsp;                putDoubleOperand(offset, typeCode, Float.NaN);</b>
+<b class="fc"><i class="no-highlight">689</i>&nbsp;                break;</b>
+<i class="no-highlight">690</i>&nbsp;            case F8_TYPE:
+<b class="fc"><i class="no-highlight">691</i>&nbsp;                putDoubleOperand(offset, typeCode, Double.NaN);</b>
+<b class="fc"><i class="no-highlight">692</i>&nbsp;                break;</b>
+<i class="no-highlight">693</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">694</i>&nbsp;                throw SqlException.position(position).put(&quot;unexpected null type: &quot;).put(typeCode);</b>
+<i class="no-highlight">695</i>&nbsp;        }
+<i class="no-highlight">696</i>&nbsp;    }
+<i class="no-highlight">697</i>&nbsp;
+<i class="no-highlight">698</i>&nbsp;    private void serializeNumber(
+<i class="no-highlight">699</i>&nbsp;            long offset,
+<i class="no-highlight">700</i>&nbsp;            int position,
+<i class="no-highlight">701</i>&nbsp;            final CharSequence token,
+<i class="no-highlight">702</i>&nbsp;            int typeCode,
+<i class="no-highlight">703</i>&nbsp;            boolean negated
+<i class="no-highlight">704</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">705</i>&nbsp;        long sign = negated ? -1 : 1;</b>
+<i class="no-highlight">706</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">707</i>&nbsp;            switch (typeCode) {</b>
+<i class="no-highlight">708</i>&nbsp;                case I1_TYPE:
+<b class="fc"><i class="no-highlight">709</i>&nbsp;                    final byte b = (byte) Numbers.parseInt(token);</b>
+<b class="fc"><i class="no-highlight">710</i>&nbsp;                    putOperand(offset, IMM, I1_TYPE, sign * b);</b>
+<b class="fc"><i class="no-highlight">711</i>&nbsp;                    break;</b>
+<i class="no-highlight">712</i>&nbsp;                case I2_TYPE:
+<b class="fc"><i class="no-highlight">713</i>&nbsp;                    final short s = (short) Numbers.parseInt(token);</b>
+<b class="fc"><i class="no-highlight">714</i>&nbsp;                    putOperand(offset, IMM, I2_TYPE, sign * s);</b>
+<b class="fc"><i class="no-highlight">715</i>&nbsp;                    break;</b>
+<i class="no-highlight">716</i>&nbsp;                case I4_TYPE:
+<i class="no-highlight">717</i>&nbsp;                case F4_TYPE:
+<i class="no-highlight">718</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">719</i>&nbsp;                        final int i = Numbers.parseInt(token);</b>
+<b class="fc"><i class="no-highlight">720</i>&nbsp;                        putOperand(offset, IMM, I4_TYPE, sign * i);</b>
+<b class="fc"><i class="no-highlight">721</i>&nbsp;                    } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">722</i>&nbsp;                        final float fi = Numbers.parseFloat(token);</b>
+<b class="fc"><i class="no-highlight">723</i>&nbsp;                        putDoubleOperand(offset, F4_TYPE, sign * fi);</b>
+<b class="fc"><i class="no-highlight">724</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">725</i>&nbsp;                    break;</b>
+<i class="no-highlight">726</i>&nbsp;                case I8_TYPE:
+<i class="no-highlight">727</i>&nbsp;                case F8_TYPE:
+<i class="no-highlight">728</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">729</i>&nbsp;                        final long l = Numbers.parseLong(token);</b>
+<b class="fc"><i class="no-highlight">730</i>&nbsp;                        putOperand(offset, IMM, I8_TYPE, sign * l);</b>
+<b class="fc"><i class="no-highlight">731</i>&nbsp;                    } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">732</i>&nbsp;                        final double dl = Numbers.parseDouble(token);</b>
+<b class="fc"><i class="no-highlight">733</i>&nbsp;                        putDoubleOperand(offset, F8_TYPE, sign * dl);</b>
+<b class="fc"><i class="no-highlight">734</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">735</i>&nbsp;                    break;</b>
+<i class="no-highlight">736</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">737</i>&nbsp;                    throw SqlException.position(position)</b>
+<b class="nc"><i class="no-highlight">738</i>&nbsp;                            .put(&quot;unexpected non-numeric constant: &quot;).put(token)</b>
+<b class="nc"><i class="no-highlight">739</i>&nbsp;                            .put(&quot;, expected type: &quot;).put(typeCode);</b>
+<i class="no-highlight">740</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">741</i>&nbsp;        } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">742</i>&nbsp;            throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">743</i>&nbsp;                    .put(&quot;could not parse constant: &quot;).put(token)</b>
+<b class="fc"><i class="no-highlight">744</i>&nbsp;                    .put(&quot;, expected type: &quot;).put(typeCode);</b>
+<b class="fc"><i class="no-highlight">745</i>&nbsp;        }</b>
+<i class="no-highlight">746</i>&nbsp;    }
+<i class="no-highlight">747</i>&nbsp;
+<i class="no-highlight">748</i>&nbsp;    private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
+<b class="fc"><i class="no-highlight">749</i>&nbsp;        if (SqlKeywords.isNotKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">750</i>&nbsp;            putOperator(NOT);</b>
+<i class="no-highlight">751</i>&nbsp;            return;
+<i class="no-highlight">752</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">753</i>&nbsp;        if (SqlKeywords.isAndKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">754</i>&nbsp;            putOperator(AND);</b>
+<i class="no-highlight">755</i>&nbsp;            return;
+<i class="no-highlight">756</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">757</i>&nbsp;        if (SqlKeywords.isOrKeyword(token)) {</b>
+<b class="fc"><i class="no-highlight">758</i>&nbsp;            putOperator(OR);</b>
+<i class="no-highlight">759</i>&nbsp;            return;
+<i class="no-highlight">760</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">761</i>&nbsp;        if (Chars.equals(token, &quot;=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">762</i>&nbsp;            putOperator(EQ);</b>
+<i class="no-highlight">763</i>&nbsp;            return;
+<i class="no-highlight">764</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">765</i>&nbsp;        if (Chars.equals(token, &quot;&lt;&gt;&quot;) || Chars.equals(token, &quot;!=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">766</i>&nbsp;            putOperator(NE);</b>
+<i class="no-highlight">767</i>&nbsp;            return;
+<i class="no-highlight">768</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">769</i>&nbsp;        if (Chars.equals(token, &quot;&lt;&quot;)) {</b>
+<b class="fc"><i class="no-highlight">770</i>&nbsp;            putOperator(LT);</b>
+<i class="no-highlight">771</i>&nbsp;            return;
+<i class="no-highlight">772</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">773</i>&nbsp;        if (Chars.equals(token, &quot;&lt;=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">774</i>&nbsp;            putOperator(LE);</b>
+<i class="no-highlight">775</i>&nbsp;            return;
+<i class="no-highlight">776</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">777</i>&nbsp;        if (Chars.equals(token, &quot;&gt;&quot;)) {</b>
+<b class="fc"><i class="no-highlight">778</i>&nbsp;            putOperator(GT);</b>
+<i class="no-highlight">779</i>&nbsp;            return;
+<i class="no-highlight">780</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">781</i>&nbsp;        if (Chars.equals(token, &quot;&gt;=&quot;)) {</b>
+<b class="fc"><i class="no-highlight">782</i>&nbsp;            putOperator(GE);</b>
+<i class="no-highlight">783</i>&nbsp;            return;
+<i class="no-highlight">784</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">785</i>&nbsp;        if (Chars.equals(token, &quot;+&quot;)) {</b>
+<b class="fc"><i class="no-highlight">786</i>&nbsp;            if (argCount == 2) {</b>
+<b class="fc"><i class="no-highlight">787</i>&nbsp;                putOperator(ADD);</b>
+<i class="no-highlight">788</i>&nbsp;            } // ignore unary
+<i class="no-highlight">789</i>&nbsp;            return;
+<i class="no-highlight">790</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">791</i>&nbsp;        if (Chars.equals(token, &quot;-&quot;)) {</b>
+<b class="fc"><i class="no-highlight">792</i>&nbsp;            if (argCount == 2) {</b>
+<b class="fc"><i class="no-highlight">793</i>&nbsp;                putOperator(SUB);</b>
+<b class="fc"><i class="no-highlight">794</i>&nbsp;            } else if (argCount == 1) {</b>
+<b class="fc"><i class="no-highlight">795</i>&nbsp;                putOperator(NEG);</b>
+<i class="no-highlight">796</i>&nbsp;            }
+<i class="no-highlight">797</i>&nbsp;            return;
+<i class="no-highlight">798</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">799</i>&nbsp;        if (Chars.equals(token, &quot;*&quot;)) {</b>
+<b class="fc"><i class="no-highlight">800</i>&nbsp;            putOperator(MUL);</b>
+<i class="no-highlight">801</i>&nbsp;            return;
+<i class="no-highlight">802</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">803</i>&nbsp;        if (Chars.equals(token, &quot;/&quot;)) {</b>
+<b class="fc"><i class="no-highlight">804</i>&nbsp;            putOperator(DIV);</b>
+<i class="no-highlight">805</i>&nbsp;            return;
+<i class="no-highlight">806</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">807</i>&nbsp;        throw SqlException.position(position).put(&quot;invalid operator: &quot;).put(token);</b>
+<i class="no-highlight">808</i>&nbsp;    }
+<i class="no-highlight">809</i>&nbsp;
+<i class="no-highlight">810</i>&nbsp;    private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
+<b class="fc"><i class="no-highlight">811</i>&nbsp;        final int len = token.length();</b>
+<b class="fc"><i class="no-highlight">812</i>&nbsp;        CharSequence symbol = token;</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;        if (Chars.isQuoted(token)) {</b>
+<b class="fc"><i class="no-highlight">814</i>&nbsp;            if (len &lt; 3) {</b>
+<b class="nc"><i class="no-highlight">815</i>&nbsp;                throw SqlException.position(position).put(&quot;unsupported symbol constant: &quot;).put(token);</b>
+<i class="no-highlight">816</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">817</i>&nbsp;            symbol = symbol.subSequence(1, len - 1);</b>
+<i class="no-highlight">818</i>&nbsp;        }
+<i class="no-highlight">819</i>&nbsp;
+<b class="fc"><i class="no-highlight">820</i>&nbsp;        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {</b>
+<b class="nc"><i class="no-highlight">821</i>&nbsp;            throw SqlException.position(position).put(&quot;reader or column index is missing for symbol constant: &quot;).put(token);</b>
+<i class="no-highlight">822</i>&nbsp;        }
+<i class="no-highlight">823</i>&nbsp;
+<b class="fc"><i class="no-highlight">824</i>&nbsp;        final int key = predicateContext.symbolTable.keyOf(symbol);</b>
+<b class="fc"><i class="no-highlight">825</i>&nbsp;        if (key != SymbolTable.VALUE_NOT_FOUND) {</b>
+<i class="no-highlight">826</i>&nbsp;            // Known symbol constant case
+<b class="fc"><i class="no-highlight">827</i>&nbsp;            putOperand(offset, IMM, I4_TYPE, key);</b>
+<i class="no-highlight">828</i>&nbsp;            return;
+<i class="no-highlight">829</i>&nbsp;        }
+<i class="no-highlight">830</i>&nbsp;
+<i class="no-highlight">831</i>&nbsp;        // Unknown symbol constant case. Create a fake bind variable function to handle it.
+<b class="fc"><i class="no-highlight">832</i>&nbsp;        final SymbolConstant function = SymbolConstant.newInstance(symbol);</b>
+<b class="fc"><i class="no-highlight">833</i>&nbsp;        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));</b>
+<b class="fc"><i class="no-highlight">834</i>&nbsp;        int index = bindVarFunctions.size() - 1;</b>
+<i class="no-highlight">835</i>&nbsp;
+<b class="fc"><i class="no-highlight">836</i>&nbsp;        int typeCode = bindVariableTypeCode(ColumnType.STRING);</b>
+<b class="fc"><i class="no-highlight">837</i>&nbsp;        putOperand(offset, VAR, typeCode, index);</b>
+<i class="no-highlight">838</i>&nbsp;    }
+<i class="no-highlight">839</i>&nbsp;
+<i class="no-highlight">840</i>&nbsp;    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
+<b class="fc"><i class="no-highlight">841</i>&nbsp;        long sign = negated ? -1 : 1;</b>
+<i class="no-highlight">842</i>&nbsp;
+<i class="no-highlight">843</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">844</i>&nbsp;            final int i = Numbers.parseInt(token);</b>
+<b class="fc"><i class="no-highlight">845</i>&nbsp;            putOperand(offset, IMM, I4_TYPE, sign * i);</b>
+<i class="no-highlight">846</i>&nbsp;            return;
+<b class="fc"><i class="no-highlight">847</i>&nbsp;        } catch (NumericException ignore) {</b>
+<i class="no-highlight">848</i>&nbsp;        }
+<i class="no-highlight">849</i>&nbsp;
+<i class="no-highlight">850</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">851</i>&nbsp;            final long l = Numbers.parseLong(token);</b>
+<b class="fc"><i class="no-highlight">852</i>&nbsp;            putOperand(offset, IMM, I8_TYPE, sign * l);</b>
+<i class="no-highlight">853</i>&nbsp;            return;
+<b class="fc"><i class="no-highlight">854</i>&nbsp;        } catch (NumericException ignore) {</b>
+<i class="no-highlight">855</i>&nbsp;        }
+<i class="no-highlight">856</i>&nbsp;
+<i class="no-highlight">857</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">858</i>&nbsp;            final double d = Numbers.parseDouble(token);</b>
+<b class="fc"><i class="no-highlight">859</i>&nbsp;            putDoubleOperand(offset, F8_TYPE, sign * d);</b>
+<i class="no-highlight">860</i>&nbsp;            return;
+<b class="fc"><i class="no-highlight">861</i>&nbsp;        } catch (NumericException ignore) {</b>
+<i class="no-highlight">862</i>&nbsp;        }
+<i class="no-highlight">863</i>&nbsp;
+<i class="no-highlight">864</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">865</i>&nbsp;            final float f = Numbers.parseFloat(token);</b>
+<b class="fc"><i class="no-highlight">866</i>&nbsp;            putDoubleOperand(offset, F4_TYPE, sign * f);</b>
+<i class="no-highlight">867</i>&nbsp;            return;
+<b class="nc"><i class="no-highlight">868</i>&nbsp;        } catch (NumericException ignore) {</b>
+<i class="no-highlight">869</i>&nbsp;        }
+<i class="no-highlight">870</i>&nbsp;
+<b class="nc"><i class="no-highlight">871</i>&nbsp;        throw SqlException.position(position).put(&quot;unexpected non-numeric constant: &quot;).put(token);</b>
+<i class="no-highlight">872</i>&nbsp;    }
+<i class="no-highlight">873</i>&nbsp;
+<b class="fc"><i class="no-highlight">874</i>&nbsp;    private enum PredicateType {</b>
+<b class="fc"><i class="no-highlight">875</i>&nbsp;        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH</b>
+<i class="no-highlight">876</i>&nbsp;    }
+<i class="no-highlight">877</i>&nbsp;
+<i class="no-highlight">878</i>&nbsp;    private static class SqlWrapperException extends RuntimeException {
+<i class="no-highlight">879</i>&nbsp;
+<i class="no-highlight">880</i>&nbsp;        final SqlException wrappedException;
+<i class="no-highlight">881</i>&nbsp;
+<b class="fc"><i class="no-highlight">882</i>&nbsp;        SqlWrapperException(SqlException wrappedException) {</b>
+<b class="fc"><i class="no-highlight">883</i>&nbsp;            this.wrappedException = wrappedException;</b>
+<i class="no-highlight">884</i>&nbsp;        }
+<i class="no-highlight">885</i>&nbsp;    }
+<i class="no-highlight">886</i>&nbsp;
+<i class="no-highlight">887</i>&nbsp;    /**
+<i class="no-highlight">888</i>&nbsp;     * Helper class for accumulating column and bind variable types information.
+<i class="no-highlight">889</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">890</i>&nbsp;    private static class TypesObserver implements Mutable {</b>
+<i class="no-highlight">891</i>&nbsp;
+<i class="no-highlight">892</i>&nbsp;        private static final int F4_INDEX = 3;
+<i class="no-highlight">893</i>&nbsp;        private static final int F8_INDEX = 5;
+<i class="no-highlight">894</i>&nbsp;        private static final int I1_INDEX = 0;
+<i class="no-highlight">895</i>&nbsp;        private static final int I2_INDEX = 1;
+<i class="no-highlight">896</i>&nbsp;        private static final int I4_INDEX = 2;
+<i class="no-highlight">897</i>&nbsp;        private static final int I8_INDEX = 4;
+<i class="no-highlight">898</i>&nbsp;        private static final int TYPES_COUNT = F8_INDEX + 1;
+<i class="no-highlight">899</i>&nbsp;
+<b class="fc"><i class="no-highlight">900</i>&nbsp;        private final byte[] sizes = new byte[TYPES_COUNT];</b>
+<i class="no-highlight">901</i>&nbsp;
+<i class="no-highlight">902</i>&nbsp;        @Override
+<i class="no-highlight">903</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">904</i>&nbsp;            Arrays.fill(sizes, (byte) 0);</b>
+<i class="no-highlight">905</i>&nbsp;        }
+<i class="no-highlight">906</i>&nbsp;
+<i class="no-highlight">907</i>&nbsp;        /**
+<i class="no-highlight">908</i>&nbsp;         * Returns the expected constant type calculated based on the &quot;widest&quot; observed column
+<i class="no-highlight">909</i>&nbsp;         * or bind variable type. The result contains *_TYPE value or UNDEFINED_CODE value.
+<i class="no-highlight">910</i>&nbsp;         */
+<i class="no-highlight">911</i>&nbsp;        public int constantTypeCode() {
+<b class="fc"><i class="no-highlight">912</i>&nbsp;            for (int i = sizes.length - 1; i &gt; -1; i--) {</b>
+<b class="fc"><i class="no-highlight">913</i>&nbsp;                byte size = sizes[i];</b>
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                if (size &gt; 0) {</b>
+<i class="no-highlight">915</i>&nbsp;                    // If floats are present, we need to cast longs to double.
+<b class="fc"><i class="no-highlight">916</i>&nbsp;                    if (i == I8_INDEX &amp;&amp; sizes[F4_INDEX] &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">917</i>&nbsp;                        return F8_TYPE;</b>
+<i class="no-highlight">918</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">919</i>&nbsp;                    return indexToTypeCode(i);</b>
+<i class="no-highlight">920</i>&nbsp;                }
+<i class="no-highlight">921</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">922</i>&nbsp;            return UNDEFINED_CODE;</b>
+<i class="no-highlight">923</i>&nbsp;        }
+<i class="no-highlight">924</i>&nbsp;
+<i class="no-highlight">925</i>&nbsp;        public boolean hasMixedSizes() {
+<b class="fc"><i class="no-highlight">926</i>&nbsp;            byte prevSize = 0;</b>
+<b class="fc"><i class="no-highlight">927</i>&nbsp;            for (byte size : sizes) {</b>
+<b class="fc"><i class="no-highlight">928</i>&nbsp;                prevSize = prevSize == 0 ? size : prevSize;</b>
+<b class="fc"><i class="no-highlight">929</i>&nbsp;                if (prevSize &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">930</i>&nbsp;                    if (size &gt; 0 &amp;&amp; size != prevSize) {</b>
+<b class="fc"><i class="no-highlight">931</i>&nbsp;                        return true;</b>
+<i class="no-highlight">932</i>&nbsp;                    }
+<i class="no-highlight">933</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">934</i>&nbsp;                    prevSize = size;</b>
+<i class="no-highlight">935</i>&nbsp;                }
+<i class="no-highlight">936</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">937</i>&nbsp;            return false;</b>
+<i class="no-highlight">938</i>&nbsp;        }
+<i class="no-highlight">939</i>&nbsp;
+<i class="no-highlight">940</i>&nbsp;        /**
+<i class="no-highlight">941</i>&nbsp;         * Returns size in bytes of the &quot;widest&quot; observed column or bind variable type.
+<i class="no-highlight">942</i>&nbsp;         */
+<i class="no-highlight">943</i>&nbsp;        public int maxSize() {
+<b class="fc"><i class="no-highlight">944</i>&nbsp;            for (int i = sizes.length - 1; i &gt; -1; i--) {</b>
+<b class="fc"><i class="no-highlight">945</i>&nbsp;                byte size = sizes[i];</b>
+<b class="fc"><i class="no-highlight">946</i>&nbsp;                if (size &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">947</i>&nbsp;                    return size;</b>
+<i class="no-highlight">948</i>&nbsp;                }
+<i class="no-highlight">949</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">950</i>&nbsp;            return 0;</b>
+<i class="no-highlight">951</i>&nbsp;        }
+<i class="no-highlight">952</i>&nbsp;
+<i class="no-highlight">953</i>&nbsp;        public void observe(int code) {
+<b class="fc"><i class="no-highlight">954</i>&nbsp;            switch (code) {</b>
+<i class="no-highlight">955</i>&nbsp;                case I1_TYPE:
+<b class="fc"><i class="no-highlight">956</i>&nbsp;                    sizes[I1_INDEX] = 1;</b>
+<b class="fc"><i class="no-highlight">957</i>&nbsp;                    break;</b>
+<i class="no-highlight">958</i>&nbsp;                case I2_TYPE:
+<b class="fc"><i class="no-highlight">959</i>&nbsp;                    sizes[I2_INDEX] = 2;</b>
+<b class="fc"><i class="no-highlight">960</i>&nbsp;                    break;</b>
+<i class="no-highlight">961</i>&nbsp;                case I4_TYPE:
+<b class="fc"><i class="no-highlight">962</i>&nbsp;                    sizes[I4_INDEX] = 4;</b>
+<b class="fc"><i class="no-highlight">963</i>&nbsp;                    break;</b>
+<i class="no-highlight">964</i>&nbsp;                case F4_TYPE:
+<b class="fc"><i class="no-highlight">965</i>&nbsp;                    sizes[F4_INDEX] = 4;</b>
+<b class="fc"><i class="no-highlight">966</i>&nbsp;                    break;</b>
+<i class="no-highlight">967</i>&nbsp;                case I8_TYPE:
+<b class="fc"><i class="no-highlight">968</i>&nbsp;                    sizes[I8_INDEX] = 8;</b>
+<b class="fc"><i class="no-highlight">969</i>&nbsp;                    break;</b>
+<i class="no-highlight">970</i>&nbsp;                case F8_TYPE:
+<b class="fc"><i class="no-highlight">971</i>&nbsp;                    sizes[F8_INDEX] = 8;</b>
+<i class="no-highlight">972</i>&nbsp;                    break;
+<i class="no-highlight">973</i>&nbsp;            }
+<i class="no-highlight">974</i>&nbsp;        }
+<i class="no-highlight">975</i>&nbsp;
+<i class="no-highlight">976</i>&nbsp;        private int indexToTypeCode(int index) {
+<b class="fc"><i class="no-highlight">977</i>&nbsp;            switch (index) {</b>
+<i class="no-highlight">978</i>&nbsp;                case I1_INDEX:
+<b class="fc"><i class="no-highlight">979</i>&nbsp;                    return I1_TYPE;</b>
+<i class="no-highlight">980</i>&nbsp;                case I2_INDEX:
+<b class="fc"><i class="no-highlight">981</i>&nbsp;                    return I2_TYPE;</b>
+<i class="no-highlight">982</i>&nbsp;                case I4_INDEX:
+<b class="fc"><i class="no-highlight">983</i>&nbsp;                    return I4_TYPE;</b>
+<i class="no-highlight">984</i>&nbsp;                case F4_INDEX:
+<b class="fc"><i class="no-highlight">985</i>&nbsp;                    return F4_TYPE;</b>
+<i class="no-highlight">986</i>&nbsp;                case I8_INDEX:
+<b class="fc"><i class="no-highlight">987</i>&nbsp;                    return I8_TYPE;</b>
+<i class="no-highlight">988</i>&nbsp;                case F8_INDEX:
+<b class="fc"><i class="no-highlight">989</i>&nbsp;                    return F8_TYPE;</b>
+<i class="no-highlight">990</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">991</i>&nbsp;            return UNDEFINED_CODE;</b>
+<i class="no-highlight">992</i>&nbsp;        }
+<i class="no-highlight">993</i>&nbsp;    }
+<i class="no-highlight">994</i>&nbsp;
+<i class="no-highlight">995</i>&nbsp;    /**
+<i class="no-highlight">996</i>&nbsp;     * Helper class that tracks types and arithmetic operations in a predicate.
+<i class="no-highlight">997</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">998</i>&nbsp;     * A &quot;predicate&quot; stands for any arithmetical expression or single boolean
+<i class="no-highlight">999</i>&nbsp;     * column expression present in the filter. Predicates are combined with
+<i class="no-highlight">1000</i>&nbsp;     * each other via binary boolean operators (and, or).
+<i class="no-highlight">1001</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">1002</i>&nbsp;     * For example, we consider the below filter:
+<i class="no-highlight">1003</i>&nbsp;     * &lt;pre&gt;
+<i class="no-highlight">1004</i>&nbsp;     * long_col - 42 &gt; 0 and (not bool_col1 or bool_col2)
+<i class="no-highlight">1005</i>&nbsp;     * &lt;/pre&gt;
+<i class="no-highlight">1006</i>&nbsp;     * to contain three predicates:
+<i class="no-highlight">1007</i>&nbsp;     * &lt;pre&gt;
+<i class="no-highlight">1008</i>&nbsp;     * long_col - 42 &gt; 0
+<i class="no-highlight">1009</i>&nbsp;     * not bool_col1
+<i class="no-highlight">1010</i>&nbsp;     * bool_col2
+<i class="no-highlight">1011</i>&nbsp;     * &lt;/pre&gt;
+<i class="no-highlight">1012</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">1013</i>&nbsp;    private class PredicateContext implements Mutable {</b>
+<i class="no-highlight">1014</i>&nbsp;
+<b class="fc"><i class="no-highlight">1015</i>&nbsp;        final TypesObserver globalTypesObserver = new TypesObserver();</b>
+<b class="fc"><i class="no-highlight">1016</i>&nbsp;        final TypesObserver localTypesObserver = new TypesObserver();</b>
+<i class="no-highlight">1017</i>&nbsp;        boolean hasArithmeticOperations;
+<i class="no-highlight">1018</i>&nbsp;        boolean singleBooleanColumn;
+<i class="no-highlight">1019</i>&nbsp;        int symbolColumnIndex; // used for symbol deferred constants and bind variables
+<i class="no-highlight">1020</i>&nbsp;        StaticSymbolTable symbolTable; // used for known symbol constant lookups
+<i class="no-highlight">1021</i>&nbsp;        PredicateType type;
+<i class="no-highlight">1022</i>&nbsp;        private ExpressionNode rootNode;
+<i class="no-highlight">1023</i>&nbsp;
+<i class="no-highlight">1024</i>&nbsp;        @Override
+<i class="no-highlight">1025</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;            reset();</b>
+<b class="fc"><i class="no-highlight">1027</i>&nbsp;            globalTypesObserver.clear();</b>
+<i class="no-highlight">1028</i>&nbsp;        }
+<i class="no-highlight">1029</i>&nbsp;
+<i class="no-highlight">1030</i>&nbsp;        public boolean isActive() {
+<b class="fc"><i class="no-highlight">1031</i>&nbsp;            return rootNode != null;</b>
+<i class="no-highlight">1032</i>&nbsp;        }
+<i class="no-highlight">1033</i>&nbsp;
+<i class="no-highlight">1034</i>&nbsp;        public void onNodeDescended(final ExpressionNode node) {
+<b class="fc"><i class="no-highlight">1035</i>&nbsp;            if (rootNode == null) {</b>
+<b class="fc"><i class="no-highlight">1036</i>&nbsp;                boolean topLevelOperation = isTopLevelOperation(node);</b>
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;                boolean topLevelBooleanColumn = isTopLevelBooleanColumn(node);</b>
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;                if (topLevelOperation || topLevelBooleanColumn) {</b>
+<i class="no-highlight">1039</i>&nbsp;                    // We entered a predicate.
+<b class="fc"><i class="no-highlight">1040</i>&nbsp;                    reset();</b>
+<b class="fc"><i class="no-highlight">1041</i>&nbsp;                    rootNode = node;</b>
+<i class="no-highlight">1042</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;                if (topLevelBooleanColumn) {</b>
+<b class="fc"><i class="no-highlight">1044</i>&nbsp;                    type = PredicateType.BOOLEAN;</b>
+<b class="fc"><i class="no-highlight">1045</i>&nbsp;                    singleBooleanColumn = true;</b>
+<i class="no-highlight">1046</i>&nbsp;                }
+<i class="no-highlight">1047</i>&nbsp;            }
+<i class="no-highlight">1048</i>&nbsp;        }
+<i class="no-highlight">1049</i>&nbsp;
+<i class="no-highlight">1050</i>&nbsp;        public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">1051</i>&nbsp;            boolean predicateLeft = false;</b>
+<b class="fc"><i class="no-highlight">1052</i>&nbsp;            if (node == rootNode) {</b>
+<i class="no-highlight">1053</i>&nbsp;                // We left the predicate.
+<b class="fc"><i class="no-highlight">1054</i>&nbsp;                rootNode = null;</b>
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;                predicateLeft = true;</b>
+<i class="no-highlight">1056</i>&nbsp;            }
+<i class="no-highlight">1057</i>&nbsp;
+<b class="fc"><i class="no-highlight">1058</i>&nbsp;            switch (node.type) {</b>
+<i class="no-highlight">1059</i>&nbsp;                case ExpressionNode.LITERAL:
+<b class="fc"><i class="no-highlight">1060</i>&nbsp;                    handleColumn(node);</b>
+<b class="fc"><i class="no-highlight">1061</i>&nbsp;                    break;</b>
+<i class="no-highlight">1062</i>&nbsp;                case ExpressionNode.BIND_VARIABLE:
+<b class="fc"><i class="no-highlight">1063</i>&nbsp;                    handleBindVariable(node);</b>
+<b class="fc"><i class="no-highlight">1064</i>&nbsp;                    break;</b>
+<i class="no-highlight">1065</i>&nbsp;                case ExpressionNode.OPERATION:
+<b class="fc"><i class="no-highlight">1066</i>&nbsp;                    handleOperation(node);</b>
+<i class="no-highlight">1067</i>&nbsp;                    break;
+<i class="no-highlight">1068</i>&nbsp;            }
+<i class="no-highlight">1069</i>&nbsp;
+<b class="fc"><i class="no-highlight">1070</i>&nbsp;            return predicateLeft;</b>
+<i class="no-highlight">1071</i>&nbsp;        }
+<i class="no-highlight">1072</i>&nbsp;
+<i class="no-highlight">1073</i>&nbsp;        private void handleBindVariable(ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">1074</i>&nbsp;            Function varFunction = getBindVariableFunction(node.position, node.token);</b>
+<i class="no-highlight">1075</i>&nbsp;            // We treat bind variables as columns here for the sake of simplicity
+<b class="fc"><i class="no-highlight">1076</i>&nbsp;            final int columnType = varFunction.getType();</b>
+<b class="fc"><i class="no-highlight">1077</i>&nbsp;            int columnTypeTag = ColumnType.tagOf(columnType);</b>
+<i class="no-highlight">1078</i>&nbsp;            // Treat string bind variable to be of symbol type
+<b class="fc"><i class="no-highlight">1079</i>&nbsp;            if (columnTypeTag == ColumnType.STRING) {</b>
+<b class="fc"><i class="no-highlight">1080</i>&nbsp;                columnTypeTag = ColumnType.SYMBOL;</b>
+<i class="no-highlight">1081</i>&nbsp;            }
+<i class="no-highlight">1082</i>&nbsp;
+<b class="fc"><i class="no-highlight">1083</i>&nbsp;            updateType(node.position, columnTypeTag);</b>
+<i class="no-highlight">1084</i>&nbsp;
+<b class="fc"><i class="no-highlight">1085</i>&nbsp;            int code = columnTypeCode(columnTypeTag);</b>
+<b class="fc"><i class="no-highlight">1086</i>&nbsp;            localTypesObserver.observe(code);</b>
+<b class="fc"><i class="no-highlight">1087</i>&nbsp;            globalTypesObserver.observe(code);</b>
+<i class="no-highlight">1088</i>&nbsp;        }
+<i class="no-highlight">1089</i>&nbsp;
+<i class="no-highlight">1090</i>&nbsp;        private void handleColumn(ExpressionNode node) throws SqlException {
+<b class="fc"><i class="no-highlight">1091</i>&nbsp;            final int columnIndex = metadata.getColumnIndexQuiet(node.token);</b>
+<b class="fc"><i class="no-highlight">1092</i>&nbsp;            if (columnIndex == -1) {</b>
+<b class="nc"><i class="no-highlight">1093</i>&nbsp;                throw SqlException.invalidColumn(node.position, node.token);</b>
+<i class="no-highlight">1094</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1095</i>&nbsp;            final int columnType = metadata.getColumnType(columnIndex);</b>
+<b class="fc"><i class="no-highlight">1096</i>&nbsp;            final int columnTypeTag = ColumnType.tagOf(columnType);</b>
+<b class="fc"><i class="no-highlight">1097</i>&nbsp;            if (columnTypeTag == ColumnType.SYMBOL) {</b>
+<b class="fc"><i class="no-highlight">1098</i>&nbsp;                symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);</b>
+<b class="fc"><i class="no-highlight">1099</i>&nbsp;                symbolColumnIndex = columnIndex;</b>
+<i class="no-highlight">1100</i>&nbsp;            }
+<i class="no-highlight">1101</i>&nbsp;
+<b class="fc"><i class="no-highlight">1102</i>&nbsp;            updateType(node.position, columnTypeTag);</b>
+<i class="no-highlight">1103</i>&nbsp;
+<b class="fc"><i class="no-highlight">1104</i>&nbsp;            int typeCode = columnTypeCode(columnTypeTag);</b>
+<b class="fc"><i class="no-highlight">1105</i>&nbsp;            localTypesObserver.observe(typeCode);</b>
+<b class="fc"><i class="no-highlight">1106</i>&nbsp;            globalTypesObserver.observe(typeCode);</b>
+<i class="no-highlight">1107</i>&nbsp;        }
+<i class="no-highlight">1108</i>&nbsp;
+<i class="no-highlight">1109</i>&nbsp;        private void handleOperation(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">1110</i>&nbsp;            hasArithmeticOperations |= isArithmeticOperation(node);</b>
+<i class="no-highlight">1111</i>&nbsp;        }
+<i class="no-highlight">1112</i>&nbsp;
+<i class="no-highlight">1113</i>&nbsp;        private void reset() {
+<b class="fc"><i class="no-highlight">1114</i>&nbsp;            rootNode = null;</b>
+<b class="fc"><i class="no-highlight">1115</i>&nbsp;            type = null;</b>
+<b class="fc"><i class="no-highlight">1116</i>&nbsp;            symbolTable = null;</b>
+<b class="fc"><i class="no-highlight">1117</i>&nbsp;            symbolColumnIndex = -1;</b>
+<b class="fc"><i class="no-highlight">1118</i>&nbsp;            singleBooleanColumn = false;</b>
+<b class="fc"><i class="no-highlight">1119</i>&nbsp;            hasArithmeticOperations = false;</b>
+<b class="fc"><i class="no-highlight">1120</i>&nbsp;            localTypesObserver.clear();</b>
+<i class="no-highlight">1121</i>&nbsp;        }
+<i class="no-highlight">1122</i>&nbsp;
+<i class="no-highlight">1123</i>&nbsp;        private void updateType(int position, int columnTypeTag) throws SqlException {
+<b class="fc"><i class="no-highlight">1124</i>&nbsp;            switch (columnTypeTag) {</b>
+<i class="no-highlight">1125</i>&nbsp;                case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">1126</i>&nbsp;                    if (type != null &amp;&amp; type != PredicateType.BOOLEAN) {</b>
+<b class="fc"><i class="no-highlight">1127</i>&nbsp;                        throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">1128</i>&nbsp;                                .put(&quot;non-boolean column in boolean expression: &quot;)</b>
+<b class="fc"><i class="no-highlight">1129</i>&nbsp;                                .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">1130</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1131</i>&nbsp;                    type = PredicateType.BOOLEAN;</b>
+<b class="fc"><i class="no-highlight">1132</i>&nbsp;                    break;</b>
+<i class="no-highlight">1133</i>&nbsp;                case ColumnType.GEOBYTE:
+<i class="no-highlight">1134</i>&nbsp;                case ColumnType.GEOSHORT:
+<i class="no-highlight">1135</i>&nbsp;                case ColumnType.GEOINT:
+<i class="no-highlight">1136</i>&nbsp;                case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">1137</i>&nbsp;                    if (type != null &amp;&amp; type != PredicateType.GEO_HASH) {</b>
+<b class="fc"><i class="no-highlight">1138</i>&nbsp;                        throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">1139</i>&nbsp;                                .put(&quot;non-geohash column in geohash expression: &quot;)</b>
+<b class="fc"><i class="no-highlight">1140</i>&nbsp;                                .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">1141</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1142</i>&nbsp;                    type = PredicateType.GEO_HASH;</b>
+<b class="fc"><i class="no-highlight">1143</i>&nbsp;                    break;</b>
+<i class="no-highlight">1144</i>&nbsp;                case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">1145</i>&nbsp;                    if (type != null &amp;&amp; type != PredicateType.CHAR) {</b>
+<b class="fc"><i class="no-highlight">1146</i>&nbsp;                        throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">1147</i>&nbsp;                                .put(&quot;non-char column in char expression: &quot;)</b>
+<b class="fc"><i class="no-highlight">1148</i>&nbsp;                                .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">1149</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1150</i>&nbsp;                    type = PredicateType.CHAR;</b>
+<b class="fc"><i class="no-highlight">1151</i>&nbsp;                    break;</b>
+<i class="no-highlight">1152</i>&nbsp;                case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">1153</i>&nbsp;                    if (type != null &amp;&amp; type != PredicateType.SYMBOL) {</b>
+<b class="fc"><i class="no-highlight">1154</i>&nbsp;                        throw SqlException.position(position)</b>
+<b class="fc"><i class="no-highlight">1155</i>&nbsp;                                .put(&quot;non-symbol column in symbol expression: &quot;)</b>
+<b class="fc"><i class="no-highlight">1156</i>&nbsp;                                .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">1157</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1158</i>&nbsp;                    type = PredicateType.SYMBOL;</b>
+<b class="fc"><i class="no-highlight">1159</i>&nbsp;                    break;</b>
+<i class="no-highlight">1160</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">1161</i>&nbsp;                    if (type != null &amp;&amp; type != PredicateType.NUMERIC) {</b>
+<b class="nc"><i class="no-highlight">1162</i>&nbsp;                        throw SqlException.position(position)</b>
+<b class="nc"><i class="no-highlight">1163</i>&nbsp;                                .put(&quot;non-numeric column in numeric expression: &quot;)</b>
+<b class="nc"><i class="no-highlight">1164</i>&nbsp;                                .put(ColumnType.nameOf(columnTypeTag));</b>
+<i class="no-highlight">1165</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1166</i>&nbsp;                    type = PredicateType.NUMERIC;</b>
+<i class="no-highlight">1167</i>&nbsp;                    break;
+<i class="no-highlight">1168</i>&nbsp;            }
+<i class="no-highlight">1169</i>&nbsp;        }
+<i class="no-highlight">1170</i>&nbsp;    }
+<i class="no-highlight">1171</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

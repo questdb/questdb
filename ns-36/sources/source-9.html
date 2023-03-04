@@ -1,0 +1,216 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > DistinctKeyRecordCursorFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.groupby</a>
+</div>
+
+<h1>Coverage Summary for Class: DistinctKeyRecordCursorFactory (io.questdb.griffin.engine.groupby)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">DistinctKeyRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (6/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95%
+  </span>
+  <span class="absValue">
+    (19/20)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.groupby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.RecordCursorFactory;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.SqlCodeGenerator;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.IntList;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.std.Transient;
+<i class="no-highlight">41</i>&nbsp;
+<i class="no-highlight">42</i>&nbsp;public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory {
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private static final TableColumnMetadata COUNT_COLUMN_META = new TableColumnMetadata(&quot;count&quot;, ColumnType.LONG);</b>
+<i class="no-highlight">44</i>&nbsp;
+<i class="no-highlight">45</i>&nbsp;    private final GroupByRecordCursorFactory baseAggregatorFactory;
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;    public DistinctKeyRecordCursorFactory(
+<i class="no-highlight">48</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">49</i>&nbsp;            RecordCursorFactory base,
+<i class="no-highlight">50</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">51</i>&nbsp;            @Transient ArrayColumnTypes columnTypes,
+<i class="no-highlight">52</i>&nbsp;            @Transient ObjList&lt;VectorAggregateFunction&gt; vafList,
+<i class="no-highlight">53</i>&nbsp;            int workerCount,
+<i class="no-highlight">54</i>&nbsp;            @Transient IntList symbolTableSkewIndex
+<i class="no-highlight">55</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        super(metadata);</b>
+<i class="no-highlight">57</i>&nbsp;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        GenericRecordMetadata internalMeta = new GenericRecordMetadata();</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;        GenericRecordMetadata.copyColumns(metadata, internalMeta);</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        internalMeta.add(COUNT_COLUMN_META);</b>
+<i class="no-highlight">61</i>&nbsp;
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        columnTypes.clear();</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        columnTypes.add(metadata.getColumnType(0));</b>
+<i class="no-highlight">64</i>&nbsp;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        vafList.clear();</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(SqlCodeGenerator.GKK_VANILLA_INT);</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        countFunction.pushValueTypes(columnTypes);</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        vafList.add(countFunction);</b>
+<i class="no-highlight">69</i>&nbsp;
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        symbolTableSkewIndex.clear();</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        symbolTableSkewIndex.add(0);</b>
+<i class="no-highlight">72</i>&nbsp;
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        baseAggregatorFactory = new GroupByRecordCursorFactory(</b>
+<i class="no-highlight">74</i>&nbsp;                configuration,
+<i class="no-highlight">75</i>&nbsp;                base,
+<i class="no-highlight">76</i>&nbsp;                internalMeta,
+<i class="no-highlight">77</i>&nbsp;                columnTypes,
+<i class="no-highlight">78</i>&nbsp;                workerCount,
+<i class="no-highlight">79</i>&nbsp;                vafList,
+<i class="no-highlight">80</i>&nbsp;                0,
+<i class="no-highlight">81</i>&nbsp;                0,
+<i class="no-highlight">82</i>&nbsp;                symbolTableSkewIndex
+<i class="no-highlight">83</i>&nbsp;        );
+<i class="no-highlight">84</i>&nbsp;    }
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;    @Override
+<i class="no-highlight">87</i>&nbsp;    public RecordCursorFactory getBaseFactory() {
+<b class="nc"><i class="no-highlight">88</i>&nbsp;        return baseAggregatorFactory;</b>
+<i class="no-highlight">89</i>&nbsp;    }
+<i class="no-highlight">90</i>&nbsp;
+<i class="no-highlight">91</i>&nbsp;    @Override
+<i class="no-highlight">92</i>&nbsp;    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        return baseAggregatorFactory.getCursor(executionContext);</b>
+<i class="no-highlight">94</i>&nbsp;    }
+<i class="no-highlight">95</i>&nbsp;
+<i class="no-highlight">96</i>&nbsp;    @Override
+<i class="no-highlight">97</i>&nbsp;    public boolean recordCursorSupportsRandomAccess() {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        return baseAggregatorFactory.recordCursorSupportsRandomAccess();</b>
+<i class="no-highlight">99</i>&nbsp;    }
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;    @Override
+<i class="no-highlight">102</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        sink.type(&quot;DistinctKey&quot;);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        sink.child(baseAggregatorFactory);</b>
+<i class="no-highlight">105</i>&nbsp;    }
+<i class="no-highlight">106</i>&nbsp;
+<i class="no-highlight">107</i>&nbsp;    @Override
+<i class="no-highlight">108</i>&nbsp;    protected void _close() {
+<b class="fc"><i class="no-highlight">109</i>&nbsp;        baseAggregatorFactory.close();</b>
+<i class="no-highlight">110</i>&nbsp;    }
+<i class="no-highlight">111</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

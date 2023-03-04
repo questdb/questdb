@@ -1,0 +1,416 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > RuntimeIntervalModelBuilder</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.model</a>
+</div>
+
+<h1>Coverage Summary for Class: RuntimeIntervalModelBuilder (io.questdb.griffin.model)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">RuntimeIntervalModelBuilder</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (24/24)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.2%
+  </span>
+  <span class="absValue">
+    (131/132)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.model;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.LongList;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Mutable;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;/**
+<i class="no-highlight">35</i>&nbsp; * Collects interval during query parsing
+<i class="no-highlight">36</i>&nbsp; * and records them as 2 types:
+<i class="no-highlight">37</i>&nbsp; * - static list of intervals as 2 long points [lo, hi] in staticIntervals list
+<i class="no-highlight">38</i>&nbsp; * - dynamic list of functions.
+<i class="no-highlight">39</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">40</i>&nbsp; * When first interval involving function is added all data starts to be encoded in 4 longs in staticPeriods
+<i class="no-highlight">41</i>&nbsp; * 0: lo (long)
+<i class="no-highlight">42</i>&nbsp; * 1: hi (long)
+<i class="no-highlight">43</i>&nbsp; * 2: operation (short), period type (short), adjustment (short), dynamicIndicator (short)
+<i class="no-highlight">44</i>&nbsp; * 3: period (int), count (int)
+<i class="no-highlight">45</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">46</i>&nbsp; * and the index when it happens stored in pureStaticCount
+<i class="no-highlight">47</i>&nbsp; */
+<b class="fc"><i class="no-highlight">48</i>&nbsp;public class RuntimeIntervalModelBuilder implements Mutable {</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    private final ObjList&lt;Function&gt; dynamicRangeList = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">50</i>&nbsp;    // All data needed to re-evaluate intervals
+<i class="no-highlight">51</i>&nbsp;    // is stored in 2 lists - ListLong and List of functions
+<i class="no-highlight">52</i>&nbsp;    // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
+<i class="no-highlight">53</i>&nbsp;    // and pairs of static intervals in the end
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private final LongList staticIntervals = new LongList();</b>
+<i class="no-highlight">55</i>&nbsp;    private long betweenBoundary;
+<i class="no-highlight">56</i>&nbsp;    private Function betweenBoundaryFunc;
+<i class="no-highlight">57</i>&nbsp;    private boolean betweenBoundarySet;
+<i class="no-highlight">58</i>&nbsp;    private boolean betweenNegated;
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private boolean intervalApplied = false;</b>
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;    public RuntimeIntrinsicIntervalModel build() {
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        return new RuntimeIntervalModel(new LongList(staticIntervals), new ObjList&lt;&gt;(dynamicRangeList));</b>
+<i class="no-highlight">63</i>&nbsp;    }
+<i class="no-highlight">64</i>&nbsp;
+<i class="no-highlight">65</i>&nbsp;    @Override
+<i class="no-highlight">66</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        staticIntervals.clear();</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        dynamicRangeList.clear();</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        intervalApplied = false;</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        clearBetweenParsing();</b>
+<i class="no-highlight">71</i>&nbsp;    }
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    public void clearBetweenParsing() {
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        betweenBoundarySet = false;</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        betweenBoundaryFunc = null;</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        betweenBoundary = Numbers.LONG_NaN;</b>
+<i class="no-highlight">77</i>&nbsp;    }
+<i class="no-highlight">78</i>&nbsp;
+<i class="no-highlight">79</i>&nbsp;    public boolean hasIntervalFilters() {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        return intervalApplied;</b>
+<i class="no-highlight">81</i>&nbsp;    }
+<i class="no-highlight">82</i>&nbsp;
+<i class="no-highlight">83</i>&nbsp;    public void intersect(long lo, Function hi, short adjustment) {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        if (isEmptySet()) return;</b>
+<i class="no-highlight">85</i>&nbsp;
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        IntervalUtils.addHiLoInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        dynamicRangeList.add(hi);</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">89</i>&nbsp;    }
+<i class="no-highlight">90</i>&nbsp;
+<i class="no-highlight">91</i>&nbsp;    public void intersect(Function lo, long hi, short adjustment) {
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        if (isEmptySet()) return;</b>
+<i class="no-highlight">93</i>&nbsp;
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        IntervalUtils.addHiLoInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        dynamicRangeList.add(lo);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">97</i>&nbsp;    }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;    public void intersect(long lo, long hi) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        if (dynamicRangeList.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            staticIntervals.add(lo, hi);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;            if (intervalApplied) {</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;                IntervalUtils.intersectInplace(staticIntervals, staticIntervals.size() - 2);</b>
+<i class="no-highlight">105</i>&nbsp;            }
+<i class="no-highlight">106</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;            dynamicRangeList.add(null);</b>
+<i class="no-highlight">109</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">111</i>&nbsp;    }
+<i class="no-highlight">112</i>&nbsp;
+<i class="no-highlight">113</i>&nbsp;    public void intersectDynamicInterval(Function intervalStrFunction) {
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        dynamicRangeList.add(intervalStrFunction);</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">118</i>&nbsp;    }
+<i class="no-highlight">119</i>&nbsp;
+<i class="no-highlight">120</i>&nbsp;    public void intersectEmpty() {
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        clear();</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">123</i>&nbsp;    }
+<i class="no-highlight">124</i>&nbsp;
+<i class="no-highlight">125</i>&nbsp;    public void intersectEquals(Function function) {
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        if (isEmptySet()) return;</b>
+<i class="no-highlight">127</i>&nbsp;
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        dynamicRangeList.add(function);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">131</i>&nbsp;    }
+<i class="no-highlight">132</i>&nbsp;
+<i class="no-highlight">133</i>&nbsp;    public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        int size = staticIntervals.size();</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        if (dynamicRangeList.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;            if (intervalApplied) {</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                IntervalUtils.intersectInplace(staticIntervals, size);</b>
+<i class="no-highlight">141</i>&nbsp;            }
+<i class="no-highlight">142</i>&nbsp;        } else {
+<i class="no-highlight">143</i>&nbsp;            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+<b class="fc"><i class="no-highlight">144</i>&nbsp;            dynamicRangeList.add(null);</b>
+<i class="no-highlight">145</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        int size = staticIntervals.size();</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        IntervalUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        if (dynamicRangeList.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;            if (intervalApplied) {</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                IntervalUtils.intersectInplace(staticIntervals, size);</b>
+<i class="no-highlight">157</i>&nbsp;            }
+<i class="no-highlight">158</i>&nbsp;        } else {
+<i class="no-highlight">159</i>&nbsp;            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+<b class="fc"><i class="no-highlight">160</i>&nbsp;            dynamicRangeList.add(null);</b>
+<i class="no-highlight">161</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    public boolean isEmptySet() {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        return intervalApplied &amp;&amp; staticIntervals.size() == 0;</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    public void setBetweenBoundary(long timestamp) {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        if (!betweenBoundarySet) {</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;            betweenBoundary = timestamp;</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;            betweenBoundarySet = true;</b>
+<i class="no-highlight">173</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            if (betweenBoundaryFunc == null) {</b>
+<i class="no-highlight">175</i>&nbsp;                // Constant interval
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                long lo = Math.min(timestamp, betweenBoundary);</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                long hi = Math.max(timestamp, betweenBoundary);</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                if (hi == Numbers.LONG_NaN || lo == Numbers.LONG_NaN) {</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                    if (!betweenNegated) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                        intersectEmpty();</b>
+<i class="no-highlight">181</i>&nbsp;                    }
+<i class="no-highlight">182</i>&nbsp;                    // else {
+<i class="no-highlight">183</i>&nbsp;                    // NOT BETWEEN with NULL
+<i class="no-highlight">184</i>&nbsp;                    // to be consistent with non-designated filtering
+<i class="no-highlight">185</i>&nbsp;                    // do no filtering
+<i class="no-highlight">186</i>&nbsp;                    //  }
+<i class="no-highlight">187</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                    if (!betweenNegated) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                        intersect(lo, hi);</b>
+<i class="no-highlight">190</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                        subtractInterval(lo, hi);</b>
+<i class="no-highlight">192</i>&nbsp;                    }
+<i class="no-highlight">193</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);</b>
+<i class="no-highlight">196</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            betweenBoundarySet = false;</b>
+<i class="no-highlight">198</i>&nbsp;        }
+<i class="no-highlight">199</i>&nbsp;    }
+<i class="no-highlight">200</i>&nbsp;
+<i class="no-highlight">201</i>&nbsp;    public void setBetweenBoundary(Function timestamp) {
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        if (!betweenBoundarySet) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;            betweenBoundaryFunc = timestamp;</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            betweenBoundarySet = true;</b>
+<i class="no-highlight">205</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            if (betweenBoundaryFunc == null) {</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                intersectBetweenSemiDynamic(timestamp, betweenBoundary);</b>
+<i class="no-highlight">208</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);</b>
+<i class="no-highlight">210</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">211</i>&nbsp;            betweenBoundarySet = false;</b>
+<i class="no-highlight">212</i>&nbsp;        }
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    public void setBetweenNegated(boolean isNegated) {
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        betweenNegated = isNegated;</b>
+<i class="no-highlight">217</i>&nbsp;    }
+<i class="no-highlight">218</i>&nbsp;
+<i class="no-highlight">219</i>&nbsp;    public void subtractEquals(Function function) {
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        if (isEmptySet()) return;</b>
+<i class="no-highlight">221</i>&nbsp;
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        dynamicRangeList.add(function);</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">225</i>&nbsp;    }
+<i class="no-highlight">226</i>&nbsp;
+<i class="no-highlight">227</i>&nbsp;    public void subtractInterval(long lo, long hi) {
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;        if (dynamicRangeList.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;            int size = staticIntervals.size();</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;            staticIntervals.add(lo, hi);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            IntervalUtils.invert(staticIntervals, size);</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;            if (intervalApplied) {</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                IntervalUtils.intersectInplace(staticIntervals, size);</b>
+<i class="no-highlight">235</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;            dynamicRangeList.add(null);</b>
+<i class="no-highlight">239</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">241</i>&nbsp;    }
+<i class="no-highlight">242</i>&nbsp;
+<i class="no-highlight">243</i>&nbsp;    public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        int size = staticIntervals.size();</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        if (dynamicRangeList.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;            IntervalUtils.invert(staticIntervals, size);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;            if (intervalApplied) {</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;                IntervalUtils.intersectInplace(staticIntervals, size);</b>
+<i class="no-highlight">252</i>&nbsp;            }
+<i class="no-highlight">253</i>&nbsp;        } else {
+<i class="no-highlight">254</i>&nbsp;            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            dynamicRangeList.add(null);</b>
+<i class="no-highlight">256</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">258</i>&nbsp;    }
+<i class="no-highlight">259</i>&nbsp;
+<i class="no-highlight">260</i>&nbsp;    public void subtractRuntimeInterval(Function intervalStrFunction) {
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        dynamicRangeList.add(intervalStrFunction);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">265</i>&nbsp;    }
+<i class="no-highlight">266</i>&nbsp;
+<i class="no-highlight">267</i>&nbsp;    public void union(long lo, long hi) {
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        if (isEmptySet()) return;</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        if (dynamicRangeList.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            staticIntervals.add(lo, hi);</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;            if (intervalApplied) {</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                IntervalUtils.unionInplace(staticIntervals, staticIntervals.size() - 2);</b>
+<i class="no-highlight">273</i>&nbsp;            }
+<i class="no-highlight">274</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">275</i>&nbsp;            throw new UnsupportedOperationException();</b>
+<i class="no-highlight">276</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">278</i>&nbsp;    }
+<i class="no-highlight">279</i>&nbsp;
+<i class="no-highlight">280</i>&nbsp;    private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        if (isEmptySet()) return;</b>
+<i class="no-highlight">282</i>&nbsp;
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        dynamicRangeList.add(funcValue1);</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;        dynamicRangeList.add(funcValue2);</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">289</i>&nbsp;    }
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;    private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        if (constValue == Numbers.LONG_NaN) {</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;            if (!betweenNegated) {</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                intersectEmpty();</b>
+<i class="no-highlight">295</i>&nbsp;            }
+<i class="no-highlight">296</i>&nbsp;            // else {
+<i class="no-highlight">297</i>&nbsp;            // NOT BETWEEN with NULL
+<i class="no-highlight">298</i>&nbsp;            // to be consistent with non-designated filtering
+<i class="no-highlight">299</i>&nbsp;            // do no filtering
+<i class="no-highlight">300</i>&nbsp;            // }
+<i class="no-highlight">301</i>&nbsp;            return;
+<i class="no-highlight">302</i>&nbsp;        }
+<i class="no-highlight">303</i>&nbsp;
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        if (isEmptySet()) return;</b>
+<i class="no-highlight">305</i>&nbsp;
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;        IntervalUtils.addHiLoInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;        dynamicRangeList.add(funcValue);</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        intervalApplied = true;</b>
+<i class="no-highlight">310</i>&nbsp;    }
+<i class="no-highlight">311</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

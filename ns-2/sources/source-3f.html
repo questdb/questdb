@@ -1,0 +1,1199 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > O3CopyJob</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: O3CopyJob (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">O3CopyJob</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (18/18)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.7%
+  </span>
+  <span class="absValue">
+    (236/239)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.MessageBus;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.mp.AbstractQueueConsumerJob;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.mp.Sequence;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.FilesFacade;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.Vect;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.tasks.O3CopyTask;
+<i class="no-highlight">37</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import java.util.concurrent.atomic.AtomicInteger;
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;import static io.questdb.cairo.TableWriter.*;
+<i class="no-highlight">42</i>&nbsp;
+<b class="fc"><i class="no-highlight">43</i>&nbsp;public class O3CopyJob extends AbstractQueueConsumerJob&lt;O3CopyTask&gt; {</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    private static final Log LOG = LogFactory.getLog(O3CopyJob.class);</b>
+<i class="no-highlight">45</i>&nbsp;
+<i class="no-highlight">46</i>&nbsp;    public O3CopyJob(MessageBus messageBus) {
+<b class="fc"><i class="no-highlight">47</i>&nbsp;        super(messageBus.getO3CopyQueue(), messageBus.getO3CopySubSeq());</b>
+<i class="no-highlight">48</i>&nbsp;    }
+<i class="no-highlight">49</i>&nbsp;
+<i class="no-highlight">50</i>&nbsp;    public static void copy(
+<i class="no-highlight">51</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">52</i>&nbsp;            @Nullable AtomicInteger partCounter,
+<i class="no-highlight">53</i>&nbsp;            int columnType,
+<i class="no-highlight">54</i>&nbsp;            int blockType,
+<i class="no-highlight">55</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">56</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">57</i>&nbsp;            int srcDataFixFd,
+<i class="no-highlight">58</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">59</i>&nbsp;            long srcDataFixOffset,
+<i class="no-highlight">60</i>&nbsp;            long srcDataFixSize,
+<i class="no-highlight">61</i>&nbsp;            int srcDataVarFd,
+<i class="no-highlight">62</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">63</i>&nbsp;            long srcDataVarOffset,
+<i class="no-highlight">64</i>&nbsp;            long srcDataVarSize,
+<i class="no-highlight">65</i>&nbsp;            long srcDataLo,
+<i class="no-highlight">66</i>&nbsp;            long srcDataHi,
+<i class="no-highlight">67</i>&nbsp;            long srcDataTop,
+<i class="no-highlight">68</i>&nbsp;            long srcDataMax,
+<i class="no-highlight">69</i>&nbsp;            long srcOooFixAddr,
+<i class="no-highlight">70</i>&nbsp;            long srcOooVarAddr,
+<i class="no-highlight">71</i>&nbsp;            long srcOooLo,
+<i class="no-highlight">72</i>&nbsp;            long srcOooHi,
+<i class="no-highlight">73</i>&nbsp;            long srcOooMax,
+<i class="no-highlight">74</i>&nbsp;            long srcOooPartitionLo,
+<i class="no-highlight">75</i>&nbsp;            long srcOooPartitionHi,
+<i class="no-highlight">76</i>&nbsp;            long timestampMin,
+<i class="no-highlight">77</i>&nbsp;            long timestampMax,
+<i class="no-highlight">78</i>&nbsp;            long partitionTimestamp, // &lt;-- this is used to determine if partition is last or not as well as partition dir
+<i class="no-highlight">79</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">80</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">81</i>&nbsp;            long dstFixOffset,
+<i class="no-highlight">82</i>&nbsp;            long dstFixFileOffset,
+<i class="no-highlight">83</i>&nbsp;            long dstFixSize,
+<i class="no-highlight">84</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">85</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">86</i>&nbsp;            long dstVarOffset,
+<i class="no-highlight">87</i>&nbsp;            long dstVarOffsetEnd,
+<i class="no-highlight">88</i>&nbsp;            long dstVarAdjust,
+<i class="no-highlight">89</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">90</i>&nbsp;            int dstKFd,
+<i class="no-highlight">91</i>&nbsp;            int dstVFd,
+<i class="no-highlight">92</i>&nbsp;            long dstIndexOffset,
+<i class="no-highlight">93</i>&nbsp;            long dstIndexAdjust,
+<i class="no-highlight">94</i>&nbsp;            int indexBlockCapacity,
+<i class="no-highlight">95</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">96</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">97</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">98</i>&nbsp;            boolean partitionMutates,
+<i class="no-highlight">99</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">100</i>&nbsp;            BitmapIndexWriter indexWriter
+<i class="no-highlight">101</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        final boolean directIoFlag = tableWriter.preferDirectIO();</b>
+<i class="no-highlight">103</i>&nbsp;
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        LOG.debug().$(&quot;o3 copy [blockType=&quot;).$(blockType)</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                .$(&quot;, columnType=&quot;).$(columnType)</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;                .$(&quot;, dstFixFd=&quot;).$(dstFixFd)</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;                .$(&quot;, dstFixSize=&quot;).$(dstFixSize)</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                .$(&quot;, dstFixOffset=&quot;).$(dstFixOffset)</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                .$(&quot;, dstVarFd=&quot;).$(dstVarFd)</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                .$(&quot;, dstVarSize=&quot;).$(dstVarSize)</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;                .$(&quot;, dstVarOffset=&quot;).$(dstVarOffset)</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                .$(&quot;, srcDataLo=&quot;).$(srcDataLo)</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                .$(&quot;, srcDataHi=&quot;).$(srcDataHi)</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                .$(&quot;, srcDataMax=&quot;).$(srcDataMax)</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                .$(&quot;, srcOooLo=&quot;).$(srcOooLo)</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                .$(&quot;, srcOooHi=&quot;).$(srcOooHi)</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                .$(&quot;, srcOooMax=&quot;).$(srcOooMax)</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                .$(&quot;, srcOooPartitionLo=&quot;).$(srcOooPartitionLo)</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                .$(&quot;, srcOooPartitionHi=&quot;).$(srcOooPartitionHi)</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                .$(&quot;, directIoFlag=&quot;).$(directIoFlag)</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                .I$();</b>
+<i class="no-highlight">122</i>&nbsp;
+<i class="no-highlight">123</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">124</i>&nbsp;            switch (blockType) {</b>
+<i class="no-highlight">125</i>&nbsp;                case O3_BLOCK_MERGE:
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                    mergeCopy(</b>
+<i class="no-highlight">127</i>&nbsp;                            columnType,
+<i class="no-highlight">128</i>&nbsp;                            timestampMergeIndexAddr,
+<i class="no-highlight">129</i>&nbsp;                            // this is a hack, when we have column top we can have only of the two:
+<i class="no-highlight">130</i>&nbsp;                            // srcDataFixOffset, when we had to shift data to back-fill nulls or
+<i class="no-highlight">131</i>&nbsp;                            // srcDataTopOffset - if we kept the column top
+<i class="no-highlight">132</i>&nbsp;                            // when one value is present the other will be 0
+<i class="no-highlight">133</i>&nbsp;                            srcDataFixAddr + srcDataFixOffset - srcDataTop,
+<i class="no-highlight">134</i>&nbsp;                            srcDataVarAddr + srcDataVarOffset,
+<i class="no-highlight">135</i>&nbsp;                            srcDataLo,
+<i class="no-highlight">136</i>&nbsp;                            srcDataHi,
+<i class="no-highlight">137</i>&nbsp;                            srcOooFixAddr,
+<i class="no-highlight">138</i>&nbsp;                            srcOooVarAddr,
+<i class="no-highlight">139</i>&nbsp;                            srcOooLo,
+<i class="no-highlight">140</i>&nbsp;                            srcOooHi,
+<i class="no-highlight">141</i>&nbsp;                            dstFixAddr + dstFixOffset,
+<i class="no-highlight">142</i>&nbsp;                            dstVarAddr,
+<i class="no-highlight">143</i>&nbsp;                            dstVarOffset,
+<i class="no-highlight">144</i>&nbsp;                            dstVarOffsetEnd
+<i class="no-highlight">145</i>&nbsp;                    );
+<b class="fc"><i class="no-highlight">146</i>&nbsp;                    break;</b>
+<i class="no-highlight">147</i>&nbsp;                case O3_BLOCK_O3:
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                    copyO3(</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                            tableWriter.getFilesFacade(),</b>
+<i class="no-highlight">150</i>&nbsp;                            columnType,
+<i class="no-highlight">151</i>&nbsp;                            srcOooFixAddr,
+<i class="no-highlight">152</i>&nbsp;                            srcOooVarAddr,
+<i class="no-highlight">153</i>&nbsp;                            srcOooLo,
+<i class="no-highlight">154</i>&nbsp;                            srcOooHi,
+<i class="no-highlight">155</i>&nbsp;                            dstFixFd,
+<i class="no-highlight">156</i>&nbsp;                            dstFixAddr + dstFixOffset,
+<i class="no-highlight">157</i>&nbsp;                            dstFixFileOffset,
+<i class="no-highlight">158</i>&nbsp;                            dstVarAddr,
+<i class="no-highlight">159</i>&nbsp;                            dstVarFd,
+<i class="no-highlight">160</i>&nbsp;                            dstVarOffset,
+<i class="no-highlight">161</i>&nbsp;                            dstVarAdjust,
+<i class="no-highlight">162</i>&nbsp;                            dstVarSize,
+<i class="no-highlight">163</i>&nbsp;                            directIoFlag
+<i class="no-highlight">164</i>&nbsp;                    );
+<b class="fc"><i class="no-highlight">165</i>&nbsp;                    break;</b>
+<i class="no-highlight">166</i>&nbsp;                case O3_BLOCK_DATA:
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                    copyData(</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                            tableWriter.getFilesFacade(),</b>
+<i class="no-highlight">169</i>&nbsp;                            columnType,
+<i class="no-highlight">170</i>&nbsp;                            srcDataFixAddr + srcDataFixOffset,
+<i class="no-highlight">171</i>&nbsp;                            srcDataVarAddr + srcDataVarOffset,
+<i class="no-highlight">172</i>&nbsp;                            srcDataLo,
+<i class="no-highlight">173</i>&nbsp;                            srcDataHi,
+<i class="no-highlight">174</i>&nbsp;                            dstFixAddr + dstFixOffset,
+<i class="no-highlight">175</i>&nbsp;                            dstFixFd,
+<i class="no-highlight">176</i>&nbsp;                            dstFixFileOffset,
+<i class="no-highlight">177</i>&nbsp;                            dstVarAddr,
+<i class="no-highlight">178</i>&nbsp;                            dstVarFd,
+<i class="no-highlight">179</i>&nbsp;                            dstVarOffset,
+<i class="no-highlight">180</i>&nbsp;                            dstVarAdjust,
+<i class="no-highlight">181</i>&nbsp;                            dstVarSize,
+<i class="no-highlight">182</i>&nbsp;                            directIoFlag
+<i class="no-highlight">183</i>&nbsp;                    );
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                    break;</b>
+<i class="no-highlight">185</i>&nbsp;                default:
+<i class="no-highlight">186</i>&nbsp;                    break;
+<i class="no-highlight">187</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        } catch (Throwable th) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;            FilesFacade ff = tableWriter.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);</b>
+<i class="no-highlight">194</i>&nbsp;
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            closeColumnIdle(</b>
+<i class="no-highlight">196</i>&nbsp;                    columnCounter,
+<i class="no-highlight">197</i>&nbsp;                    timestampMergeIndexAddr,
+<i class="no-highlight">198</i>&nbsp;                    timestampMergeIndexSize,
+<i class="no-highlight">199</i>&nbsp;                    srcTimestampFd,
+<i class="no-highlight">200</i>&nbsp;                    srcTimestampAddr,
+<i class="no-highlight">201</i>&nbsp;                    srcTimestampSize,
+<i class="no-highlight">202</i>&nbsp;                    tableWriter
+<i class="no-highlight">203</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            throw th;</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;        }</b>
+<i class="no-highlight">206</i>&nbsp;
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        copyTail(</b>
+<i class="no-highlight">208</i>&nbsp;                columnCounter,
+<i class="no-highlight">209</i>&nbsp;                partCounter,
+<i class="no-highlight">210</i>&nbsp;                timestampMergeIndexAddr,
+<i class="no-highlight">211</i>&nbsp;                timestampMergeIndexSize,
+<i class="no-highlight">212</i>&nbsp;                srcDataFixFd,
+<i class="no-highlight">213</i>&nbsp;                srcDataFixAddr,
+<i class="no-highlight">214</i>&nbsp;                srcDataFixSize,
+<i class="no-highlight">215</i>&nbsp;                srcDataVarFd,
+<i class="no-highlight">216</i>&nbsp;                srcDataVarAddr,
+<i class="no-highlight">217</i>&nbsp;                srcDataVarSize,
+<i class="no-highlight">218</i>&nbsp;                srcDataMax,
+<i class="no-highlight">219</i>&nbsp;                srcOooMax,
+<i class="no-highlight">220</i>&nbsp;                srcOooPartitionLo,
+<i class="no-highlight">221</i>&nbsp;                srcOooPartitionHi,
+<i class="no-highlight">222</i>&nbsp;                timestampMin,
+<i class="no-highlight">223</i>&nbsp;                timestampMax,
+<i class="no-highlight">224</i>&nbsp;                partitionTimestamp,
+<i class="no-highlight">225</i>&nbsp;                dstFixFd,
+<i class="no-highlight">226</i>&nbsp;                dstFixAddr,
+<i class="no-highlight">227</i>&nbsp;                dstFixSize,
+<i class="no-highlight">228</i>&nbsp;                dstVarFd,
+<i class="no-highlight">229</i>&nbsp;                dstVarAddr,
+<i class="no-highlight">230</i>&nbsp;                dstVarSize,
+<i class="no-highlight">231</i>&nbsp;                dstKFd,
+<i class="no-highlight">232</i>&nbsp;                dstVFd,
+<i class="no-highlight">233</i>&nbsp;                dstIndexOffset,
+<i class="no-highlight">234</i>&nbsp;                dstIndexAdjust,
+<i class="no-highlight">235</i>&nbsp;                indexBlockCapacity,
+<i class="no-highlight">236</i>&nbsp;                srcTimestampFd,
+<i class="no-highlight">237</i>&nbsp;                srcTimestampAddr,
+<i class="no-highlight">238</i>&nbsp;                srcTimestampSize,
+<i class="no-highlight">239</i>&nbsp;                partitionMutates,
+<i class="no-highlight">240</i>&nbsp;                tableWriter,
+<i class="no-highlight">241</i>&nbsp;                indexWriter
+<i class="no-highlight">242</i>&nbsp;        );
+<i class="no-highlight">243</i>&nbsp;    }
+<i class="no-highlight">244</i>&nbsp;
+<i class="no-highlight">245</i>&nbsp;    public static void copy(O3CopyTask task, long cursor, Sequence subSeq) {
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        final AtomicInteger columnCounter = task.getColumnCounter();</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        final AtomicInteger partCounter = task.getPartCounter();</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        final int columnType = task.getColumnType();</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        final int blockType = task.getBlockType();</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        final long timestampMergeIndexSize = task.getTimestampMergeIndexSize();</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        final int srcDataFixFd = task.getSrcDataFixFd();</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        final long srcDataFixAddr = task.getSrcDataFixAddr();</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        final long srcDataFixOffset = task.getSrcDataFixOffset();</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;        final long srcDataFixSize = task.getSrcDataFixSize();</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        final int srcDataVarFd = task.getSrcDataVarFd();</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        final long srcDataVarAddr = task.getSrcDataVarAddr();</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        final long srcDataVarOffset = task.getSrcDataVarOffset();</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        final long srcDataVarSize = task.getSrcDataVarSize();</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        final long srcDataTop = task.getSrcDataTop();</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        final long srcDataLo = task.getSrcDataLo();</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        final long srcDataMax = task.getSrcDataMax();</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        final long srcDataHi = task.getSrcDataHi();</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        final long srcOooFixAddr = task.getSrcOooFixAddr();</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        final long srcOooVarAddr = task.getSrcOooVarAddr();</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        final long srcOooLo = task.getSrcOooLo();</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        final long srcOooHi = task.getSrcOooHi();</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        final long srcOooMax = task.getSrcOooMax();</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        final long srcOooPartitionLo = task.getSrcOooPartitionLo();</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        final long srcOooPartitionHi = task.getSrcOooPartitionHi();</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;        final long timestampMin = task.getTimestampMin();</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        final long timestampMax = task.getTimestampMax();</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        final long partitionTimestamp = task.getPartitionTimestamp();</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        final int dstFixFd = task.getDstFixFd();</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;        final long dstFixAddr = task.getDstFixAddr();</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;        final long dstFixOffset = task.getDstFixOffset();</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        final long dstFixFileOffset = task.getDstFixFileOffset();</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        final long dstFixSize = task.getDstFixSize();</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        final int dstVarFd = task.getDstVarFd();</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        final long dstVarAddr = task.getDstVarAddr();</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        final long dstVarOffset = task.getDstVarOffset();</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        final long dstVarOffsetEnd = task.getDstVarOffsetEnd();</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        final long dstVarAdjust = task.getDstVarAdjust();</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        final long dstVarSize = task.getDstVarSize();</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        final int dstKFd = task.getDstKFd();</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        final int dskVFd = task.getDstVFd();</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;        final long dstIndexOffset = task.getDstIndexOffset();</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        final long dstIndexAdjust = task.getDstIndexAdjust();</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        final int indexBlockCapacity = task.getIndexBlockCapacity();</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        final int srcTimestampFd = task.getSrcTimestampFd();</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        final long srcTimestampAddr = task.getSrcTimestampAddr();</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        final long srcTimestampSize = task.getSrcTimestampSize();</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        final boolean partitionMutates = task.isPartitionMutates();</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;        final TableWriter tableWriter = task.getTableWriter();</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        final BitmapIndexWriter indexWriter = task.getIndexWriter();</b>
+<i class="no-highlight">296</i>&nbsp;
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        subSeq.done(cursor);</b>
+<i class="no-highlight">298</i>&nbsp;
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        copy(</b>
+<i class="no-highlight">300</i>&nbsp;                columnCounter,
+<i class="no-highlight">301</i>&nbsp;                partCounter,
+<i class="no-highlight">302</i>&nbsp;                columnType,
+<i class="no-highlight">303</i>&nbsp;                blockType,
+<i class="no-highlight">304</i>&nbsp;                timestampMergeIndexAddr,
+<i class="no-highlight">305</i>&nbsp;                timestampMergeIndexSize,
+<i class="no-highlight">306</i>&nbsp;                srcDataFixFd,
+<i class="no-highlight">307</i>&nbsp;                srcDataFixAddr,
+<i class="no-highlight">308</i>&nbsp;                srcDataFixOffset,
+<i class="no-highlight">309</i>&nbsp;                srcDataFixSize,
+<i class="no-highlight">310</i>&nbsp;                srcDataVarFd,
+<i class="no-highlight">311</i>&nbsp;                srcDataVarAddr,
+<i class="no-highlight">312</i>&nbsp;                srcDataVarOffset,
+<i class="no-highlight">313</i>&nbsp;                srcDataVarSize,
+<i class="no-highlight">314</i>&nbsp;                srcDataLo,
+<i class="no-highlight">315</i>&nbsp;                srcDataHi,
+<i class="no-highlight">316</i>&nbsp;                srcDataTop,
+<i class="no-highlight">317</i>&nbsp;                srcDataMax,
+<i class="no-highlight">318</i>&nbsp;                srcOooFixAddr,
+<i class="no-highlight">319</i>&nbsp;                srcOooVarAddr,
+<i class="no-highlight">320</i>&nbsp;                srcOooLo,
+<i class="no-highlight">321</i>&nbsp;                srcOooHi,
+<i class="no-highlight">322</i>&nbsp;                srcOooMax,
+<i class="no-highlight">323</i>&nbsp;                srcOooPartitionLo,
+<i class="no-highlight">324</i>&nbsp;                srcOooPartitionHi,
+<i class="no-highlight">325</i>&nbsp;                timestampMin,
+<i class="no-highlight">326</i>&nbsp;                timestampMax,
+<i class="no-highlight">327</i>&nbsp;                partitionTimestamp,
+<i class="no-highlight">328</i>&nbsp;                dstFixFd,
+<i class="no-highlight">329</i>&nbsp;                dstFixAddr,
+<i class="no-highlight">330</i>&nbsp;                dstFixOffset,
+<i class="no-highlight">331</i>&nbsp;                dstFixFileOffset,
+<i class="no-highlight">332</i>&nbsp;                dstFixSize,
+<i class="no-highlight">333</i>&nbsp;                dstVarFd,
+<i class="no-highlight">334</i>&nbsp;                dstVarAddr,
+<i class="no-highlight">335</i>&nbsp;                dstVarOffset,
+<i class="no-highlight">336</i>&nbsp;                dstVarOffsetEnd,
+<i class="no-highlight">337</i>&nbsp;                dstVarAdjust,
+<i class="no-highlight">338</i>&nbsp;                dstVarSize,
+<i class="no-highlight">339</i>&nbsp;                dstKFd,
+<i class="no-highlight">340</i>&nbsp;                dskVFd,
+<i class="no-highlight">341</i>&nbsp;                dstIndexOffset,
+<i class="no-highlight">342</i>&nbsp;                dstIndexAdjust,
+<i class="no-highlight">343</i>&nbsp;                indexBlockCapacity,
+<i class="no-highlight">344</i>&nbsp;                srcTimestampFd,
+<i class="no-highlight">345</i>&nbsp;                srcTimestampAddr,
+<i class="no-highlight">346</i>&nbsp;                srcTimestampSize,
+<i class="no-highlight">347</i>&nbsp;                partitionMutates,
+<i class="no-highlight">348</i>&nbsp;                tableWriter,
+<i class="no-highlight">349</i>&nbsp;                indexWriter
+<i class="no-highlight">350</i>&nbsp;        );
+<i class="no-highlight">351</i>&nbsp;    }
+<i class="no-highlight">352</i>&nbsp;
+<i class="no-highlight">353</i>&nbsp;    private static void copyData(
+<i class="no-highlight">354</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">355</i>&nbsp;            int columnType,
+<i class="no-highlight">356</i>&nbsp;            long srcFixAddr,
+<i class="no-highlight">357</i>&nbsp;            long srcVarAddr,
+<i class="no-highlight">358</i>&nbsp;            long srcLo,
+<i class="no-highlight">359</i>&nbsp;            long srcHi,
+<i class="no-highlight">360</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">361</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">362</i>&nbsp;            long dstFixFileOffset,
+<i class="no-highlight">363</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">364</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">365</i>&nbsp;            long dstVarOffset,
+<i class="no-highlight">366</i>&nbsp;            long dstVarAdjust,
+<i class="no-highlight">367</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">368</i>&nbsp;            boolean directIoFlag
+<i class="no-highlight">369</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">371</i>&nbsp;            case ColumnType.STRING:
+<i class="no-highlight">372</i>&nbsp;            case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">373</i>&nbsp;                copyVarSizeCol(</b>
+<i class="no-highlight">374</i>&nbsp;                        ff,
+<i class="no-highlight">375</i>&nbsp;                        srcFixAddr,
+<i class="no-highlight">376</i>&nbsp;                        srcVarAddr,
+<i class="no-highlight">377</i>&nbsp;                        srcLo,
+<i class="no-highlight">378</i>&nbsp;                        srcHi,
+<i class="no-highlight">379</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">380</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">381</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">382</i>&nbsp;                        dstVarAddr,
+<i class="no-highlight">383</i>&nbsp;                        dstVarFd,
+<i class="no-highlight">384</i>&nbsp;                        dstVarOffset,
+<i class="no-highlight">385</i>&nbsp;                        dstVarAdjust,
+<i class="no-highlight">386</i>&nbsp;                        dstVarSize,
+<i class="no-highlight">387</i>&nbsp;                        directIoFlag
+<i class="no-highlight">388</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                break;</b>
+<i class="no-highlight">390</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">392</i>&nbsp;                        ff,
+<i class="no-highlight">393</i>&nbsp;                        srcFixAddr,
+<i class="no-highlight">394</i>&nbsp;                        srcLo,
+<i class="no-highlight">395</i>&nbsp;                        srcHi,
+<i class="no-highlight">396</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">397</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">398</i>&nbsp;                        dstFixFd,
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                        ColumnType.pow2SizeOf(Math.abs(columnType)),</b>
+<i class="no-highlight">400</i>&nbsp;                        directIoFlag
+<i class="no-highlight">401</i>&nbsp;                );
+<i class="no-highlight">402</i>&nbsp;                break;
+<i class="no-highlight">403</i>&nbsp;        }
+<i class="no-highlight">404</i>&nbsp;    }
+<i class="no-highlight">405</i>&nbsp;
+<i class="no-highlight">406</i>&nbsp;    private static void copyFixedSizeCol(
+<i class="no-highlight">407</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">408</i>&nbsp;            long src,
+<i class="no-highlight">409</i>&nbsp;            long srcLo,
+<i class="no-highlight">410</i>&nbsp;            long srcHi,
+<i class="no-highlight">411</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">412</i>&nbsp;            long dstFixFileOffset,
+<i class="no-highlight">413</i>&nbsp;            int dstFd,
+<i class="no-highlight">414</i>&nbsp;            final int shl,
+<i class="no-highlight">415</i>&nbsp;            boolean directIoFlag
+<i class="no-highlight">416</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">417</i>&nbsp;        final long len = (srcHi - srcLo + 1) &lt;&lt; shl;</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;        final long fromAddress = src + (srcLo &lt;&lt; shl);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;        if (directIoFlag) {</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                throw CairoException.critical(ff.errno()).put(&quot;cannot copy fixed column prefix [fd=&quot;)</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                        .put(dstFd).put(&quot;, len=&quot;).put(len).put(&quot;, offset=&quot;).put(fromAddress).put(&#39;]&#39;);</b>
+<i class="no-highlight">423</i>&nbsp;            }
+<i class="no-highlight">424</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">425</i>&nbsp;            Vect.memcpy(dstFixAddr, fromAddress, len);</b>
+<i class="no-highlight">426</i>&nbsp;        }
+<i class="no-highlight">427</i>&nbsp;    }
+<i class="no-highlight">428</i>&nbsp;
+<i class="no-highlight">429</i>&nbsp;    private static void copyTail(
+<i class="no-highlight">430</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">431</i>&nbsp;            @Nullable AtomicInteger partCounter,
+<i class="no-highlight">432</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">433</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">434</i>&nbsp;            int srcDataFixFd,
+<i class="no-highlight">435</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">436</i>&nbsp;            long srcDataFixSize,
+<i class="no-highlight">437</i>&nbsp;            int srcDataVarFd,
+<i class="no-highlight">438</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">439</i>&nbsp;            long srcDataVarSize,
+<i class="no-highlight">440</i>&nbsp;            long srcDataMax,
+<i class="no-highlight">441</i>&nbsp;            long srcOooMax,
+<i class="no-highlight">442</i>&nbsp;            long srcOooPartitionLo,
+<i class="no-highlight">443</i>&nbsp;            long srcOooPartitionHi,
+<i class="no-highlight">444</i>&nbsp;            long timestampMin,
+<i class="no-highlight">445</i>&nbsp;            long timestampMax,
+<i class="no-highlight">446</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">447</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">448</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">449</i>&nbsp;            long dstFixSize,
+<i class="no-highlight">450</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">451</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">452</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">453</i>&nbsp;            int dstKFd,
+<i class="no-highlight">454</i>&nbsp;            int dstVFd,
+<i class="no-highlight">455</i>&nbsp;            long dstIndexOffset,
+<i class="no-highlight">456</i>&nbsp;            long dstIndexAdjust,
+<i class="no-highlight">457</i>&nbsp;            int indexBlockCapacity,
+<i class="no-highlight">458</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">459</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">460</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">461</i>&nbsp;            boolean partitionMutates,
+<i class="no-highlight">462</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">463</i>&nbsp;            BitmapIndexWriter indexWriter
+<i class="no-highlight">464</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        if (partCounter == null || partCounter.decrementAndGet() == 0) {</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;            final FilesFacade ff = tableWriter.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;            if (indexBlockCapacity &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                updateIndex(</b>
+<i class="no-highlight">469</i>&nbsp;                        columnCounter,
+<i class="no-highlight">470</i>&nbsp;                        timestampMergeIndexAddr,
+<i class="no-highlight">471</i>&nbsp;                        timestampMergeIndexSize,
+<i class="no-highlight">472</i>&nbsp;                        srcDataFixFd,
+<i class="no-highlight">473</i>&nbsp;                        srcDataFixAddr,
+<i class="no-highlight">474</i>&nbsp;                        srcDataFixSize,
+<i class="no-highlight">475</i>&nbsp;                        srcDataVarFd,
+<i class="no-highlight">476</i>&nbsp;                        srcDataVarAddr,
+<i class="no-highlight">477</i>&nbsp;                        srcDataVarSize,
+<i class="no-highlight">478</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">479</i>&nbsp;                        dstFixAddr,
+<b class="fc"><i class="no-highlight">480</i>&nbsp;                        Math.abs(dstFixSize),</b>
+<i class="no-highlight">481</i>&nbsp;                        dstVarFd,
+<i class="no-highlight">482</i>&nbsp;                        dstVarAddr,
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                        Math.abs(dstVarSize),</b>
+<i class="no-highlight">484</i>&nbsp;                        dstKFd,
+<i class="no-highlight">485</i>&nbsp;                        dstVFd,
+<i class="no-highlight">486</i>&nbsp;                        dstIndexOffset,
+<i class="no-highlight">487</i>&nbsp;                        dstIndexAdjust,
+<i class="no-highlight">488</i>&nbsp;                        srcTimestampFd,
+<i class="no-highlight">489</i>&nbsp;                        srcTimestampAddr,
+<i class="no-highlight">490</i>&nbsp;                        srcTimestampSize,
+<i class="no-highlight">491</i>&nbsp;                        tableWriter,
+<i class="no-highlight">492</i>&nbsp;                        indexWriter,
+<i class="no-highlight">493</i>&nbsp;                        indexBlockCapacity
+<i class="no-highlight">494</i>&nbsp;                );
+<i class="no-highlight">495</i>&nbsp;            }
+<i class="no-highlight">496</i>&nbsp;
+<i class="no-highlight">497</i>&nbsp;            // unmap memory
+<b class="fc"><i class="no-highlight">498</i>&nbsp;            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);</b>
+<i class="no-highlight">502</i>&nbsp;
+<b class="fc"><i class="no-highlight">503</i>&nbsp;            final int columnsRemaining = columnCounter.decrementAndGet();</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;            LOG.debug()</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                    .$(&quot;organic [columnsRemaining=&quot;).$(columnsRemaining)</b>
+<b class="fc"><i class="no-highlight">506</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">507</i>&nbsp;
+<b class="fc"><i class="no-highlight">508</i>&nbsp;            if (columnsRemaining == 0) {</b>
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                updatePartition(</b>
+<i class="no-highlight">510</i>&nbsp;                        timestampMergeIndexAddr,
+<i class="no-highlight">511</i>&nbsp;                        timestampMergeIndexSize,
+<i class="no-highlight">512</i>&nbsp;                        srcDataMax,
+<i class="no-highlight">513</i>&nbsp;                        srcOooMax,
+<i class="no-highlight">514</i>&nbsp;                        srcOooPartitionLo,
+<i class="no-highlight">515</i>&nbsp;                        srcOooPartitionHi,
+<i class="no-highlight">516</i>&nbsp;                        timestampMin,
+<i class="no-highlight">517</i>&nbsp;                        timestampMax,
+<i class="no-highlight">518</i>&nbsp;                        partitionTimestamp,
+<i class="no-highlight">519</i>&nbsp;                        srcTimestampFd,
+<i class="no-highlight">520</i>&nbsp;                        srcTimestampAddr,
+<i class="no-highlight">521</i>&nbsp;                        srcTimestampSize,
+<i class="no-highlight">522</i>&nbsp;                        partitionMutates,
+<i class="no-highlight">523</i>&nbsp;                        tableWriter
+<i class="no-highlight">524</i>&nbsp;                );
+<i class="no-highlight">525</i>&nbsp;            }
+<i class="no-highlight">526</i>&nbsp;        }
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;    private static void copyVarSizeCol(
+<i class="no-highlight">530</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">531</i>&nbsp;            long srcFixAddr,
+<i class="no-highlight">532</i>&nbsp;            long srcVarAddr,
+<i class="no-highlight">533</i>&nbsp;            long srcLo,
+<i class="no-highlight">534</i>&nbsp;            long srcHi,
+<i class="no-highlight">535</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">536</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">537</i>&nbsp;            long dstFixFileOffset,
+<i class="no-highlight">538</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">539</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">540</i>&nbsp;            long dstVarOffset,
+<i class="no-highlight">541</i>&nbsp;            long dstVarAdjust,
+<i class="no-highlight">542</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">543</i>&nbsp;            boolean directIoFlag
+<i class="no-highlight">544</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">545</i>&nbsp;        final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo);</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;        assert lo &gt;= 0;</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;        final long hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1);</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;        assert hi &gt;= lo;</b>
+<i class="no-highlight">549</i>&nbsp;        // copy this before it changes
+<b class="fc"><i class="no-highlight">550</i>&nbsp;        final long len = hi - lo;</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;        assert len &lt;= Math.abs(dstVarSize) - dstVarOffset;</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;        final long offset = dstVarOffset + dstVarAdjust;</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;        if (directIoFlag) {</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;            if (ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset) != len) {</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;                throw CairoException.critical(ff.errno()).put(&quot;cannot copy var data column prefix [fd=&quot;).put(dstVarFd).put(&quot;, offset=&quot;).put(offset).put(&quot;, len=&quot;).put(len).put(&#39;]&#39;);</b>
+<i class="no-highlight">556</i>&nbsp;            }
+<i class="no-highlight">557</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">558</i>&nbsp;            Vect.memcpy(dstVarAddr + dstVarOffset, srcVarAddr + lo, len);</b>
+<i class="no-highlight">559</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">560</i>&nbsp;        if (lo == offset) {</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;            copyFixedSizeCol(</b>
+<i class="no-highlight">562</i>&nbsp;                    ff,
+<i class="no-highlight">563</i>&nbsp;                    srcFixAddr,
+<i class="no-highlight">564</i>&nbsp;                    srcLo,
+<i class="no-highlight">565</i>&nbsp;                    srcHi + 1,
+<i class="no-highlight">566</i>&nbsp;                    dstFixAddr,
+<i class="no-highlight">567</i>&nbsp;                    dstFixFileOffset,
+<i class="no-highlight">568</i>&nbsp;                    dstFixFd,
+<i class="no-highlight">569</i>&nbsp;                    3,
+<i class="no-highlight">570</i>&nbsp;                    directIoFlag
+<i class="no-highlight">571</i>&nbsp;            );
+<i class="no-highlight">572</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">573</i>&nbsp;            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);</b>
+<i class="no-highlight">574</i>&nbsp;        }
+<i class="no-highlight">575</i>&nbsp;    }
+<i class="no-highlight">576</i>&nbsp;
+<i class="no-highlight">577</i>&nbsp;    private static void mergeCopy(
+<i class="no-highlight">578</i>&nbsp;            int columnType,
+<i class="no-highlight">579</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">580</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">581</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">582</i>&nbsp;            long srcDataLo,
+<i class="no-highlight">583</i>&nbsp;            long srcDataHi,
+<i class="no-highlight">584</i>&nbsp;            long srcOooFixAddr,
+<i class="no-highlight">585</i>&nbsp;            long srcOooVarAddr,
+<i class="no-highlight">586</i>&nbsp;            long srcOooLo,
+<i class="no-highlight">587</i>&nbsp;            long srcOooHi,
+<i class="no-highlight">588</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">589</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">590</i>&nbsp;            long dstVarOffset,
+<i class="no-highlight">591</i>&nbsp;            long dstVarOffsetEnd
+<i class="no-highlight">592</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">593</i>&nbsp;        final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;</b>
+<b class="fc"><i class="no-highlight">594</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">595</i>&nbsp;            case ColumnType.BOOLEAN:
+<i class="no-highlight">596</i>&nbsp;            case ColumnType.BYTE:
+<i class="no-highlight">597</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">598</i>&nbsp;                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<b class="fc"><i class="no-highlight">599</i>&nbsp;                break;</b>
+<i class="no-highlight">600</i>&nbsp;            case ColumnType.SHORT:
+<i class="no-highlight">601</i>&nbsp;            case ColumnType.CHAR:
+<i class="no-highlight">602</i>&nbsp;            case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">603</i>&nbsp;                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;                break;</b>
+<i class="no-highlight">605</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">606</i>&nbsp;                Vect.oooMergeCopyStrColumn(</b>
+<i class="no-highlight">607</i>&nbsp;                        timestampMergeIndexAddr,
+<i class="no-highlight">608</i>&nbsp;                        rowCount,
+<i class="no-highlight">609</i>&nbsp;                        srcDataFixAddr,
+<i class="no-highlight">610</i>&nbsp;                        srcDataVarAddr,
+<i class="no-highlight">611</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">612</i>&nbsp;                        srcOooVarAddr,
+<i class="no-highlight">613</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">614</i>&nbsp;                        dstVarAddr,
+<i class="no-highlight">615</i>&nbsp;                        dstVarOffset
+<i class="no-highlight">616</i>&nbsp;                );
+<i class="no-highlight">617</i>&nbsp;                // multiple threads could be writing to this location as var index segments overlap,
+<i class="no-highlight">618</i>&nbsp;                // but they will be writing the same value
+<b class="fc"><i class="no-highlight">619</i>&nbsp;                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarOffsetEnd);</b>
+<b class="fc"><i class="no-highlight">620</i>&nbsp;                break;</b>
+<i class="no-highlight">621</i>&nbsp;            case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">622</i>&nbsp;                Vect.oooMergeCopyBinColumn(</b>
+<i class="no-highlight">623</i>&nbsp;                        timestampMergeIndexAddr,
+<i class="no-highlight">624</i>&nbsp;                        rowCount,
+<i class="no-highlight">625</i>&nbsp;                        srcDataFixAddr,
+<i class="no-highlight">626</i>&nbsp;                        srcDataVarAddr,
+<i class="no-highlight">627</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">628</i>&nbsp;                        srcOooVarAddr,
+<i class="no-highlight">629</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">630</i>&nbsp;                        dstVarAddr,
+<i class="no-highlight">631</i>&nbsp;                        dstVarOffset
+<i class="no-highlight">632</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">633</i>&nbsp;                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarOffsetEnd);</b>
+<b class="fc"><i class="no-highlight">634</i>&nbsp;                break;</b>
+<i class="no-highlight">635</i>&nbsp;            case ColumnType.INT:
+<i class="no-highlight">636</i>&nbsp;            case ColumnType.FLOAT:
+<i class="no-highlight">637</i>&nbsp;            case ColumnType.SYMBOL:
+<i class="no-highlight">638</i>&nbsp;            case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">639</i>&nbsp;                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<b class="fc"><i class="no-highlight">640</i>&nbsp;                break;</b>
+<i class="no-highlight">641</i>&nbsp;            case ColumnType.DOUBLE:
+<i class="no-highlight">642</i>&nbsp;            case ColumnType.LONG:
+<i class="no-highlight">643</i>&nbsp;            case ColumnType.DATE:
+<i class="no-highlight">644</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">645</i>&nbsp;                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<b class="fc"><i class="no-highlight">646</i>&nbsp;                break;</b>
+<i class="no-highlight">647</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">648</i>&nbsp;                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);</b>
+<b class="fc"><i class="no-highlight">649</i>&nbsp;                if (designated) {</b>
+<b class="fc"><i class="no-highlight">650</i>&nbsp;                    Vect.oooCopyIndex(timestampMergeIndexAddr, rowCount, dstFixAddr);</b>
+<i class="no-highlight">651</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">652</i>&nbsp;                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<i class="no-highlight">653</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">654</i>&nbsp;                break;</b>
+<i class="no-highlight">655</i>&nbsp;            case ColumnType.UUID:
+<i class="no-highlight">656</i>&nbsp;            case ColumnType.LONG128:
+<b class="fc"><i class="no-highlight">657</i>&nbsp;                Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<b class="fc"><i class="no-highlight">658</i>&nbsp;                break;</b>
+<i class="no-highlight">659</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">660</i>&nbsp;                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);</b>
+<b class="fc"><i class="no-highlight">661</i>&nbsp;                break;</b>
+<i class="no-highlight">662</i>&nbsp;            default:
+<i class="no-highlight">663</i>&nbsp;                break;
+<i class="no-highlight">664</i>&nbsp;        }
+<i class="no-highlight">665</i>&nbsp;    }
+<i class="no-highlight">666</i>&nbsp;
+<i class="no-highlight">667</i>&nbsp;    private static void updateIndex(
+<i class="no-highlight">668</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">669</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">670</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">671</i>&nbsp;            int srcDataFixFd,
+<i class="no-highlight">672</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">673</i>&nbsp;            long srcDataFixSize,
+<i class="no-highlight">674</i>&nbsp;            int srcDataVarFd,
+<i class="no-highlight">675</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">676</i>&nbsp;            long srcDataVarSize,
+<i class="no-highlight">677</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">678</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">679</i>&nbsp;            long dstFixSize,
+<i class="no-highlight">680</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">681</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">682</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">683</i>&nbsp;            int dstKFd,
+<i class="no-highlight">684</i>&nbsp;            int dstVFd,
+<i class="no-highlight">685</i>&nbsp;            long dstIndexOffset,
+<i class="no-highlight">686</i>&nbsp;            long dstIndexAdjust,
+<i class="no-highlight">687</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">688</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">689</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">690</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">691</i>&nbsp;            BitmapIndexWriter indexWriter,
+<i class="no-highlight">692</i>&nbsp;            int indexBlockCapacity
+<i class="no-highlight">693</i>&nbsp;    ) {
+<i class="no-highlight">694</i>&nbsp;        // dstKFd &amp; dstVFd are closed by the indexer
+<i class="no-highlight">695</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">696</i>&nbsp;            long row = dstIndexOffset / Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">697</i>&nbsp;            boolean closed = !indexWriter.isOpen();</b>
+<b class="fc"><i class="no-highlight">698</i>&nbsp;            if (closed) {</b>
+<b class="fc"><i class="no-highlight">699</i>&nbsp;                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);</b>
+<i class="no-highlight">700</i>&nbsp;            }
+<i class="no-highlight">701</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">702</i>&nbsp;                updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);</b>
+<i class="no-highlight">703</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">704</i>&nbsp;                if (closed) {</b>
+<b class="fc"><i class="no-highlight">705</i>&nbsp;                    Misc.free(indexWriter);</b>
+<i class="no-highlight">706</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">707</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">708</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="fc"><i class="no-highlight">709</i>&nbsp;            LOG.error()</b>
+<b class="fc"><i class="no-highlight">710</i>&nbsp;                    .$(&quot;index error [table=&quot;).utf8(tableWriter.getTableToken().getTableName())</b>
+<b class="fc"><i class="no-highlight">711</i>&nbsp;                    .$(&quot;, e=&quot;).$(e)</b>
+<b class="fc"><i class="no-highlight">712</i>&nbsp;                    .I$();</b>
+<b class="fc"><i class="no-highlight">713</i>&nbsp;            tableWriter.o3BumpErrorCount();</b>
+<b class="fc"><i class="no-highlight">714</i>&nbsp;            copyIdleQuick(</b>
+<i class="no-highlight">715</i>&nbsp;                    columnCounter,
+<i class="no-highlight">716</i>&nbsp;                    timestampMergeIndexAddr,
+<i class="no-highlight">717</i>&nbsp;                    timestampMergeIndexSize,
+<i class="no-highlight">718</i>&nbsp;                    srcDataFixFd,
+<i class="no-highlight">719</i>&nbsp;                    srcDataFixAddr,
+<i class="no-highlight">720</i>&nbsp;                    srcDataFixSize,
+<i class="no-highlight">721</i>&nbsp;                    srcDataVarFd,
+<i class="no-highlight">722</i>&nbsp;                    srcDataVarAddr,
+<i class="no-highlight">723</i>&nbsp;                    srcDataVarSize,
+<i class="no-highlight">724</i>&nbsp;                    srcTimestampFd,
+<i class="no-highlight">725</i>&nbsp;                    srcTimestampAddr,
+<i class="no-highlight">726</i>&nbsp;                    srcTimestampSize,
+<i class="no-highlight">727</i>&nbsp;                    dstFixFd,
+<i class="no-highlight">728</i>&nbsp;                    dstFixAddr,
+<i class="no-highlight">729</i>&nbsp;                    dstFixSize,
+<i class="no-highlight">730</i>&nbsp;                    dstVarFd,
+<i class="no-highlight">731</i>&nbsp;                    dstVarAddr,
+<i class="no-highlight">732</i>&nbsp;                    dstVarSize,
+<i class="no-highlight">733</i>&nbsp;                    0,
+<i class="no-highlight">734</i>&nbsp;                    0,
+<i class="no-highlight">735</i>&nbsp;                    tableWriter
+<i class="no-highlight">736</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">737</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">738</i>&nbsp;        }</b>
+<i class="no-highlight">739</i>&nbsp;    }
+<i class="no-highlight">740</i>&nbsp;
+<i class="no-highlight">741</i>&nbsp;    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
+<b class="fc"><i class="no-highlight">742</i>&nbsp;        w.rollbackConditionally(row + rowAdjust);</b>
+<b class="fc"><i class="no-highlight">743</i>&nbsp;        final long count = dstFixSize / Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">744</i>&nbsp;        for (; row &lt; count; row++) {</b>
+<b class="fc"><i class="no-highlight">745</i>&nbsp;            w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);</b>
+<i class="no-highlight">746</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">747</i>&nbsp;        w.setMaxValue(count - 1);</b>
+<i class="no-highlight">748</i>&nbsp;    }
+<i class="no-highlight">749</i>&nbsp;
+<i class="no-highlight">750</i>&nbsp;    // lowest timestamp of partition where data is headed
+<i class="no-highlight">751</i>&nbsp;
+<i class="no-highlight">752</i>&nbsp;    private static void updatePartition(
+<i class="no-highlight">753</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">754</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">755</i>&nbsp;            long srcDataMax,
+<i class="no-highlight">756</i>&nbsp;            long srcOooMax,
+<i class="no-highlight">757</i>&nbsp;            long srcOooPartitionLo,
+<i class="no-highlight">758</i>&nbsp;            long srcOooPartitionHi,
+<i class="no-highlight">759</i>&nbsp;            long timestampMin,
+<i class="no-highlight">760</i>&nbsp;            long timestampMax,
+<i class="no-highlight">761</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">762</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">763</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">764</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">765</i>&nbsp;            boolean partitionMutates,
+<i class="no-highlight">766</i>&nbsp;            TableWriter tableWriter
+<i class="no-highlight">767</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">768</i>&nbsp;        final FilesFacade ff = tableWriter.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">769</i>&nbsp;        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);</b>
+<i class="no-highlight">770</i>&nbsp;        try {
+<i class="no-highlight">771</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">772</i>&nbsp;                O3Utils.close(ff, srcTimestampFd);</b>
+<i class="no-highlight">773</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">774</i>&nbsp;                tableWriter.o3NotifyPartitionUpdate(</b>
+<i class="no-highlight">775</i>&nbsp;                        timestampMin,
+<i class="no-highlight">776</i>&nbsp;                        timestampMax,
+<i class="no-highlight">777</i>&nbsp;                        partitionTimestamp,
+<i class="no-highlight">778</i>&nbsp;                        srcOooPartitionLo,
+<i class="no-highlight">779</i>&nbsp;                        srcOooPartitionHi,
+<i class="no-highlight">780</i>&nbsp;                        partitionMutates,
+<i class="no-highlight">781</i>&nbsp;                        srcOooMax,
+<i class="no-highlight">782</i>&nbsp;                        srcDataMax
+<i class="no-highlight">783</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">784</i>&nbsp;            }</b>
+<i class="no-highlight">785</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">786</i>&nbsp;            if (timestampMergeIndexAddr != 0) {</b>
+<b class="fc"><i class="no-highlight">787</i>&nbsp;                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);</b>
+<i class="no-highlight">788</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">789</i>&nbsp;            tableWriter.o3CountDownDoneLatch();</b>
+<b class="fc"><i class="no-highlight">790</i>&nbsp;        }</b>
+<i class="no-highlight">791</i>&nbsp;    }
+<i class="no-highlight">792</i>&nbsp;
+<i class="no-highlight">793</i>&nbsp;    static void closeColumnIdle(
+<i class="no-highlight">794</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">795</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">796</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">797</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">798</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">799</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">800</i>&nbsp;            TableWriter tableWriter
+<i class="no-highlight">801</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">802</i>&nbsp;        final int columnsRemaining = columnCounter.decrementAndGet();</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;        LOG.debug()</b>
+<b class="fc"><i class="no-highlight">804</i>&nbsp;                .$(&quot;idle [table=&quot;).utf8(tableWriter.getTableToken().getTableName())</b>
+<b class="fc"><i class="no-highlight">805</i>&nbsp;                .$(&quot;, columnsRemaining=&quot;).$(columnsRemaining)</b>
+<b class="fc"><i class="no-highlight">806</i>&nbsp;                .I$();</b>
+<b class="fc"><i class="no-highlight">807</i>&nbsp;        if (columnsRemaining == 0) {</b>
+<b class="fc"><i class="no-highlight">808</i>&nbsp;            closeColumnIdleQuick(</b>
+<i class="no-highlight">809</i>&nbsp;                    timestampMergeIndexAddr,
+<i class="no-highlight">810</i>&nbsp;                    timestampMergeIndexSize,
+<i class="no-highlight">811</i>&nbsp;                    srcTimestampFd,
+<i class="no-highlight">812</i>&nbsp;                    srcTimestampAddr,
+<i class="no-highlight">813</i>&nbsp;                    srcTimestampSize,
+<i class="no-highlight">814</i>&nbsp;                    tableWriter
+<i class="no-highlight">815</i>&nbsp;            );
+<i class="no-highlight">816</i>&nbsp;        }
+<i class="no-highlight">817</i>&nbsp;    }
+<i class="no-highlight">818</i>&nbsp;
+<i class="no-highlight">819</i>&nbsp;    static void closeColumnIdleQuick(
+<i class="no-highlight">820</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">821</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">822</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">823</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">824</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">825</i>&nbsp;            TableWriter tableWriter
+<i class="no-highlight">826</i>&nbsp;    ) {
+<i class="no-highlight">827</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">828</i>&nbsp;            final FilesFacade ff = tableWriter.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">829</i>&nbsp;            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);</b>
+<b class="fc"><i class="no-highlight">830</i>&nbsp;            O3Utils.close(ff, srcTimestampFd);</b>
+<b class="fc"><i class="no-highlight">831</i>&nbsp;            if (timestampMergeIndexAddr != 0) {</b>
+<b class="fc"><i class="no-highlight">832</i>&nbsp;                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);</b>
+<i class="no-highlight">833</i>&nbsp;            }
+<i class="no-highlight">834</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">835</i>&nbsp;            tableWriter.o3ClockDownPartitionUpdateCount();</b>
+<b class="fc"><i class="no-highlight">836</i>&nbsp;            tableWriter.o3CountDownDoneLatch();</b>
+<b class="fc"><i class="no-highlight">837</i>&nbsp;        }</b>
+<i class="no-highlight">838</i>&nbsp;    }
+<i class="no-highlight">839</i>&nbsp;
+<i class="no-highlight">840</i>&nbsp;    static void copyIdle(
+<i class="no-highlight">841</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">842</i>&nbsp;            AtomicInteger partCounter,
+<i class="no-highlight">843</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">844</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">845</i>&nbsp;            int srcDataFixFd,
+<i class="no-highlight">846</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">847</i>&nbsp;            long srcDataFixSize,
+<i class="no-highlight">848</i>&nbsp;            int srcDataVarFd,
+<i class="no-highlight">849</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">850</i>&nbsp;            long srcDataVarSize,
+<i class="no-highlight">851</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">852</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">853</i>&nbsp;            long dstFixSize,
+<i class="no-highlight">854</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">855</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">856</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">857</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">858</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">859</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">860</i>&nbsp;            int dstKFd,
+<i class="no-highlight">861</i>&nbsp;            int dstVFd,
+<i class="no-highlight">862</i>&nbsp;            TableWriter tableWriter
+<i class="no-highlight">863</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">864</i>&nbsp;        if (partCounter == null || partCounter.decrementAndGet() == 0) {</b>
+<i class="no-highlight">865</i>&nbsp;            // unmap memory
+<b class="fc"><i class="no-highlight">866</i>&nbsp;            copyIdleQuick(</b>
+<i class="no-highlight">867</i>&nbsp;                    columnCounter,
+<i class="no-highlight">868</i>&nbsp;                    timestampMergeIndexAddr,
+<i class="no-highlight">869</i>&nbsp;                    timestampMergeIndexSize,
+<i class="no-highlight">870</i>&nbsp;                    srcDataFixFd,
+<i class="no-highlight">871</i>&nbsp;                    srcDataFixAddr,
+<i class="no-highlight">872</i>&nbsp;                    srcDataFixSize,
+<i class="no-highlight">873</i>&nbsp;                    srcDataVarFd,
+<i class="no-highlight">874</i>&nbsp;                    srcDataVarAddr,
+<i class="no-highlight">875</i>&nbsp;                    srcDataVarSize,
+<i class="no-highlight">876</i>&nbsp;                    srcTimestampFd,
+<i class="no-highlight">877</i>&nbsp;                    srcTimestampAddr,
+<i class="no-highlight">878</i>&nbsp;                    srcTimestampSize,
+<i class="no-highlight">879</i>&nbsp;                    dstFixFd,
+<i class="no-highlight">880</i>&nbsp;                    dstFixAddr,
+<i class="no-highlight">881</i>&nbsp;                    dstFixSize,
+<i class="no-highlight">882</i>&nbsp;                    dstVarFd,
+<i class="no-highlight">883</i>&nbsp;                    dstVarAddr,
+<i class="no-highlight">884</i>&nbsp;                    dstVarSize,
+<i class="no-highlight">885</i>&nbsp;                    dstKFd,
+<i class="no-highlight">886</i>&nbsp;                    dstVFd,
+<i class="no-highlight">887</i>&nbsp;                    tableWriter
+<i class="no-highlight">888</i>&nbsp;            );
+<i class="no-highlight">889</i>&nbsp;        }
+<i class="no-highlight">890</i>&nbsp;    }
+<i class="no-highlight">891</i>&nbsp;
+<i class="no-highlight">892</i>&nbsp;    static void copyIdleQuick(
+<i class="no-highlight">893</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">894</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">895</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">896</i>&nbsp;            int srcDataFixFd,
+<i class="no-highlight">897</i>&nbsp;            long srcDataFixAddr,
+<i class="no-highlight">898</i>&nbsp;            long srcDataFixSize,
+<i class="no-highlight">899</i>&nbsp;            int srcDataVarFd,
+<i class="no-highlight">900</i>&nbsp;            long srcDataVarAddr,
+<i class="no-highlight">901</i>&nbsp;            long srcDataVarSize,
+<i class="no-highlight">902</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">903</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">904</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">905</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">906</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">907</i>&nbsp;            long dstFixSize,
+<i class="no-highlight">908</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">909</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">910</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">911</i>&nbsp;            int dstKFd,
+<i class="no-highlight">912</i>&nbsp;            int dstVFd,
+<i class="no-highlight">913</i>&nbsp;            TableWriter tableWriter
+<i class="no-highlight">914</i>&nbsp;    ) {
+<i class="no-highlight">915</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">916</i>&nbsp;            final FilesFacade ff = tableWriter.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">917</i>&nbsp;            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);</b>
+<b class="fc"><i class="no-highlight">918</i>&nbsp;            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);</b>
+<b class="fc"><i class="no-highlight">919</i>&nbsp;            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);</b>
+<b class="fc"><i class="no-highlight">920</i>&nbsp;            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);</b>
+<b class="fc"><i class="no-highlight">921</i>&nbsp;            O3Utils.close(ff, dstKFd);</b>
+<b class="fc"><i class="no-highlight">922</i>&nbsp;            O3Utils.close(ff, dstVFd);</b>
+<i class="no-highlight">923</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">924</i>&nbsp;            closeColumnIdle(</b>
+<i class="no-highlight">925</i>&nbsp;                    columnCounter,
+<i class="no-highlight">926</i>&nbsp;                    timestampMergeIndexAddr,
+<i class="no-highlight">927</i>&nbsp;                    timestampMergeIndexSize,
+<i class="no-highlight">928</i>&nbsp;                    srcTimestampFd,
+<i class="no-highlight">929</i>&nbsp;                    srcTimestampAddr,
+<i class="no-highlight">930</i>&nbsp;                    srcTimestampSize,
+<i class="no-highlight">931</i>&nbsp;                    tableWriter
+<i class="no-highlight">932</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">933</i>&nbsp;        }</b>
+<i class="no-highlight">934</i>&nbsp;    }
+<i class="no-highlight">935</i>&nbsp;
+<i class="no-highlight">936</i>&nbsp;    static void copyO3(
+<i class="no-highlight">937</i>&nbsp;            FilesFacade ff,
+<i class="no-highlight">938</i>&nbsp;            int columnType,
+<i class="no-highlight">939</i>&nbsp;            long srcOooFixAddr,
+<i class="no-highlight">940</i>&nbsp;            long srcOooVarAddr,
+<i class="no-highlight">941</i>&nbsp;            long srcOooLo,
+<i class="no-highlight">942</i>&nbsp;            long srcOooHi,
+<i class="no-highlight">943</i>&nbsp;            int dstFixFd,
+<i class="no-highlight">944</i>&nbsp;            long dstFixAddr,
+<i class="no-highlight">945</i>&nbsp;            long dstFixFileOffset,
+<i class="no-highlight">946</i>&nbsp;            long dstVarAddr,
+<i class="no-highlight">947</i>&nbsp;            int dstVarFd,
+<i class="no-highlight">948</i>&nbsp;            long dstVarOffset,
+<i class="no-highlight">949</i>&nbsp;            long dstVarAdjust,
+<i class="no-highlight">950</i>&nbsp;            long dstVarSize,
+<i class="no-highlight">951</i>&nbsp;            boolean directIoFlag
+<i class="no-highlight">952</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">953</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">954</i>&nbsp;            case ColumnType.STRING:
+<i class="no-highlight">955</i>&nbsp;            case ColumnType.BINARY:
+<i class="no-highlight">956</i>&nbsp;                // we can find out the edge of string column in one of two ways
+<i class="no-highlight">957</i>&nbsp;                // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
+<i class="no-highlight">958</i>&nbsp;                // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
+<b class="fc"><i class="no-highlight">959</i>&nbsp;                copyVarSizeCol(</b>
+<i class="no-highlight">960</i>&nbsp;                        ff,
+<i class="no-highlight">961</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">962</i>&nbsp;                        srcOooVarAddr,
+<i class="no-highlight">963</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">964</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">965</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">966</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">967</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">968</i>&nbsp;                        dstVarAddr,
+<i class="no-highlight">969</i>&nbsp;                        dstVarFd,
+<i class="no-highlight">970</i>&nbsp;                        dstVarOffset,
+<i class="no-highlight">971</i>&nbsp;                        dstVarAdjust,
+<i class="no-highlight">972</i>&nbsp;                        dstVarSize,
+<i class="no-highlight">973</i>&nbsp;                        directIoFlag
+<i class="no-highlight">974</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">975</i>&nbsp;                break;</b>
+<i class="no-highlight">976</i>&nbsp;            case ColumnType.BOOLEAN:
+<i class="no-highlight">977</i>&nbsp;            case ColumnType.BYTE:
+<i class="no-highlight">978</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">979</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">980</i>&nbsp;                        ff,
+<i class="no-highlight">981</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">982</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">983</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">984</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">985</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">986</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">987</i>&nbsp;                        0,
+<i class="no-highlight">988</i>&nbsp;                        directIoFlag
+<i class="no-highlight">989</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">990</i>&nbsp;                break;</b>
+<i class="no-highlight">991</i>&nbsp;            case ColumnType.CHAR:
+<i class="no-highlight">992</i>&nbsp;            case ColumnType.SHORT:
+<i class="no-highlight">993</i>&nbsp;            case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">994</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">995</i>&nbsp;                        ff,
+<i class="no-highlight">996</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">997</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">998</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">999</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">1000</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">1001</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">1002</i>&nbsp;                        1,
+<i class="no-highlight">1003</i>&nbsp;                        directIoFlag
+<i class="no-highlight">1004</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">1005</i>&nbsp;                break;</b>
+<i class="no-highlight">1006</i>&nbsp;            case ColumnType.INT:
+<i class="no-highlight">1007</i>&nbsp;            case ColumnType.FLOAT:
+<i class="no-highlight">1008</i>&nbsp;            case ColumnType.SYMBOL:
+<i class="no-highlight">1009</i>&nbsp;            case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">1010</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">1011</i>&nbsp;                        ff,
+<i class="no-highlight">1012</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">1013</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">1014</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">1015</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">1016</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">1017</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">1018</i>&nbsp;                        2,
+<i class="no-highlight">1019</i>&nbsp;                        directIoFlag
+<i class="no-highlight">1020</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">1021</i>&nbsp;                break;</b>
+<i class="no-highlight">1022</i>&nbsp;            case ColumnType.LONG:
+<i class="no-highlight">1023</i>&nbsp;            case ColumnType.DATE:
+<i class="no-highlight">1024</i>&nbsp;            case ColumnType.DOUBLE:
+<i class="no-highlight">1025</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">1027</i>&nbsp;                        ff,
+<i class="no-highlight">1028</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">1029</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">1030</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">1031</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">1032</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">1033</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">1034</i>&nbsp;                        3,
+<i class="no-highlight">1035</i>&nbsp;                        directIoFlag
+<i class="no-highlight">1036</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;                break;</b>
+<i class="no-highlight">1038</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">1039</i>&nbsp;                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);</b>
+<b class="fc"><i class="no-highlight">1040</i>&nbsp;                if (designated) {</b>
+<b class="fc"><i class="no-highlight">1041</i>&nbsp;                    O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);</b>
+<i class="no-highlight">1042</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;                    copyFixedSizeCol(</b>
+<i class="no-highlight">1044</i>&nbsp;                            ff,
+<i class="no-highlight">1045</i>&nbsp;                            srcOooFixAddr,
+<i class="no-highlight">1046</i>&nbsp;                            srcOooLo,
+<i class="no-highlight">1047</i>&nbsp;                            srcOooHi,
+<i class="no-highlight">1048</i>&nbsp;                            dstFixAddr,
+<i class="no-highlight">1049</i>&nbsp;                            dstFixFileOffset,
+<i class="no-highlight">1050</i>&nbsp;                            dstFixFd,
+<i class="no-highlight">1051</i>&nbsp;                            3,
+<i class="no-highlight">1052</i>&nbsp;                            directIoFlag
+<i class="no-highlight">1053</i>&nbsp;                    );
+<i class="no-highlight">1054</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;                break;</b>
+<i class="no-highlight">1056</i>&nbsp;            case ColumnType.UUID:
+<i class="no-highlight">1057</i>&nbsp;            case ColumnType.LONG128:
+<b class="fc"><i class="no-highlight">1058</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">1059</i>&nbsp;                        ff,
+<i class="no-highlight">1060</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">1061</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">1062</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">1063</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">1064</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">1065</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">1066</i>&nbsp;                        4,
+<i class="no-highlight">1067</i>&nbsp;                        directIoFlag
+<i class="no-highlight">1068</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">1069</i>&nbsp;                break;</b>
+<i class="no-highlight">1070</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">1071</i>&nbsp;                copyFixedSizeCol(</b>
+<i class="no-highlight">1072</i>&nbsp;                        ff,
+<i class="no-highlight">1073</i>&nbsp;                        srcOooFixAddr,
+<i class="no-highlight">1074</i>&nbsp;                        srcOooLo,
+<i class="no-highlight">1075</i>&nbsp;                        srcOooHi,
+<i class="no-highlight">1076</i>&nbsp;                        dstFixAddr,
+<i class="no-highlight">1077</i>&nbsp;                        dstFixFileOffset,
+<i class="no-highlight">1078</i>&nbsp;                        dstFixFd,
+<i class="no-highlight">1079</i>&nbsp;                        5,
+<i class="no-highlight">1080</i>&nbsp;                        directIoFlag
+<i class="no-highlight">1081</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">1082</i>&nbsp;                break;</b>
+<i class="no-highlight">1083</i>&nbsp;            default:
+<i class="no-highlight">1084</i>&nbsp;                // we have exhausted all supported types in &quot;case&quot; clauses
+<i class="no-highlight">1085</i>&nbsp;                break;
+<i class="no-highlight">1086</i>&nbsp;        }
+<i class="no-highlight">1087</i>&nbsp;    }
+<i class="no-highlight">1088</i>&nbsp;
+<i class="no-highlight">1089</i>&nbsp;    @Override
+<i class="no-highlight">1090</i>&nbsp;    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+<b class="fc"><i class="no-highlight">1091</i>&nbsp;        copy(queue.get(cursor), cursor, subSeq);</b>
+<b class="fc"><i class="no-highlight">1092</i>&nbsp;        return true;</b>
+<i class="no-highlight">1093</i>&nbsp;    }
+<i class="no-highlight">1094</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

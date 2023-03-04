@@ -1,0 +1,210 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > AbstractPool</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.pool</a>
+</div>
+
+<h1>Coverage Summary for Class: AbstractPool (io.questdb.cairo.pool)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">AbstractPool</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.7%
+  </span>
+  <span class="absValue">
+    (11/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.2%
+  </span>
+  <span class="absValue">
+    (20/21)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.pool;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.TableToken;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.FilesFacade;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.datetime.microtime.MicrosecondClock;
+<i class="no-highlight">32</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">35</i>&nbsp;
+<i class="no-highlight">36</i>&nbsp;public abstract class AbstractPool implements Closeable {
+<b class="fc"><i class="no-highlight">37</i>&nbsp;    public static final long CLOSED = Unsafe.getFieldOffset(AbstractPool.class, &quot;closed&quot;);</b>
+<i class="no-highlight">38</i>&nbsp;    public static final long UNALLOCATED = -1L;
+<i class="no-highlight">39</i>&nbsp;    private static final int FALSE = 0;
+<i class="no-highlight">40</i>&nbsp;    private static final int TRUE = 1;
+<i class="no-highlight">41</i>&nbsp;    protected final MicrosecondClock clock;
+<i class="no-highlight">42</i>&nbsp;    protected final FilesFacade ff;
+<i class="no-highlight">43</i>&nbsp;    private final CairoConfiguration configuration;
+<i class="no-highlight">44</i>&nbsp;    private final long inactiveTtlUs;
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    @SuppressWarnings({&quot;FieldCanBeLocal&quot;, &quot;FieldMayBeFinal&quot;})</b>
+<i class="no-highlight">46</i>&nbsp;    private volatile int closed = FALSE;
+<i class="no-highlight">47</i>&nbsp;    private PoolListener eventListener;
+<i class="no-highlight">48</i>&nbsp;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    public AbstractPool(CairoConfiguration configuration, long inactiveTtlMillis) {</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;        this.configuration = configuration;</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        this.ff = configuration.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        this.clock = configuration.getMicrosecondClock();</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        this.inactiveTtlUs = inactiveTtlMillis * 1000;</b>
+<i class="no-highlight">54</i>&nbsp;    }
+<i class="no-highlight">55</i>&nbsp;
+<i class="no-highlight">56</i>&nbsp;    @Override
+<i class="no-highlight">57</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, FALSE, TRUE)) {</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;            closePool();</b>
+<i class="no-highlight">60</i>&nbsp;        }
+<i class="no-highlight">61</i>&nbsp;    }
+<i class="no-highlight">62</i>&nbsp;
+<i class="no-highlight">63</i>&nbsp;    public CairoConfiguration getConfiguration() {
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        return configuration;</b>
+<i class="no-highlight">65</i>&nbsp;    }
+<i class="no-highlight">66</i>&nbsp;
+<i class="no-highlight">67</i>&nbsp;    public PoolListener getPoolListener() {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        return eventListener;</b>
+<i class="no-highlight">69</i>&nbsp;    }
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;    public boolean releaseAll() {
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        return releaseAll(Long.MAX_VALUE);</b>
+<i class="no-highlight">73</i>&nbsp;    }
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    public boolean releaseInactive() {
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        return releaseAll(clock.getTicks() - inactiveTtlUs);</b>
+<i class="no-highlight">77</i>&nbsp;    }
+<i class="no-highlight">78</i>&nbsp;
+<i class="no-highlight">79</i>&nbsp;    @TestOnly
+<i class="no-highlight">80</i>&nbsp;    public boolean reopen() {
+<b class="nc"><i class="no-highlight">81</i>&nbsp;        return Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, TRUE, FALSE);</b>
+<i class="no-highlight">82</i>&nbsp;    }
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;    public void setPoolListener(PoolListener eventListener) {
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        this.eventListener = eventListener;</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    protected void closePool() {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        releaseAll(Long.MAX_VALUE);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_CLOSED);</b>
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    protected boolean isClosed() {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        return closed == TRUE;</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    protected void notifyListener(long thread, TableToken tableToken, short event) {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        PoolListener listener = getPoolListener();</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        if (listener != null) {</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;            listener.onEvent(PoolListener.SRC_WRITER, thread, tableToken, event, (short) 0, (short) 0);</b>
+<i class="no-highlight">101</i>&nbsp;        }
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    protected abstract boolean releaseAll(long deadline);
+<i class="no-highlight">105</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

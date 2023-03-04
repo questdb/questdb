@@ -1,0 +1,597 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TableTransactionLog</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.wal.seq</a>
+</div>
+
+<h1>Coverage Summary for Class: TableTransactionLog (io.questdb.cairo.wal.seq)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TableTransactionLog</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (14/14)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99%
+  </span>
+  <span class="absValue">
+    (100/101)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TableTransactionLog$TableMetadataChangeLogImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.3%
+  </span>
+  <span class="absValue">
+    (5/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    89.1%
+  </span>
+  <span class="absValue">
+    (41/46)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TableTransactionLog$TransactionLogCursorImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (14/14)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (48/48)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    97.1%
+  </span>
+  <span class="absValue">
+    (33/34)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.9%
+  </span>
+  <span class="absValue">
+    (189/195)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.wal.seq;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.MemorySerializer;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.TableToken;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.TableUtils;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.vm.MemoryFCRImpl;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCMARW;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.engine.ops.AlterOperation;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">40</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">41</i>&nbsp;
+<i class="no-highlight">42</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">43</i>&nbsp;import java.lang.ThreadLocal;
+<i class="no-highlight">44</i>&nbsp;import java.util.concurrent.atomic.AtomicLong;
+<i class="no-highlight">45</i>&nbsp;
+<i class="no-highlight">46</i>&nbsp;import static io.questdb.cairo.TableUtils.openSmallFile;
+<i class="no-highlight">47</i>&nbsp;import static io.questdb.cairo.wal.WalUtils.*;
+<i class="no-highlight">48</i>&nbsp;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;public class TableTransactionLog implements Closeable {</b>
+<i class="no-highlight">50</i>&nbsp;    public final static int HEADER_RESERVED = 8 * Long.BYTES;
+<i class="no-highlight">51</i>&nbsp;    public static final long MAX_TXN_OFFSET = Integer.BYTES;
+<i class="no-highlight">52</i>&nbsp;    public static final long HEADER_SIZE = MAX_TXN_OFFSET + Long.BYTES + HEADER_RESERVED;
+<i class="no-highlight">53</i>&nbsp;    public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);</b>
+<i class="no-highlight">55</i>&nbsp;    private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
+<i class="no-highlight">56</i>&nbsp;    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
+<i class="no-highlight">57</i>&nbsp;    private static final long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
+<i class="no-highlight">58</i>&nbsp;    private static final long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
+<i class="no-highlight">59</i>&nbsp;    private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
+<i class="no-highlight">60</i>&nbsp;    public static final long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    private static final ThreadLocal&lt;AlterOperation&gt; tlAlterOperation = new ThreadLocal&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    private static final ThreadLocal&lt;TableMetadataChangeLogImpl&gt; tlStructChangeCursor = new ThreadLocal&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    private static final ThreadLocal&lt;TransactionLogCursorImpl&gt; tlTransactionLogCursor = new ThreadLocal&lt;&gt;();</b>
+<i class="no-highlight">64</i>&nbsp;    private final FilesFacade ff;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    private final AtomicLong maxTxn = new AtomicLong();</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    private final StringSink rootPath = new StringSink();</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    private final MemoryCMARW txnMem = Vm.getCMARWInstance();</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();</b>
+<i class="no-highlight">70</i>&nbsp;
+<b class="fc"><i class="no-highlight">71</i>&nbsp;    TableTransactionLog(FilesFacade ff) {</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.ff = ff;</b>
+<i class="no-highlight">73</i>&nbsp;    }
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    @Override
+<i class="no-highlight">76</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        if (txnMem.isOpen()) {</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;            assert maxTxnInFile == maxTxn.get() : &quot;Max txn in the file &quot; + maxTxnInFile + &quot; but in memory is &quot; + maxTxn.get();</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;            txnMem.close(false);</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            txnMetaMem.close(false);</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;            txnMetaMemIndex.close(false);</b>
+<i class="no-highlight">83</i>&nbsp;        }
+<i class="no-highlight">84</i>&nbsp;    }
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;    private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        final int rootLen = path.length();</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        path.concat(fileName).$();</b>
+<i class="no-highlight">89</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">90</i>&nbsp;            return TableUtils.openRO(ff, path, LOG);</b>
+<i class="no-highlight">91</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">92</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        }</b>
+<i class="no-highlight">94</i>&nbsp;    }
+<i class="no-highlight">95</i>&nbsp;
+<i class="no-highlight">96</i>&nbsp;    private void syncDiskWrites() {
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        txnMetaMemIndex.sync(false);</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        txnMetaMem.sync(false);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        txnMem.sync(false);</b>
+<i class="no-highlight">100</i>&nbsp;    }
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    @NotNull
+<i class="no-highlight">103</i>&nbsp;    static TableMetadataChangeLog getTableMetadataChangeLog() {
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        TableMetadataChangeLogImpl instance = tlStructChangeCursor.get();</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        if (instance == null) {</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            tlStructChangeCursor.set(instance = new TableMetadataChangeLogImpl());</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        return instance;</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        txnMem.putLong(structureVersion);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        txnMem.putInt(walId);</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        txnMem.putInt(segmentId);</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        txnMem.putInt(segmentTxn);</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        txnMem.putLong(timestamp);</b>
+<i class="no-highlight">117</i>&nbsp;
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        long maxTxn = this.maxTxn.incrementAndGet();</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);</b>
+<i class="no-highlight">121</i>&nbsp;        // Transactions are 1 based here
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        return maxTxn;</b>
+<i class="no-highlight">123</i>&nbsp;    }
+<i class="no-highlight">124</i>&nbsp;
+<i class="no-highlight">125</i>&nbsp;    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        assert newStructureVersion == txnMetaMemIndex.getAppendOffset() / Long.BYTES;</b>
+<i class="no-highlight">127</i>&nbsp;
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        txnMem.putLong(newStructureVersion);</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        txnMem.putInt(-1);</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        txnMem.putInt(-1);</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        txnMem.putLong(timestamp);</b>
+<i class="no-highlight">133</i>&nbsp;
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        txnMetaMem.putInt(0);</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        long varMemBegin = txnMetaMem.getAppendOffset();</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        serializer.toSink(instance, txnMetaMem);</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        int len = (int) (txnMetaMem.getAppendOffset() - varMemBegin);</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        txnMetaMem.putInt(varMemBegin - Integer.BYTES, len);</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        txnMetaMemIndex.putLong(varMemBegin + len);</b>
+<i class="no-highlight">140</i>&nbsp;    }
+<i class="no-highlight">141</i>&nbsp;
+<i class="no-highlight">142</i>&nbsp;    long endMetadataChangeEntry() {
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        syncDiskWrites();</b>
+<i class="no-highlight">144</i>&nbsp;
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">146</i>&nbsp;
+<i class="no-highlight">147</i>&nbsp;        // Transactions are 1 based here
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        long nextTxn = maxTxn.incrementAndGet();</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        txnMem.putLong(MAX_TXN_OFFSET, nextTxn);</b>
+<i class="no-highlight">150</i>&nbsp;
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        return nextTxn;</b>
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    TransactionLogCursor getCursor(long txnLo) {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        final Path path = Path.PATH.get().of(rootPath);</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        if (cursor == null) {</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            cursor = new TransactionLogCursorImpl(ff, txnLo, path);</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;            tlTransactionLogCursor.set(cursor);</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;            return cursor;</b>
+<i class="no-highlight">161</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        return cursor.of(ff, txnLo, path);</b>
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    @NotNull
+<i class="no-highlight">166</i>&nbsp;    TableMetadataChangeLog getTableMetadataChangeLog(TableToken tableToken, long structureVersionLo, MemorySerializer serializer) {
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        cursor.of(ff, tableToken, structureVersionLo, serializer, Path.getThreadLocal(rootPath));</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        return cursor;</b>
+<i class="no-highlight">170</i>&nbsp;    }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;    long lastTxn() {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        return maxTxn.get();</b>
+<i class="no-highlight">174</i>&nbsp;    }
+<i class="no-highlight">175</i>&nbsp;
+<i class="no-highlight">176</i>&nbsp;    void open(Path path) {
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        this.rootPath.clear();</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        path.toSink(this.rootPath);</b>
+<i class="no-highlight">179</i>&nbsp;
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        final int pathLength = path.length();</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);</b>
+<i class="no-highlight">184</i>&nbsp;
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;        maxTxn.set(lastTxn);</b>
+<i class="no-highlight">187</i>&nbsp;
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        if (lastTxn == 0) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;            txnMem.jumpTo(0L);</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;            txnMem.putInt(WAL_FORMAT_VERSION);</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            txnMem.putLong(0L);</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            txnMem.putLong(0L);</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            txnMem.jumpTo(HEADER_SIZE);</b>
+<i class="no-highlight">194</i>&nbsp;
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            txnMetaMemIndex.jumpTo(0L);</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;            txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            txnMetaMem.jumpTo(0L);</b>
+<i class="no-highlight">198</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;            long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            long structureAppendOffset = maxStructureVersion * Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;            txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            txnMetaMem.jumpTo(txnMetaMemSize);</b>
+<i class="no-highlight">205</i>&nbsp;        }
+<i class="no-highlight">206</i>&nbsp;    }
+<i class="no-highlight">207</i>&nbsp;
+<i class="no-highlight">208</i>&nbsp;    AlterOperation readTableMetadataChangeLog(long structureVersion, MemorySerializer serializer) {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        long txnMetaOffset = txnMetaMemIndex.getLong(structureVersion * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        int recordSize = txnMetaMem.getInt(txnMetaOffset);</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        if (recordSize &lt; 0 || recordSize &gt; Files.PAGE_SIZE) {</b>
+<b class="nc"><i class="no-highlight">212</i>&nbsp;            throw CairoException.critical(0).put(&quot;invalid sequencer txn metadata [offset=&quot;).put(txnMetaOffset).put(&quot;, recordSize=&quot;).put(recordSize).put(&#39;]&#39;);</b>
+<i class="no-highlight">213</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">214</i>&nbsp;        txnMetaOffset += Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        AlterOperation alterToDeserializeTo = tlAlterOperation.get();</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        if (alterToDeserializeTo == null) {</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;            tlAlterOperation.set(alterToDeserializeTo = new AlterOperation());</b>
+<i class="no-highlight">218</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        serializer.fromSink(alterToDeserializeTo, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        txnMetaMem.jumpTo(txnMetaOffset + recordSize);</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        return alterToDeserializeTo;</b>
+<i class="no-highlight">222</i>&nbsp;    }
+<i class="no-highlight">223</i>&nbsp;
+<b class="fc"><i class="no-highlight">224</i>&nbsp;    private static class TableMetadataChangeLogImpl implements TableMetadataChangeLog {</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        private final AlterOperation alterOp = new AlterOperation();</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        private final MemoryFCRImpl txnMetaMem = new MemoryFCRImpl();</b>
+<i class="no-highlight">227</i>&nbsp;        private FilesFacade ff;
+<i class="no-highlight">228</i>&nbsp;        private MemorySerializer serializer;
+<i class="no-highlight">229</i>&nbsp;        private TableToken tableToken;
+<i class="no-highlight">230</i>&nbsp;        private long txnMetaAddress;
+<i class="no-highlight">231</i>&nbsp;        private long txnMetaOffset;
+<i class="no-highlight">232</i>&nbsp;        private long txnMetaOffsetHi;
+<i class="no-highlight">233</i>&nbsp;
+<i class="no-highlight">234</i>&nbsp;        @Override
+<i class="no-highlight">235</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            if (txnMetaAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_TX_LOG_CURSOR);</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;                txnMetaAddress = 0;</b>
+<i class="no-highlight">239</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">240</i>&nbsp;            txnMetaOffset = 0;</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;            txnMetaOffsetHi = 0;</b>
+<i class="no-highlight">242</i>&nbsp;        }
+<i class="no-highlight">243</i>&nbsp;
+<i class="no-highlight">244</i>&nbsp;        @Override
+<i class="no-highlight">245</i>&nbsp;        public TableToken getTableToken() {
+<b class="nc"><i class="no-highlight">246</i>&nbsp;            return tableToken;</b>
+<i class="no-highlight">247</i>&nbsp;        }
+<i class="no-highlight">248</i>&nbsp;
+<i class="no-highlight">249</i>&nbsp;        @Override
+<i class="no-highlight">250</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            return txnMetaOffset &lt; txnMetaOffsetHi;</b>
+<i class="no-highlight">252</i>&nbsp;        }
+<i class="no-highlight">253</i>&nbsp;
+<i class="no-highlight">254</i>&nbsp;        @Override
+<i class="no-highlight">255</i>&nbsp;        public TableMetadataChange next() {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;            int recordSize = txnMetaMem.getInt(txnMetaOffset);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;            if (recordSize &lt; 0 || recordSize &gt; Files.PAGE_SIZE) {</b>
+<b class="nc"><i class="no-highlight">258</i>&nbsp;                throw CairoException.critical(0).put(&quot;invalid sequencer txn metadata [offset=&quot;).put(txnMetaOffset).put(&quot;, recordSize=&quot;).put(recordSize).put(&#39;]&#39;);</b>
+<i class="no-highlight">259</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;            txnMetaOffset += Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            serializer.fromSink(alterOp, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            txnMetaOffset += recordSize;</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;            return alterOp;</b>
+<i class="no-highlight">264</i>&nbsp;        }
+<i class="no-highlight">265</i>&nbsp;
+<i class="no-highlight">266</i>&nbsp;        public void of(
+<i class="no-highlight">267</i>&nbsp;                FilesFacade ff,
+<i class="no-highlight">268</i>&nbsp;                TableToken tableToken,
+<i class="no-highlight">269</i>&nbsp;                long structureVersionLo,
+<i class="no-highlight">270</i>&nbsp;                MemorySerializer serializer,
+<i class="no-highlight">271</i>&nbsp;                @Transient final Path path
+<i class="no-highlight">272</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            this.tableToken = tableToken;</b>
+<i class="no-highlight">274</i>&nbsp;
+<i class="no-highlight">275</i>&nbsp;            // deallocates current state
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            close();</b>
+<i class="no-highlight">277</i>&nbsp;
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            this.ff = ff;</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;            this.serializer = serializer;</b>
+<i class="no-highlight">280</i>&nbsp;
+<b class="fc"><i class="no-highlight">281</i>&nbsp;            int txnFd = -1;</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;            int txnMetaFd = -1;</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            int txnMetaIndexFd = -1;</b>
+<i class="no-highlight">284</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                txnFd = openFileRO(ff, path, TXNLOG_FILE_NAME);</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                txnMetaFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;                txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;                long txnCount = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;                if (txnCount &gt; -1L) {</b>
+<i class="no-highlight">290</i>&nbsp;
+<b class="fc"><i class="no-highlight">291</i>&nbsp;                    long maxStructureVersion = ff.readNonNegativeLong(txnFd, HEADER_SIZE + (txnCount - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                    if (maxStructureVersion &gt; structureVersionLo) {</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                        txnMetaOffset = ff.readNonNegativeLong(txnMetaIndexFd, structureVersionLo * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                        if (txnMetaOffset &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                            txnMetaOffsetHi = ff.readNonNegativeLong(txnMetaIndexFd, maxStructureVersion * Long.BYTES);</b>
+<i class="no-highlight">296</i>&nbsp;
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                            if (txnMetaOffsetHi &gt; txnMetaOffset) {</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                                txnMetaAddress = ff.mmap(</b>
+<i class="no-highlight">299</i>&nbsp;                                        txnMetaFd,
+<i class="no-highlight">300</i>&nbsp;                                        txnMetaOffsetHi,
+<i class="no-highlight">301</i>&nbsp;                                        0L,
+<i class="no-highlight">302</i>&nbsp;                                        Files.MAP_RO,
+<i class="no-highlight">303</i>&nbsp;                                        MemoryTag.MMAP_TX_LOG_CURSOR
+<i class="no-highlight">304</i>&nbsp;                                );
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                                if (txnMetaAddress &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">306</i>&nbsp;                                    txnMetaAddress = 0;</b>
+<b class="nc"><i class="no-highlight">307</i>&nbsp;                                    close();</b>
+<i class="no-highlight">308</i>&nbsp;                                } else {
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                                    txnMetaMem.of(txnMetaAddress, txnMetaOffsetHi);</b>
+<i class="no-highlight">310</i>&nbsp;                                    return;
+<i class="no-highlight">311</i>&nbsp;                                }
+<i class="no-highlight">312</i>&nbsp;                            }
+<i class="no-highlight">313</i>&nbsp;                        }
+<i class="no-highlight">314</i>&nbsp;                    } else {
+<i class="no-highlight">315</i>&nbsp;                        // Set empty. This is not an error, it just means that there are no changes.
+<b class="nc"><i class="no-highlight">316</i>&nbsp;                        txnMetaOffset = txnMetaOffsetHi = 0;</b>
+<i class="no-highlight">317</i>&nbsp;                    }
+<i class="no-highlight">318</i>&nbsp;                }
+<i class="no-highlight">319</i>&nbsp;
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                throw CairoException.critical(0).put(&quot;expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=&quot;).put(structureVersionLo).put(&#39;]&#39;);</b>
+<i class="no-highlight">321</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                ff.close(txnFd);</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                ff.close(txnMetaFd);</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;                ff.close(txnMetaIndexFd);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;            }</b>
+<i class="no-highlight">326</i>&nbsp;        }
+<i class="no-highlight">327</i>&nbsp;    }
+<i class="no-highlight">328</i>&nbsp;
+<i class="no-highlight">329</i>&nbsp;    private static class TransactionLogCursorImpl implements TransactionLogCursor {
+<i class="no-highlight">330</i>&nbsp;        private long address;
+<i class="no-highlight">331</i>&nbsp;        private int fd;
+<i class="no-highlight">332</i>&nbsp;        private FilesFacade ff;
+<i class="no-highlight">333</i>&nbsp;        private long txn;
+<i class="no-highlight">334</i>&nbsp;        private long txnCount;
+<i class="no-highlight">335</i>&nbsp;        private long txnLo;
+<i class="no-highlight">336</i>&nbsp;        private long txnOffset;
+<i class="no-highlight">337</i>&nbsp;
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;            of(ff, txnLo, path);</b>
+<i class="no-highlight">340</i>&nbsp;        }
+<i class="no-highlight">341</i>&nbsp;
+<i class="no-highlight">342</i>&nbsp;        @Override
+<i class="no-highlight">343</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;            ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);</b>
+<i class="no-highlight">346</i>&nbsp;        }
+<i class="no-highlight">347</i>&nbsp;
+<i class="no-highlight">348</i>&nbsp;        @Override
+<i class="no-highlight">349</i>&nbsp;        public long getCommitTimestamp() {
+<b class="fc"><i class="no-highlight">350</i>&nbsp;            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);</b>
+<i class="no-highlight">351</i>&nbsp;        }
+<i class="no-highlight">352</i>&nbsp;
+<i class="no-highlight">353</i>&nbsp;        @Override
+<i class="no-highlight">354</i>&nbsp;        public int getSegmentId() {
+<b class="fc"><i class="no-highlight">355</i>&nbsp;            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);</b>
+<i class="no-highlight">356</i>&nbsp;        }
+<i class="no-highlight">357</i>&nbsp;
+<i class="no-highlight">358</i>&nbsp;        @Override
+<i class="no-highlight">359</i>&nbsp;        public int getSegmentTxn() {
+<b class="fc"><i class="no-highlight">360</i>&nbsp;            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);</b>
+<i class="no-highlight">361</i>&nbsp;        }
+<i class="no-highlight">362</i>&nbsp;
+<i class="no-highlight">363</i>&nbsp;        @Override
+<i class="no-highlight">364</i>&nbsp;        public long getStructureVersion() {
+<b class="fc"><i class="no-highlight">365</i>&nbsp;            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);</b>
+<i class="no-highlight">366</i>&nbsp;        }
+<i class="no-highlight">367</i>&nbsp;
+<i class="no-highlight">368</i>&nbsp;        @Override
+<i class="no-highlight">369</i>&nbsp;        public long getTxn() {
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            return txn;</b>
+<i class="no-highlight">371</i>&nbsp;        }
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;        @Override
+<i class="no-highlight">374</i>&nbsp;        public int getWalId() {
+<b class="fc"><i class="no-highlight">375</i>&nbsp;            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);</b>
+<i class="no-highlight">376</i>&nbsp;        }
+<i class="no-highlight">377</i>&nbsp;
+<i class="no-highlight">378</i>&nbsp;        @Override
+<i class="no-highlight">379</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            if (hasNext(getMappedLen())) {</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                return true;</b>
+<i class="no-highlight">382</i>&nbsp;            }
+<i class="no-highlight">383</i>&nbsp;
+<b class="fc"><i class="no-highlight">384</i>&nbsp;            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;            if (newTxnCount &gt; txnCount) {</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                final long oldSize = getMappedLen();</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                txnCount = newTxnCount;</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                final long newSize = getMappedLen();</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);</b>
+<i class="no-highlight">390</i>&nbsp;
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                return hasNext(newSize);</b>
+<i class="no-highlight">392</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">393</i>&nbsp;            return false;</b>
+<i class="no-highlight">394</i>&nbsp;        }
+<i class="no-highlight">395</i>&nbsp;
+<i class="no-highlight">396</i>&nbsp;        @Override
+<i class="no-highlight">397</i>&nbsp;        public boolean reset() {
+<b class="fc"><i class="no-highlight">398</i>&nbsp;            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;            if (newTxnCount &gt; txnCount) {</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                final long oldSize = getMappedLen();</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                txnCount = newTxnCount;</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                final long newSize = getMappedLen();</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);</b>
+<i class="no-highlight">404</i>&nbsp;
+<b class="fc"><i class="no-highlight">405</i>&nbsp;                this.txnLo = txn - 1;</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                this.txnOffset -= RECORD_SIZE;</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                return true;</b>
+<i class="no-highlight">408</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            return false;</b>
+<i class="no-highlight">410</i>&nbsp;        }
+<i class="no-highlight">411</i>&nbsp;
+<i class="no-highlight">412</i>&nbsp;        @Override
+<i class="no-highlight">413</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">414</i>&nbsp;            if (txnCount &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                this.txn = txnLo;</b>
+<i class="no-highlight">417</i>&nbsp;            }
+<i class="no-highlight">418</i>&nbsp;        }
+<i class="no-highlight">419</i>&nbsp;
+<i class="no-highlight">420</i>&nbsp;        private long getMappedLen() {
+<b class="fc"><i class="no-highlight">421</i>&nbsp;            return txnCount * RECORD_SIZE + HEADER_SIZE;</b>
+<i class="no-highlight">422</i>&nbsp;        }
+<i class="no-highlight">423</i>&nbsp;
+<i class="no-highlight">424</i>&nbsp;        private boolean hasNext(long mappedLen) {
+<b class="fc"><i class="no-highlight">425</i>&nbsp;            if (txnOffset + 2 * RECORD_SIZE &lt;= mappedLen) {</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                txnOffset += RECORD_SIZE;</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                txn++;</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                return true;</b>
+<i class="no-highlight">429</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">430</i>&nbsp;            return false;</b>
+<i class="no-highlight">431</i>&nbsp;        }
+<i class="no-highlight">432</i>&nbsp;
+<i class="no-highlight">433</i>&nbsp;        @NotNull
+<i class="no-highlight">434</i>&nbsp;        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
+<b class="fc"><i class="no-highlight">435</i>&nbsp;            this.ff = ff;</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;            this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;            this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;            if (txnCount &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;</b>
+<i class="no-highlight">441</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            this.txnLo = txnLo;</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;            txn = txnLo;</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;            return this;</b>
+<i class="no-highlight">445</i>&nbsp;        }
+<i class="no-highlight">446</i>&nbsp;    }
+<i class="no-highlight">447</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

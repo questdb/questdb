@@ -1,0 +1,932 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > HttpResponseSink</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.http</a>
+</div>
+
+<h1>Coverage Summary for Class: HttpResponseSink (io.questdb.cutlass.http)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">HttpResponseSink</td>
+<td class="coverageStat">
+  <span class="percent">
+    84.2%
+  </span>
+  <span class="absValue">
+    (16/19)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    50.7%
+  </span>
+  <span class="absValue">
+    (70/138)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">HttpResponseSink$ChunkBuffer</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.4%
+  </span>
+  <span class="absValue">
+    (17/18)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.3%
+  </span>
+  <span class="absValue">
+    (52/54)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">HttpResponseSink$ChunkedResponseImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (9/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.5%
+  </span>
+  <span class="absValue">
+    (21/22)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">HttpResponseSink$HttpRawSocketImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (7/7)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">HttpResponseSink$HttpResponseHeaderImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    77.8%
+  </span>
+  <span class="absValue">
+    (7/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.9%
+  </span>
+  <span class="absValue">
+    (34/37)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">HttpResponseSink$ResponseSinkImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (10/10)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    84.2%
+  </span>
+  <span class="absValue">
+    (32/38)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">HttpResponseSink$SimpleResponseImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (14/14)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    91.8%
+  </span>
+  <span class="absValue">
+    (67/73)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    74.2%
+  </span>
+  <span class="absValue">
+    (230/310)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.http;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.Reopenable;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.network.*;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.datetime.millitime.DateFormatUtils;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.datetime.millitime.MillisecondClock;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.ex.ZLibException;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.str.AbstractCharSink;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.str.StdoutSink;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">40</i>&nbsp;
+<b class="fc"><i class="no-highlight">41</i>&nbsp;public class HttpResponseSink implements Closeable, Mutable {</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private static final IntObjHashMap&lt;String&gt; httpStatusMap = new IntObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">44</i>&nbsp;    private final ChunkBuffer buffer;
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();</b>
+<i class="no-highlight">46</i>&nbsp;    private final ChunkBuffer compressOutBuffer;
+<i class="no-highlight">47</i>&nbsp;    private final boolean connectionCloseHeader;
+<i class="no-highlight">48</i>&nbsp;    private final boolean dumpNetworkTraffic;
+<i class="no-highlight">49</i>&nbsp;    private final HttpResponseHeaderImpl headerImpl;
+<i class="no-highlight">50</i>&nbsp;    private final String httpVersion;
+<i class="no-highlight">51</i>&nbsp;    private final NetworkFacade nf;
+<b class="fc"><i class="no-highlight">52</i>&nbsp;    private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;    private final SimpleResponseImpl simple = new SimpleResponseImpl();</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private final ResponseSinkImpl sink = new ResponseSinkImpl();</b>
+<i class="no-highlight">55</i>&nbsp;    private boolean chunkedRequestDone;
+<i class="no-highlight">56</i>&nbsp;    private boolean compressedHeaderDone;
+<i class="no-highlight">57</i>&nbsp;    private boolean compressedOutputReady;
+<i class="no-highlight">58</i>&nbsp;    private boolean compressionComplete;
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private int crc = 0;</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;    private boolean deflateBeforeSend = false;</b>
+<i class="no-highlight">61</i>&nbsp;    private int fd;
+<i class="no-highlight">62</i>&nbsp;    private boolean headersSent;
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    private long total = 0;</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;    private long totalBytesSent = 0;</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    private long z_streamp = 0;</b>
+<i class="no-highlight">66</i>&nbsp;
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    public HttpResponseSink(HttpContextConfiguration configuration) {</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        this.nf = configuration.getNetworkFacade();</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        this.buffer = new ChunkBuffer(responseBufferSize);</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        this.compressOutBuffer = new ChunkBuffer(responseBufferSize);</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        this.httpVersion = configuration.getHttpVersion();</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        this.connectionCloseHeader = !configuration.getServerKeepAlive();</b>
+<i class="no-highlight">76</i>&nbsp;    }
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    @Override
+<i class="no-highlight">79</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        headerImpl.clear();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        totalBytesSent = 0;</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        headersSent = false;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        chunkedRequestDone = false;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        resetZip();</b>
+<i class="no-highlight">85</i>&nbsp;    }
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;    @Override
+<i class="no-highlight">88</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        if (z_streamp != 0) {</b>
+<b class="nc"><i class="no-highlight">90</i>&nbsp;            Zip.deflateEnd(z_streamp);</b>
+<b class="nc"><i class="no-highlight">91</i>&nbsp;            z_streamp = 0;</b>
+<b class="nc"><i class="no-highlight">92</i>&nbsp;            compressOutBuffer.close();</b>
+<i class="no-highlight">93</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        buffer.close();</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        fd = -1;</b>
+<i class="no-highlight">96</i>&nbsp;    }
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    public HttpChunkedResponseSocket getChunkedSocket() {
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        return chunkedResponse;</b>
+<i class="no-highlight">100</i>&nbsp;    }
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    public int getCode() {
+<b class="nc"><i class="no-highlight">103</i>&nbsp;        return headerImpl.getCode();</b>
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;    public SimpleResponseImpl getSimple() {
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        return simple;</b>
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        if (!headersSent || !deflateBeforeSend) {</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;            sendBuffer(buffer);</b>
+<i class="no-highlight">113</i>&nbsp;            return;
+<i class="no-highlight">114</i>&nbsp;        }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;        while (true) {
+<b class="nc"><i class="no-highlight">117</i>&nbsp;            if (!compressedOutputReady &amp;&amp; !compressionComplete) {</b>
+<b class="nc"><i class="no-highlight">118</i>&nbsp;                deflate();</b>
+<i class="no-highlight">119</i>&nbsp;            }
+<i class="no-highlight">120</i>&nbsp;
+<b class="nc"><i class="no-highlight">121</i>&nbsp;            if (compressedOutputReady) {</b>
+<b class="nc"><i class="no-highlight">122</i>&nbsp;                sendBuffer(compressOutBuffer);</b>
+<b class="nc"><i class="no-highlight">123</i>&nbsp;                compressedOutputReady = false;</b>
+<b class="nc"><i class="no-highlight">124</i>&nbsp;                if (compressionComplete) {</b>
+<b class="nc"><i class="no-highlight">125</i>&nbsp;                    break;</b>
+<i class="no-highlight">126</i>&nbsp;                }
+<i class="no-highlight">127</i>&nbsp;            } else {
+<i class="no-highlight">128</i>&nbsp;                break;
+<i class="no-highlight">129</i>&nbsp;            }
+<i class="no-highlight">130</i>&nbsp;        }
+<i class="no-highlight">131</i>&nbsp;    }
+<i class="no-highlight">132</i>&nbsp;
+<i class="no-highlight">133</i>&nbsp;    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+<b class="nc"><i class="no-highlight">134</i>&nbsp;        this.deflateBeforeSend = deflateBeforeSend;</b>
+<b class="nc"><i class="no-highlight">135</i>&nbsp;        if (z_streamp == 0 &amp;&amp; deflateBeforeSend) {</b>
+<b class="nc"><i class="no-highlight">136</i>&nbsp;            z_streamp = Zip.deflateInit();</b>
+<b class="nc"><i class="no-highlight">137</i>&nbsp;            compressOutBuffer.reopen();</b>
+<i class="no-highlight">138</i>&nbsp;        }
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    private void deflate() {
+<b class="nc"><i class="no-highlight">142</i>&nbsp;        if (!compressedHeaderDone) {</b>
+<b class="nc"><i class="no-highlight">143</i>&nbsp;            int len = Zip.gzipHeaderLen;</b>
+<b class="nc"><i class="no-highlight">144</i>&nbsp;            Vect.memcpy(compressOutBuffer.getWriteAddress(len), Zip.gzipHeader, len);</b>
+<b class="nc"><i class="no-highlight">145</i>&nbsp;            compressOutBuffer.onWrite(len);</b>
+<b class="nc"><i class="no-highlight">146</i>&nbsp;            compressedHeaderDone = true;</b>
+<i class="no-highlight">147</i>&nbsp;        }
+<i class="no-highlight">148</i>&nbsp;
+<b class="nc"><i class="no-highlight">149</i>&nbsp;        int nInAvailable = (int) buffer.getReadNAvailable();</b>
+<b class="nc"><i class="no-highlight">150</i>&nbsp;        if (nInAvailable &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">151</i>&nbsp;            long inAddress = buffer.getReadAddress();</b>
+<b class="nc"><i class="no-highlight">152</i>&nbsp;            LOG.debug().$(&quot;Zip.setInput [inAddress=&quot;).$(inAddress).$(&quot;, nInAvailable=&quot;).$(nInAvailable).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">153</i>&nbsp;            buffer.write64BitZeroPadding();</b>
+<b class="nc"><i class="no-highlight">154</i>&nbsp;            Zip.setInput(z_streamp, inAddress, nInAvailable);</b>
+<i class="no-highlight">155</i>&nbsp;        }
+<i class="no-highlight">156</i>&nbsp;
+<i class="no-highlight">157</i>&nbsp;        int ret;
+<i class="no-highlight">158</i>&nbsp;        int len;
+<i class="no-highlight">159</i>&nbsp;        // compress input until we run out of either input or output
+<i class="no-highlight">160</i>&nbsp;        do {
+<b class="nc"><i class="no-highlight">161</i>&nbsp;            int sz = (int) compressOutBuffer.getWriteNAvailable() - 8;</b>
+<b class="nc"><i class="no-highlight">162</i>&nbsp;            long p = compressOutBuffer.getWriteAddress(0);</b>
+<b class="nc"><i class="no-highlight">163</i>&nbsp;            LOG.debug().$(&quot;deflate starting [p=&quot;).$(p).$(&quot;, sz=&quot;).$(sz).$(&quot;, chunkedRequestDone=&quot;).$(chunkedRequestDone).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">164</i>&nbsp;            ret = Zip.deflate(z_streamp, p, sz, chunkedRequestDone);</b>
+<b class="nc"><i class="no-highlight">165</i>&nbsp;            len = sz - Zip.availOut(z_streamp);</b>
+<b class="nc"><i class="no-highlight">166</i>&nbsp;            compressOutBuffer.onWrite(len);</b>
+<b class="nc"><i class="no-highlight">167</i>&nbsp;            if (ret &lt; 0) {</b>
+<i class="no-highlight">168</i>&nbsp;                // This is not an error, zlib just couldn&#39;t do any work with the input/output buffers it was provided.
+<i class="no-highlight">169</i>&nbsp;                // This happens often (will depend on output buffer size) when there is no new input and zlib has finished generating
+<i class="no-highlight">170</i>&nbsp;                // output from previously provided input
+<b class="nc"><i class="no-highlight">171</i>&nbsp;                if (ret != Zip.Z_BUF_ERROR || len != 0) {</b>
+<b class="nc"><i class="no-highlight">172</i>&nbsp;                    throw HttpException.instance(&quot;could not deflate [ret=&quot;).put(ret);</b>
+<i class="no-highlight">173</i>&nbsp;                }
+<i class="no-highlight">174</i>&nbsp;            }
+<i class="no-highlight">175</i>&nbsp;
+<b class="nc"><i class="no-highlight">176</i>&nbsp;            int availIn = Zip.availIn(z_streamp);</b>
+<b class="nc"><i class="no-highlight">177</i>&nbsp;            int nInConsumed = nInAvailable - availIn;</b>
+<b class="nc"><i class="no-highlight">178</i>&nbsp;            if (nInConsumed &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">179</i>&nbsp;                this.crc = Zip.crc32(this.crc, buffer.getReadAddress(), nInConsumed);</b>
+<b class="nc"><i class="no-highlight">180</i>&nbsp;                this.total += nInConsumed;</b>
+<b class="nc"><i class="no-highlight">181</i>&nbsp;                buffer.onRead(nInConsumed);</b>
+<b class="nc"><i class="no-highlight">182</i>&nbsp;                nInAvailable = availIn;</b>
+<i class="no-highlight">183</i>&nbsp;            }
+<i class="no-highlight">184</i>&nbsp;
+<b class="nc"><i class="no-highlight">185</i>&nbsp;            LOG.debug().$(&quot;deflate finished [ret=&quot;).$(ret).$(&quot;, len=&quot;).$(len).$(&quot;, availIn=&quot;).$(availIn).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">186</i>&nbsp;        } while (len == 0 &amp;&amp; nInAvailable &gt; 0);</b>
+<i class="no-highlight">187</i>&nbsp;
+<b class="nc"><i class="no-highlight">188</i>&nbsp;        if (nInAvailable == 0) {</b>
+<b class="nc"><i class="no-highlight">189</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<i class="no-highlight">190</i>&nbsp;        }
+<i class="no-highlight">191</i>&nbsp;
+<b class="nc"><i class="no-highlight">192</i>&nbsp;        if (len == 0) {</b>
+<b class="nc"><i class="no-highlight">193</i>&nbsp;            compressedOutputReady = false;</b>
+<i class="no-highlight">194</i>&nbsp;            return;
+<i class="no-highlight">195</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">196</i>&nbsp;        compressedOutputReady = true;</b>
+<i class="no-highlight">197</i>&nbsp;
+<i class="no-highlight">198</i>&nbsp;        // this is ZLib error, can&#39;t continue
+<b class="nc"><i class="no-highlight">199</i>&nbsp;        if (len &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">200</i>&nbsp;            throw ZLibException.INSTANCE;</b>
+<i class="no-highlight">201</i>&nbsp;        }
+<i class="no-highlight">202</i>&nbsp;
+<i class="no-highlight">203</i>&nbsp;        // trailer
+<b class="nc"><i class="no-highlight">204</i>&nbsp;        boolean finished = chunkedRequestDone &amp;&amp; ret == Zip.Z_STREAM_END;</b>
+<b class="nc"><i class="no-highlight">205</i>&nbsp;        if (finished) {</b>
+<b class="nc"><i class="no-highlight">206</i>&nbsp;            long p = compressOutBuffer.getWriteAddress(0);</b>
+<b class="nc"><i class="no-highlight">207</i>&nbsp;            Unsafe.getUnsafe().putInt(p, crc); // crc</b>
+<b class="nc"><i class="no-highlight">208</i>&nbsp;            Unsafe.getUnsafe().putInt(p + 4, (int) total); // total</b>
+<b class="nc"><i class="no-highlight">209</i>&nbsp;            compressOutBuffer.onWrite(8);</b>
+<b class="nc"><i class="no-highlight">210</i>&nbsp;            compressionComplete = true;</b>
+<i class="no-highlight">211</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">212</i>&nbsp;        compressOutBuffer.prepareToReadFromBuffer(true, finished);</b>
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    private void dumpBuffer(long buffer, int size) {
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        if (dumpNetworkTraffic &amp;&amp; size &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">217</i>&nbsp;            StdoutSink.INSTANCE.put(&#39;&lt;&#39;);</b>
+<b class="nc"><i class="no-highlight">218</i>&nbsp;            Net.dump(buffer, size);</b>
+<i class="no-highlight">219</i>&nbsp;        }
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        sendBuffer(buffer);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    private void prepareHeaderSink() {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        buffer.prepareToReadFromBuffer(false, false);</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        headerImpl.prepareToSend();</b>
+<i class="no-highlight">229</i>&nbsp;    }
+<i class="no-highlight">230</i>&nbsp;
+<i class="no-highlight">231</i>&nbsp;    private void resetZip() {
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        if (z_streamp != 0) {</b>
+<b class="nc"><i class="no-highlight">233</i>&nbsp;            Zip.deflateReset(z_streamp);</b>
+<b class="nc"><i class="no-highlight">234</i>&nbsp;            compressOutBuffer.clear();</b>
+<b class="nc"><i class="no-highlight">235</i>&nbsp;            crc = 0;</b>
+<b class="nc"><i class="no-highlight">236</i>&nbsp;            total = 0;</b>
+<b class="nc"><i class="no-highlight">237</i>&nbsp;            compressedHeaderDone = false;</b>
+<b class="nc"><i class="no-highlight">238</i>&nbsp;            compressedOutputReady = false;</b>
+<b class="nc"><i class="no-highlight">239</i>&nbsp;            compressionComplete = false;</b>
+<i class="no-highlight">240</i>&nbsp;        }
+<i class="no-highlight">241</i>&nbsp;    }
+<i class="no-highlight">242</i>&nbsp;
+<i class="no-highlight">243</i>&nbsp;    private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        int nSend = (int) sendBuf.getReadNAvailable();</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        while (nSend &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;            int n = nf.send(fd, sendBuf.getReadAddress(), nSend);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;            if (n &lt; 0) {</b>
+<i class="no-highlight">248</i>&nbsp;                // disconnected
+<b class="fc"><i class="no-highlight">249</i>&nbsp;                LOG.error()</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                        .$(&quot;disconnected [errno=&quot;).$(nf.errno())</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;                        .$(&quot;, fd=&quot;).$(fd)</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;                        .$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                throw PeerDisconnectedException.INSTANCE;</b>
+<i class="no-highlight">254</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            if (n == 0) {</b>
+<i class="no-highlight">256</i>&nbsp;                // test how many times we tried to send before parking up
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                throw PeerIsSlowToReadException.INSTANCE;</b>
+<i class="no-highlight">258</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                dumpBuffer(sendBuf.getReadAddress(), n);</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                sendBuf.onRead(n);</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                nSend -= n;</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                totalBytesSent += n;</b>
+<i class="no-highlight">263</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        assert sendBuf.getReadNAvailable() == 0;</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        sendBuf.clearAndPrepareToWriteToBuffer();</b>
+<i class="no-highlight">267</i>&nbsp;    }
+<i class="no-highlight">268</i>&nbsp;
+<i class="no-highlight">269</i>&nbsp;    HttpResponseHeader getHeader() {
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        return headerImpl;</b>
+<i class="no-highlight">271</i>&nbsp;    }
+<i class="no-highlight">272</i>&nbsp;
+<i class="no-highlight">273</i>&nbsp;    HttpRawSocket getRawSocket() {
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        return rawSocket;</b>
+<i class="no-highlight">275</i>&nbsp;    }
+<i class="no-highlight">276</i>&nbsp;
+<i class="no-highlight">277</i>&nbsp;    long getTotalBytesSent() {
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        return totalBytesSent;</b>
+<i class="no-highlight">279</i>&nbsp;    }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;    void of(int fd) {
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        this.fd = fd;</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        if (fd &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            this.buffer.reopen();</b>
+<i class="no-highlight">285</i>&nbsp;        }
+<i class="no-highlight">286</i>&nbsp;    }
+<i class="no-highlight">287</i>&nbsp;
+<b class="fc"><i class="no-highlight">288</i>&nbsp;    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reopenable {</b>
+<i class="no-highlight">289</i>&nbsp;        private static final String EOF_CHUNK = &quot;\r\n00\r\n\r\n&quot;;
+<i class="no-highlight">290</i>&nbsp;        private static final int MAX_CHUNK_HEADER_SIZE = 12;
+<i class="no-highlight">291</i>&nbsp;        private final long bufSize;
+<i class="no-highlight">292</i>&nbsp;        private long _rptr;
+<i class="no-highlight">293</i>&nbsp;        private long _wptr;
+<i class="no-highlight">294</i>&nbsp;        private long bufStart;
+<i class="no-highlight">295</i>&nbsp;        private long bufStartOfData;
+<i class="no-highlight">296</i>&nbsp;
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        private ChunkBuffer(int bufSize) {</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;            this.bufSize = bufSize;</b>
+<i class="no-highlight">299</i>&nbsp;        }
+<i class="no-highlight">300</i>&nbsp;
+<i class="no-highlight">301</i>&nbsp;        @Override
+<i class="no-highlight">302</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            if (bufStart != 0) {</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                bufStart = bufStartOfData = _wptr = _rptr = 0;</b>
+<i class="no-highlight">306</i>&nbsp;            }
+<i class="no-highlight">307</i>&nbsp;        }
+<i class="no-highlight">308</i>&nbsp;
+<i class="no-highlight">309</i>&nbsp;        @Override
+<i class="no-highlight">310</i>&nbsp;        public CharSink put(CharSequence cs) {
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            int len = cs.length();</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;            Chars.asciiStrCpy(cs, len, getWriteAddress(len));</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;            onWrite(len);</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;            return this;</b>
+<i class="no-highlight">315</i>&nbsp;        }
+<i class="no-highlight">316</i>&nbsp;
+<i class="no-highlight">317</i>&nbsp;        @Override
+<i class="no-highlight">318</i>&nbsp;        public CharSink put(char c) {
+<b class="fc"><i class="no-highlight">319</i>&nbsp;            Unsafe.getUnsafe().putByte(getWriteAddress(1), (byte) c);</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;            onWrite(1);</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;            return this;</b>
+<i class="no-highlight">322</i>&nbsp;        }
+<i class="no-highlight">323</i>&nbsp;
+<i class="no-highlight">324</i>&nbsp;        @Override
+<i class="no-highlight">325</i>&nbsp;        public CharSink put(char[] chars, int start, int len) {
+<b class="fc"><i class="no-highlight">326</i>&nbsp;            Chars.asciiCopyTo(chars, start, len, getWriteAddress(len));</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;            onWrite(len);</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;            return this;</b>
+<i class="no-highlight">329</i>&nbsp;        }
+<i class="no-highlight">330</i>&nbsp;
+<i class="no-highlight">331</i>&nbsp;        @Override
+<i class="no-highlight">332</i>&nbsp;        public CharSink put(CharSequence cs, int lo, int hi) {
+<b class="fc"><i class="no-highlight">333</i>&nbsp;            int len = hi - lo;</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            Chars.asciiStrCpy(cs, lo, len, getWriteAddress(len));</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;            onWrite(len);</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            return this;</b>
+<i class="no-highlight">337</i>&nbsp;        }
+<i class="no-highlight">338</i>&nbsp;
+<i class="no-highlight">339</i>&nbsp;        @Override
+<i class="no-highlight">340</i>&nbsp;        public void reopen() {
+<b class="fc"><i class="no-highlight">341</i>&nbsp;            if (bufStart == 0) {</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                clear();</b>
+<i class="no-highlight">345</i>&nbsp;            }
+<i class="no-highlight">346</i>&nbsp;        }
+<i class="no-highlight">347</i>&nbsp;
+<i class="no-highlight">348</i>&nbsp;        void clear() {
+<b class="fc"><i class="no-highlight">349</i>&nbsp;            _wptr = _rptr = bufStartOfData;</b>
+<i class="no-highlight">350</i>&nbsp;        }
+<i class="no-highlight">351</i>&nbsp;
+<i class="no-highlight">352</i>&nbsp;        void clearAndPrepareToWriteToBuffer() {
+<b class="fc"><i class="no-highlight">353</i>&nbsp;            _rptr = _wptr = bufStartOfData;</b>
+<i class="no-highlight">354</i>&nbsp;        }
+<i class="no-highlight">355</i>&nbsp;
+<i class="no-highlight">356</i>&nbsp;        long getReadAddress() {
+<b class="fc"><i class="no-highlight">357</i>&nbsp;            assert _rptr != 0;</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;            return _rptr;</b>
+<i class="no-highlight">359</i>&nbsp;        }
+<i class="no-highlight">360</i>&nbsp;
+<i class="no-highlight">361</i>&nbsp;        long getReadNAvailable() {
+<b class="fc"><i class="no-highlight">362</i>&nbsp;            return _wptr - _rptr;</b>
+<i class="no-highlight">363</i>&nbsp;        }
+<i class="no-highlight">364</i>&nbsp;
+<i class="no-highlight">365</i>&nbsp;        long getWriteAddress(int len) {
+<b class="fc"><i class="no-highlight">366</i>&nbsp;            assert _wptr != 0;</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;            if (getWriteNAvailable() &gt;= len) {</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                return _wptr;</b>
+<i class="no-highlight">369</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            throw NoSpaceLeftInResponseBufferException.INSTANCE;</b>
+<i class="no-highlight">371</i>&nbsp;        }
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;        long getWriteNAvailable() {
+<b class="fc"><i class="no-highlight">374</i>&nbsp;            return bufStartOfData + bufSize - _wptr;</b>
+<i class="no-highlight">375</i>&nbsp;        }
+<i class="no-highlight">376</i>&nbsp;
+<i class="no-highlight">377</i>&nbsp;        void onRead(int nRead) {
+<b class="fc"><i class="no-highlight">378</i>&nbsp;            assert nRead &gt;= 0 &amp;&amp; nRead &lt;= getReadNAvailable();</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;            _rptr += nRead;</b>
+<i class="no-highlight">380</i>&nbsp;        }
+<i class="no-highlight">381</i>&nbsp;
+<i class="no-highlight">382</i>&nbsp;        void onWrite(int nWrite) {
+<b class="fc"><i class="no-highlight">383</i>&nbsp;            assert nWrite &gt;= 0 &amp;&amp; nWrite &lt;= getWriteNAvailable();</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;            _wptr += nWrite;</b>
+<i class="no-highlight">385</i>&nbsp;        }
+<i class="no-highlight">386</i>&nbsp;
+<i class="no-highlight">387</i>&nbsp;        void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
+<b class="fc"><i class="no-highlight">388</i>&nbsp;            if (addChunkHeader) {</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                int len = (int) (_wptr - bufStartOfData);</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;                int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) &gt;&gt; 3) &lt;&lt; 1;</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                long tmp = _wptr;</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                _rptr = _wptr = bufStart + padding;</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;                put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;                Numbers.appendHex(this, len);</b>
+<b class="fc"><i class="no-highlight">395</i>&nbsp;                put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;                _wptr = tmp;</b>
+<i class="no-highlight">397</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">398</i>&nbsp;            if (addEofChunk) {</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                int len = EOF_CHUNK.length();</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                Chars.asciiStrCpy(EOF_CHUNK, len, _wptr);</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                _wptr += len;</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                LOG.debug().$(&quot;end chunk sent [fd=&quot;).$(fd).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">403</i>&nbsp;            }
+<i class="no-highlight">404</i>&nbsp;        }
+<i class="no-highlight">405</i>&nbsp;
+<i class="no-highlight">406</i>&nbsp;        void write64BitZeroPadding() {
+<b class="nc"><i class="no-highlight">407</i>&nbsp;            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);</b>
+<b class="nc"><i class="no-highlight">408</i>&nbsp;            Unsafe.getUnsafe().putLong(_wptr, 0);</b>
+<i class="no-highlight">409</i>&nbsp;        }
+<i class="no-highlight">410</i>&nbsp;    }
+<i class="no-highlight">411</i>&nbsp;
+<b class="fc"><i class="no-highlight">412</i>&nbsp;    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponseSocket {</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;        private long bookmark = 0;</b>
+<i class="no-highlight">414</i>&nbsp;
+<i class="no-highlight">415</i>&nbsp;        @Override
+<i class="no-highlight">416</i>&nbsp;        public void bookmark() {
+<b class="fc"><i class="no-highlight">417</i>&nbsp;            bookmark = buffer._wptr;</b>
+<i class="no-highlight">418</i>&nbsp;        }
+<i class="no-highlight">419</i>&nbsp;
+<i class="no-highlight">420</i>&nbsp;        @Override
+<i class="no-highlight">421</i>&nbsp;        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">422</i>&nbsp;            if (!chunkedRequestDone) {</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                sendChunk(true);</b>
+<i class="no-highlight">424</i>&nbsp;            }
+<i class="no-highlight">425</i>&nbsp;        }
+<i class="no-highlight">426</i>&nbsp;
+<i class="no-highlight">427</i>&nbsp;        @Override
+<i class="no-highlight">428</i>&nbsp;        public HttpResponseHeader headers() {
+<b class="fc"><i class="no-highlight">429</i>&nbsp;            return headerImpl;</b>
+<i class="no-highlight">430</i>&nbsp;        }
+<i class="no-highlight">431</i>&nbsp;
+<i class="no-highlight">432</i>&nbsp;        @Override
+<i class="no-highlight">433</i>&nbsp;        public boolean resetToBookmark() {
+<b class="fc"><i class="no-highlight">434</i>&nbsp;            buffer._wptr = bookmark;</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;            return bookmark != buffer.bufStartOfData;</b>
+<i class="no-highlight">436</i>&nbsp;        }
+<i class="no-highlight">437</i>&nbsp;
+<i class="no-highlight">438</i>&nbsp;        @Override
+<i class="no-highlight">439</i>&nbsp;        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">440</i>&nbsp;            headersSent = true;</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            chunkedRequestDone = done;</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            if (buffer.getReadNAvailable() &gt; 0 || done) {</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                if (!deflateBeforeSend) {</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                    buffer.prepareToReadFromBuffer(true, chunkedRequestDone);</b>
+<i class="no-highlight">445</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">446</i>&nbsp;                resumeSend();</b>
+<i class="no-highlight">447</i>&nbsp;            }
+<i class="no-highlight">448</i>&nbsp;        }
+<i class="no-highlight">449</i>&nbsp;
+<i class="no-highlight">450</i>&nbsp;        @Override
+<i class="no-highlight">451</i>&nbsp;        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">452</i>&nbsp;            chunkedRequestDone = false;</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;            prepareHeaderSink();</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;            flushSingle();</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<i class="no-highlight">456</i>&nbsp;        }
+<i class="no-highlight">457</i>&nbsp;
+<i class="no-highlight">458</i>&nbsp;        @Override
+<i class="no-highlight">459</i>&nbsp;        public void shutdownWrite() {
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            nf.shutdown(fd, Net.SHUT_WR);</b>
+<i class="no-highlight">461</i>&nbsp;        }
+<i class="no-highlight">462</i>&nbsp;
+<i class="no-highlight">463</i>&nbsp;        @Override
+<i class="no-highlight">464</i>&nbsp;        public void status(int status, CharSequence contentType) {
+<b class="fc"><i class="no-highlight">465</i>&nbsp;            super.status(status, contentType);</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;            if (deflateBeforeSend) {</b>
+<b class="nc"><i class="no-highlight">467</i>&nbsp;                headerImpl.put(&quot;Content-Encoding: gzip&quot;).put(Misc.EOL);</b>
+<i class="no-highlight">468</i>&nbsp;            }
+<i class="no-highlight">469</i>&nbsp;        }
+<i class="no-highlight">470</i>&nbsp;    }
+<i class="no-highlight">471</i>&nbsp;
+<b class="fc"><i class="no-highlight">472</i>&nbsp;    public class HttpRawSocketImpl implements HttpRawSocket {</b>
+<i class="no-highlight">473</i>&nbsp;
+<i class="no-highlight">474</i>&nbsp;        @Override
+<i class="no-highlight">475</i>&nbsp;        public long getBufferAddress() {
+<b class="fc"><i class="no-highlight">476</i>&nbsp;            return buffer.getWriteAddress(1);</b>
+<i class="no-highlight">477</i>&nbsp;        }
+<i class="no-highlight">478</i>&nbsp;
+<i class="no-highlight">479</i>&nbsp;        @Override
+<i class="no-highlight">480</i>&nbsp;        public int getBufferSize() {
+<b class="fc"><i class="no-highlight">481</i>&nbsp;            return (int) buffer.getWriteNAvailable();</b>
+<i class="no-highlight">482</i>&nbsp;        }
+<i class="no-highlight">483</i>&nbsp;
+<i class="no-highlight">484</i>&nbsp;        @Override
+<i class="no-highlight">485</i>&nbsp;        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">486</i>&nbsp;            buffer.onWrite(size);</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;            buffer.prepareToReadFromBuffer(false, false);</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;            flushSingle();</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<i class="no-highlight">490</i>&nbsp;        }
+<i class="no-highlight">491</i>&nbsp;    }
+<i class="no-highlight">492</i>&nbsp;
+<i class="no-highlight">493</i>&nbsp;    public class HttpResponseHeaderImpl extends AbstractCharSink implements Mutable, HttpResponseHeader {
+<i class="no-highlight">494</i>&nbsp;        private final MillisecondClock clock;
+<i class="no-highlight">495</i>&nbsp;        private boolean chunky;
+<i class="no-highlight">496</i>&nbsp;        private int code;
+<i class="no-highlight">497</i>&nbsp;
+<b class="fc"><i class="no-highlight">498</i>&nbsp;        public HttpResponseHeaderImpl(MillisecondClock clock) {</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;            this.clock = clock;</b>
+<i class="no-highlight">500</i>&nbsp;        }
+<i class="no-highlight">501</i>&nbsp;
+<i class="no-highlight">502</i>&nbsp;        @Override
+<i class="no-highlight">503</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">504</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;            chunky = false;</b>
+<i class="no-highlight">506</i>&nbsp;        }
+<i class="no-highlight">507</i>&nbsp;
+<i class="no-highlight">508</i>&nbsp;        // this is used for HTTP access logging
+<i class="no-highlight">509</i>&nbsp;        public int getCode() {
+<b class="nc"><i class="no-highlight">510</i>&nbsp;            return code;</b>
+<i class="no-highlight">511</i>&nbsp;        }
+<i class="no-highlight">512</i>&nbsp;
+<i class="no-highlight">513</i>&nbsp;        @Override
+<i class="no-highlight">514</i>&nbsp;        public CharSink put(CharSequence cs) {
+<b class="fc"><i class="no-highlight">515</i>&nbsp;            int len = cs.length();</b>
+<b class="fc"><i class="no-highlight">516</i>&nbsp;            Chars.asciiStrCpy(cs, len, buffer.getWriteAddress(len));</b>
+<b class="fc"><i class="no-highlight">517</i>&nbsp;            buffer.onWrite(len);</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;            return this;</b>
+<i class="no-highlight">519</i>&nbsp;        }
+<i class="no-highlight">520</i>&nbsp;
+<i class="no-highlight">521</i>&nbsp;        @Override
+<i class="no-highlight">522</i>&nbsp;        public CharSink put(char c) {
+<b class="fc"><i class="no-highlight">523</i>&nbsp;            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), (byte) c);</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;            buffer.onWrite(1);</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;            return this;</b>
+<i class="no-highlight">526</i>&nbsp;        }
+<i class="no-highlight">527</i>&nbsp;
+<i class="no-highlight">528</i>&nbsp;        @Override
+<i class="no-highlight">529</i>&nbsp;        public CharSink put(char[] chars, int start, int len) {
+<b class="nc"><i class="no-highlight">530</i>&nbsp;            throw new UnsupportedOperationException();</b>
+<i class="no-highlight">531</i>&nbsp;        }
+<i class="no-highlight">532</i>&nbsp;
+<i class="no-highlight">533</i>&nbsp;        @Override
+<i class="no-highlight">534</i>&nbsp;        public void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">535</i>&nbsp;            headerImpl.prepareToSend();</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;            flushSingle();</b>
+<i class="no-highlight">537</i>&nbsp;        }
+<i class="no-highlight">538</i>&nbsp;
+<i class="no-highlight">539</i>&nbsp;        @Override
+<i class="no-highlight">540</i>&nbsp;        public String status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength) {
+<b class="fc"><i class="no-highlight">541</i>&nbsp;            this.code = code;</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;            String status = httpStatusMap.get(code);</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;            if (status == null) {</b>
+<b class="nc"><i class="no-highlight">544</i>&nbsp;                throw new IllegalArgumentException(&quot;Illegal status code: &quot; + code);</b>
+<i class="no-highlight">545</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">546</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;            put(httpProtocolVersion).put(code).put(&#39; &#39;).put(status).put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;            put(&quot;Server: &quot;).put(&quot;questDB/1.0&quot;).put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;            put(&quot;Date: &quot;);</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;            DateFormatUtils.formatHTTP(this, clock.getTicks());</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;            put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;            if (contentLength &gt; -2) {</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                this.chunky = (contentLength == -1);</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;                if (this.chunky) {</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;                    put(&quot;Transfer-Encoding: &quot;).put(&quot;chunked&quot;).put(Misc.EOL);</b>
+<i class="no-highlight">556</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">557</i>&nbsp;                    put(&quot;Content-Length: &quot;).put(contentLength).put(Misc.EOL);</b>
+<i class="no-highlight">558</i>&nbsp;                }
+<i class="no-highlight">559</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">560</i>&nbsp;            if (contentType != null) {</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;                put(&quot;Content-Type: &quot;).put(contentType).put(Misc.EOL);</b>
+<i class="no-highlight">562</i>&nbsp;            }
+<i class="no-highlight">563</i>&nbsp;
+<b class="fc"><i class="no-highlight">564</i>&nbsp;            if (connectionCloseHeader) {</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;                put(&quot;Connection: close&quot;).put(Misc.EOL);</b>
+<i class="no-highlight">566</i>&nbsp;            }
+<i class="no-highlight">567</i>&nbsp;
+<b class="fc"><i class="no-highlight">568</i>&nbsp;            return status;</b>
+<i class="no-highlight">569</i>&nbsp;        }
+<i class="no-highlight">570</i>&nbsp;
+<i class="no-highlight">571</i>&nbsp;        private void prepareToSend() {
+<b class="fc"><i class="no-highlight">572</i>&nbsp;            if (!chunky) {</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;                put(Misc.EOL);</b>
+<i class="no-highlight">574</i>&nbsp;            }
+<i class="no-highlight">575</i>&nbsp;        }
+<i class="no-highlight">576</i>&nbsp;
+<i class="no-highlight">577</i>&nbsp;    }
+<i class="no-highlight">578</i>&nbsp;
+<b class="fc"><i class="no-highlight">579</i>&nbsp;    private class ResponseSinkImpl extends AbstractCharSink {</b>
+<i class="no-highlight">580</i>&nbsp;
+<i class="no-highlight">581</i>&nbsp;        @Override
+<i class="no-highlight">582</i>&nbsp;        public CharSink put(CharSequence seq) {
+<b class="fc"><i class="no-highlight">583</i>&nbsp;            buffer.put(seq);</b>
+<b class="fc"><i class="no-highlight">584</i>&nbsp;            return this;</b>
+<i class="no-highlight">585</i>&nbsp;        }
+<i class="no-highlight">586</i>&nbsp;
+<i class="no-highlight">587</i>&nbsp;        @Override
+<i class="no-highlight">588</i>&nbsp;        public CharSink put(CharSequence cs, int lo, int hi) {
+<b class="fc"><i class="no-highlight">589</i>&nbsp;            buffer.put(cs, lo, hi);</b>
+<b class="fc"><i class="no-highlight">590</i>&nbsp;            return this;</b>
+<i class="no-highlight">591</i>&nbsp;        }
+<i class="no-highlight">592</i>&nbsp;
+<i class="no-highlight">593</i>&nbsp;        @Override
+<i class="no-highlight">594</i>&nbsp;        public CharSink put(char c) {
+<b class="fc"><i class="no-highlight">595</i>&nbsp;            buffer.put(c);</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;            return this;</b>
+<i class="no-highlight">597</i>&nbsp;        }
+<i class="no-highlight">598</i>&nbsp;
+<i class="no-highlight">599</i>&nbsp;        @Override
+<i class="no-highlight">600</i>&nbsp;        public CharSink put(char[] chars, int start, int len) {
+<b class="fc"><i class="no-highlight">601</i>&nbsp;            buffer.put(chars, start, len);</b>
+<b class="fc"><i class="no-highlight">602</i>&nbsp;            return this;</b>
+<i class="no-highlight">603</i>&nbsp;        }
+<i class="no-highlight">604</i>&nbsp;
+<i class="no-highlight">605</i>&nbsp;        @Override
+<i class="no-highlight">606</i>&nbsp;        public CharSink put(float value, int scale) {
+<b class="fc"><i class="no-highlight">607</i>&nbsp;            if (Float.isNaN(value) || Float.isInfinite(value)) {</b>
+<b class="fc"><i class="no-highlight">608</i>&nbsp;                put(&quot;null&quot;);</b>
+<b class="fc"><i class="no-highlight">609</i>&nbsp;                return this;</b>
+<i class="no-highlight">610</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">611</i>&nbsp;            return super.put(value, scale);</b>
+<i class="no-highlight">612</i>&nbsp;        }
+<i class="no-highlight">613</i>&nbsp;
+<i class="no-highlight">614</i>&nbsp;        @Override
+<i class="no-highlight">615</i>&nbsp;        public CharSink put(double value, int scale) {
+<b class="fc"><i class="no-highlight">616</i>&nbsp;            if (Double.isNaN(value) || Double.isInfinite(value)) {</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;                put(&quot;null&quot;);</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;                return this;</b>
+<i class="no-highlight">619</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">620</i>&nbsp;            return super.put(value, scale);</b>
+<i class="no-highlight">621</i>&nbsp;        }
+<i class="no-highlight">622</i>&nbsp;
+<i class="no-highlight">623</i>&nbsp;        @Override
+<i class="no-highlight">624</i>&nbsp;        public void putUtf8Special(char c) {
+<b class="fc"><i class="no-highlight">625</i>&nbsp;            if (c &lt; 32) {</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;                escapeSpace(c);</b>
+<i class="no-highlight">627</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">628</i>&nbsp;                switch (c) {</b>
+<i class="no-highlight">629</i>&nbsp;                    case &#39;\&quot;&#39;:
+<i class="no-highlight">630</i>&nbsp;                    case &#39;\\&#39;:
+<b class="fc"><i class="no-highlight">631</i>&nbsp;                        put(&#39;\\&#39;);</b>
+<i class="no-highlight">632</i>&nbsp;                        // intentional fall through
+<i class="no-highlight">633</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">634</i>&nbsp;                        put(c);</b>
+<i class="no-highlight">635</i>&nbsp;                        break;
+<i class="no-highlight">636</i>&nbsp;                }
+<i class="no-highlight">637</i>&nbsp;            }
+<i class="no-highlight">638</i>&nbsp;        }
+<i class="no-highlight">639</i>&nbsp;
+<i class="no-highlight">640</i>&nbsp;        public void status(int status, CharSequence contentType) {
+<b class="fc"><i class="no-highlight">641</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<b class="fc"><i class="no-highlight">642</i>&nbsp;            headerImpl.status(&quot;HTTP/1.1 &quot;, status, contentType, -1);</b>
+<i class="no-highlight">643</i>&nbsp;        }
+<i class="no-highlight">644</i>&nbsp;
+<i class="no-highlight">645</i>&nbsp;        private void escapeSpace(char c) {
+<b class="fc"><i class="no-highlight">646</i>&nbsp;            switch (c) {</b>
+<i class="no-highlight">647</i>&nbsp;                case &#39;\b&#39;:
+<b class="nc"><i class="no-highlight">648</i>&nbsp;                    put(&quot;\\b&quot;);</b>
+<b class="nc"><i class="no-highlight">649</i>&nbsp;                    break;</b>
+<i class="no-highlight">650</i>&nbsp;                case &#39;\f&#39;:
+<b class="nc"><i class="no-highlight">651</i>&nbsp;                    put(&quot;\\f&quot;);</b>
+<b class="nc"><i class="no-highlight">652</i>&nbsp;                    break;</b>
+<i class="no-highlight">653</i>&nbsp;                case &#39;\n&#39;:
+<b class="fc"><i class="no-highlight">654</i>&nbsp;                    put(&quot;\\n&quot;);</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;                    break;</b>
+<i class="no-highlight">656</i>&nbsp;                case &#39;\r&#39;:
+<b class="fc"><i class="no-highlight">657</i>&nbsp;                    put(&quot;\\r&quot;);</b>
+<b class="fc"><i class="no-highlight">658</i>&nbsp;                    break;</b>
+<i class="no-highlight">659</i>&nbsp;                case &#39;\t&#39;:
+<b class="nc"><i class="no-highlight">660</i>&nbsp;                    put(&quot;\\t&quot;);</b>
+<b class="nc"><i class="no-highlight">661</i>&nbsp;                    break;</b>
+<i class="no-highlight">662</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">663</i>&nbsp;                    put(&quot;\\u00&quot;);</b>
+<b class="fc"><i class="no-highlight">664</i>&nbsp;                    put(c &gt;&gt; 4);</b>
+<b class="fc"><i class="no-highlight">665</i>&nbsp;                    put(Numbers.hexDigits[c &amp; 15]);</b>
+<i class="no-highlight">666</i>&nbsp;                    break;
+<i class="no-highlight">667</i>&nbsp;            }
+<i class="no-highlight">668</i>&nbsp;        }
+<i class="no-highlight">669</i>&nbsp;    }
+<i class="no-highlight">670</i>&nbsp;
+<b class="fc"><i class="no-highlight">671</i>&nbsp;    public class SimpleResponseImpl {</b>
+<i class="no-highlight">672</i>&nbsp;
+<i class="no-highlight">673</i>&nbsp;        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">674</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<b class="fc"><i class="no-highlight">675</i>&nbsp;            final String std = headerImpl.status(httpVersion, code, &quot;text/plain; charset=utf-8&quot;, -1L);</b>
+<b class="fc"><i class="no-highlight">676</i>&nbsp;            prepareHeaderSink();</b>
+<b class="fc"><i class="no-highlight">677</i>&nbsp;            flushSingle();</b>
+<b class="fc"><i class="no-highlight">678</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<b class="fc"><i class="no-highlight">679</i>&nbsp;            sink.put(message == null ? std : message).put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">680</i>&nbsp;            buffer.prepareToReadFromBuffer(true, true);</b>
+<b class="fc"><i class="no-highlight">681</i>&nbsp;            resumeSend();</b>
+<i class="no-highlight">682</i>&nbsp;        }
+<i class="no-highlight">683</i>&nbsp;
+<i class="no-highlight">684</i>&nbsp;        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">685</i>&nbsp;            buffer.clearAndPrepareToWriteToBuffer();</b>
+<b class="fc"><i class="no-highlight">686</i>&nbsp;            headerImpl.status(httpVersion, code, &quot;text/html; charset=utf-8&quot;, -2L);</b>
+<b class="fc"><i class="no-highlight">687</i>&nbsp;            prepareHeaderSink();</b>
+<b class="fc"><i class="no-highlight">688</i>&nbsp;            flushSingle();</b>
+<i class="no-highlight">689</i>&nbsp;        }
+<i class="no-highlight">690</i>&nbsp;
+<i class="no-highlight">691</i>&nbsp;        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">692</i>&nbsp;            sendStatus(code, null);</b>
+<i class="no-highlight">693</i>&nbsp;        }
+<i class="no-highlight">694</i>&nbsp;    }
+<i class="no-highlight">695</i>&nbsp;
+<i class="no-highlight">696</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">697</i>&nbsp;        httpStatusMap.put(200, &quot;OK&quot;);</b>
+<b class="fc"><i class="no-highlight">698</i>&nbsp;        httpStatusMap.put(206, &quot;Partial content&quot;);</b>
+<b class="fc"><i class="no-highlight">699</i>&nbsp;        httpStatusMap.put(304, &quot;Not Modified&quot;);</b>
+<b class="fc"><i class="no-highlight">700</i>&nbsp;        httpStatusMap.put(400, &quot;Bad request&quot;);</b>
+<b class="fc"><i class="no-highlight">701</i>&nbsp;        httpStatusMap.put(404, &quot;Not Found&quot;);</b>
+<b class="fc"><i class="no-highlight">702</i>&nbsp;        httpStatusMap.put(416, &quot;Request range not satisfiable&quot;);</b>
+<b class="fc"><i class="no-highlight">703</i>&nbsp;        httpStatusMap.put(431, &quot;Headers too large&quot;);</b>
+<b class="fc"><i class="no-highlight">704</i>&nbsp;        httpStatusMap.put(500, &quot;Internal server error&quot;);</b>
+<i class="no-highlight">705</i>&nbsp;    }
+<i class="no-highlight">706</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

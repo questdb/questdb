@@ -1,0 +1,186 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > BinarySearch</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: BinarySearch (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">BinarySearch</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    50%
+  </span>
+  <span class="absValue">
+    (1/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    90%
+  </span>
+  <span class="absValue">
+    (18/20)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.vm.api.MemoryR;
+<i class="no-highlight">28</i>&nbsp;
+<b class="nc"><i class="no-highlight">29</i>&nbsp;public class BinarySearch {</b>
+<i class="no-highlight">30</i>&nbsp;    // Down is increasing direction
+<i class="no-highlight">31</i>&nbsp;    public static final int SCAN_DOWN = 1;
+<i class="no-highlight">32</i>&nbsp;    // Up is decreasing direction
+<i class="no-highlight">33</i>&nbsp;    public static final int SCAN_UP = -1;
+<i class="no-highlight">34</i>&nbsp;
+<i class="no-highlight">35</i>&nbsp;    /**
+<i class="no-highlight">36</i>&nbsp;     * Performs binary search on column of Long values.
+<i class="no-highlight">37</i>&nbsp;     *
+<i class="no-highlight">38</i>&nbsp;     * @param column        the column
+<i class="no-highlight">39</i>&nbsp;     * @param value         the search value
+<i class="no-highlight">40</i>&nbsp;     * @param low           the low boundary of the search, inclusive of value
+<i class="no-highlight">41</i>&nbsp;     * @param high          the high boundary of the search inclusive of value
+<i class="no-highlight">42</i>&nbsp;     * @param scanDirection logical direction in which column is searched. UP means we are looking for
+<i class="no-highlight">43</i>&nbsp;     *                      the bottom boundary of the values that are lower or equal the search value. DOWN means
+<i class="no-highlight">44</i>&nbsp;     *                      we are looking for upper boundary of the values that are greater or equal the search
+<i class="no-highlight">45</i>&nbsp;     *                      value.
+<i class="no-highlight">46</i>&nbsp;     * @return index in column where value is less or equal to the search value. If column contains
+<i class="no-highlight">47</i>&nbsp;     * multiple exact matches the scanDirection determines whether top or bottom of these matches is returned.
+<i class="no-highlight">48</i>&nbsp;     * When scan direction is DOWN - the last index of exact matches is returns, when UP - the first index
+<i class="no-highlight">49</i>&nbsp;     */
+<i class="no-highlight">50</i>&nbsp;    public static long find(MemoryR column, long value, long low, long high, int scanDirection) {
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        while (low &lt; high) {</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;            long mid = (low + high) / 2;</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;            long midVal = column.getLong(mid * Long.BYTES);</b>
+<i class="no-highlight">54</i>&nbsp;
+<b class="fc"><i class="no-highlight">55</i>&nbsp;            if (midVal &lt; value) {</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;                if (low &lt; mid) {</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;                    low = mid;</b>
+<i class="no-highlight">58</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">59</i>&nbsp;                    if (column.getLong(high * Long.BYTES) &gt; value) {</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;                        return low;</b>
+<i class="no-highlight">61</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">62</i>&nbsp;                    return high;</b>
+<i class="no-highlight">63</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">64</i>&nbsp;            } else if (midVal &gt; value)</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;                high = mid;</b>
+<i class="no-highlight">66</i>&nbsp;            else {
+<i class="no-highlight">67</i>&nbsp;                // In case of multiple equal values, find the first
+<b class="fc"><i class="no-highlight">68</i>&nbsp;                mid += scanDirection;</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;                while (mid &gt; 0 &amp;&amp; mid &lt;= high &amp;&amp; midVal == column.getLong(mid * Long.BYTES)) {</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;                    mid += scanDirection;</b>
+<i class="no-highlight">71</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">72</i>&nbsp;                return mid - scanDirection;</b>
+<i class="no-highlight">73</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        }</b>
+<i class="no-highlight">75</i>&nbsp;
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        if (column.getLong(low * Long.BYTES) &gt; value) {</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;            return low - 1;</b>
+<i class="no-highlight">78</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">79</i>&nbsp;        return low;</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

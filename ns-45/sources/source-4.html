@@ -1,0 +1,2059 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TimestampFormatCompiler</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.datetime.microtime</a>
+</div>
+
+<h1>Coverage Summary for Class: TimestampFormatCompiler (io.questdb.std.datetime.microtime)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TimestampFormatCompiler</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (23/23)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.9%
+  </span>
+  <span class="absValue">
+    (1037/1038)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.datetime.microtime;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.datetime.AbstractDateFormat;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.datetime.DateFormat;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.datetime.DateLocale;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;public class TimestampFormatCompiler {
+<i class="no-highlight">35</i>&nbsp;    static final int OP_AM_PM = 14;
+<i class="no-highlight">36</i>&nbsp;    static final int OP_DAY_GREEDY = 139;
+<i class="no-highlight">37</i>&nbsp;    static final int OP_DAY_NAME_LONG = 12;
+<i class="no-highlight">38</i>&nbsp;    static final int OP_DAY_NAME_SHORT = 11;
+<i class="no-highlight">39</i>&nbsp;    static final int OP_DAY_OF_WEEK = 13;
+<i class="no-highlight">40</i>&nbsp;    static final int OP_DAY_OF_YEAR = 36;
+<i class="no-highlight">41</i>&nbsp;    static final int OP_DAY_ONE_DIGIT = 9;
+<i class="no-highlight">42</i>&nbsp;    static final int OP_DAY_TWO_DIGITS = 10;
+<i class="no-highlight">43</i>&nbsp;    static final int OP_ERA = 1;
+<i class="no-highlight">44</i>&nbsp;    static final int OP_HOUR_12_GREEDY = 142;
+<i class="no-highlight">45</i>&nbsp;    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
+<i class="no-highlight">46</i>&nbsp;    static final int OP_HOUR_12_ONE_DIGIT = 17;
+<i class="no-highlight">47</i>&nbsp;    static final int OP_HOUR_12_ONE_DIGIT_ONE_BASED = 18;
+<i class="no-highlight">48</i>&nbsp;    static final int OP_HOUR_12_TWO_DIGITS = 34;
+<i class="no-highlight">49</i>&nbsp;    static final int OP_HOUR_12_TWO_DIGITS_ONE_BASED = 35;
+<i class="no-highlight">50</i>&nbsp;    static final int OP_HOUR_24_GREEDY = 140;
+<i class="no-highlight">51</i>&nbsp;    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
+<i class="no-highlight">52</i>&nbsp;    static final int OP_HOUR_24_ONE_DIGIT = 15;
+<i class="no-highlight">53</i>&nbsp;    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
+<i class="no-highlight">54</i>&nbsp;    static final int OP_HOUR_24_TWO_DIGITS = 32;
+<i class="no-highlight">55</i>&nbsp;    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+<i class="no-highlight">56</i>&nbsp;    static final int OP_ISO_WEEK_OF_YEAR = 38;
+<i class="no-highlight">57</i>&nbsp;    static final int OP_MICROS_GREEDY3 = 149;
+<i class="no-highlight">58</i>&nbsp;    static final int OP_MICROS_GREEDY6 = 51;
+<i class="no-highlight">59</i>&nbsp;    static final int OP_MICROS_ONE_DIGIT = 39;
+<i class="no-highlight">60</i>&nbsp;    static final int OP_MICROS_THREE_DIGITS = 49;
+<i class="no-highlight">61</i>&nbsp;    static final int OP_MILLIS_GREEDY = 146;
+<i class="no-highlight">62</i>&nbsp;    static final int OP_MILLIS_ONE_DIGIT = 21;
+<i class="no-highlight">63</i>&nbsp;    static final int OP_MILLIS_THREE_DIGITS = 31;
+<i class="no-highlight">64</i>&nbsp;    static final int OP_MINUTE_GREEDY = 144;
+<i class="no-highlight">65</i>&nbsp;    static final int OP_MINUTE_ONE_DIGIT = 19;
+<i class="no-highlight">66</i>&nbsp;    static final int OP_MINUTE_TWO_DIGITS = 29;
+<i class="no-highlight">67</i>&nbsp;    static final int OP_MONTH_GREEDY = 135;
+<i class="no-highlight">68</i>&nbsp;    static final int OP_MONTH_LONG_NAME = 8;
+<i class="no-highlight">69</i>&nbsp;    static final int OP_MONTH_ONE_DIGIT = 5;
+<i class="no-highlight">70</i>&nbsp;    static final int OP_MONTH_SHORT_NAME = 7;
+<i class="no-highlight">71</i>&nbsp;    static final int OP_MONTH_TWO_DIGITS = 6;
+<i class="no-highlight">72</i>&nbsp;    static final int OP_NANOS_GREEDY = 147;
+<i class="no-highlight">73</i>&nbsp;    static final int OP_NANOS_GREEDY9 = 52;
+<i class="no-highlight">74</i>&nbsp;    static final int OP_NANOS_ONE_DIGIT = 40;
+<i class="no-highlight">75</i>&nbsp;    static final int OP_NANOS_THREE_DIGITS = 50;
+<i class="no-highlight">76</i>&nbsp;    static final int OP_SECOND_GREEDY = 145;
+<i class="no-highlight">77</i>&nbsp;    static final int OP_SECOND_ONE_DIGIT = 20;
+<i class="no-highlight">78</i>&nbsp;    static final int OP_SECOND_TWO_DIGITS = 30;
+<i class="no-highlight">79</i>&nbsp;    static final int OP_TIME_ZONE_GMT_BASED = 22;
+<i class="no-highlight">80</i>&nbsp;    static final int OP_TIME_ZONE_ISO_8601_1 = 26;
+<i class="no-highlight">81</i>&nbsp;    static final int OP_TIME_ZONE_ISO_8601_2 = 27;
+<i class="no-highlight">82</i>&nbsp;    static final int OP_TIME_ZONE_ISO_8601_3 = 28;
+<i class="no-highlight">83</i>&nbsp;    static final int OP_TIME_ZONE_LONG = 24;
+<i class="no-highlight">84</i>&nbsp;    static final int OP_TIME_ZONE_RFC_822 = 25;
+<i class="no-highlight">85</i>&nbsp;    static final int OP_TIME_ZONE_SHORT = 23;
+<i class="no-highlight">86</i>&nbsp;    static final int OP_WEEK_OF_YEAR = 37;
+<i class="no-highlight">87</i>&nbsp;    static final int OP_YEAR_FOUR_DIGITS = 4;
+<i class="no-highlight">88</i>&nbsp;    static final int OP_YEAR_GREEDY = 132;
+<i class="no-highlight">89</i>&nbsp;    static final int OP_YEAR_ISO_FOUR_DIGITS = 41;
+<i class="no-highlight">90</i>&nbsp;    static final int OP_YEAR_ONE_DIGIT = 2;
+<i class="no-highlight">91</i>&nbsp;    static final int OP_YEAR_THREE_DIGITS = 148;
+<i class="no-highlight">92</i>&nbsp;    static final int OP_YEAR_TWO_DIGITS = 3;
+<i class="no-highlight">93</i>&nbsp;    static final ObjList&lt;String&gt; opList;
+<i class="no-highlight">94</i>&nbsp;    static final CharSequenceIntHashMap opMap;
+<i class="no-highlight">95</i>&nbsp;    private static final int FA_DAY = 5;
+<i class="no-highlight">96</i>&nbsp;    private static final int FA_DAY_OF_WEEK = 10;
+<i class="no-highlight">97</i>&nbsp;    private static final int FA_DAY_OF_YEAR = 14;
+<i class="no-highlight">98</i>&nbsp;    private static final int FA_HOUR = 4;
+<i class="no-highlight">99</i>&nbsp;    private static final int FA_ISO_WEEK_OF_YEAR = 13;
+<i class="no-highlight">100</i>&nbsp;    private static final int FA_ISO_YEAR = 9;
+<i class="no-highlight">101</i>&nbsp;    private static final int FA_LEAP = 8;
+<i class="no-highlight">102</i>&nbsp;    private static final int FA_LOCAL_DATETIME = 1;
+<i class="no-highlight">103</i>&nbsp;    private static final int FA_LOCAL_LOCALE = 3;
+<i class="no-highlight">104</i>&nbsp;    private static final int FA_LOCAL_SINK = 5;
+<i class="no-highlight">105</i>&nbsp;    private static final int FA_LOCAL_TIMEZONE = 4;
+<i class="no-highlight">106</i>&nbsp;    private static final int FA_MILLIS_MICROS = 11;
+<i class="no-highlight">107</i>&nbsp;    private static final int FA_MINUTE = 3;
+<i class="no-highlight">108</i>&nbsp;    private static final int FA_MONTH = 6;
+<i class="no-highlight">109</i>&nbsp;    private static final int FA_SECOND = 2;
+<i class="no-highlight">110</i>&nbsp;    private static final int FA_SECOND_MICROS = 15;
+<i class="no-highlight">111</i>&nbsp;    private static final int FA_SECOND_MILLIS = 1;
+<i class="no-highlight">112</i>&nbsp;    private static final int FA_WEEK_OF_YEAR = 12;
+<i class="no-highlight">113</i>&nbsp;    private static final int FA_YEAR = 7;
+<i class="no-highlight">114</i>&nbsp;    private static final int FORMAT_METHOD_STACK_START = 6;
+<i class="no-highlight">115</i>&nbsp;    private static final int LOCAL_DAY = 5;
+<i class="no-highlight">116</i>&nbsp;    private static final int LOCAL_ERA = 19;
+<i class="no-highlight">117</i>&nbsp;    private static final int LOCAL_HOUR = 8;
+<i class="no-highlight">118</i>&nbsp;    private static final int LOCAL_HOUR_TYPE = 18;
+<i class="no-highlight">119</i>&nbsp;    private static final int LOCAL_MICROS = 20;
+<i class="no-highlight">120</i>&nbsp;    private static final int LOCAL_MILLIS = 11;
+<i class="no-highlight">121</i>&nbsp;    private static final int LOCAL_MINUTE = 9;
+<i class="no-highlight">122</i>&nbsp;    private static final int LOCAL_MONTH = 6;
+<i class="no-highlight">123</i>&nbsp;    private static final int LOCAL_OFFSET = 16;
+<i class="no-highlight">124</i>&nbsp;    private static final int LOCAL_POS = 12;
+<i class="no-highlight">125</i>&nbsp;    private static final int LOCAL_SECOND = 10;
+<i class="no-highlight">126</i>&nbsp;    private static final int LOCAL_TEMP_LONG = 13;
+<i class="no-highlight">127</i>&nbsp;    private static final int LOCAL_TIMEZONE = 15;
+<i class="no-highlight">128</i>&nbsp;    private static final int LOCAL_WEEK = 21;
+<i class="no-highlight">129</i>&nbsp;    private static final int LOCAL_YEAR = 7;
+<i class="no-highlight">130</i>&nbsp;    private static final int P_HI = 3;
+<i class="no-highlight">131</i>&nbsp;    private static final int P_INPUT_STR = 1;
+<i class="no-highlight">132</i>&nbsp;    private static final int P_LO = 2;
+<i class="no-highlight">133</i>&nbsp;    private static final int P_LOCALE = 4;
+<b class="fc"><i class="no-highlight">134</i>&nbsp;    private final BytecodeAssembler asm = new BytecodeAssembler();</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;    private final IntList delimiterIndexes = new IntList();</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;    private final ObjList&lt;String&gt; delimiters = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;    private final int[] fmtAttributeIndex = new int[32];</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;    private final LongList frameOffsets = new LongList();</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;    private final GenericLexer lexer = new GenericLexer(2048);</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;    private final IntList ops = new IntList();</b>
+<i class="no-highlight">141</i>&nbsp;
+<b class="fc"><i class="no-highlight">142</i>&nbsp;    public TimestampFormatCompiler() {</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        for (int i = 0, n = opList.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;            lexer.defineSymbol(opList.getQuick(i));</b>
+<i class="no-highlight">145</i>&nbsp;        }
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    public DateFormat compile(CharSequence pattern) {
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        return compile(pattern, false);</b>
+<i class="no-highlight">150</i>&nbsp;    }
+<i class="no-highlight">151</i>&nbsp;
+<i class="no-highlight">152</i>&nbsp;    public DateFormat compile(CharSequence pattern, boolean generic) {
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        return compile(pattern, 0, pattern.length(), generic);</b>
+<i class="no-highlight">154</i>&nbsp;    }
+<i class="no-highlight">155</i>&nbsp;
+<i class="no-highlight">156</i>&nbsp;    public DateFormat compile(CharSequence pattern, int lo, int hi, boolean generic) {
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        this.lexer.of(pattern, lo, hi);</b>
+<i class="no-highlight">158</i>&nbsp;
+<i class="no-highlight">159</i>&nbsp;        IntList ops;
+<i class="no-highlight">160</i>&nbsp;        ObjList&lt;String&gt; delimiters;
+<i class="no-highlight">161</i>&nbsp;
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        if (generic) {</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            ops = new IntList();</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            delimiters = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">165</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;            ops = this.ops;</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;            delimiters = this.delimiters;</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;            ops.clear();</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;            delimiters.clear();</b>
+<i class="no-highlight">170</i>&nbsp;        }
+<i class="no-highlight">171</i>&nbsp;
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        while (this.lexer.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;            final CharSequence cs = lexer.next();</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            final int op = opMap.get(cs);</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;            switch (op) {</b>
+<i class="no-highlight">176</i>&nbsp;                case -1:
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                    makeLastOpGreedy(ops);</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                    delimiters.add(Chars.toString(cs));</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                    ops.add(-(delimiters.size()));</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                    break;</b>
+<i class="no-highlight">181</i>&nbsp;                case OP_AM_PM:
+<i class="no-highlight">182</i>&nbsp;                case OP_TIME_ZONE_SHORT:
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                    makeLastOpGreedy(ops);</b>
+<i class="no-highlight">184</i>&nbsp;                    // fall thru
+<i class="no-highlight">185</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                    ops.add(op);</b>
+<i class="no-highlight">187</i>&nbsp;                    break;
+<i class="no-highlight">188</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        }</b>
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;        // make last operation &quot;greedy&quot;
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        makeLastOpGreedy(ops);</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        return generic ? new GenericTimestampFormat(ops, delimiters) : compile(ops, delimiters);</b>
+<i class="no-highlight">194</i>&nbsp;    }
+<i class="no-highlight">195</i>&nbsp;
+<i class="no-highlight">196</i>&nbsp;    private static void addOp(String op, int opDayTwoDigits) {
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        opMap.put(op, opDayTwoDigits);</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        opList.add(op);</b>
+<i class="no-highlight">199</i>&nbsp;    }
+<i class="no-highlight">200</i>&nbsp;
+<i class="no-highlight">201</i>&nbsp;    private void addTempToPos(int decodeLenIndex) {
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        decodeInt(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        asm.iadd();</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;        asm.istore(LOCAL_POS);</b>
+<i class="no-highlight">206</i>&nbsp;    }
+<i class="no-highlight">207</i>&nbsp;
+<i class="no-highlight">208</i>&nbsp;    private void assembleFormatMethod(
+<i class="no-highlight">209</i>&nbsp;            IntList ops,
+<i class="no-highlight">210</i>&nbsp;            ObjList&lt;String&gt; delimiters,
+<i class="no-highlight">211</i>&nbsp;            int getWeekdayIndex,
+<i class="no-highlight">212</i>&nbsp;            int getShortWeekdayIndex,
+<i class="no-highlight">213</i>&nbsp;            int getMonthIndex,
+<i class="no-highlight">214</i>&nbsp;            int getShortMonthIndex,
+<i class="no-highlight">215</i>&nbsp;            int appendEraIndex,
+<i class="no-highlight">216</i>&nbsp;            int appendAmPmIndex,
+<i class="no-highlight">217</i>&nbsp;            int appendHour12Index,
+<i class="no-highlight">218</i>&nbsp;            int appendHour12PaddedIndex,
+<i class="no-highlight">219</i>&nbsp;            int appendHour121Index,
+<i class="no-highlight">220</i>&nbsp;            int appendHour121PaddedIndex,
+<i class="no-highlight">221</i>&nbsp;            int getYearIndex,
+<i class="no-highlight">222</i>&nbsp;            int getIsoYearIndex,
+<i class="no-highlight">223</i>&nbsp;            int isLeapYearIndex,
+<i class="no-highlight">224</i>&nbsp;            int getMonthOfYearIndex,
+<i class="no-highlight">225</i>&nbsp;            int getDayOfMonthIndex,
+<i class="no-highlight">226</i>&nbsp;            int getHourOfDayIndex,
+<i class="no-highlight">227</i>&nbsp;            int getMinuteOfHourIndex,
+<i class="no-highlight">228</i>&nbsp;            int getSecondOfMinuteIndex,
+<i class="no-highlight">229</i>&nbsp;            int getMillisOfSecondIndex,
+<i class="no-highlight">230</i>&nbsp;            int getMicrosOfMilliIndex,
+<i class="no-highlight">231</i>&nbsp;            int getMicrosOfSecondIndex,
+<i class="no-highlight">232</i>&nbsp;            int getDayOfWeekIndex,
+<i class="no-highlight">233</i>&nbsp;            int append00000Index,
+<i class="no-highlight">234</i>&nbsp;            int append00Index,
+<i class="no-highlight">235</i>&nbsp;            int append0Index,
+<i class="no-highlight">236</i>&nbsp;            int appendYear000Index,
+<i class="no-highlight">237</i>&nbsp;            int appendYear00Index,
+<i class="no-highlight">238</i>&nbsp;            int appendYear0Index,
+<i class="no-highlight">239</i>&nbsp;            int appendYearIndex,
+<i class="no-highlight">240</i>&nbsp;            int sinkPutIntIndex,
+<i class="no-highlight">241</i>&nbsp;            int sinkPutStrIndex,
+<i class="no-highlight">242</i>&nbsp;            int sinkPutChrIndex,
+<i class="no-highlight">243</i>&nbsp;            int formatNameIndex,
+<i class="no-highlight">244</i>&nbsp;            int formatSigIndex,
+<i class="no-highlight">245</i>&nbsp;            int getDayOfYearIndex,
+<i class="no-highlight">246</i>&nbsp;            int getWeekOfYearIndex,
+<i class="no-highlight">247</i>&nbsp;            int getWeekIndex
+<i class="no-highlight">248</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        int formatAttributes = computeFormatAttributes(ops);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));</b>
+<i class="no-highlight">251</i>&nbsp;
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        assembleFormatMethodStack(</b>
+<i class="no-highlight">253</i>&nbsp;                formatAttributes,
+<i class="no-highlight">254</i>&nbsp;                getYearIndex,
+<i class="no-highlight">255</i>&nbsp;                getIsoYearIndex,
+<i class="no-highlight">256</i>&nbsp;                isLeapYearIndex,
+<i class="no-highlight">257</i>&nbsp;                getMonthOfYearIndex,
+<i class="no-highlight">258</i>&nbsp;                getDayOfMonthIndex,
+<i class="no-highlight">259</i>&nbsp;                getHourOfDayIndex,
+<i class="no-highlight">260</i>&nbsp;                getMinuteOfHourIndex,
+<i class="no-highlight">261</i>&nbsp;                getSecondOfMinuteIndex,
+<i class="no-highlight">262</i>&nbsp;                getMillisOfSecondIndex,
+<i class="no-highlight">263</i>&nbsp;                getMicrosOfMilliIndex,
+<i class="no-highlight">264</i>&nbsp;                getMicrosOfSecondIndex,
+<i class="no-highlight">265</i>&nbsp;                getDayOfWeekIndex,
+<i class="no-highlight">266</i>&nbsp;                getDayOfYearIndex,
+<i class="no-highlight">267</i>&nbsp;                getWeekOfYearIndex,
+<i class="no-highlight">268</i>&nbsp;                getWeekIndex
+<i class="no-highlight">269</i>&nbsp;        );
+<i class="no-highlight">270</i>&nbsp;
+<b class="fc"><i class="no-highlight">271</i>&nbsp;        for (int i = 0, n = ops.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;            int op = ops.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            switch (op) {</b>
+<i class="no-highlight">274</i>&nbsp;                // AM/PM
+<i class="no-highlight">275</i>&nbsp;                case TimestampFormatCompiler.OP_AM_PM:
+<b class="fc"><i class="no-highlight">276</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                    asm.aload(FA_LOCAL_LOCALE);</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                    asm.invokeStatic(appendAmPmIndex);</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                    break;</b>
+<i class="no-highlight">281</i>&nbsp;                // MICROS3
+<i class="no-highlight">282</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+<i class="no-highlight">283</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+<b class="fc"><i class="no-highlight">284</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;                    break;</b>
+<i class="no-highlight">289</i>&nbsp;                // MICROS6 &amp; NANOS9 are formatted the same
+<i class="no-highlight">290</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+<i class="no-highlight">291</i>&nbsp;                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                    asm.invokeStatic(append00000Index);</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                    break;</b>
+<i class="no-highlight">296</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;                    asm.invokeStatic(append00Index);</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;                    break;</b>
+<i class="no-highlight">301</i>&nbsp;                // NANOS
+<i class="no-highlight">302</i>&nbsp;                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
+<i class="no-highlight">303</i>&nbsp;                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                    asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                    break;</b>
+<i class="no-highlight">309</i>&nbsp;                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">310</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;                    asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                    asm.invokeStatic(append00Index);</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;                    break;</b>
+<i class="no-highlight">314</i>&nbsp;                // MILLIS
+<i class="no-highlight">315</i>&nbsp;                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+<i class="no-highlight">316</i>&nbsp;                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+<b class="fc"><i class="no-highlight">317</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                    break;</b>
+<i class="no-highlight">322</i>&nbsp;                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                    asm.invokeStatic(append00Index);</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                    break;</b>
+<i class="no-highlight">327</i>&nbsp;                // SECOND
+<i class="no-highlight">328</i>&nbsp;                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+<i class="no-highlight">329</i>&nbsp;                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_SECOND]);</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                    break;</b>
+<i class="no-highlight">335</i>&nbsp;                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_SECOND]);</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;                    break;</b>
+<i class="no-highlight">340</i>&nbsp;                // MINUTE
+<i class="no-highlight">341</i>&nbsp;                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+<i class="no-highlight">342</i>&nbsp;                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MINUTE]);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                    break;</b>
+<i class="no-highlight">348</i>&nbsp;                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MINUTE]);</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                    break;</b>
+<i class="no-highlight">353</i>&nbsp;                // HOUR (0-11)
+<i class="no-highlight">354</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+<i class="no-highlight">355</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                    asm.invokeStatic(appendHour12Index);</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                    break;</b>
+<i class="no-highlight">360</i>&nbsp;
+<i class="no-highlight">361</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                    asm.invokeStatic(appendHour12PaddedIndex);</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                    break;</b>
+<i class="no-highlight">366</i>&nbsp;
+<i class="no-highlight">367</i>&nbsp;                // HOUR (1-12)
+<i class="no-highlight">368</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<i class="no-highlight">369</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                    asm.invokeStatic(appendHour121Index);</b>
+<b class="fc"><i class="no-highlight">373</i>&nbsp;                    break;</b>
+<i class="no-highlight">374</i>&nbsp;
+<i class="no-highlight">375</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<b class="fc"><i class="no-highlight">376</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                    asm.invokeStatic(appendHour121PaddedIndex);</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                    break;</b>
+<i class="no-highlight">380</i>&nbsp;                // HOUR (0-23)
+<i class="no-highlight">381</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+<i class="no-highlight">382</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                    break;</b>
+<i class="no-highlight">388</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                    break;</b>
+<i class="no-highlight">393</i>&nbsp;
+<i class="no-highlight">394</i>&nbsp;                // HOUR (1 - 24)
+<i class="no-highlight">395</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<i class="no-highlight">396</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+<b class="fc"><i class="no-highlight">397</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;                    break;</b>
+<i class="no-highlight">404</i>&nbsp;
+<i class="no-highlight">405</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_HOUR]);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                    break;</b>
+<i class="no-highlight">412</i>&nbsp;                // DAY
+<i class="no-highlight">413</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+<i class="no-highlight">414</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_GREEDY:
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_DAY]);</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                    break;</b>
+<i class="no-highlight">420</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_DAY]);</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                    break;</b>
+<i class="no-highlight">425</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                    asm.aload(FA_LOCAL_LOCALE);</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                    asm.invokeVirtual(getWeekdayIndex);</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                    asm.invokeInterface(sinkPutStrIndex, 1);</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                    break;</b>
+<i class="no-highlight">433</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+<b class="fc"><i class="no-highlight">434</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                    asm.aload(FA_LOCAL_LOCALE);</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;                    asm.invokeVirtual(getShortWeekdayIndex);</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                    asm.invokeInterface(sinkPutStrIndex, 1);</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;                    break;</b>
+<i class="no-highlight">441</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">446</i>&nbsp;                    break;</b>
+<i class="no-highlight">447</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+<b class="fc"><i class="no-highlight">448</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_DAY_OF_YEAR]);</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;                    break;</b>
+<i class="no-highlight">453</i>&nbsp;                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR]);</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                    break;</b>
+<i class="no-highlight">458</i>&nbsp;                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+<b class="fc"><i class="no-highlight">459</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_WEEK_OF_YEAR]);</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                    break;</b>
+<i class="no-highlight">464</i>&nbsp;                // MONTH
+<i class="no-highlight">465</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+<i class="no-highlight">466</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MONTH]);</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;                    asm.invokeInterface(sinkPutIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                    break;</b>
+<i class="no-highlight">472</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MONTH]);</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;                    asm.invokeStatic(append0Index);</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;                    break;</b>
+<i class="no-highlight">477</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+<b class="fc"><i class="no-highlight">478</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                    asm.aload(FA_LOCAL_LOCALE);</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MONTH]);</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;                    asm.isub();</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                    asm.invokeVirtual(getShortMonthIndex);</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                    asm.invokeInterface(sinkPutStrIndex, 1);</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">486</i>&nbsp;                    break;</b>
+<i class="no-highlight">487</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;                    asm.aload(FA_LOCAL_LOCALE);</b>
+<b class="fc"><i class="no-highlight">490</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_MONTH]);</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                    asm.isub();</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                    asm.invokeVirtual(getMonthIndex);</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;                    asm.invokeInterface(sinkPutStrIndex, 1);</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;                    break;</b>
+<i class="no-highlight">497</i>&nbsp;                // YEAR
+<i class="no-highlight">498</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+<i class="no-highlight">499</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">502</i>&nbsp;                    asm.invokeStatic(appendYearIndex);</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                    break;</b>
+<i class="no-highlight">504</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">506</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                    asm.iconst(100);</b>
+<b class="fc"><i class="no-highlight">508</i>&nbsp;                    asm.irem();</b>
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                    asm.invokeStatic(appendYear0Index);</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;                    break;</b>
+<i class="no-highlight">511</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">512</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                    asm.iconst(1000);</b>
+<b class="fc"><i class="no-highlight">515</i>&nbsp;                    asm.irem();</b>
+<b class="fc"><i class="no-highlight">516</i>&nbsp;                    asm.invokeStatic(appendYear00Index);</b>
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                    break;</b>
+<i class="no-highlight">518</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+<b class="fc"><i class="no-highlight">519</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">521</i>&nbsp;                    asm.invokeStatic(appendYear000Index);</b>
+<b class="fc"><i class="no-highlight">522</i>&nbsp;                    break;</b>
+<i class="no-highlight">523</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+<b class="fc"><i class="no-highlight">524</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_ISO_YEAR]);</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                    asm.invokeStatic(appendYear000Index);</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;                    break;</b>
+<i class="no-highlight">528</i>&nbsp;                // ERA
+<i class="no-highlight">529</i>&nbsp;                case TimestampFormatCompiler.OP_ERA:
+<b class="fc"><i class="no-highlight">530</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">531</i>&nbsp;                    asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;                    asm.aload(FA_LOCAL_LOCALE);</b>
+<b class="fc"><i class="no-highlight">533</i>&nbsp;                    asm.invokeStatic(appendEraIndex);</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;                    break;</b>
+<i class="no-highlight">535</i>&nbsp;
+<i class="no-highlight">536</i>&nbsp;                // TIMEZONE
+<i class="no-highlight">537</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
+<i class="no-highlight">538</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+<i class="no-highlight">539</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+<i class="no-highlight">540</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+<i class="no-highlight">541</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+<i class="no-highlight">542</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
+<i class="no-highlight">543</i>&nbsp;                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+<b class="fc"><i class="no-highlight">544</i>&nbsp;                    asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;                    asm.aload(FA_LOCAL_TIMEZONE);</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;                    asm.invokeInterface(sinkPutStrIndex, 1);</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                    break;</b>
+<i class="no-highlight">548</i>&nbsp;                // SEPARATORS
+<i class="no-highlight">549</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">550</i>&nbsp;                    if (op &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;                        String delimiter = delimiters.getQuick(-op - 1);</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;                        if (delimiter.length() &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                            asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;                            asm.ldc(delimiterIndexes.getQuick(-op - 1));</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;                            asm.invokeInterface(sinkPutStrIndex, 1);</b>
+<i class="no-highlight">556</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">557</i>&nbsp;                            asm.aload(FA_LOCAL_SINK);</b>
+<b class="fc"><i class="no-highlight">558</i>&nbsp;                            asm.iconst(delimiter.charAt(0));</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;                            asm.invokeInterface(sinkPutChrIndex, 1);</b>
+<i class="no-highlight">560</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">561</i>&nbsp;                        asm.pop();</b>
+<i class="no-highlight">562</i>&nbsp;                    }
+<i class="no-highlight">563</i>&nbsp;                    break;
+<i class="no-highlight">564</i>&nbsp;            }
+<i class="no-highlight">565</i>&nbsp;        }
+<i class="no-highlight">566</i>&nbsp;
+<b class="fc"><i class="no-highlight">567</i>&nbsp;        asm.return_();</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;        asm.endMethodCode();</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;        asm.putShort(0);</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;        asm.putShort(0);</b>
+<b class="fc"><i class="no-highlight">571</i>&nbsp;        asm.endMethod();</b>
+<i class="no-highlight">572</i>&nbsp;    }
+<i class="no-highlight">573</i>&nbsp;
+<i class="no-highlight">574</i>&nbsp;    private void assembleFormatMethodStack(
+<i class="no-highlight">575</i>&nbsp;            int formatAttributes,
+<i class="no-highlight">576</i>&nbsp;            int getYearIndex,
+<i class="no-highlight">577</i>&nbsp;            int getIsoYearIndex,
+<i class="no-highlight">578</i>&nbsp;            int isLeapYearIndex,
+<i class="no-highlight">579</i>&nbsp;            int getMonthOfYearIndex,
+<i class="no-highlight">580</i>&nbsp;            int getDayOfMonthIndex,
+<i class="no-highlight">581</i>&nbsp;            int getHourOfDayIndex,
+<i class="no-highlight">582</i>&nbsp;            int getMinuteOfHourIndex,
+<i class="no-highlight">583</i>&nbsp;            int getSecondOfMinuteIndex,
+<i class="no-highlight">584</i>&nbsp;            int getMillisOfSecondIndex,
+<i class="no-highlight">585</i>&nbsp;            int getMicrosOfMilliIndex,
+<i class="no-highlight">586</i>&nbsp;            int getMicrosOfSecondIndex,
+<i class="no-highlight">587</i>&nbsp;            int getDayOfWeekIndex,
+<i class="no-highlight">588</i>&nbsp;            int getDayOfYearIndex,
+<i class="no-highlight">589</i>&nbsp;            int getWeekOfYearIndex,
+<i class="no-highlight">590</i>&nbsp;            int getWeekIndex) {
+<b class="fc"><i class="no-highlight">591</i>&nbsp;        int index = FORMAT_METHOD_STACK_START;</b>
+<b class="fc"><i class="no-highlight">592</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">593</i>&nbsp;            fmtAttributeIndex[FA_YEAR] = index++;</b>
+<i class="no-highlight">594</i>&nbsp;        }
+<i class="no-highlight">595</i>&nbsp;
+<b class="fc"><i class="no-highlight">596</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_ISO_YEAR, getIsoYearIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">597</i>&nbsp;            fmtAttributeIndex[FA_ISO_YEAR] = index++;</b>
+<i class="no-highlight">598</i>&nbsp;        }
+<i class="no-highlight">599</i>&nbsp;
+<b class="fc"><i class="no-highlight">600</i>&nbsp;        if ((formatAttributes &amp; (1 &lt;&lt; FA_LEAP)) != 0) {</b>
+<b class="fc"><i class="no-highlight">601</i>&nbsp;            asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">602</i>&nbsp;            asm.invokeStatic(isLeapYearIndex);</b>
+<b class="fc"><i class="no-highlight">603</i>&nbsp;            asm.istore(index);</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;            fmtAttributeIndex[FA_LEAP] = index++;</b>
+<i class="no-highlight">605</i>&nbsp;        }
+<i class="no-highlight">606</i>&nbsp;
+<b class="fc"><i class="no-highlight">607</i>&nbsp;        if ((formatAttributes &amp; (1 &lt;&lt; FA_MONTH)) != 0) {</b>
+<b class="fc"><i class="no-highlight">608</i>&nbsp;            asm.lload(FA_LOCAL_DATETIME);</b>
+<b class="fc"><i class="no-highlight">609</i>&nbsp;            asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">610</i>&nbsp;            asm.iload(fmtAttributeIndex[FA_LEAP]);</b>
+<b class="fc"><i class="no-highlight">611</i>&nbsp;            asm.invokeStatic(getMonthOfYearIndex);</b>
+<b class="fc"><i class="no-highlight">612</i>&nbsp;            asm.istore(index);</b>
+<b class="fc"><i class="no-highlight">613</i>&nbsp;            fmtAttributeIndex[FA_MONTH] = index++;</b>
+<i class="no-highlight">614</i>&nbsp;        }
+<i class="no-highlight">615</i>&nbsp;
+<b class="fc"><i class="no-highlight">616</i>&nbsp;        if ((formatAttributes &amp; (1 &lt;&lt; FA_DAY)) != 0) {</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;            asm.lload(FA_LOCAL_DATETIME);</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;            asm.iload(fmtAttributeIndex[FA_YEAR]);</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;            asm.iload(fmtAttributeIndex[FA_MONTH]);</b>
+<b class="fc"><i class="no-highlight">620</i>&nbsp;            asm.iload(fmtAttributeIndex[FA_LEAP]);</b>
+<b class="fc"><i class="no-highlight">621</i>&nbsp;            asm.invokeStatic(getDayOfMonthIndex);</b>
+<b class="fc"><i class="no-highlight">622</i>&nbsp;            asm.istore(index);</b>
+<b class="fc"><i class="no-highlight">623</i>&nbsp;            fmtAttributeIndex[FA_DAY] = index++;</b>
+<i class="no-highlight">624</i>&nbsp;        }
+<i class="no-highlight">625</i>&nbsp;
+<b class="fc"><i class="no-highlight">626</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_HOUR, getHourOfDayIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">627</i>&nbsp;            fmtAttributeIndex[FA_HOUR] = index++;</b>
+<i class="no-highlight">628</i>&nbsp;        }
+<i class="no-highlight">629</i>&nbsp;
+<b class="fc"><i class="no-highlight">630</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_MINUTE, getMinuteOfHourIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">631</i>&nbsp;            fmtAttributeIndex[FA_MINUTE] = index++;</b>
+<i class="no-highlight">632</i>&nbsp;        }
+<i class="no-highlight">633</i>&nbsp;
+<b class="fc"><i class="no-highlight">634</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_SECOND, getSecondOfMinuteIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">635</i>&nbsp;            fmtAttributeIndex[FA_SECOND] = index++;</b>
+<i class="no-highlight">636</i>&nbsp;        }
+<i class="no-highlight">637</i>&nbsp;
+<b class="fc"><i class="no-highlight">638</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_SECOND_MILLIS, getMillisOfSecondIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">639</i>&nbsp;            fmtAttributeIndex[FA_SECOND_MILLIS] = index++;</b>
+<i class="no-highlight">640</i>&nbsp;        }
+<i class="no-highlight">641</i>&nbsp;
+<b class="fc"><i class="no-highlight">642</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_MILLIS_MICROS, getMicrosOfMilliIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">643</i>&nbsp;            fmtAttributeIndex[FA_MILLIS_MICROS] = index++;</b>
+<i class="no-highlight">644</i>&nbsp;        }
+<i class="no-highlight">645</i>&nbsp;
+<b class="fc"><i class="no-highlight">646</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_SECOND_MICROS, getMicrosOfSecondIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">647</i>&nbsp;            fmtAttributeIndex[FA_SECOND_MICROS] = index++;</b>
+<i class="no-highlight">648</i>&nbsp;        }
+<i class="no-highlight">649</i>&nbsp;
+<b class="fc"><i class="no-highlight">650</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">651</i>&nbsp;            fmtAttributeIndex[FA_DAY_OF_WEEK] = index;</b>
+<i class="no-highlight">652</i>&nbsp;        }
+<i class="no-highlight">653</i>&nbsp;
+<b class="fc"><i class="no-highlight">654</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_DAY_OF_YEAR, getDayOfYearIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;            fmtAttributeIndex[FA_DAY_OF_YEAR] = index;</b>
+<i class="no-highlight">656</i>&nbsp;        }
+<i class="no-highlight">657</i>&nbsp;
+<b class="fc"><i class="no-highlight">658</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_ISO_WEEK_OF_YEAR, getWeekIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">659</i>&nbsp;            fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR] = index;</b>
+<i class="no-highlight">660</i>&nbsp;        }
+<i class="no-highlight">661</i>&nbsp;
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekOfYearIndex, index)) {</b>
+<b class="fc"><i class="no-highlight">663</i>&nbsp;            fmtAttributeIndex[FA_WEEK_OF_YEAR] = index;</b>
+<i class="no-highlight">664</i>&nbsp;        }
+<i class="no-highlight">665</i>&nbsp;
+<i class="no-highlight">666</i>&nbsp;    }
+<i class="no-highlight">667</i>&nbsp;
+<i class="no-highlight">668</i>&nbsp;    private void assembleParseMethod(
+<i class="no-highlight">669</i>&nbsp;            IntList ops,
+<i class="no-highlight">670</i>&nbsp;            ObjList&lt;String&gt; delimiters,
+<i class="no-highlight">671</i>&nbsp;            int thisClassIndex,
+<i class="no-highlight">672</i>&nbsp;            int stackMapTableIndex,
+<i class="no-highlight">673</i>&nbsp;            int dateLocaleClassIndex,
+<i class="no-highlight">674</i>&nbsp;            int charSequenceClassIndex,
+<i class="no-highlight">675</i>&nbsp;            int minLongIndex,
+<i class="no-highlight">676</i>&nbsp;            int minMillisIndex,
+<i class="no-highlight">677</i>&nbsp;            int matchWeekdayIndex,
+<i class="no-highlight">678</i>&nbsp;            int matchMonthIndex,
+<i class="no-highlight">679</i>&nbsp;            int matchZoneIndex,
+<i class="no-highlight">680</i>&nbsp;            int matchAMPMIndex,
+<i class="no-highlight">681</i>&nbsp;            int matchEraIndex,
+<i class="no-highlight">682</i>&nbsp;            int parseIntSafelyIndex,
+<i class="no-highlight">683</i>&nbsp;            int parseInt000GreedyIndex,
+<i class="no-highlight">684</i>&nbsp;            int parseLong000000GreedyIndex,
+<i class="no-highlight">685</i>&nbsp;            int parseNanosAsMicrosGreedyIndex,
+<i class="no-highlight">686</i>&nbsp;            int decodeLenIndex,
+<i class="no-highlight">687</i>&nbsp;            int decodeIntIndex,
+<i class="no-highlight">688</i>&nbsp;            int assertRemainingIndex,
+<i class="no-highlight">689</i>&nbsp;            int assertNoTailIndex,
+<i class="no-highlight">690</i>&nbsp;            int parseIntIndex,
+<i class="no-highlight">691</i>&nbsp;            int assertStringIndex,
+<i class="no-highlight">692</i>&nbsp;            int assertCharIndex,
+<i class="no-highlight">693</i>&nbsp;            int computeIndex,
+<i class="no-highlight">694</i>&nbsp;            int adjustYearIndex,
+<i class="no-highlight">695</i>&nbsp;            int parseYearGreedyIndex,
+<i class="no-highlight">696</i>&nbsp;            int parseOffsetIndex,
+<i class="no-highlight">697</i>&nbsp;            int parseNameIndex,
+<i class="no-highlight">698</i>&nbsp;            int parseSigIndex,
+<i class="no-highlight">699</i>&nbsp;            IntList delimIndices,
+<i class="no-highlight">700</i>&nbsp;            int charAtIndex
+<i class="no-highlight">701</i>&nbsp;    ) {
+<i class="no-highlight">702</i>&nbsp;
+<b class="fc"><i class="no-highlight">703</i>&nbsp;        int stackState = computeParseMethodStack(ops);</b>
+<i class="no-highlight">704</i>&nbsp;
+<i class="no-highlight">705</i>&nbsp;        // public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException
+<b class="fc"><i class="no-highlight">706</i>&nbsp;        asm.startMethod(parseNameIndex, parseSigIndex, 15, 22);</b>
+<i class="no-highlight">707</i>&nbsp;
+<i class="no-highlight">708</i>&nbsp;        // define stack variables
+<i class="no-highlight">709</i>&nbsp;        // when pattern is not used a default value must be assigned
+<i class="no-highlight">710</i>&nbsp;
+<b class="fc"><i class="no-highlight">711</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_DAY)) == 0) {</b>
+<i class="no-highlight">712</i>&nbsp;            // int day = 1
+<b class="fc"><i class="no-highlight">713</i>&nbsp;            asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">714</i>&nbsp;            asm.istore(LOCAL_DAY);</b>
+<i class="no-highlight">715</i>&nbsp;        }
+<i class="no-highlight">716</i>&nbsp;
+<b class="fc"><i class="no-highlight">717</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_WEEK)) == 0) {</b>
+<i class="no-highlight">718</i>&nbsp;            // int week = -1
+<b class="fc"><i class="no-highlight">719</i>&nbsp;            asm.iconst(-1);</b>
+<b class="fc"><i class="no-highlight">720</i>&nbsp;            asm.istore(LOCAL_WEEK);</b>
+<i class="no-highlight">721</i>&nbsp;        }
+<i class="no-highlight">722</i>&nbsp;
+<b class="fc"><i class="no-highlight">723</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_MONTH)) == 0) {</b>
+<i class="no-highlight">724</i>&nbsp;            // int month = 1
+<b class="fc"><i class="no-highlight">725</i>&nbsp;            asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">726</i>&nbsp;            asm.istore(LOCAL_MONTH);</b>
+<i class="no-highlight">727</i>&nbsp;        }
+<i class="no-highlight">728</i>&nbsp;
+<b class="fc"><i class="no-highlight">729</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_YEAR)) == 0) {</b>
+<i class="no-highlight">730</i>&nbsp;            // int year = 1970
+<b class="fc"><i class="no-highlight">731</i>&nbsp;            asm.iconst(1970);</b>
+<b class="fc"><i class="no-highlight">732</i>&nbsp;            asm.istore(LOCAL_YEAR);</b>
+<i class="no-highlight">733</i>&nbsp;        }
+<i class="no-highlight">734</i>&nbsp;
+<b class="fc"><i class="no-highlight">735</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_HOUR)) == 0) {</b>
+<i class="no-highlight">736</i>&nbsp;            // int hour = 0
+<b class="fc"><i class="no-highlight">737</i>&nbsp;            asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">738</i>&nbsp;            asm.istore(LOCAL_HOUR);</b>
+<i class="no-highlight">739</i>&nbsp;        }
+<i class="no-highlight">740</i>&nbsp;
+<b class="fc"><i class="no-highlight">741</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_MINUTE)) == 0) {</b>
+<i class="no-highlight">742</i>&nbsp;            // int minute = 0;
+<b class="fc"><i class="no-highlight">743</i>&nbsp;            asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">744</i>&nbsp;            asm.istore(LOCAL_MINUTE);</b>
+<i class="no-highlight">745</i>&nbsp;        }
+<i class="no-highlight">746</i>&nbsp;
+<b class="fc"><i class="no-highlight">747</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_SECOND)) == 0) {</b>
+<i class="no-highlight">748</i>&nbsp;            // int second = 0
+<b class="fc"><i class="no-highlight">749</i>&nbsp;            asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">750</i>&nbsp;            asm.istore(LOCAL_SECOND);</b>
+<i class="no-highlight">751</i>&nbsp;        }
+<i class="no-highlight">752</i>&nbsp;
+<b class="fc"><i class="no-highlight">753</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_MILLIS)) == 0) {</b>
+<i class="no-highlight">754</i>&nbsp;            // int millis = 0
+<b class="fc"><i class="no-highlight">755</i>&nbsp;            asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">756</i>&nbsp;            asm.istore(LOCAL_MILLIS);</b>
+<i class="no-highlight">757</i>&nbsp;        }
+<i class="no-highlight">758</i>&nbsp;
+<i class="no-highlight">759</i>&nbsp;        // int pos = lo
+<b class="fc"><i class="no-highlight">760</i>&nbsp;        asm.iload(P_LO);</b>
+<b class="fc"><i class="no-highlight">761</i>&nbsp;        asm.istore(LOCAL_POS);</b>
+<i class="no-highlight">762</i>&nbsp;
+<i class="no-highlight">763</i>&nbsp;        // int timezone = -1
+<b class="fc"><i class="no-highlight">764</i>&nbsp;        asm.iconst(-1);</b>
+<b class="fc"><i class="no-highlight">765</i>&nbsp;        asm.istore(LOCAL_TIMEZONE);</b>
+<i class="no-highlight">766</i>&nbsp;
+<i class="no-highlight">767</i>&nbsp;        // long offset = Long.MIN_VALUE
+<b class="fc"><i class="no-highlight">768</i>&nbsp;        asm.ldc2_w(minLongIndex);</b>
+<b class="fc"><i class="no-highlight">769</i>&nbsp;        asm.lstore(LOCAL_OFFSET);</b>
+<i class="no-highlight">770</i>&nbsp;
+<b class="fc"><i class="no-highlight">771</i>&nbsp;        asm.iconst(TimestampFormatUtils.HOUR_24);</b>
+<b class="fc"><i class="no-highlight">772</i>&nbsp;        asm.istore(LOCAL_HOUR_TYPE);</b>
+<i class="no-highlight">773</i>&nbsp;
+<b class="fc"><i class="no-highlight">774</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_ERA)) == 0) {</b>
+<b class="fc"><i class="no-highlight">775</i>&nbsp;            asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">776</i>&nbsp;            asm.istore(LOCAL_ERA);</b>
+<i class="no-highlight">777</i>&nbsp;        }
+<i class="no-highlight">778</i>&nbsp;
+<b class="fc"><i class="no-highlight">779</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_TEMP_LONG)) == 0) {</b>
+<b class="fc"><i class="no-highlight">780</i>&nbsp;            asm.lconst_0();</b>
+<b class="fc"><i class="no-highlight">781</i>&nbsp;            asm.lstore(LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">782</i>&nbsp;        }
+<i class="no-highlight">783</i>&nbsp;
+<b class="fc"><i class="no-highlight">784</i>&nbsp;        if ((stackState &amp; (1 &lt;&lt; LOCAL_MICROS)) == 0) {</b>
+<b class="fc"><i class="no-highlight">785</i>&nbsp;            asm.iconst(0);</b>
+<b class="fc"><i class="no-highlight">786</i>&nbsp;            asm.istore(LOCAL_MICROS);</b>
+<i class="no-highlight">787</i>&nbsp;        }
+<i class="no-highlight">788</i>&nbsp;
+<b class="fc"><i class="no-highlight">789</i>&nbsp;        frameOffsets.clear();</b>
+<b class="fc"><i class="no-highlight">790</i>&nbsp;        for (int i = 0, n = ops.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">791</i>&nbsp;            int op = ops.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">792</i>&nbsp;            switch (op) {</b>
+<i class="no-highlight">793</i>&nbsp;                // AM/PM
+<i class="no-highlight">794</i>&nbsp;                case OP_AM_PM:
+<b class="fc"><i class="no-highlight">795</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">796</i>&nbsp;                    invokeMatch(matchAMPMIndex);</b>
+<b class="fc"><i class="no-highlight">797</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">798</i>&nbsp;                    asm.istore(LOCAL_HOUR_TYPE);</b>
+<b class="fc"><i class="no-highlight">799</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">800</i>&nbsp;                    break;</b>
+<i class="no-highlight">801</i>&nbsp;                case OP_MICROS_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">802</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">804</i>&nbsp;                    break;</b>
+<i class="no-highlight">805</i>&nbsp;                case OP_MICROS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">806</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">807</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">808</i>&nbsp;                    break;</b>
+<i class="no-highlight">809</i>&nbsp;                case OP_MICROS_GREEDY3:
+<b class="fc"><i class="no-highlight">810</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">811</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">812</i>&nbsp;                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;                    break;</b>
+<i class="no-highlight">814</i>&nbsp;                case OP_MICROS_GREEDY6:
+<b class="fc"><i class="no-highlight">815</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">816</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">817</i>&nbsp;                    invokeParseIntSafelyAndStore(parseLong000000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">818</i>&nbsp;                    break;</b>
+<i class="no-highlight">819</i>&nbsp;                case OP_NANOS_GREEDY9:
+<b class="fc"><i class="no-highlight">820</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">821</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">822</i>&nbsp;                    invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">823</i>&nbsp;                    break;</b>
+<i class="no-highlight">824</i>&nbsp;                case OP_NANOS_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">825</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);</b>
+<b class="fc"><i class="no-highlight">826</i>&nbsp;                    break;</b>
+<i class="no-highlight">827</i>&nbsp;                case OP_NANOS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">828</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 3, -1);</b>
+<b class="fc"><i class="no-highlight">829</i>&nbsp;                    break;</b>
+<i class="no-highlight">830</i>&nbsp;                case OP_NANOS_GREEDY:
+<b class="fc"><i class="no-highlight">831</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, -1);</b>
+<b class="fc"><i class="no-highlight">832</i>&nbsp;                    break;</b>
+<i class="no-highlight">833</i>&nbsp;                case OP_MILLIS_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">834</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">835</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">836</i>&nbsp;                    break;</b>
+<i class="no-highlight">837</i>&nbsp;                case OP_MILLIS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">838</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">839</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">840</i>&nbsp;                    break;</b>
+<i class="no-highlight">841</i>&nbsp;                case OP_MILLIS_GREEDY:
+<b class="fc"><i class="no-highlight">842</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">843</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">844</i>&nbsp;                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">845</i>&nbsp;                    break;</b>
+<i class="no-highlight">846</i>&nbsp;                case OP_SECOND_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">847</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">848</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">849</i>&nbsp;                    break;</b>
+<i class="no-highlight">850</i>&nbsp;                case OP_SECOND_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">851</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">852</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">853</i>&nbsp;                    break;</b>
+<i class="no-highlight">854</i>&nbsp;                case OP_SECOND_GREEDY:
+<b class="fc"><i class="no-highlight">855</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">856</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">857</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">858</i>&nbsp;                    break;</b>
+<i class="no-highlight">859</i>&nbsp;                case OP_MINUTE_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">860</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">861</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">862</i>&nbsp;                    break;</b>
+<i class="no-highlight">863</i>&nbsp;                case OP_MINUTE_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">864</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">865</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">866</i>&nbsp;                    break;</b>
+<i class="no-highlight">867</i>&nbsp;
+<i class="no-highlight">868</i>&nbsp;                case OP_MINUTE_GREEDY:
+<b class="fc"><i class="no-highlight">869</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">870</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">871</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">872</i>&nbsp;                    break;</b>
+<i class="no-highlight">873</i>&nbsp;                // HOUR (0-11)
+<i class="no-highlight">874</i>&nbsp;                case OP_HOUR_12_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">875</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">876</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">877</i>&nbsp;                    setHourType(stackState);</b>
+<b class="fc"><i class="no-highlight">878</i>&nbsp;                    break;</b>
+<i class="no-highlight">879</i>&nbsp;                case OP_HOUR_12_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">880</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">881</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">882</i>&nbsp;                    setHourType(stackState);</b>
+<b class="fc"><i class="no-highlight">883</i>&nbsp;                    break;</b>
+<i class="no-highlight">884</i>&nbsp;
+<i class="no-highlight">885</i>&nbsp;                case OP_HOUR_12_GREEDY:
+<b class="fc"><i class="no-highlight">886</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">887</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">888</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">889</i>&nbsp;                    setHourType(stackState);</b>
+<b class="fc"><i class="no-highlight">890</i>&nbsp;                    break;</b>
+<i class="no-highlight">891</i>&nbsp;                // HOUR (1-12)
+<i class="no-highlight">892</i>&nbsp;                case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<b class="fc"><i class="no-highlight">893</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">894</i>&nbsp;                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">895</i>&nbsp;                    setHourType(stackState);</b>
+<b class="fc"><i class="no-highlight">896</i>&nbsp;                    break;</b>
+<i class="no-highlight">897</i>&nbsp;
+<i class="no-highlight">898</i>&nbsp;                case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<b class="fc"><i class="no-highlight">899</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">900</i>&nbsp;                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);</b>
+<b class="fc"><i class="no-highlight">901</i>&nbsp;                    setHourType(stackState);</b>
+<b class="fc"><i class="no-highlight">902</i>&nbsp;                    break;</b>
+<i class="no-highlight">903</i>&nbsp;
+<i class="no-highlight">904</i>&nbsp;                case OP_HOUR_12_GREEDY_ONE_BASED:
+<b class="fc"><i class="no-highlight">905</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">906</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">907</i>&nbsp;
+<b class="fc"><i class="no-highlight">908</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">909</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">910</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">911</i>&nbsp;                    asm.invokeStatic(parseIntSafelyIndex);</b>
+<b class="fc"><i class="no-highlight">912</i>&nbsp;                    asm.lstore(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">913</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">915</i>&nbsp;                    asm.isub();</b>
+<b class="fc"><i class="no-highlight">916</i>&nbsp;                    asm.istore(LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">917</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">918</i>&nbsp;                    setHourType(stackState);</b>
+<b class="fc"><i class="no-highlight">919</i>&nbsp;                    break;</b>
+<i class="no-highlight">920</i>&nbsp;                // HOUR (0-23)
+<i class="no-highlight">921</i>&nbsp;                case OP_HOUR_24_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">922</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">923</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">924</i>&nbsp;                    break;</b>
+<i class="no-highlight">925</i>&nbsp;
+<i class="no-highlight">926</i>&nbsp;                case OP_HOUR_24_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">927</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">928</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">929</i>&nbsp;                    break;</b>
+<i class="no-highlight">930</i>&nbsp;
+<i class="no-highlight">931</i>&nbsp;                case OP_HOUR_24_GREEDY:
+<b class="fc"><i class="no-highlight">932</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">933</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">934</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">935</i>&nbsp;                    break;</b>
+<i class="no-highlight">936</i>&nbsp;                // HOUR (1 - 24)
+<i class="no-highlight">937</i>&nbsp;                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<b class="fc"><i class="no-highlight">938</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">939</i>&nbsp;                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);</b>
+<b class="fc"><i class="no-highlight">940</i>&nbsp;                    break;</b>
+<i class="no-highlight">941</i>&nbsp;
+<i class="no-highlight">942</i>&nbsp;                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<b class="fc"><i class="no-highlight">943</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">944</i>&nbsp;                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);</b>
+<b class="fc"><i class="no-highlight">945</i>&nbsp;                    break;</b>
+<i class="no-highlight">946</i>&nbsp;
+<i class="no-highlight">947</i>&nbsp;                case OP_HOUR_24_GREEDY_ONE_BASED:
+<b class="fc"><i class="no-highlight">948</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">949</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">950</i>&nbsp;
+<b class="fc"><i class="no-highlight">951</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">952</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">953</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">954</i>&nbsp;                    asm.invokeStatic(parseIntSafelyIndex);</b>
+<b class="fc"><i class="no-highlight">955</i>&nbsp;                    asm.lstore(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">956</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">957</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">958</i>&nbsp;                    asm.isub();</b>
+<b class="fc"><i class="no-highlight">959</i>&nbsp;                    asm.istore(LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">960</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">961</i>&nbsp;                    break;</b>
+<i class="no-highlight">962</i>&nbsp;                // DAY
+<i class="no-highlight">963</i>&nbsp;                case OP_DAY_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">964</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">965</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">966</i>&nbsp;                    break;</b>
+<i class="no-highlight">967</i>&nbsp;                case OP_DAY_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">968</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">969</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">970</i>&nbsp;                    break;</b>
+<i class="no-highlight">971</i>&nbsp;                case OP_DAY_GREEDY:
+<b class="fc"><i class="no-highlight">972</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">973</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">974</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">975</i>&nbsp;                    break;</b>
+<i class="no-highlight">976</i>&nbsp;                case OP_DAY_NAME_LONG:
+<i class="no-highlight">977</i>&nbsp;                case OP_DAY_NAME_SHORT:
+<b class="fc"><i class="no-highlight">978</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">979</i>&nbsp;                    invokeMatch(matchWeekdayIndex);</b>
+<b class="fc"><i class="no-highlight">980</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">981</i>&nbsp;                    break;</b>
+<i class="no-highlight">982</i>&nbsp;                case OP_ISO_WEEK_OF_YEAR:
+<b class="fc"><i class="no-highlight">983</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_WEEK);</b>
+<b class="fc"><i class="no-highlight">984</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_WEEK);</b>
+<b class="fc"><i class="no-highlight">985</i>&nbsp;                    break;</b>
+<i class="no-highlight">986</i>&nbsp;                case OP_WEEK_OF_YEAR:
+<i class="no-highlight">987</i>&nbsp;                case OP_DAY_OF_YEAR:
+<b class="fc"><i class="no-highlight">988</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">989</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">990</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">991</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">992</i>&nbsp;                    asm.invokeStatic(parseIntSafelyIndex);</b>
+<b class="fc"><i class="no-highlight">993</i>&nbsp;                    asm.lstore(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">994</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">995</i>&nbsp;                    break;</b>
+<i class="no-highlight">996</i>&nbsp;                case OP_DAY_OF_WEEK:
+<b class="fc"><i class="no-highlight">997</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">998</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">999</i>&nbsp;                    asm.invokeStatic(assertRemainingIndex);</b>
+<i class="no-highlight">1000</i>&nbsp;
+<b class="fc"><i class="no-highlight">1001</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1002</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1003</i>&nbsp;                    asm.iinc(LOCAL_POS, 1);</b>
+<b class="fc"><i class="no-highlight">1004</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1005</i>&nbsp;                    asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1006</i>&nbsp;                    asm.pop();</b>
+<b class="fc"><i class="no-highlight">1007</i>&nbsp;                    break;</b>
+<i class="no-highlight">1008</i>&nbsp;
+<i class="no-highlight">1009</i>&nbsp;                case OP_MONTH_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1010</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1011</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1012</i>&nbsp;                    break;</b>
+<i class="no-highlight">1013</i>&nbsp;                case OP_MONTH_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1014</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1015</i>&nbsp;                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1016</i>&nbsp;                    break;</b>
+<i class="no-highlight">1017</i>&nbsp;                case OP_MONTH_GREEDY:
+<b class="fc"><i class="no-highlight">1018</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1019</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1020</i>&nbsp;                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1021</i>&nbsp;                    break;</b>
+<i class="no-highlight">1022</i>&nbsp;
+<i class="no-highlight">1023</i>&nbsp;                case OP_MONTH_SHORT_NAME:
+<i class="no-highlight">1024</i>&nbsp;                case OP_MONTH_LONG_NAME:
+<b class="fc"><i class="no-highlight">1025</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1027</i>&nbsp;
+<b class="fc"><i class="no-highlight">1028</i>&nbsp;                    invokeMatch(matchMonthIndex);</b>
+<b class="fc"><i class="no-highlight">1029</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">1030</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">1031</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">1032</i>&nbsp;                    asm.istore(LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1033</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">1034</i>&nbsp;                    break;</b>
+<i class="no-highlight">1035</i>&nbsp;
+<i class="no-highlight">1036</i>&nbsp;                case OP_YEAR_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1039</i>&nbsp;                    break;</b>
+<i class="no-highlight">1040</i>&nbsp;                case OP_YEAR_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1041</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</b>
+<i class="no-highlight">1042</i>&nbsp;
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1044</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">1045</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">1046</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1047</i>&nbsp;                    asm.invokeStatic(assertRemainingIndex);</b>
+<i class="no-highlight">1048</i>&nbsp;
+<b class="fc"><i class="no-highlight">1049</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1050</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1051</i>&nbsp;                    asm.iinc(LOCAL_POS, 2);</b>
+<b class="fc"><i class="no-highlight">1052</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1053</i>&nbsp;                    asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1054</i>&nbsp;                    asm.invokeStatic(adjustYearIndex);</b>
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;                    asm.istore(LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1056</i>&nbsp;                    break;</b>
+<i class="no-highlight">1057</i>&nbsp;                case OP_YEAR_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">1058</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</b>
+<i class="no-highlight">1059</i>&nbsp;
+<b class="fc"><i class="no-highlight">1060</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1061</i>&nbsp;                    asm.iconst(2);</b>
+<b class="fc"><i class="no-highlight">1062</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">1063</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1064</i>&nbsp;                    asm.invokeStatic(assertRemainingIndex);</b>
+<i class="no-highlight">1065</i>&nbsp;
+<b class="fc"><i class="no-highlight">1066</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1067</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1068</i>&nbsp;                    asm.iinc(LOCAL_POS, 3);</b>
+<b class="fc"><i class="no-highlight">1069</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1070</i>&nbsp;                    asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1071</i>&nbsp;                    asm.istore(LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1072</i>&nbsp;                    break;</b>
+<i class="no-highlight">1073</i>&nbsp;                case OP_YEAR_ISO_FOUR_DIGITS:
+<i class="no-highlight">1074</i>&nbsp;                case OP_YEAR_FOUR_DIGITS: {
+<b class="fc"><i class="no-highlight">1075</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1076</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1077</i>&nbsp;                    int b1 = asm.if_icmpge();</b>
+<b class="fc"><i class="no-highlight">1078</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1079</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1080</i>&nbsp;                    asm.invokeInterface(charAtIndex, 1); //charAt</b>
+<b class="fc"><i class="no-highlight">1081</i>&nbsp;                    asm.iconst(&#39;-&#39;);</b>
+<b class="fc"><i class="no-highlight">1082</i>&nbsp;                    int b2 = asm.if_icmpne();</b>
+<b class="fc"><i class="no-highlight">1083</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1084</i>&nbsp;                    asm.iconst(4);</b>
+<b class="fc"><i class="no-highlight">1085</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">1086</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1087</i>&nbsp;                    asm.invokeStatic(assertRemainingIndex);</b>
+<b class="fc"><i class="no-highlight">1088</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1089</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1090</i>&nbsp;                    asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">1091</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">1092</i>&nbsp;                    asm.iinc(LOCAL_POS, 5);</b>
+<b class="fc"><i class="no-highlight">1093</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1094</i>&nbsp;                    asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1095</i>&nbsp;                    asm.ineg();</b>
+<b class="fc"><i class="no-highlight">1096</i>&nbsp;                    asm.istore(LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1097</i>&nbsp;                    int b3 = asm.goto_();</b>
+<i class="no-highlight">1098</i>&nbsp;
+<b class="fc"><i class="no-highlight">1099</i>&nbsp;                    int p = asm.position();</b>
+<b class="fc"><i class="no-highlight">1100</i>&nbsp;                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</b>
+<b class="fc"><i class="no-highlight">1101</i>&nbsp;                    asm.setJmp(b1, p);</b>
+<b class="fc"><i class="no-highlight">1102</i>&nbsp;                    asm.setJmp(b2, p);</b>
+<i class="no-highlight">1103</i>&nbsp;
+<b class="fc"><i class="no-highlight">1104</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1105</i>&nbsp;                    asm.iconst(3);</b>
+<b class="fc"><i class="no-highlight">1106</i>&nbsp;                    asm.iadd();</b>
+<b class="fc"><i class="no-highlight">1107</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1108</i>&nbsp;                    asm.invokeStatic(assertRemainingIndex);</b>
+<i class="no-highlight">1109</i>&nbsp;
+<b class="fc"><i class="no-highlight">1110</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1111</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1112</i>&nbsp;                    asm.iinc(LOCAL_POS, 4);</b>
+<b class="fc"><i class="no-highlight">1113</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1114</i>&nbsp;                    asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1115</i>&nbsp;                    asm.istore(LOCAL_YEAR);</b>
+<i class="no-highlight">1116</i>&nbsp;
+<b class="fc"><i class="no-highlight">1117</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</b>
+<i class="no-highlight">1118</i>&nbsp;
+<b class="fc"><i class="no-highlight">1119</i>&nbsp;                    p = asm.position();</b>
+<b class="fc"><i class="no-highlight">1120</i>&nbsp;                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</b>
+<b class="fc"><i class="no-highlight">1121</i>&nbsp;                    asm.setJmp(b3, p);</b>
+<i class="no-highlight">1122</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1123</i>&nbsp;                break;</b>
+<i class="no-highlight">1124</i>&nbsp;                case OP_YEAR_GREEDY:
+<b class="fc"><i class="no-highlight">1125</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1126</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1127</i>&nbsp;
+<b class="fc"><i class="no-highlight">1128</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1129</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1130</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1131</i>&nbsp;                    asm.invokeStatic(parseYearGreedyIndex);</b>
+<b class="fc"><i class="no-highlight">1132</i>&nbsp;                    asm.lstore(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1133</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">1134</i>&nbsp;                    asm.istore(LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1135</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">1136</i>&nbsp;                    break;</b>
+<i class="no-highlight">1137</i>&nbsp;                case OP_ERA:
+<b class="fc"><i class="no-highlight">1138</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_ERA);</b>
+<i class="no-highlight">1139</i>&nbsp;
+<b class="fc"><i class="no-highlight">1140</i>&nbsp;                    invokeMatch(matchEraIndex);</b>
+<b class="fc"><i class="no-highlight">1141</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">1142</i>&nbsp;                    asm.istore(LOCAL_ERA);</b>
+<b class="fc"><i class="no-highlight">1143</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<b class="fc"><i class="no-highlight">1144</i>&nbsp;                    break;</b>
+<i class="no-highlight">1145</i>&nbsp;                case OP_TIME_ZONE_SHORT:
+<i class="no-highlight">1146</i>&nbsp;                case OP_TIME_ZONE_GMT_BASED:
+<i class="no-highlight">1147</i>&nbsp;                case OP_TIME_ZONE_ISO_8601_1:
+<i class="no-highlight">1148</i>&nbsp;                case OP_TIME_ZONE_ISO_8601_2:
+<i class="no-highlight">1149</i>&nbsp;                case OP_TIME_ZONE_ISO_8601_3:
+<i class="no-highlight">1150</i>&nbsp;                case OP_TIME_ZONE_LONG:
+<i class="no-highlight">1151</i>&nbsp;                case OP_TIME_ZONE_RFC_822:
+<b class="fc"><i class="no-highlight">1152</i>&nbsp;                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1153</i>&nbsp;
+<b class="fc"><i class="no-highlight">1154</i>&nbsp;                    asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1155</i>&nbsp;                    asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1156</i>&nbsp;                    asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1157</i>&nbsp;                    asm.invokeStatic(parseOffsetIndex);</b>
+<b class="fc"><i class="no-highlight">1158</i>&nbsp;                    asm.lstore(LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1159</i>&nbsp;
+<b class="fc"><i class="no-highlight">1160</i>&nbsp;                    asm.lload(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1161</i>&nbsp;                    asm.ldc2_w(minLongIndex);</b>
+<b class="fc"><i class="no-highlight">1162</i>&nbsp;                    asm.lcmp();</b>
+<b class="fc"><i class="no-highlight">1163</i>&nbsp;                    int branch1 = asm.ifne();</b>
+<i class="no-highlight">1164</i>&nbsp;
+<i class="no-highlight">1165</i>&nbsp;                    //
+<b class="fc"><i class="no-highlight">1166</i>&nbsp;                    invokeMatch(matchZoneIndex);</b>
+<i class="no-highlight">1167</i>&nbsp;                    //
+<b class="fc"><i class="no-highlight">1168</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">1169</i>&nbsp;                    asm.istore(LOCAL_TIMEZONE);</b>
+<b class="fc"><i class="no-highlight">1170</i>&nbsp;                    int branch2 = asm.goto_();</b>
+<i class="no-highlight">1171</i>&nbsp;
+<b class="fc"><i class="no-highlight">1172</i>&nbsp;                    int p = asm.position();</b>
+<b class="fc"><i class="no-highlight">1173</i>&nbsp;                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</b>
+<b class="fc"><i class="no-highlight">1174</i>&nbsp;                    asm.setJmp(branch1, p);</b>
+<i class="no-highlight">1175</i>&nbsp;
+<b class="fc"><i class="no-highlight">1176</i>&nbsp;                    decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">1177</i>&nbsp;                    asm.i2l();</b>
+<b class="fc"><i class="no-highlight">1178</i>&nbsp;                    asm.ldc2_w(minMillisIndex);</b>
+<b class="fc"><i class="no-highlight">1179</i>&nbsp;                    asm.lmul();</b>
+<b class="fc"><i class="no-highlight">1180</i>&nbsp;                    asm.lstore(LOCAL_OFFSET);</b>
+<b class="fc"><i class="no-highlight">1181</i>&nbsp;                    p = asm.position();</b>
+<b class="fc"><i class="no-highlight">1182</i>&nbsp;                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</b>
+<b class="fc"><i class="no-highlight">1183</i>&nbsp;                    asm.setJmp(branch2, p);</b>
+<i class="no-highlight">1184</i>&nbsp;
+<b class="fc"><i class="no-highlight">1185</i>&nbsp;                    addTempToPos(decodeLenIndex);</b>
+<i class="no-highlight">1186</i>&nbsp;
+<b class="fc"><i class="no-highlight">1187</i>&nbsp;                    break;</b>
+<i class="no-highlight">1188</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">1189</i>&nbsp;                    String delimiter = delimiters.getQuick(-op - 1);</b>
+<b class="fc"><i class="no-highlight">1190</i>&nbsp;                    int len = delimiter.length();</b>
+<b class="fc"><i class="no-highlight">1191</i>&nbsp;                    if (len == 1) {</b>
+<b class="fc"><i class="no-highlight">1192</i>&nbsp;                        asm.iconst(delimiter.charAt(0));</b>
+<b class="fc"><i class="no-highlight">1193</i>&nbsp;                        asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1194</i>&nbsp;                        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1195</i>&nbsp;                        asm.iinc(LOCAL_POS, 1);</b>
+<b class="fc"><i class="no-highlight">1196</i>&nbsp;                        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1197</i>&nbsp;                        asm.invokeStatic(assertCharIndex);</b>
+<i class="no-highlight">1198</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1199</i>&nbsp;                        asm.ldc(delimIndices.getQuick(-op - 1));</b>
+<b class="fc"><i class="no-highlight">1200</i>&nbsp;                        asm.iconst(len);</b>
+<b class="fc"><i class="no-highlight">1201</i>&nbsp;                        asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1202</i>&nbsp;                        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1203</i>&nbsp;                        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1204</i>&nbsp;                        asm.invokeStatic(assertStringIndex);</b>
+<b class="fc"><i class="no-highlight">1205</i>&nbsp;                        asm.istore(LOCAL_POS);</b>
+<i class="no-highlight">1206</i>&nbsp;                    }
+<i class="no-highlight">1207</i>&nbsp;                    break;
+<i class="no-highlight">1208</i>&nbsp;            }
+<i class="no-highlight">1209</i>&nbsp;        }
+<i class="no-highlight">1210</i>&nbsp;
+<i class="no-highlight">1211</i>&nbsp;        // check that there is no tail
+<b class="fc"><i class="no-highlight">1212</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1213</i>&nbsp;        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1214</i>&nbsp;        asm.invokeStatic(assertNoTailIndex);</b>
+<b class="fc"><i class="no-highlight">1215</i>&nbsp;        asm.aload(P_LOCALE);</b>
+<b class="fc"><i class="no-highlight">1216</i>&nbsp;        asm.iload(LOCAL_ERA);</b>
+<b class="fc"><i class="no-highlight">1217</i>&nbsp;        asm.iload(LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1218</i>&nbsp;        asm.iload(LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1219</i>&nbsp;        asm.iload(LOCAL_WEEK);</b>
+<b class="fc"><i class="no-highlight">1220</i>&nbsp;        asm.iload(LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">1221</i>&nbsp;        asm.iload(LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">1222</i>&nbsp;        asm.iload(LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">1223</i>&nbsp;        asm.iload(LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">1224</i>&nbsp;        asm.iload(LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">1225</i>&nbsp;        asm.iload(LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">1226</i>&nbsp;        asm.iload(LOCAL_TIMEZONE);</b>
+<b class="fc"><i class="no-highlight">1227</i>&nbsp;        asm.lload(LOCAL_OFFSET);</b>
+<b class="fc"><i class="no-highlight">1228</i>&nbsp;        asm.iload(LOCAL_HOUR_TYPE);</b>
+<b class="fc"><i class="no-highlight">1229</i>&nbsp;        asm.invokeStatic(computeIndex);</b>
+<b class="fc"><i class="no-highlight">1230</i>&nbsp;        asm.lreturn();</b>
+<b class="fc"><i class="no-highlight">1231</i>&nbsp;        asm.endMethodCode();</b>
+<i class="no-highlight">1232</i>&nbsp;
+<i class="no-highlight">1233</i>&nbsp;        // exceptions
+<b class="fc"><i class="no-highlight">1234</i>&nbsp;        asm.putShort(0);</b>
+<i class="no-highlight">1235</i>&nbsp;        // attributes
+<b class="fc"><i class="no-highlight">1236</i>&nbsp;        int n = frameOffsets.size();</b>
+<b class="fc"><i class="no-highlight">1237</i>&nbsp;        asm.putShort(n &gt; 0 ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">1238</i>&nbsp;        if (n &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1239</i>&nbsp;            asm.startStackMapTables(stackMapTableIndex, n);</b>
+<i class="no-highlight">1240</i>&nbsp;
+<b class="fc"><i class="no-highlight">1241</i>&nbsp;            int prevStackState = 0;</b>
+<b class="fc"><i class="no-highlight">1242</i>&nbsp;            int start = asm.getCodeStart();</b>
+<i class="no-highlight">1243</i>&nbsp;
+<b class="fc"><i class="no-highlight">1244</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1245</i>&nbsp;                long l = frameOffsets.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">1246</i>&nbsp;                int offset = Numbers.decodeHighInt(l);</b>
+<b class="fc"><i class="no-highlight">1247</i>&nbsp;                int ss = Numbers.decodeLowInt(l);</b>
+<i class="no-highlight">1248</i>&nbsp;
+<b class="fc"><i class="no-highlight">1249</i>&nbsp;                if (i == 0 || prevStackState != ss) {</b>
+<b class="fc"><i class="no-highlight">1250</i>&nbsp;                    asm.full_frame(offset - start);</b>
+<i class="no-highlight">1251</i>&nbsp;                    // 19 local variables
+<b class="fc"><i class="no-highlight">1252</i>&nbsp;                    int countPos = asm.position();</b>
+<b class="fc"><i class="no-highlight">1253</i>&nbsp;                    int count = 20; // TOTAL COUNT of local variables</b>
+<b class="fc"><i class="no-highlight">1254</i>&nbsp;                    asm.putShort(0);</b>
+<i class="no-highlight">1255</i>&nbsp;
+<b class="fc"><i class="no-highlight">1256</i>&nbsp;                    asm.putITEM_Object(thisClassIndex);</b>
+<b class="fc"><i class="no-highlight">1257</i>&nbsp;                    asm.putITEM_Object(charSequenceClassIndex);</b>
+<b class="fc"><i class="no-highlight">1258</i>&nbsp;                    asm.putITEM_Integer();</b>
+<b class="fc"><i class="no-highlight">1259</i>&nbsp;                    asm.putITEM_Integer();</b>
+<b class="fc"><i class="no-highlight">1260</i>&nbsp;                    asm.putITEM_Object(dateLocaleClassIndex);</b>
+<i class="no-highlight">1261</i>&nbsp;
+<b class="fc"><i class="no-highlight">1262</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_DAY)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1263</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1264</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1265</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1266</i>&nbsp;                    }
+<i class="no-highlight">1267</i>&nbsp;
+<b class="fc"><i class="no-highlight">1268</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_MONTH)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1269</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1270</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1271</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1272</i>&nbsp;                    }
+<i class="no-highlight">1273</i>&nbsp;
+<b class="fc"><i class="no-highlight">1274</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_YEAR)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1275</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1276</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1277</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1278</i>&nbsp;                    }
+<i class="no-highlight">1279</i>&nbsp;
+<b class="fc"><i class="no-highlight">1280</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_HOUR)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1281</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1282</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1283</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1284</i>&nbsp;                    }
+<i class="no-highlight">1285</i>&nbsp;
+<b class="fc"><i class="no-highlight">1286</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_MINUTE)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1287</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1288</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1289</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1290</i>&nbsp;                    }
+<i class="no-highlight">1291</i>&nbsp;
+<b class="fc"><i class="no-highlight">1292</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_SECOND)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1293</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1294</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1295</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1296</i>&nbsp;                    }
+<i class="no-highlight">1297</i>&nbsp;
+<b class="fc"><i class="no-highlight">1298</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_MILLIS)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1299</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1300</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1301</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1302</i>&nbsp;                    }
+<i class="no-highlight">1303</i>&nbsp;
+<i class="no-highlight">1304</i>&nbsp;                    // LOCAL_POS is always set
+<b class="fc"><i class="no-highlight">1305</i>&nbsp;                    asm.putITEM_Integer();</b>
+<i class="no-highlight">1306</i>&nbsp;
+<b class="fc"><i class="no-highlight">1307</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_TEMP_LONG)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1308</i>&nbsp;                        asm.putITEM_Long();</b>
+<i class="no-highlight">1309</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1310</i>&nbsp;                        asm.putITEM_Top();</b>
+<b class="fc"><i class="no-highlight">1311</i>&nbsp;                        asm.putITEM_Top();</b>
+<b class="fc"><i class="no-highlight">1312</i>&nbsp;                        count++;</b>
+<i class="no-highlight">1313</i>&nbsp;                    }
+<i class="no-highlight">1314</i>&nbsp;
+<i class="no-highlight">1315</i>&nbsp;                    // LOCAL_TIMEZONE is always set
+<b class="fc"><i class="no-highlight">1316</i>&nbsp;                    asm.putITEM_Integer();</b>
+<i class="no-highlight">1317</i>&nbsp;
+<i class="no-highlight">1318</i>&nbsp;                    // LOCAL_OFFSET
+<b class="fc"><i class="no-highlight">1319</i>&nbsp;                    asm.putITEM_Long();</b>
+<i class="no-highlight">1320</i>&nbsp;
+<i class="no-highlight">1321</i>&nbsp;                    // LOCAL_HOUR_TYPE
+<b class="fc"><i class="no-highlight">1322</i>&nbsp;                    asm.putITEM_Integer();</b>
+<i class="no-highlight">1323</i>&nbsp;
+<b class="fc"><i class="no-highlight">1324</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_ERA)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1325</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1326</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1327</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1328</i>&nbsp;                    }
+<i class="no-highlight">1329</i>&nbsp;
+<i class="no-highlight">1330</i>&nbsp;                    // MICROS
+<b class="fc"><i class="no-highlight">1331</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_MICROS)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1332</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1333</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1334</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1335</i>&nbsp;                    }
+<i class="no-highlight">1336</i>&nbsp;
+<b class="fc"><i class="no-highlight">1337</i>&nbsp;                    if ((ss &amp; (1 &lt;&lt; LOCAL_WEEK)) == 0) {</b>
+<b class="fc"><i class="no-highlight">1338</i>&nbsp;                        asm.putITEM_Integer();</b>
+<i class="no-highlight">1339</i>&nbsp;                    } else {
+<b class="nc"><i class="no-highlight">1340</i>&nbsp;                        asm.putITEM_Top();</b>
+<i class="no-highlight">1341</i>&nbsp;                    }
+<i class="no-highlight">1342</i>&nbsp;
+<b class="fc"><i class="no-highlight">1343</i>&nbsp;                    asm.putShort(countPos, count);</b>
+<i class="no-highlight">1344</i>&nbsp;
+<i class="no-highlight">1345</i>&nbsp;                    // 0 stack
+<b class="fc"><i class="no-highlight">1346</i>&nbsp;                    asm.putShort(0);</b>
+<b class="fc"><i class="no-highlight">1347</i>&nbsp;                    prevStackState = ss;</b>
+<b class="fc"><i class="no-highlight">1348</i>&nbsp;                } else {</b>
+<b class="fc"><i class="no-highlight">1349</i>&nbsp;                    asm.same_frame(offset - start);</b>
+<i class="no-highlight">1350</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1351</i>&nbsp;                start = offset + 1;</b>
+<i class="no-highlight">1352</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1353</i>&nbsp;            asm.endStackMapTables();</b>
+<i class="no-highlight">1354</i>&nbsp;        }
+<i class="no-highlight">1355</i>&nbsp;
+<b class="fc"><i class="no-highlight">1356</i>&nbsp;        asm.endMethod();</b>
+<i class="no-highlight">1357</i>&nbsp;    }
+<i class="no-highlight">1358</i>&nbsp;
+<i class="no-highlight">1359</i>&nbsp;    /**
+<i class="no-highlight">1360</i>&nbsp;     * Bytecode is assembled from fragments of switch() statement in GenericDateFormat. Compilation removes loop/switch
+<i class="no-highlight">1361</i>&nbsp;     * and does not include code that wouldn&#39;t be relevant for the given pattern. Main performance benefit however comes
+<i class="no-highlight">1362</i>&nbsp;     * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
+<i class="no-highlight">1363</i>&nbsp;     * it isn&#39;t present in the pattern and does not have to be defaulted at all when it is.
+<i class="no-highlight">1364</i>&nbsp;     */
+<i class="no-highlight">1365</i>&nbsp;    private DateFormat compile(IntList ops, ObjList&lt;String&gt; delimiters) {
+<b class="fc"><i class="no-highlight">1366</i>&nbsp;        asm.init(DateFormat.class);</b>
+<b class="fc"><i class="no-highlight">1367</i>&nbsp;        asm.setupPool();</b>
+<b class="fc"><i class="no-highlight">1368</i>&nbsp;        int thisClassIndex = asm.poolClass(asm.poolUtf8(&quot;io/questdb/std/datetime/TimestampFormatAsm&quot;));</b>
+<b class="fc"><i class="no-highlight">1369</i>&nbsp;        int stackMapTableIndex = asm.poolUtf8(&quot;StackMapTable&quot;);</b>
+<b class="fc"><i class="no-highlight">1370</i>&nbsp;        int superclassIndex = asm.poolClass(AbstractDateFormat.class);</b>
+<b class="fc"><i class="no-highlight">1371</i>&nbsp;        int dateLocaleClassIndex = asm.poolClass(DateLocale.class);</b>
+<b class="fc"><i class="no-highlight">1372</i>&nbsp;        int charSequenceClassIndex = asm.poolClass(CharSequence.class);</b>
+<b class="fc"><i class="no-highlight">1373</i>&nbsp;        int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);</b>
+<b class="fc"><i class="no-highlight">1374</i>&nbsp;        int minMillisIndex = asm.poolLongConst(Timestamps.MINUTE_MICROS);</b>
+<i class="no-highlight">1375</i>&nbsp;
+<b class="fc"><i class="no-highlight">1376</i>&nbsp;        int superIndex = asm.poolMethod(superclassIndex, &quot;&lt;init&gt;&quot;, &quot;()V&quot;);</b>
+<b class="fc"><i class="no-highlight">1377</i>&nbsp;        int matchWeekdayIndex = asm.poolMethod(DateLocale.class, &quot;matchWeekday&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1378</i>&nbsp;        int matchMonthIndex = asm.poolMethod(DateLocale.class, &quot;matchMonth&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1379</i>&nbsp;        int matchZoneIndex = asm.poolMethod(DateLocale.class, &quot;matchZone&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1380</i>&nbsp;        int matchAMPMIndex = asm.poolMethod(DateLocale.class, &quot;matchAMPM&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1381</i>&nbsp;        int matchEraIndex = asm.poolMethod(DateLocale.class, &quot;matchEra&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1382</i>&nbsp;        int getWeekdayIndex = asm.poolMethod(DateLocale.class, &quot;getWeekday&quot;, &quot;(I)Ljava/lang/String;&quot;);</b>
+<b class="fc"><i class="no-highlight">1383</i>&nbsp;        int getShortWeekdayIndex = asm.poolMethod(DateLocale.class, &quot;getShortWeekday&quot;, &quot;(I)Ljava/lang/String;&quot;);</b>
+<b class="fc"><i class="no-highlight">1384</i>&nbsp;        int getMonthIndex = asm.poolMethod(DateLocale.class, &quot;getMonth&quot;, &quot;(I)Ljava/lang/String;&quot;);</b>
+<b class="fc"><i class="no-highlight">1385</i>&nbsp;        int getShortMonthIndex = asm.poolMethod(DateLocale.class, &quot;getShortMonth&quot;, &quot;(I)Ljava/lang/String;&quot;);</b>
+<i class="no-highlight">1386</i>&nbsp;
+<b class="fc"><i class="no-highlight">1387</i>&nbsp;        int parseIntSafelyIndex = asm.poolMethod(Numbers.class, &quot;parseIntSafely&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1388</i>&nbsp;        int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, &quot;parseInt000Greedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1389</i>&nbsp;        int parseLong000000GreedyIndex = asm.poolMethod(Numbers.class, &quot;parseLong000000Greedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1390</i>&nbsp;        int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Timestamps.class, &quot;parseNanosAsMicrosGreedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1391</i>&nbsp;        int decodeLenIndex = asm.poolMethod(Numbers.class, &quot;decodeHighInt&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1392</i>&nbsp;        int decodeIntIndex = asm.poolMethod(Numbers.class, &quot;decodeLowInt&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1393</i>&nbsp;        int parseIntIndex = asm.poolMethod(Numbers.class, &quot;parseInt&quot;, &quot;(Ljava/lang/CharSequence;II)I&quot;);</b>
+<i class="no-highlight">1394</i>&nbsp;
+<b class="fc"><i class="no-highlight">1395</i>&nbsp;        int assertRemainingIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertRemaining&quot;, &quot;(II)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1396</i>&nbsp;        int assertNoTailIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertNoTail&quot;, &quot;(II)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1397</i>&nbsp;        int assertStringIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertString&quot;, &quot;(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1398</i>&nbsp;        int assertCharIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertChar&quot;, &quot;(CLjava/lang/CharSequence;II)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1399</i>&nbsp;        int computeIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;compute&quot;, &quot;(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIIJI)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1400</i>&nbsp;        int adjustYearIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;adjustYear&quot;, &quot;(I)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1401</i>&nbsp;        int parseYearGreedyIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;parseYearGreedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1402</i>&nbsp;        int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendEra&quot;, &quot;(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1403</i>&nbsp;        int appendAmPmIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendAmPm&quot;, &quot;(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1404</i>&nbsp;        int appendHour12Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour12&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1405</i>&nbsp;        int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour12Padded&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1406</i>&nbsp;        int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour121&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1407</i>&nbsp;        int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour121Padded&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1408</i>&nbsp;        int append00000Index = asm.poolMethod(TimestampFormatUtils.class, &quot;append00000&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1409</i>&nbsp;        int append00Index = asm.poolMethod(TimestampFormatUtils.class, &quot;append00&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1410</i>&nbsp;        int append0Index = asm.poolMethod(TimestampFormatUtils.class, &quot;append0&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1411</i>&nbsp;        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear000&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1412</i>&nbsp;        int appendYear00Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear00&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1413</i>&nbsp;        int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear0&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<b class="fc"><i class="no-highlight">1414</i>&nbsp;        int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</b>
+<i class="no-highlight">1415</i>&nbsp;
+<b class="fc"><i class="no-highlight">1416</i>&nbsp;        int parseOffsetIndex = asm.poolMethod(Timestamps.class, &quot;parseOffset&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1417</i>&nbsp;        int getYearIndex = asm.poolMethod(Timestamps.class, &quot;getYear&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1418</i>&nbsp;        int getIsoYearIndex = asm.poolMethod(Timestamps.class, &quot;getIsoYear&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1419</i>&nbsp;        int isLeapYearIndex = asm.poolMethod(Timestamps.class, &quot;isLeapYear&quot;, &quot;(I)Z&quot;);</b>
+<b class="fc"><i class="no-highlight">1420</i>&nbsp;        int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, &quot;getMonthOfYear&quot;, &quot;(JIZ)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1421</i>&nbsp;        int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, &quot;getDayOfMonth&quot;, &quot;(JIIZ)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1422</i>&nbsp;        int getHourOfDayIndex = asm.poolMethod(Timestamps.class, &quot;getHourOfDay&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1423</i>&nbsp;        int getMinuteOfHourIndex = asm.poolMethod(Timestamps.class, &quot;getMinuteOfHour&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1424</i>&nbsp;        int getSecondOfMinuteIndex = asm.poolMethod(Timestamps.class, &quot;getSecondOfMinute&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1425</i>&nbsp;        int getMillisOfSecondIndex = asm.poolMethod(Timestamps.class, &quot;getMillisOfSecond&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1426</i>&nbsp;        int getMicrosOfMilliIndex = asm.poolMethod(Timestamps.class, &quot;getMicrosOfMilli&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1427</i>&nbsp;        int getMicrosOfSecondIndex = asm.poolMethod(Timestamps.class, &quot;getMicrosOfSecond&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1428</i>&nbsp;        int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, &quot;getDayOfWeekSundayFirst&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1429</i>&nbsp;        int getDayOfYearIndex = asm.poolMethod(Timestamps.class, &quot;getDayOfYear&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1430</i>&nbsp;        int getWeekIndex = asm.poolMethod(Timestamps.class, &quot;getWeek&quot;, &quot;(J)I&quot;);</b>
+<b class="fc"><i class="no-highlight">1431</i>&nbsp;        int getWeekOfYearIndex = asm.poolMethod(Timestamps.class, &quot;getWeekOfYear&quot;, &quot;(J)I&quot;);</b>
+<i class="no-highlight">1432</i>&nbsp;
+<b class="fc"><i class="no-highlight">1433</i>&nbsp;        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, &quot;put&quot;, &quot;(I)Lio/questdb/std/str/CharSink;&quot;);</b>
+<b class="fc"><i class="no-highlight">1434</i>&nbsp;        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, &quot;put&quot;, &quot;(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;&quot;);</b>
+<b class="fc"><i class="no-highlight">1435</i>&nbsp;        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSink.class, &quot;put&quot;, &quot;(C)Lio/questdb/std/str/CharSink;&quot;);</b>
+<i class="no-highlight">1436</i>&nbsp;
+<b class="fc"><i class="no-highlight">1437</i>&nbsp;        int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, &quot;charAt&quot;, &quot;(I)C&quot;);</b>
+<i class="no-highlight">1438</i>&nbsp;
+<b class="fc"><i class="no-highlight">1439</i>&nbsp;        int parseNameIndex = asm.poolUtf8(&quot;parse&quot;);</b>
+<b class="fc"><i class="no-highlight">1440</i>&nbsp;        int parseSigIndex = asm.poolUtf8(&quot;(Ljava/lang/CharSequence;IILio/questdb/std/datetime/DateLocale;)J&quot;);</b>
+<b class="fc"><i class="no-highlight">1441</i>&nbsp;        int formatNameIndex = asm.poolUtf8(&quot;format&quot;);</b>
+<b class="fc"><i class="no-highlight">1442</i>&nbsp;        int formatSigIndex = asm.poolUtf8(&quot;(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V&quot;);</b>
+<i class="no-highlight">1443</i>&nbsp;
+<i class="no-highlight">1444</i>&nbsp;        // pool only delimiters over 1 char in length
+<i class="no-highlight">1445</i>&nbsp;        // when delimiter is 1 char we would use shorter code path
+<i class="no-highlight">1446</i>&nbsp;        // that doesn&#39;t require constant
+<b class="fc"><i class="no-highlight">1447</i>&nbsp;        delimiterIndexes.clear();</b>
+<b class="fc"><i class="no-highlight">1448</i>&nbsp;        for (int i = 0, n = delimiters.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1449</i>&nbsp;            String delimiter = delimiters.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">1450</i>&nbsp;            if (delimiter.length() &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">1451</i>&nbsp;                delimiterIndexes.add(asm.poolStringConst(asm.poolUtf8(delimiter)));</b>
+<i class="no-highlight">1452</i>&nbsp;            } else {
+<i class="no-highlight">1453</i>&nbsp;                // keep indexes in both lists the same
+<b class="fc"><i class="no-highlight">1454</i>&nbsp;                delimiterIndexes.add(-1);</b>
+<i class="no-highlight">1455</i>&nbsp;            }
+<i class="no-highlight">1456</i>&nbsp;        }
+<i class="no-highlight">1457</i>&nbsp;
+<b class="fc"><i class="no-highlight">1458</i>&nbsp;        asm.finishPool();</b>
+<i class="no-highlight">1459</i>&nbsp;
+<b class="fc"><i class="no-highlight">1460</i>&nbsp;        asm.defineClass(thisClassIndex, superclassIndex);</b>
+<b class="fc"><i class="no-highlight">1461</i>&nbsp;        asm.interfaceCount(0);</b>
+<b class="fc"><i class="no-highlight">1462</i>&nbsp;        asm.fieldCount(0);</b>
+<b class="fc"><i class="no-highlight">1463</i>&nbsp;        asm.methodCount(3);</b>
+<b class="fc"><i class="no-highlight">1464</i>&nbsp;        asm.defineDefaultConstructor(superIndex);</b>
+<i class="no-highlight">1465</i>&nbsp;
+<b class="fc"><i class="no-highlight">1466</i>&nbsp;        assembleParseMethod(</b>
+<i class="no-highlight">1467</i>&nbsp;                ops,
+<i class="no-highlight">1468</i>&nbsp;                delimiters,
+<i class="no-highlight">1469</i>&nbsp;                thisClassIndex,
+<i class="no-highlight">1470</i>&nbsp;                stackMapTableIndex,
+<i class="no-highlight">1471</i>&nbsp;                dateLocaleClassIndex,
+<i class="no-highlight">1472</i>&nbsp;                charSequenceClassIndex,
+<i class="no-highlight">1473</i>&nbsp;                minLongIndex,
+<i class="no-highlight">1474</i>&nbsp;                minMillisIndex,
+<i class="no-highlight">1475</i>&nbsp;                matchWeekdayIndex,
+<i class="no-highlight">1476</i>&nbsp;                matchMonthIndex,
+<i class="no-highlight">1477</i>&nbsp;                matchZoneIndex,
+<i class="no-highlight">1478</i>&nbsp;                matchAMPMIndex,
+<i class="no-highlight">1479</i>&nbsp;                matchEraIndex,
+<i class="no-highlight">1480</i>&nbsp;                parseIntSafelyIndex,
+<i class="no-highlight">1481</i>&nbsp;                parseInt000GreedyIndex,
+<i class="no-highlight">1482</i>&nbsp;                parseLong000000GreedyIndex,
+<i class="no-highlight">1483</i>&nbsp;                parseNanosAsMicrosGreedyIndex,
+<i class="no-highlight">1484</i>&nbsp;                decodeLenIndex,
+<i class="no-highlight">1485</i>&nbsp;                decodeIntIndex,
+<i class="no-highlight">1486</i>&nbsp;                assertRemainingIndex,
+<i class="no-highlight">1487</i>&nbsp;                assertNoTailIndex,
+<i class="no-highlight">1488</i>&nbsp;                parseIntIndex,
+<i class="no-highlight">1489</i>&nbsp;                assertStringIndex,
+<i class="no-highlight">1490</i>&nbsp;                assertCharIndex,
+<i class="no-highlight">1491</i>&nbsp;                computeIndex,
+<i class="no-highlight">1492</i>&nbsp;                adjustYearIndex,
+<i class="no-highlight">1493</i>&nbsp;                parseYearGreedyIndex,
+<i class="no-highlight">1494</i>&nbsp;                parseOffsetIndex,
+<i class="no-highlight">1495</i>&nbsp;                parseNameIndex,
+<i class="no-highlight">1496</i>&nbsp;                parseSigIndex,
+<i class="no-highlight">1497</i>&nbsp;                delimiterIndexes,
+<i class="no-highlight">1498</i>&nbsp;                charAtIndex
+<i class="no-highlight">1499</i>&nbsp;        );
+<i class="no-highlight">1500</i>&nbsp;
+<b class="fc"><i class="no-highlight">1501</i>&nbsp;        assembleFormatMethod(</b>
+<i class="no-highlight">1502</i>&nbsp;                ops,
+<i class="no-highlight">1503</i>&nbsp;                delimiters,
+<i class="no-highlight">1504</i>&nbsp;                getWeekdayIndex,
+<i class="no-highlight">1505</i>&nbsp;                getShortWeekdayIndex,
+<i class="no-highlight">1506</i>&nbsp;                getMonthIndex,
+<i class="no-highlight">1507</i>&nbsp;                getShortMonthIndex,
+<i class="no-highlight">1508</i>&nbsp;                appendEraIndex,
+<i class="no-highlight">1509</i>&nbsp;                appendAmPmIndex,
+<i class="no-highlight">1510</i>&nbsp;                appendHour12Index,
+<i class="no-highlight">1511</i>&nbsp;                appendHour12PaddedIndex,
+<i class="no-highlight">1512</i>&nbsp;                appendHour121Index,
+<i class="no-highlight">1513</i>&nbsp;                appendHour121PaddedIndex,
+<i class="no-highlight">1514</i>&nbsp;                getYearIndex,
+<i class="no-highlight">1515</i>&nbsp;                getIsoYearIndex,
+<i class="no-highlight">1516</i>&nbsp;                isLeapYearIndex,
+<i class="no-highlight">1517</i>&nbsp;                getMonthOfYearIndex,
+<i class="no-highlight">1518</i>&nbsp;                getDayOfMonthIndex,
+<i class="no-highlight">1519</i>&nbsp;                getHourOfDayIndex,
+<i class="no-highlight">1520</i>&nbsp;                getMinuteOfHourIndex,
+<i class="no-highlight">1521</i>&nbsp;                getSecondOfMinuteIndex,
+<i class="no-highlight">1522</i>&nbsp;                getMillisOfSecondIndex,
+<i class="no-highlight">1523</i>&nbsp;                getMicrosOfMilliIndex,
+<i class="no-highlight">1524</i>&nbsp;                getMicrosOfSecondIndex,
+<i class="no-highlight">1525</i>&nbsp;                getDayOfWeekIndex,
+<i class="no-highlight">1526</i>&nbsp;                append00000Index,
+<i class="no-highlight">1527</i>&nbsp;                append00Index,
+<i class="no-highlight">1528</i>&nbsp;                append0Index,
+<i class="no-highlight">1529</i>&nbsp;                appendYear000Index,
+<i class="no-highlight">1530</i>&nbsp;                appendYear00Index,
+<i class="no-highlight">1531</i>&nbsp;                appendYear0Index,
+<i class="no-highlight">1532</i>&nbsp;                appendYearIndex,
+<i class="no-highlight">1533</i>&nbsp;                sinkPutIntIndex,
+<i class="no-highlight">1534</i>&nbsp;                sinkPutStrIndex,
+<i class="no-highlight">1535</i>&nbsp;                sinkPutChrIndex,
+<i class="no-highlight">1536</i>&nbsp;                formatNameIndex,
+<i class="no-highlight">1537</i>&nbsp;                formatSigIndex,
+<i class="no-highlight">1538</i>&nbsp;                getDayOfYearIndex,
+<i class="no-highlight">1539</i>&nbsp;                getWeekOfYearIndex,
+<i class="no-highlight">1540</i>&nbsp;                getWeekIndex
+<i class="no-highlight">1541</i>&nbsp;        );
+<i class="no-highlight">1542</i>&nbsp;
+<i class="no-highlight">1543</i>&nbsp;        // class attribute count
+<b class="fc"><i class="no-highlight">1544</i>&nbsp;        asm.putShort(0);</b>
+<i class="no-highlight">1545</i>&nbsp;
+<b class="fc"><i class="no-highlight">1546</i>&nbsp;        return asm.newInstance();</b>
+<i class="no-highlight">1547</i>&nbsp;    }
+<i class="no-highlight">1548</i>&nbsp;
+<i class="no-highlight">1549</i>&nbsp;    private int computeFormatAttributes(IntList ops) {
+<b class="fc"><i class="no-highlight">1550</i>&nbsp;        int attributes = 0;</b>
+<b class="fc"><i class="no-highlight">1551</i>&nbsp;        for (int i = 0, n = ops.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1552</i>&nbsp;            switch (ops.getQuick(i)) {</b>
+<i class="no-highlight">1553</i>&nbsp;                // AM/PM
+<i class="no-highlight">1554</i>&nbsp;                case TimestampFormatCompiler.OP_AM_PM:
+<b class="fc"><i class="no-highlight">1555</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_HOUR);</b>
+<b class="fc"><i class="no-highlight">1556</i>&nbsp;                    break;</b>
+<i class="no-highlight">1557</i>&nbsp;                // MICROS
+<i class="no-highlight">1558</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+<i class="no-highlight">1559</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+<i class="no-highlight">1560</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">1561</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_MILLIS_MICROS);</b>
+<b class="fc"><i class="no-highlight">1562</i>&nbsp;                    break;</b>
+<i class="no-highlight">1563</i>&nbsp;                // formatting method for MICROS6 and NANOS9 is the same
+<i class="no-highlight">1564</i>&nbsp;                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+<i class="no-highlight">1565</i>&nbsp;                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+<b class="fc"><i class="no-highlight">1566</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_SECOND_MICROS);</b>
+<b class="fc"><i class="no-highlight">1567</i>&nbsp;                    break;</b>
+<i class="no-highlight">1568</i>&nbsp;
+<i class="no-highlight">1569</i>&nbsp;                // NANOS we are parsing microsecond resolution time, it does not
+<i class="no-highlight">1570</i>&nbsp;                // have nanos, therefore we do not need to store value on stack, it is constant 0
+<i class="no-highlight">1571</i>&nbsp;
+<i class="no-highlight">1572</i>&nbsp;                // MILLIS
+<i class="no-highlight">1573</i>&nbsp;                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+<i class="no-highlight">1574</i>&nbsp;                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+<i class="no-highlight">1575</i>&nbsp;                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">1576</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_SECOND_MILLIS);</b>
+<b class="fc"><i class="no-highlight">1577</i>&nbsp;                    break;</b>
+<i class="no-highlight">1578</i>&nbsp;                // SECOND
+<i class="no-highlight">1579</i>&nbsp;                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+<i class="no-highlight">1580</i>&nbsp;                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+<i class="no-highlight">1581</i>&nbsp;                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1582</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_SECOND);</b>
+<b class="fc"><i class="no-highlight">1583</i>&nbsp;                    break;</b>
+<i class="no-highlight">1584</i>&nbsp;                // MINUTE
+<i class="no-highlight">1585</i>&nbsp;                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+<i class="no-highlight">1586</i>&nbsp;                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+<i class="no-highlight">1587</i>&nbsp;                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1588</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_MINUTE);</b>
+<b class="fc"><i class="no-highlight">1589</i>&nbsp;                    break;</b>
+<i class="no-highlight">1590</i>&nbsp;                // HOUR
+<i class="no-highlight">1591</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+<i class="no-highlight">1592</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+<i class="no-highlight">1593</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+<i class="no-highlight">1594</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<i class="no-highlight">1595</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+<i class="no-highlight">1596</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<i class="no-highlight">1597</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+<i class="no-highlight">1598</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+<i class="no-highlight">1599</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+<i class="no-highlight">1600</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<i class="no-highlight">1601</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+<i class="no-highlight">1602</i>&nbsp;                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<b class="fc"><i class="no-highlight">1603</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_HOUR);</b>
+<b class="fc"><i class="no-highlight">1604</i>&nbsp;                    break;</b>
+<i class="no-highlight">1605</i>&nbsp;
+<i class="no-highlight">1606</i>&nbsp;                // DAY OF MONTH
+<i class="no-highlight">1607</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+<i class="no-highlight">1608</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_GREEDY:
+<i class="no-highlight">1609</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1610</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_DAY);</b>
+<b class="fc"><i class="no-highlight">1611</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_MONTH);</b>
+<b class="fc"><i class="no-highlight">1612</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_YEAR);</b>
+<b class="fc"><i class="no-highlight">1613</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_LEAP);</b>
+<b class="fc"><i class="no-highlight">1614</i>&nbsp;                    break;</b>
+<i class="no-highlight">1615</i>&nbsp;                // DAY OF WEEK
+<i class="no-highlight">1616</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+<i class="no-highlight">1617</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+<i class="no-highlight">1618</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+<b class="fc"><i class="no-highlight">1619</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_DAY_OF_WEEK);</b>
+<b class="fc"><i class="no-highlight">1620</i>&nbsp;                    break;</b>
+<i class="no-highlight">1621</i>&nbsp;                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+<b class="fc"><i class="no-highlight">1622</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_DAY_OF_YEAR);</b>
+<b class="fc"><i class="no-highlight">1623</i>&nbsp;                    break;</b>
+<i class="no-highlight">1624</i>&nbsp;                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+<b class="fc"><i class="no-highlight">1625</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_WEEK_OF_YEAR);</b>
+<b class="fc"><i class="no-highlight">1626</i>&nbsp;                    break;</b>
+<i class="no-highlight">1627</i>&nbsp;                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+<b class="fc"><i class="no-highlight">1628</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_ISO_WEEK_OF_YEAR);</b>
+<b class="fc"><i class="no-highlight">1629</i>&nbsp;                    break;</b>
+<i class="no-highlight">1630</i>&nbsp;                // MONTH
+<i class="no-highlight">1631</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+<i class="no-highlight">1632</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+<i class="no-highlight">1633</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+<i class="no-highlight">1634</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+<i class="no-highlight">1635</i>&nbsp;                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+<b class="fc"><i class="no-highlight">1636</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_MONTH);</b>
+<b class="fc"><i class="no-highlight">1637</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_YEAR);</b>
+<b class="fc"><i class="no-highlight">1638</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_LEAP);</b>
+<b class="fc"><i class="no-highlight">1639</i>&nbsp;                    break;</b>
+<i class="no-highlight">1640</i>&nbsp;                // YEAR
+<i class="no-highlight">1641</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+<i class="no-highlight">1642</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+<i class="no-highlight">1643</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+<i class="no-highlight">1644</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+<i class="no-highlight">1645</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+<b class="fc"><i class="no-highlight">1646</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_YEAR);</b>
+<b class="fc"><i class="no-highlight">1647</i>&nbsp;                    break;</b>
+<i class="no-highlight">1648</i>&nbsp;                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+<b class="fc"><i class="no-highlight">1649</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_ISO_YEAR);</b>
+<b class="fc"><i class="no-highlight">1650</i>&nbsp;                    break;</b>
+<i class="no-highlight">1651</i>&nbsp;                // ERA
+<i class="no-highlight">1652</i>&nbsp;                case TimestampFormatCompiler.OP_ERA:
+<b class="fc"><i class="no-highlight">1653</i>&nbsp;                    attributes |= (1 &lt;&lt; FA_YEAR);</b>
+<b class="fc"><i class="no-highlight">1654</i>&nbsp;                    break;</b>
+<i class="no-highlight">1655</i>&nbsp;                default:
+<i class="no-highlight">1656</i>&nbsp;                    break;
+<i class="no-highlight">1657</i>&nbsp;            }
+<i class="no-highlight">1658</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1659</i>&nbsp;        return attributes;</b>
+<i class="no-highlight">1660</i>&nbsp;    }
+<i class="no-highlight">1661</i>&nbsp;
+<i class="no-highlight">1662</i>&nbsp;    /*
+<i class="no-highlight">1663</i>&nbsp;     * For each operation code in given operation list determine which stack slots can be left uninitialized. Set bits
+<i class="no-highlight">1664</i>&nbsp;     * in the result integer will represent these stack slots. Bits positions are values of LOCAL_ constants.
+<i class="no-highlight">1665</i>&nbsp;     */
+<i class="no-highlight">1666</i>&nbsp;    private int computeParseMethodStack(IntList ops) {
+<b class="fc"><i class="no-highlight">1667</i>&nbsp;        int result = 0;</b>
+<b class="fc"><i class="no-highlight">1668</i>&nbsp;        for (int i = 0, n = ops.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1669</i>&nbsp;            switch (ops.getQuick(i)) {</b>
+<i class="no-highlight">1670</i>&nbsp;                case OP_AM_PM:
+<b class="fc"><i class="no-highlight">1671</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1672</i>&nbsp;                    break;</b>
+<i class="no-highlight">1673</i>&nbsp;                case OP_MICROS_GREEDY3:
+<b class="fc"><i class="no-highlight">1674</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1675</i>&nbsp;                    // fall through
+<i class="no-highlight">1676</i>&nbsp;                case OP_MICROS_ONE_DIGIT:
+<i class="no-highlight">1677</i>&nbsp;                case OP_MICROS_THREE_DIGITS:
+<i class="no-highlight">1678</i>&nbsp;                case OP_MICROS_GREEDY6:
+<b class="fc"><i class="no-highlight">1679</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_MICROS);</b>
+<b class="fc"><i class="no-highlight">1680</i>&nbsp;                    break;</b>
+<i class="no-highlight">1681</i>&nbsp;                case OP_MILLIS_GREEDY:
+<b class="fc"><i class="no-highlight">1682</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1683</i>&nbsp;                    // fall through
+<i class="no-highlight">1684</i>&nbsp;                case OP_MILLIS_ONE_DIGIT:
+<i class="no-highlight">1685</i>&nbsp;                case OP_MILLIS_THREE_DIGITS:
+<b class="fc"><i class="no-highlight">1686</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_MILLIS);</b>
+<b class="fc"><i class="no-highlight">1687</i>&nbsp;                    break;</b>
+<i class="no-highlight">1688</i>&nbsp;                case OP_SECOND_GREEDY:
+<b class="fc"><i class="no-highlight">1689</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1690</i>&nbsp;                    // fall through
+<i class="no-highlight">1691</i>&nbsp;                case OP_SECOND_ONE_DIGIT:
+<i class="no-highlight">1692</i>&nbsp;                case OP_SECOND_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1693</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_SECOND);</b>
+<b class="fc"><i class="no-highlight">1694</i>&nbsp;                    break;</b>
+<i class="no-highlight">1695</i>&nbsp;                case OP_MINUTE_GREEDY:
+<b class="fc"><i class="no-highlight">1696</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1697</i>&nbsp;                case OP_MINUTE_ONE_DIGIT:
+<i class="no-highlight">1698</i>&nbsp;                case OP_MINUTE_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1699</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_MINUTE);</b>
+<b class="fc"><i class="no-highlight">1700</i>&nbsp;                    break;</b>
+<i class="no-highlight">1701</i>&nbsp;                // HOUR (0-11)
+<i class="no-highlight">1702</i>&nbsp;                case OP_HOUR_12_GREEDY:
+<i class="no-highlight">1703</i>&nbsp;                case OP_HOUR_12_GREEDY_ONE_BASED:
+<i class="no-highlight">1704</i>&nbsp;                case OP_HOUR_24_GREEDY:
+<i class="no-highlight">1705</i>&nbsp;                case OP_HOUR_24_GREEDY_ONE_BASED:
+<b class="fc"><i class="no-highlight">1706</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1707</i>&nbsp;                case OP_HOUR_12_ONE_DIGIT:
+<i class="no-highlight">1708</i>&nbsp;                case OP_HOUR_12_TWO_DIGITS:
+<i class="no-highlight">1709</i>&nbsp;                case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<i class="no-highlight">1710</i>&nbsp;                case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<i class="no-highlight">1711</i>&nbsp;                case OP_HOUR_24_ONE_DIGIT:
+<i class="no-highlight">1712</i>&nbsp;                case OP_HOUR_24_TWO_DIGITS:
+<i class="no-highlight">1713</i>&nbsp;                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<i class="no-highlight">1714</i>&nbsp;                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<b class="fc"><i class="no-highlight">1715</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_HOUR);</b>
+<b class="fc"><i class="no-highlight">1716</i>&nbsp;                    break;</b>
+<i class="no-highlight">1717</i>&nbsp;                // DAY
+<i class="no-highlight">1718</i>&nbsp;                case OP_DAY_GREEDY:
+<b class="fc"><i class="no-highlight">1719</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1720</i>&nbsp;                case OP_DAY_ONE_DIGIT:
+<i class="no-highlight">1721</i>&nbsp;                case OP_DAY_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1722</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_DAY);</b>
+<b class="fc"><i class="no-highlight">1723</i>&nbsp;                    break;</b>
+<i class="no-highlight">1724</i>&nbsp;                case OP_DAY_NAME_LONG:
+<i class="no-highlight">1725</i>&nbsp;                case OP_DAY_NAME_SHORT:
+<b class="fc"><i class="no-highlight">1726</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1727</i>&nbsp;                    break;</b>
+<i class="no-highlight">1728</i>&nbsp;                case OP_MONTH_GREEDY:
+<i class="no-highlight">1729</i>&nbsp;                case OP_MONTH_SHORT_NAME:
+<i class="no-highlight">1730</i>&nbsp;                case OP_MONTH_LONG_NAME:
+<b class="fc"><i class="no-highlight">1731</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1732</i>&nbsp;                case OP_MONTH_ONE_DIGIT:
+<i class="no-highlight">1733</i>&nbsp;                case OP_MONTH_TWO_DIGITS:
+<b class="fc"><i class="no-highlight">1734</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_MONTH);</b>
+<b class="fc"><i class="no-highlight">1735</i>&nbsp;                    break;</b>
+<i class="no-highlight">1736</i>&nbsp;                case OP_YEAR_GREEDY:
+<b class="fc"><i class="no-highlight">1737</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1738</i>&nbsp;                case OP_YEAR_ONE_DIGIT:
+<i class="no-highlight">1739</i>&nbsp;                case OP_YEAR_TWO_DIGITS:
+<i class="no-highlight">1740</i>&nbsp;                case OP_YEAR_THREE_DIGITS:
+<i class="no-highlight">1741</i>&nbsp;                case OP_YEAR_FOUR_DIGITS:
+<i class="no-highlight">1742</i>&nbsp;                case OP_YEAR_ISO_FOUR_DIGITS:
+<b class="fc"><i class="no-highlight">1743</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_YEAR);</b>
+<b class="fc"><i class="no-highlight">1744</i>&nbsp;                    break;</b>
+<i class="no-highlight">1745</i>&nbsp;                case OP_ERA:
+<b class="fc"><i class="no-highlight">1746</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_ERA);</b>
+<b class="fc"><i class="no-highlight">1747</i>&nbsp;                    break;</b>
+<i class="no-highlight">1748</i>&nbsp;                case OP_TIME_ZONE_SHORT:
+<i class="no-highlight">1749</i>&nbsp;                case OP_TIME_ZONE_GMT_BASED:
+<i class="no-highlight">1750</i>&nbsp;                case OP_TIME_ZONE_ISO_8601_1:
+<i class="no-highlight">1751</i>&nbsp;                case OP_TIME_ZONE_ISO_8601_2:
+<i class="no-highlight">1752</i>&nbsp;                case OP_TIME_ZONE_ISO_8601_3:
+<i class="no-highlight">1753</i>&nbsp;                case OP_TIME_ZONE_LONG:
+<i class="no-highlight">1754</i>&nbsp;                case OP_TIME_ZONE_RFC_822:
+<b class="fc"><i class="no-highlight">1755</i>&nbsp;                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1756</i>&nbsp;                    break;</b>
+<i class="no-highlight">1757</i>&nbsp;                default:
+<i class="no-highlight">1758</i>&nbsp;                    break;
+<i class="no-highlight">1759</i>&nbsp;
+<i class="no-highlight">1760</i>&nbsp;            }
+<i class="no-highlight">1761</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1762</i>&nbsp;        return result;</b>
+<i class="no-highlight">1763</i>&nbsp;    }
+<i class="no-highlight">1764</i>&nbsp;
+<i class="no-highlight">1765</i>&nbsp;    private void decodeInt(int decodeIntIndex) {
+<b class="fc"><i class="no-highlight">1766</i>&nbsp;        asm.lload(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1767</i>&nbsp;        asm.invokeStatic(decodeIntIndex);</b>
+<i class="no-highlight">1768</i>&nbsp;    }
+<i class="no-highlight">1769</i>&nbsp;
+<i class="no-highlight">1770</i>&nbsp;    private boolean invokeConvertMillis(int formatAttributes, int bit, int funcIndex, int stackIndex) {
+<b class="fc"><i class="no-highlight">1771</i>&nbsp;        if ((formatAttributes &amp; (1 &lt;&lt; bit)) != 0) {</b>
+<b class="fc"><i class="no-highlight">1772</i>&nbsp;            asm.lload(FA_LOCAL_DATETIME);</b>
+<b class="fc"><i class="no-highlight">1773</i>&nbsp;            asm.invokeStatic(funcIndex);</b>
+<b class="fc"><i class="no-highlight">1774</i>&nbsp;            asm.istore(stackIndex);</b>
+<b class="fc"><i class="no-highlight">1775</i>&nbsp;            return true;</b>
+<i class="no-highlight">1776</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1777</i>&nbsp;        return false;</b>
+<i class="no-highlight">1778</i>&nbsp;    }
+<i class="no-highlight">1779</i>&nbsp;
+<i class="no-highlight">1780</i>&nbsp;    private void invokeMatch(int matchIndex) {
+<b class="fc"><i class="no-highlight">1781</i>&nbsp;        asm.aload(P_LOCALE);</b>
+<b class="fc"><i class="no-highlight">1782</i>&nbsp;        asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1783</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1784</i>&nbsp;        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1785</i>&nbsp;        asm.invokeVirtual(matchIndex);</b>
+<b class="fc"><i class="no-highlight">1786</i>&nbsp;        asm.lstore(LOCAL_TEMP_LONG);</b>
+<i class="no-highlight">1787</i>&nbsp;    }
+<i class="no-highlight">1788</i>&nbsp;
+<i class="no-highlight">1789</i>&nbsp;    private void invokeParseIntSafelyAndStore(int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int target) {
+<b class="fc"><i class="no-highlight">1790</i>&nbsp;        asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1791</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1792</i>&nbsp;        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1793</i>&nbsp;        asm.invokeStatic(parseIntSafelyIndex);</b>
+<b class="fc"><i class="no-highlight">1794</i>&nbsp;        asm.lstore(LOCAL_TEMP_LONG);</b>
+<b class="fc"><i class="no-highlight">1795</i>&nbsp;        decodeInt(decodeIntIndex);</b>
+<b class="fc"><i class="no-highlight">1796</i>&nbsp;        if (target &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">1797</i>&nbsp;            asm.istore(target);</b>
+<i class="no-highlight">1798</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1799</i>&nbsp;            asm.pop();</b>
+<i class="no-highlight">1800</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1801</i>&nbsp;        addTempToPos(decodeLenIndex);</b>
+<i class="no-highlight">1802</i>&nbsp;    }
+<i class="no-highlight">1803</i>&nbsp;
+<i class="no-highlight">1804</i>&nbsp;    private int makeGreedy(int oldOp) {
+<b class="fc"><i class="no-highlight">1805</i>&nbsp;        switch (oldOp) {</b>
+<i class="no-highlight">1806</i>&nbsp;            case OP_YEAR_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1807</i>&nbsp;                return OP_YEAR_GREEDY;</b>
+<i class="no-highlight">1808</i>&nbsp;            case OP_MONTH_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1809</i>&nbsp;                return OP_MONTH_GREEDY;</b>
+<i class="no-highlight">1810</i>&nbsp;            case OP_DAY_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1811</i>&nbsp;                return OP_DAY_GREEDY;</b>
+<i class="no-highlight">1812</i>&nbsp;            case OP_HOUR_24_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1813</i>&nbsp;                return OP_HOUR_24_GREEDY;</b>
+<i class="no-highlight">1814</i>&nbsp;            case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<b class="fc"><i class="no-highlight">1815</i>&nbsp;                return OP_HOUR_24_GREEDY_ONE_BASED;</b>
+<i class="no-highlight">1816</i>&nbsp;            case OP_HOUR_12_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1817</i>&nbsp;                return OP_HOUR_12_GREEDY;</b>
+<i class="no-highlight">1818</i>&nbsp;            case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<b class="fc"><i class="no-highlight">1819</i>&nbsp;                return OP_HOUR_12_GREEDY_ONE_BASED;</b>
+<i class="no-highlight">1820</i>&nbsp;            case OP_MINUTE_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1821</i>&nbsp;                return OP_MINUTE_GREEDY;</b>
+<i class="no-highlight">1822</i>&nbsp;            case OP_SECOND_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1823</i>&nbsp;                return OP_SECOND_GREEDY;</b>
+<i class="no-highlight">1824</i>&nbsp;            case OP_MILLIS_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1825</i>&nbsp;                return OP_MILLIS_GREEDY;</b>
+<i class="no-highlight">1826</i>&nbsp;            case OP_MICROS_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1827</i>&nbsp;                return OP_MICROS_GREEDY3;</b>
+<i class="no-highlight">1828</i>&nbsp;            case OP_NANOS_ONE_DIGIT:
+<b class="fc"><i class="no-highlight">1829</i>&nbsp;                return OP_NANOS_GREEDY;</b>
+<i class="no-highlight">1830</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">1831</i>&nbsp;                return oldOp;</b>
+<i class="no-highlight">1832</i>&nbsp;        }
+<i class="no-highlight">1833</i>&nbsp;    }
+<i class="no-highlight">1834</i>&nbsp;
+<i class="no-highlight">1835</i>&nbsp;    private void makeLastOpGreedy(IntList compiled) {
+<b class="fc"><i class="no-highlight">1836</i>&nbsp;        int lastOpIndex = compiled.size() - 1;</b>
+<b class="fc"><i class="no-highlight">1837</i>&nbsp;        if (lastOpIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">1838</i>&nbsp;            int oldOp = compiled.getQuick(lastOpIndex);</b>
+<b class="fc"><i class="no-highlight">1839</i>&nbsp;            if (oldOp &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1840</i>&nbsp;                int newOp = makeGreedy(oldOp);</b>
+<b class="fc"><i class="no-highlight">1841</i>&nbsp;                if (newOp != oldOp) {</b>
+<b class="fc"><i class="no-highlight">1842</i>&nbsp;                    compiled.setQuick(lastOpIndex, newOp);</b>
+<i class="no-highlight">1843</i>&nbsp;                }
+<i class="no-highlight">1844</i>&nbsp;            }
+<i class="no-highlight">1845</i>&nbsp;        }
+<i class="no-highlight">1846</i>&nbsp;    }
+<i class="no-highlight">1847</i>&nbsp;
+<i class="no-highlight">1848</i>&nbsp;    private void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, int target) {
+<b class="fc"><i class="no-highlight">1849</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1850</i>&nbsp;        if (digitCount &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">1851</i>&nbsp;            asm.iconst(digitCount - 1);</b>
+<b class="fc"><i class="no-highlight">1852</i>&nbsp;            asm.iadd();</b>
+<i class="no-highlight">1853</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1854</i>&nbsp;        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1855</i>&nbsp;        asm.invokeStatic(assertRemainingIndex);</b>
+<i class="no-highlight">1856</i>&nbsp;
+<b class="fc"><i class="no-highlight">1857</i>&nbsp;        asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1858</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1859</i>&nbsp;        asm.iinc(LOCAL_POS, digitCount);</b>
+<b class="fc"><i class="no-highlight">1860</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1861</i>&nbsp;        asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1862</i>&nbsp;        if (target &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">1863</i>&nbsp;            asm.istore(target);</b>
+<i class="no-highlight">1864</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1865</i>&nbsp;            asm.pop();</b>
+<i class="no-highlight">1866</i>&nbsp;        }
+<i class="no-highlight">1867</i>&nbsp;    }
+<i class="no-highlight">1868</i>&nbsp;
+<i class="no-highlight">1869</i>&nbsp;    private void parseDigitsSub1(int assertRemainingIndex, int parseIntIndex, int digitCount) {
+<b class="fc"><i class="no-highlight">1870</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1871</i>&nbsp;        if (digitCount &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">1872</i>&nbsp;            asm.iconst(digitCount - 1);</b>
+<b class="fc"><i class="no-highlight">1873</i>&nbsp;            asm.iadd();</b>
+<i class="no-highlight">1874</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1875</i>&nbsp;        asm.iload(P_HI);</b>
+<b class="fc"><i class="no-highlight">1876</i>&nbsp;        asm.invokeStatic(assertRemainingIndex);</b>
+<i class="no-highlight">1877</i>&nbsp;
+<b class="fc"><i class="no-highlight">1878</i>&nbsp;        asm.aload(P_INPUT_STR);</b>
+<b class="fc"><i class="no-highlight">1879</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1880</i>&nbsp;        asm.iinc(LOCAL_POS, digitCount);</b>
+<b class="fc"><i class="no-highlight">1881</i>&nbsp;        asm.iload(LOCAL_POS);</b>
+<b class="fc"><i class="no-highlight">1882</i>&nbsp;        asm.invokeStatic(parseIntIndex);</b>
+<b class="fc"><i class="no-highlight">1883</i>&nbsp;        asm.iconst(1);</b>
+<b class="fc"><i class="no-highlight">1884</i>&nbsp;        asm.isub();</b>
+<b class="fc"><i class="no-highlight">1885</i>&nbsp;        asm.istore(TimestampFormatCompiler.LOCAL_HOUR);</b>
+<i class="no-highlight">1886</i>&nbsp;    }
+<i class="no-highlight">1887</i>&nbsp;
+<i class="no-highlight">1888</i>&nbsp;    private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {
+<b class="fc"><i class="no-highlight">1889</i>&nbsp;        parseDigits(assertRemainingIndex, parseIntIndex, 2, target);</b>
+<i class="no-highlight">1890</i>&nbsp;    }
+<i class="no-highlight">1891</i>&nbsp;
+<i class="no-highlight">1892</i>&nbsp;    private void setHourType(int stackState) {
+<b class="fc"><i class="no-highlight">1893</i>&nbsp;        asm.iload(LOCAL_HOUR_TYPE);</b>
+<b class="fc"><i class="no-highlight">1894</i>&nbsp;        asm.iconst(TimestampFormatUtils.HOUR_24);</b>
+<b class="fc"><i class="no-highlight">1895</i>&nbsp;        int branch = asm.if_icmpne();</b>
+<b class="fc"><i class="no-highlight">1896</i>&nbsp;        asm.iconst(TimestampFormatUtils.HOUR_AM);</b>
+<b class="fc"><i class="no-highlight">1897</i>&nbsp;        asm.istore(LOCAL_HOUR_TYPE);</b>
+<b class="fc"><i class="no-highlight">1898</i>&nbsp;        int p = asm.position();</b>
+<b class="fc"><i class="no-highlight">1899</i>&nbsp;        frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</b>
+<b class="fc"><i class="no-highlight">1900</i>&nbsp;        asm.setJmp(branch, p);</b>
+<i class="no-highlight">1901</i>&nbsp;    }
+<i class="no-highlight">1902</i>&nbsp;
+<i class="no-highlight">1903</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">1904</i>&nbsp;        opMap = new CharSequenceIntHashMap();</b>
+<b class="fc"><i class="no-highlight">1905</i>&nbsp;        opList = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">1906</i>&nbsp;
+<b class="fc"><i class="no-highlight">1907</i>&nbsp;        addOp(&quot;G&quot;, OP_ERA);</b>
+<b class="fc"><i class="no-highlight">1908</i>&nbsp;        addOp(&quot;y&quot;, OP_YEAR_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1909</i>&nbsp;        addOp(&quot;yy&quot;, OP_YEAR_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1910</i>&nbsp;        addOp(&quot;yyy&quot;, OP_YEAR_THREE_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1911</i>&nbsp;        addOp(&quot;yyyy&quot;, OP_YEAR_FOUR_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1912</i>&nbsp;        addOp(&quot;YYYY&quot;, OP_YEAR_ISO_FOUR_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1913</i>&nbsp;        addOp(&quot;M&quot;, OP_MONTH_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1914</i>&nbsp;        addOp(&quot;MM&quot;, OP_MONTH_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1915</i>&nbsp;        addOp(&quot;MMM&quot;, OP_MONTH_SHORT_NAME);</b>
+<b class="fc"><i class="no-highlight">1916</i>&nbsp;        addOp(&quot;MMMM&quot;, OP_MONTH_LONG_NAME);</b>
+<b class="fc"><i class="no-highlight">1917</i>&nbsp;        addOp(&quot;d&quot;, OP_DAY_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1918</i>&nbsp;        addOp(&quot;dd&quot;, OP_DAY_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1919</i>&nbsp;        addOp(&quot;E&quot;, OP_DAY_NAME_SHORT);</b>
+<b class="fc"><i class="no-highlight">1920</i>&nbsp;        addOp(&quot;EE&quot;, OP_DAY_NAME_LONG);</b>
+<b class="fc"><i class="no-highlight">1921</i>&nbsp;        addOp(&quot;u&quot;, OP_DAY_OF_WEEK);</b>
+<b class="fc"><i class="no-highlight">1922</i>&nbsp;        addOp(&quot;D&quot;, OP_DAY_OF_YEAR);</b>
+<b class="fc"><i class="no-highlight">1923</i>&nbsp;        addOp(&quot;w&quot;, OP_WEEK_OF_YEAR);</b>
+<b class="fc"><i class="no-highlight">1924</i>&nbsp;        addOp(&quot;ww&quot;, OP_ISO_WEEK_OF_YEAR);</b>
+<b class="fc"><i class="no-highlight">1925</i>&nbsp;        addOp(&quot;a&quot;, OP_AM_PM);</b>
+<b class="fc"><i class="no-highlight">1926</i>&nbsp;        addOp(&quot;H&quot;, OP_HOUR_24_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1927</i>&nbsp;        addOp(&quot;HH&quot;, OP_HOUR_24_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1928</i>&nbsp;        addOp(&quot;k&quot;, OP_HOUR_24_ONE_DIGIT_ONE_BASED);</b>
+<b class="fc"><i class="no-highlight">1929</i>&nbsp;        addOp(&quot;kk&quot;, OP_HOUR_24_TWO_DIGITS_ONE_BASED);</b>
+<b class="fc"><i class="no-highlight">1930</i>&nbsp;        addOp(&quot;K&quot;, OP_HOUR_12_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1931</i>&nbsp;        addOp(&quot;KK&quot;, OP_HOUR_12_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1932</i>&nbsp;        addOp(&quot;h&quot;, OP_HOUR_12_ONE_DIGIT_ONE_BASED);</b>
+<b class="fc"><i class="no-highlight">1933</i>&nbsp;        addOp(&quot;hh&quot;, OP_HOUR_12_TWO_DIGITS_ONE_BASED);</b>
+<b class="fc"><i class="no-highlight">1934</i>&nbsp;        addOp(&quot;m&quot;, OP_MINUTE_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1935</i>&nbsp;        addOp(&quot;mm&quot;, OP_MINUTE_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1936</i>&nbsp;        addOp(&quot;s&quot;, OP_SECOND_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1937</i>&nbsp;        addOp(&quot;ss&quot;, OP_SECOND_TWO_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1938</i>&nbsp;        addOp(&quot;S&quot;, OP_MILLIS_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1939</i>&nbsp;        addOp(&quot;SSS&quot;, OP_MILLIS_THREE_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1940</i>&nbsp;        addOp(&quot;N&quot;, OP_NANOS_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1941</i>&nbsp;        addOp(&quot;NNN&quot;, OP_NANOS_THREE_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1942</i>&nbsp;        addOp(&quot;z&quot;, OP_TIME_ZONE_SHORT);</b>
+<b class="fc"><i class="no-highlight">1943</i>&nbsp;        addOp(&quot;zz&quot;, OP_TIME_ZONE_GMT_BASED);</b>
+<b class="fc"><i class="no-highlight">1944</i>&nbsp;        addOp(&quot;zzz&quot;, OP_TIME_ZONE_LONG);</b>
+<b class="fc"><i class="no-highlight">1945</i>&nbsp;        addOp(&quot;Z&quot;, OP_TIME_ZONE_RFC_822);</b>
+<b class="fc"><i class="no-highlight">1946</i>&nbsp;        addOp(&quot;x&quot;, OP_TIME_ZONE_ISO_8601_1);</b>
+<b class="fc"><i class="no-highlight">1947</i>&nbsp;        addOp(&quot;xx&quot;, OP_TIME_ZONE_ISO_8601_2);</b>
+<b class="fc"><i class="no-highlight">1948</i>&nbsp;        addOp(&quot;xxx&quot;, OP_TIME_ZONE_ISO_8601_3);</b>
+<b class="fc"><i class="no-highlight">1949</i>&nbsp;        addOp(&quot;U&quot;, OP_MICROS_ONE_DIGIT);</b>
+<b class="fc"><i class="no-highlight">1950</i>&nbsp;        addOp(&quot;UUU&quot;, OP_MICROS_THREE_DIGITS);</b>
+<b class="fc"><i class="no-highlight">1951</i>&nbsp;        addOp(&quot;U+&quot;, OP_MICROS_GREEDY6);</b>
+<b class="fc"><i class="no-highlight">1952</i>&nbsp;        addOp(&quot;N+&quot;, OP_NANOS_GREEDY9);</b>
+<i class="no-highlight">1953</i>&nbsp;    }
+<i class="no-highlight">1954</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

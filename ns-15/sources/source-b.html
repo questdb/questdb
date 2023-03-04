@@ -1,0 +1,970 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > LineTcpMeasurementScheduler</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.line.tcp</a>
+</div>
+
+<h1>Coverage Summary for Class: LineTcpMeasurementScheduler (io.questdb.cutlass.line.tcp)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">LineTcpMeasurementScheduler</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (20/20)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.5%
+  </span>
+  <span class="absValue">
+    (409/433)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.line.tcp;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.Telemetry;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.TelemetryOrigin;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.TelemetrySystemEvent;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.TableRecordMetadata;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cairo.vm.api.MemoryMARW;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.cairo.wal.WalWriter;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.mp.MPSequence;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.mp.RingQueue;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.mp.SCSequence;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.mp.WorkerPool;
+<i class="no-highlight">42</i>&nbsp;import io.questdb.network.IODispatcher;
+<i class="no-highlight">43</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">44</i>&nbsp;import io.questdb.std.datetime.millitime.MillisecondClock;
+<i class="no-highlight">45</i>&nbsp;import io.questdb.std.str.ByteCharSequence;
+<i class="no-highlight">46</i>&nbsp;import io.questdb.std.str.DirectByteCharSequence;
+<i class="no-highlight">47</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">48</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">49</i>&nbsp;import io.questdb.tasks.TelemetryTask;
+<i class="no-highlight">50</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">51</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">54</i>&nbsp;import java.util.Arrays;
+<i class="no-highlight">55</i>&nbsp;import java.util.concurrent.locks.ReadWriteLock;
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
+<i class="no-highlight">58</i>&nbsp;import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
+<i class="no-highlight">59</i>&nbsp;import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
+<i class="no-highlight">60</i>&nbsp;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;class LineTcpMeasurementScheduler implements Closeable {</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);</b>
+<i class="no-highlight">63</i>&nbsp;    private final ObjList&lt;TableUpdateDetails&gt;[] assignedTables;
+<i class="no-highlight">64</i>&nbsp;    private final boolean autoCreateNewColumns;
+<i class="no-highlight">65</i>&nbsp;    private final boolean autoCreateNewTables;
+<i class="no-highlight">66</i>&nbsp;    private final CairoConfiguration cairoConfiguration;
+<i class="no-highlight">67</i>&nbsp;    private final LineTcpReceiverConfiguration configuration;
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    private final MemoryMARW ddlMem = Vm.getMARWInstance();</b>
+<i class="no-highlight">69</i>&nbsp;    private final DefaultColumnTypes defaultColumnTypes;
+<i class="no-highlight">70</i>&nbsp;    private final CairoEngine engine;
+<i class="no-highlight">71</i>&nbsp;    private final LowerCaseCharSequenceObjHashMap&lt;TableUpdateDetails&gt; idleTableUpdateDetailsUtf16;
+<i class="no-highlight">72</i>&nbsp;    private final long[] loadByWriterThread;
+<i class="no-highlight">73</i>&nbsp;    private final NetworkIOJob[] netIoJobs;
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    private final Path path = new Path();</b>
+<i class="no-highlight">75</i>&nbsp;    private final MPSequence[] pubSeq;
+<i class="no-highlight">76</i>&nbsp;    private final RingQueue&lt;LineTcpMeasurementEvent&gt;[] queue;
+<i class="no-highlight">77</i>&nbsp;    private final CairoSecurityContext securityContext;
+<i class="no-highlight">78</i>&nbsp;    private final StringSink[] tableNameSinks;
+<i class="no-highlight">79</i>&nbsp;    private final TableStructureAdapter tableStructureAdapter;
+<b class="fc"><i class="no-highlight">80</i>&nbsp;    private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();</b>
+<i class="no-highlight">81</i>&nbsp;    private final LowerCaseCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf16;
+<i class="no-highlight">82</i>&nbsp;    private final Telemetry&lt;TelemetryTask&gt; telemetry;
+<i class="no-highlight">83</i>&nbsp;    private final IOTableUpdateDetailsPool walIdleUpdateDetailsUtf8;
+<i class="no-highlight">84</i>&nbsp;    private final long writerIdleTimeout;
+<i class="no-highlight">85</i>&nbsp;    private LineTcpReceiver.SchedulerListener listener;
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;    LineTcpMeasurementScheduler(
+<i class="no-highlight">88</i>&nbsp;            LineTcpReceiverConfiguration lineConfiguration,
+<i class="no-highlight">89</i>&nbsp;            CairoEngine engine,
+<i class="no-highlight">90</i>&nbsp;            WorkerPool ioWorkerPool,
+<i class="no-highlight">91</i>&nbsp;            IODispatcher&lt;LineTcpConnectionContext&gt; dispatcher,
+<i class="no-highlight">92</i>&nbsp;            WorkerPool writerWorkerPool
+<b class="fc"><i class="no-highlight">93</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        this.engine = engine;</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        this.telemetry = engine.getTelemetry();</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        this.securityContext = lineConfiguration.getCairoSecurityContext();</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        this.cairoConfiguration = engine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        this.configuration = lineConfiguration;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        this.tableNameSinks = new StringSink[ioWorkerPoolSize];</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        for (int i = 0; i &lt; ioWorkerPoolSize; i++) {</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;            tableNameSinks[i] = new StringSink();</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            netIoJobs[i] = netIoJob;</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;            ioWorkerPool.assign(i, netIoJob);</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;            ioWorkerPool.freeOnExit(netIoJob);</b>
+<i class="no-highlight">110</i>&nbsp;        }
+<i class="no-highlight">111</i>&nbsp;
+<i class="no-highlight">112</i>&nbsp;        // Worker count is set to 1 because we do not use this execution context
+<i class="no-highlight">113</i>&nbsp;        // in worker threads.
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        int queueSize = lineConfiguration.getWriterQueueCapacity();</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        long commitIntervalDefault = configuration.getCommitIntervalDefault();</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        int nWriterThreads = writerWorkerPool.getWorkerCount();</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        pubSeq = new MPSequence[nWriterThreads];</b>
+<i class="no-highlight">124</i>&nbsp;        //noinspection unchecked
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        queue = new RingQueue[nWriterThreads];</b>
+<i class="no-highlight">126</i>&nbsp;        //noinspection unchecked
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        assignedTables = new ObjList[nWriterThreads];</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        for (int i = 0; i &lt; nWriterThreads; i++) {</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;            MPSequence ps = new MPSequence(queueSize);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;            pubSeq[i] = ps;</b>
+<i class="no-highlight">131</i>&nbsp;
+<b class="fc"><i class="no-highlight">132</i>&nbsp;            RingQueue&lt;LineTcpMeasurementEvent&gt; q = new RingQueue&lt;&gt;(</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                    (address, addressSize) -&gt; new LineTcpMeasurementEvent(</b>
+<i class="no-highlight">134</i>&nbsp;                            address,
+<i class="no-highlight">135</i>&nbsp;                            addressSize,
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                            lineConfiguration.getMicrosecondClock(),</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                            lineConfiguration.getTimestampAdapter(),</b>
+<i class="no-highlight">138</i>&nbsp;                            defaultColumnTypes,
+<b class="fc"><i class="no-highlight">139</i>&nbsp;                            lineConfiguration.isStringToCharCastAllowed(),</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                            lineConfiguration.getMaxFileNameLength(),</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;                            lineConfiguration.getAutoCreateNewColumns()</b>
+<i class="no-highlight">142</i>&nbsp;                    ),
+<b class="fc"><i class="no-highlight">143</i>&nbsp;                    getEventSlotSize(maxMeasurementSize),</b>
+<i class="no-highlight">144</i>&nbsp;                    queueSize,
+<i class="no-highlight">145</i>&nbsp;                    MemoryTag.NATIVE_ILP_RSS
+<i class="no-highlight">146</i>&nbsp;            );
+<i class="no-highlight">147</i>&nbsp;
+<b class="fc"><i class="no-highlight">148</i>&nbsp;            queue[i] = q;</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;            SCSequence subSeq = new SCSequence();</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;            ps.then(subSeq).then(ps);</b>
+<i class="no-highlight">151</i>&nbsp;
+<b class="fc"><i class="no-highlight">152</i>&nbsp;            assignedTables[i] = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">153</i>&nbsp;
+<b class="fc"><i class="no-highlight">154</i>&nbsp;            final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(</b>
+<i class="no-highlight">155</i>&nbsp;                    i,
+<i class="no-highlight">156</i>&nbsp;                    q,
+<i class="no-highlight">157</i>&nbsp;                    subSeq,
+<i class="no-highlight">158</i>&nbsp;                    milliClock,
+<i class="no-highlight">159</i>&nbsp;                    commitIntervalDefault,
+<i class="no-highlight">160</i>&nbsp;                    this,
+<b class="fc"><i class="no-highlight">161</i>&nbsp;                    engine.getMetrics(),</b>
+<i class="no-highlight">162</i>&nbsp;                    assignedTables[i]
+<i class="no-highlight">163</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            writerWorkerPool.assign(i, lineTcpWriterJob);</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;            writerWorkerPool.freeOnExit(lineTcpWriterJob);</b>
+<i class="no-highlight">166</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy());</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        walIdleUpdateDetailsUtf8 = new IOTableUpdateDetailsPool(ioWorkerPoolSize);</b>
+<i class="no-highlight">170</i>&nbsp;    }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;    @Override
+<i class="no-highlight">173</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        tableUpdateDetailsLock.writeLock().lock();</b>
+<i class="no-highlight">175</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            closeLocals(tableUpdateDetailsUtf16);</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;            closeLocals(idleTableUpdateDetailsUtf16);</b>
+<i class="no-highlight">178</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">179</i>&nbsp;            tableUpdateDetailsLock.writeLock().unlock();</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        Misc.free(walIdleUpdateDetailsUtf8);</b>
+<i class="no-highlight">182</i>&nbsp;
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        Misc.free(path);</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;        Misc.free(ddlMem);</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        for (int i = 0, n = assignedTables.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            Misc.freeObjList(assignedTables[i]);</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;            assignedTables[i].clear();</b>
+<i class="no-highlight">188</i>&nbsp;        }
+<i class="no-highlight">189</i>&nbsp;        //noinspection ForLoopReplaceableByForEach
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        for (int i = 0, n = queue.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            Misc.free(queue[i]);</b>
+<i class="no-highlight">192</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        for (int i = 0, n = netIoJobs.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            netIoJobs[i].close();</b>
+<i class="no-highlight">195</i>&nbsp;        }
+<i class="no-highlight">196</i>&nbsp;    }
+<i class="no-highlight">197</i>&nbsp;
+<i class="no-highlight">198</i>&nbsp;    public long commitWalTables(ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8, long wallClockMillis) {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        long minTableNextCommitTime = Long.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n &lt; sz; n++) {</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</b>
+<i class="no-highlight">203</i>&nbsp;
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            if (tud.isWal()) {</b>
+<b class="nc"><i class="no-highlight">205</i>&nbsp;                final MillisecondClock millisecondClock = tud.getMillisecondClock();</b>
+<i class="no-highlight">206</i>&nbsp;                try {
+<b class="nc"><i class="no-highlight">207</i>&nbsp;                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);</b>
+<i class="no-highlight">208</i>&nbsp;                    // get current time again, commit is not instant and take quite some time.
+<b class="nc"><i class="no-highlight">209</i>&nbsp;                    wallClockMillis = millisecondClock.getTicks();</b>
+<b class="nc"><i class="no-highlight">210</i>&nbsp;                    if (tableNextCommitTime &lt; minTableNextCommitTime) {</b>
+<i class="no-highlight">211</i>&nbsp;                        // taking the earliest commit time
+<b class="nc"><i class="no-highlight">212</i>&nbsp;                        minTableNextCommitTime = tableNextCommitTime;</b>
+<i class="no-highlight">213</i>&nbsp;                    }
+<b class="nc"><i class="no-highlight">214</i>&nbsp;                } catch (Throwable ex) {</b>
+<b class="nc"><i class="no-highlight">215</i>&nbsp;                    LOG.critical().$(&quot;commit failed [table=&quot;).$(tud.getTableNameUtf16()).$(&quot;,ex=&quot;).$(ex).I$();</b>
+<b class="nc"><i class="no-highlight">216</i>&nbsp;                    engine.getMetrics().health().incrementUnhandledErrors();</b>
+<b class="nc"><i class="no-highlight">217</i>&nbsp;                }</b>
+<i class="no-highlight">218</i>&nbsp;            }
+<i class="no-highlight">219</i>&nbsp;        }
+<i class="no-highlight">220</i>&nbsp;        // if no tables, just use the default commit interval
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        long commitIntervalDefault = configuration.getCommitIntervalDefault();</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;</b>
+<i class="no-highlight">223</i>&nbsp;    }
+<i class="no-highlight">224</i>&nbsp;
+<i class="no-highlight">225</i>&nbsp;    public boolean doMaintenance(
+<i class="no-highlight">226</i>&nbsp;            ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8,
+<i class="no-highlight">227</i>&nbsp;            int readerWorkerId,
+<i class="no-highlight">228</i>&nbsp;            long millis
+<i class="no-highlight">229</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        walIdleUpdateDetailsUtf8.closeIdle(millis, writerIdleTimeout, listener);</b>
+<i class="no-highlight">231</i>&nbsp;
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n &lt; sz; n++) {</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</b>
+<i class="no-highlight">235</i>&nbsp;
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            if (millis - tud.getLastMeasurementMillis() &gt;= writerIdleTimeout) {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;                tableUpdateDetailsLock.writeLock().lock();</b>
+<i class="no-highlight">238</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">239</i>&nbsp;                    if (tud.getNetworkIOOwnerCount() == 1) {</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;                        final int writerWorkerId = tud.getWriterThreadId();</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                        final long seq = getNextPublisherEventSequence(writerWorkerId);</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                        if (seq &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                            LineTcpMeasurementEvent event = queue[writerWorkerId].get(seq);</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;                            event.createWriterReleaseEvent(tud, true);</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                            tableUpdateDetailsUtf8.remove(tableNameUtf8);</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                            final CharSequence tableNameUtf16 = tud.getTableNameUtf16();</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                            tableUpdateDetailsUtf16.remove(tableNameUtf16);</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;                            idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;                            tud.removeReference(readerWorkerId);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                            pubSeq[writerWorkerId].done(seq);</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;                            if (listener != null) {</b>
+<i class="no-highlight">252</i>&nbsp;                                // table going idle
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                                listener.onEvent(tud.getTableToken(), 1);</b>
+<i class="no-highlight">254</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                            LOG.info().$(&quot;active table going idle [tableName=&quot;).$(tableNameUtf16).I$();</b>
+<i class="no-highlight">256</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                        return true;</b>
+<i class="no-highlight">258</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                        tableUpdateDetailsUtf8.remove(tableNameUtf8);</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                        tud.removeReference(readerWorkerId);</b>
+<i class="no-highlight">261</i>&nbsp;
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                        if (tud.isWal()) {</b>
+<b class="nc"><i class="no-highlight">263</i>&nbsp;                            if (listener != null) {</b>
+<i class="no-highlight">264</i>&nbsp;                                // table going idle
+<b class="nc"><i class="no-highlight">265</i>&nbsp;                                listener.onEvent(tud.getTableToken(), 1);</b>
+<i class="no-highlight">266</i>&nbsp;                            }
+<b class="nc"><i class="no-highlight">267</i>&nbsp;                            tud.releaseWriter(true);</b>
+<b class="nc"><i class="no-highlight">268</i>&nbsp;                            tud.close();</b>
+<i class="no-highlight">269</i>&nbsp;                        }
+<i class="no-highlight">270</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                    return sz &gt; 1;</b>
+<i class="no-highlight">272</i>&nbsp;                } finally {
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                    tableUpdateDetailsLock.writeLock().unlock();</b>
+<b class="nc"><i class="no-highlight">274</i>&nbsp;                }</b>
+<i class="no-highlight">275</i>&nbsp;            }
+<i class="no-highlight">276</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        return false;</b>
+<i class="no-highlight">278</i>&nbsp;    }
+<i class="no-highlight">279</i>&nbsp;
+<i class="no-highlight">280</i>&nbsp;    public void processWriterReleaseEvent(LineTcpMeasurementEvent event, int workerId) {
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        tableUpdateDetailsLock.readLock().lock();</b>
+<i class="no-highlight">282</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            final TableUpdateDetails tub = event.getTableUpdateDetails();</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            if (tub.getWriterThreadId() != workerId) {</b>
+<i class="no-highlight">285</i>&nbsp;                return;
+<i class="no-highlight">286</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            if (!event.getTableUpdateDetails().isWriterInError() &amp;&amp; tableUpdateDetailsUtf16.keyIndex(tub.getTableNameUtf16()) &lt; 0) {</b>
+<i class="no-highlight">288</i>&nbsp;                // Table must have been re-assigned to an IO thread
+<i class="no-highlight">289</i>&nbsp;                return;
+<i class="no-highlight">290</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">291</i>&nbsp;            LOG.info()</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                    .$(&quot;releasing writer, its been idle since &quot;).$ts(tub.getLastMeasurementMillis() * 1_000)</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                    .$(&quot;[tableName=&quot;).$(tub.getTableNameUtf16())</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">295</i>&nbsp;
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            event.releaseWriter();</b>
+<i class="no-highlight">297</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">298</i>&nbsp;            tableUpdateDetailsLock.readLock().unlock();</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        }</b>
+<i class="no-highlight">300</i>&nbsp;    }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;    public void releaseWalTableDetails(ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8) {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        ObjList&lt;ByteCharSequence&gt; keys = tableUpdateDetailsUtf8.keys();</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        for (int n = keys.size() - 1; n &gt; -1; --n) {</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;            final ByteCharSequence tableNameUtf8 = keys.getQuick(n);</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;            if (tud.isWal()) {</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                tableUpdateDetailsUtf8.remove(tableNameUtf8);</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                walIdleUpdateDetailsUtf8.put(tableNameUtf8, tud);</b>
+<i class="no-highlight">310</i>&nbsp;            }
+<i class="no-highlight">311</i>&nbsp;        }
+<i class="no-highlight">312</i>&nbsp;    }
+<i class="no-highlight">313</i>&nbsp;
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;    private static long getEventSlotSize(int maxMeasurementSize) {
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));</b>
+<i class="no-highlight">317</i>&nbsp;    }
+<i class="no-highlight">318</i>&nbsp;
+<i class="no-highlight">319</i>&nbsp;    private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+<b class="fc"><i class="no-highlight">320</i>&nbsp;        final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();</b>
+<i class="no-highlight">322</i>&nbsp;        // pass 1: create all columns that do not exist
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        ld.resetStateIfNecessary();</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        ld.clearColumnTypes();</b>
+<i class="no-highlight">326</i>&nbsp;
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        WalWriter ww = (WalWriter) tud.getWriter();</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        TableRecordMetadata metadata = ww.getMetadata();</b>
+<i class="no-highlight">329</i>&nbsp;
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        long timestamp = parser.getTimestamp();</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        if (timestamp != LineTcpParser.NULL_TIMESTAMP) {</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;            timestamp = timestampAdapter.getMicros(timestamp);</b>
+<i class="no-highlight">333</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            timestamp = configuration.getMicrosecondClock().getTicks();</b>
+<i class="no-highlight">335</i>&nbsp;        }
+<i class="no-highlight">336</i>&nbsp;
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        final int entCount = parser.getEntityCount();</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        for (int i = 0; i &lt; entCount; i++) {</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;            final LineTcpParser.ProtoEntity ent = parser.getEntity(i);</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;            int columnIndex = ld.getColumnIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;            int columnType = ColumnType.UNDEFINED;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;            if (columnIndex == COLUMN_NOT_FOUND) {</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                final String columnNameUtf16 = ld.getColNameUtf16();</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                if (autoCreateNewColumns &amp;&amp; TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                    if (metadata.getColumnIndexQuiet(columnNameUtf16) &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                        tud.commit(false);</b>
+<i class="no-highlight">347</i>&nbsp;                        try {
+<b class="fc"><i class="no-highlight">348</i>&nbsp;                            ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                        } catch (CairoException e) {</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                            if (columnIndex &lt; 0) {</b>
+<i class="no-highlight">352</i>&nbsp;                                // the column is still not there, something must be wrong
+<b class="nc"><i class="no-highlight">353</i>&nbsp;                                throw e;</b>
+<i class="no-highlight">354</i>&nbsp;                            }
+<i class="no-highlight">355</i>&nbsp;                            // all good, someone added the column concurrently
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                        }</b>
+<i class="no-highlight">357</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                    columnType = metadata.getColumnType(columnIndex);</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                } else if (!autoCreateNewColumns) {</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                    throw newColumnsNotAllowed(tud, columnNameUtf16);</b>
+<i class="no-highlight">362</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                    throw invalidColNameError(tud, columnNameUtf16);</b>
+<i class="no-highlight">364</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">365</i>&nbsp;            } else if (columnIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                if (columnIndex == tud.getTimestampIndex()) {</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                    timestamp = timestampAdapter.getMicros(ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                    columnIndex = DUPLICATED_COLUMN;</b>
+<i class="no-highlight">369</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                columnType = columnIndex &lt; 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);</b>
+<i class="no-highlight">371</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">372</i>&nbsp;            ld.addColumnType(columnIndex, columnType);</b>
+<i class="no-highlight">373</i>&nbsp;        }
+<i class="no-highlight">374</i>&nbsp;
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        TableWriter.Row r = ww.newRow(timestamp);</b>
+<i class="no-highlight">376</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            for (int i = 0; i &lt; entCount; i++) {</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);</b>
+<i class="no-highlight">379</i>&nbsp;
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                short entType = ent.getType();</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                int colTypeAndIndex = ld.getColumnType(i);</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                int colType = Numbers.decodeLowShort(colTypeAndIndex);</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);</b>
+<i class="no-highlight">384</i>&nbsp;
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                if (columnIndex &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                    continue;</b>
+<i class="no-highlight">387</i>&nbsp;                }
+<i class="no-highlight">388</i>&nbsp;
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                switch (entType) {</b>
+<i class="no-highlight">390</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_TAG: {
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());</b>
+<i class="no-highlight">393</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">394</i>&nbsp;                            throw castError(&quot;tag&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">395</i>&nbsp;                        }
+<i class="no-highlight">396</i>&nbsp;                        break;
+<i class="no-highlight">397</i>&nbsp;                    }
+<i class="no-highlight">398</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_INTEGER: {
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                        switch (ColumnType.tagOf(colType)) {</b>
+<i class="no-highlight">400</i>&nbsp;                            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                                r.putLong(columnIndex, ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                                break;</b>
+<i class="no-highlight">403</i>&nbsp;
+<i class="no-highlight">404</i>&nbsp;                            case ColumnType.INT: {
+<b class="fc"><i class="no-highlight">405</i>&nbsp;                                final long entityValue = ent.getLongValue();</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                                if (entityValue &gt;= Integer.MIN_VALUE &amp;&amp; entityValue &lt;= Integer.MAX_VALUE) {</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                                    r.putInt(columnIndex, (int) entityValue);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                                } else if (entityValue == Numbers.LONG_NaN) {</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                                    r.putInt(columnIndex, Numbers.INT_NaN);</b>
+<i class="no-highlight">410</i>&nbsp;                                } else {
+<b class="nc"><i class="no-highlight">411</i>&nbsp;                                    throw boundsError(entityValue, i, ColumnType.INT);</b>
+<i class="no-highlight">412</i>&nbsp;                                }
+<i class="no-highlight">413</i>&nbsp;                                break;
+<i class="no-highlight">414</i>&nbsp;                            }
+<i class="no-highlight">415</i>&nbsp;                            case ColumnType.SHORT: {
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                                final long entityValue = ent.getLongValue();</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                                if (entityValue &gt;= Short.MIN_VALUE &amp;&amp; entityValue &lt;= Short.MAX_VALUE) {</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                                    r.putShort(columnIndex, (short) entityValue);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                                } else if (entityValue == Numbers.LONG_NaN) {</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;                                    r.putShort(columnIndex, (short) 0);</b>
+<i class="no-highlight">421</i>&nbsp;                                } else {
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                                    throw boundsError(entityValue, i, ColumnType.SHORT);</b>
+<i class="no-highlight">423</i>&nbsp;                                }
+<i class="no-highlight">424</i>&nbsp;                                break;
+<i class="no-highlight">425</i>&nbsp;                            }
+<i class="no-highlight">426</i>&nbsp;                            case ColumnType.BYTE: {
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                                final long entityValue = ent.getLongValue();</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                                if (entityValue &gt;= Byte.MIN_VALUE &amp;&amp; entityValue &lt;= Byte.MAX_VALUE) {</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                                    r.putByte(columnIndex, (byte) entityValue);</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                                } else if (entityValue == Numbers.LONG_NaN) {</b>
+<b class="nc"><i class="no-highlight">431</i>&nbsp;                                    r.putByte(columnIndex, (byte) 0);</b>
+<i class="no-highlight">432</i>&nbsp;                                } else {
+<b class="fc"><i class="no-highlight">433</i>&nbsp;                                    throw boundsError(entityValue, i, ColumnType.BYTE);</b>
+<i class="no-highlight">434</i>&nbsp;                                }
+<i class="no-highlight">435</i>&nbsp;                                break;
+<i class="no-highlight">436</i>&nbsp;                            }
+<i class="no-highlight">437</i>&nbsp;                            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                                r.putTimestamp(columnIndex, ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                                break;</b>
+<i class="no-highlight">440</i>&nbsp;
+<i class="no-highlight">441</i>&nbsp;                            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                                r.putDate(columnIndex, ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                                break;</b>
+<i class="no-highlight">444</i>&nbsp;
+<i class="no-highlight">445</i>&nbsp;                            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">446</i>&nbsp;                                r.putDouble(columnIndex, ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;                                break;</b>
+<i class="no-highlight">448</i>&nbsp;
+<i class="no-highlight">449</i>&nbsp;                            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">450</i>&nbsp;                                r.putFloat(columnIndex, ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;                                break;</b>
+<i class="no-highlight">452</i>&nbsp;
+<i class="no-highlight">453</i>&nbsp;                            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                                r.putSym(columnIndex, ent.getValue());</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                                break;</b>
+<i class="no-highlight">456</i>&nbsp;
+<i class="no-highlight">457</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">458</i>&nbsp;                                throw castError(&quot;integer&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">459</i>&nbsp;                        }
+<i class="no-highlight">460</i>&nbsp;                        break;
+<i class="no-highlight">461</i>&nbsp;                    }
+<i class="no-highlight">462</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_FLOAT: {
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                        switch (ColumnType.tagOf(colType)) {</b>
+<i class="no-highlight">464</i>&nbsp;                            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">465</i>&nbsp;                                r.putDouble(columnIndex, ent.getFloatValue());</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                                break;</b>
+<i class="no-highlight">467</i>&nbsp;
+<i class="no-highlight">468</i>&nbsp;                            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">469</i>&nbsp;                                r.putFloat(columnIndex, (float) ent.getFloatValue());</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;                                break;</b>
+<i class="no-highlight">471</i>&nbsp;
+<i class="no-highlight">472</i>&nbsp;                            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                                r.putSym(columnIndex, ent.getValue());</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;                                break;</b>
+<i class="no-highlight">475</i>&nbsp;
+<i class="no-highlight">476</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">477</i>&nbsp;                                throw castError(&quot;float&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">478</i>&nbsp;                        }
+<i class="no-highlight">479</i>&nbsp;                        break;
+<i class="no-highlight">480</i>&nbsp;                    }
+<i class="no-highlight">481</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_STRING: {
+<b class="fc"><i class="no-highlight">482</i>&nbsp;                        final int geoHashBits = ColumnType.getGeoHashBits(colType);</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                        final DirectByteCharSequence entityValue = ent.getValue();</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                        if (geoHashBits == 0) { // not geohash</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;                            switch (ColumnType.tagOf(colType)) {</b>
+<i class="no-highlight">486</i>&nbsp;                                case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                                    r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                                    break;</b>
+<i class="no-highlight">489</i>&nbsp;
+<i class="no-highlight">490</i>&nbsp;                                case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                                    if (entityValue.length() == 1 &amp;&amp; entityValue.byteAt(0) &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                                        r.putChar(columnIndex, entityValue.charAt(0));</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                                    } else if (stringToCharCastAllowed) {</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;                                        int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                                        if (Numbers.decodeLowShort(encodedResult) &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;                                            r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));</b>
+<i class="no-highlight">497</i>&nbsp;                                        } else {
+<b class="nc"><i class="no-highlight">498</i>&nbsp;                                            throw castError(&quot;string&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">499</i>&nbsp;                                        }
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                                    } else {</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                                        throw castError(&quot;string&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">502</i>&nbsp;                                    }
+<i class="no-highlight">503</i>&nbsp;                                    break;
+<i class="no-highlight">504</i>&nbsp;
+<i class="no-highlight">505</i>&nbsp;                                case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">506</i>&nbsp;                                    r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                                    break;</b>
+<i class="no-highlight">508</i>&nbsp;                                case ColumnType.UUID:
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                                    r.putUuid(columnIndex, entityValue);</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;                                    break;</b>
+<i class="no-highlight">511</i>&nbsp;                                default:
+<b class="fc"><i class="no-highlight">512</i>&nbsp;                                    throw castError(&quot;string&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">513</i>&nbsp;                            }
+<i class="no-highlight">514</i>&nbsp;                        } else {
+<i class="no-highlight">515</i>&nbsp;                            long geoHash;
+<i class="no-highlight">516</i>&nbsp;                            try {
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                                DirectByteCharSequence value = ent.getValue();</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;                                geoHash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), geoHashBits);</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;                            } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;                                geoHash = GeoHashes.NULL;</b>
+<b class="fc"><i class="no-highlight">521</i>&nbsp;                            }</b>
+<b class="fc"><i class="no-highlight">522</i>&nbsp;                            r.putGeoHash(columnIndex, geoHash);</b>
+<i class="no-highlight">523</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">524</i>&nbsp;                        break;</b>
+<i class="no-highlight">525</i>&nbsp;                    }
+<i class="no-highlight">526</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_LONG256: {
+<b class="fc"><i class="no-highlight">527</i>&nbsp;                        switch (ColumnType.tagOf(colType)) {</b>
+<i class="no-highlight">528</i>&nbsp;                            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">529</i>&nbsp;                                r.putLong256(columnIndex, ent.getValue());</b>
+<b class="fc"><i class="no-highlight">530</i>&nbsp;                                break;</b>
+<i class="no-highlight">531</i>&nbsp;
+<i class="no-highlight">532</i>&nbsp;                            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">533</i>&nbsp;                                r.putSym(columnIndex, ent.getValue());</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;                                break;</b>
+<i class="no-highlight">535</i>&nbsp;
+<i class="no-highlight">536</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">537</i>&nbsp;                                throw castError(&quot;long256&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">538</i>&nbsp;                        }
+<i class="no-highlight">539</i>&nbsp;                        break;
+<i class="no-highlight">540</i>&nbsp;                    }
+<i class="no-highlight">541</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
+<b class="fc"><i class="no-highlight">542</i>&nbsp;                        switch (ColumnType.tagOf(colType)) {</b>
+<i class="no-highlight">543</i>&nbsp;                            case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">544</i>&nbsp;                                r.putBool(columnIndex, ent.getBooleanValue());</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;                                break;</b>
+<i class="no-highlight">546</i>&nbsp;
+<i class="no-highlight">547</i>&nbsp;                            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                                r.putByte(columnIndex, (byte) (ent.getBooleanValue() ? 1 : 0));</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                                break;</b>
+<i class="no-highlight">550</i>&nbsp;
+<i class="no-highlight">551</i>&nbsp;                            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">552</i>&nbsp;                                r.putShort(columnIndex, (short) (ent.getBooleanValue() ? 1 : 0));</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                                break;</b>
+<i class="no-highlight">554</i>&nbsp;
+<i class="no-highlight">555</i>&nbsp;                            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">556</i>&nbsp;                                r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">557</i>&nbsp;                                break;</b>
+<i class="no-highlight">558</i>&nbsp;
+<i class="no-highlight">559</i>&nbsp;                            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">560</i>&nbsp;                                r.putLong(columnIndex, ent.getBooleanValue() ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;                                break;</b>
+<i class="no-highlight">562</i>&nbsp;
+<i class="no-highlight">563</i>&nbsp;                            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">564</i>&nbsp;                                r.putFloat(columnIndex, ent.getBooleanValue() ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;                                break;</b>
+<i class="no-highlight">566</i>&nbsp;
+<i class="no-highlight">567</i>&nbsp;                            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">568</i>&nbsp;                                r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                                break;</b>
+<i class="no-highlight">570</i>&nbsp;
+<i class="no-highlight">571</i>&nbsp;                            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">572</i>&nbsp;                                r.putSym(columnIndex, ent.getValue());</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;                                break;</b>
+<i class="no-highlight">574</i>&nbsp;
+<i class="no-highlight">575</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                                throw castError(&quot;boolean&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">577</i>&nbsp;                        }
+<i class="no-highlight">578</i>&nbsp;                        break;
+<i class="no-highlight">579</i>&nbsp;                    }
+<i class="no-highlight">580</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
+<b class="fc"><i class="no-highlight">581</i>&nbsp;                        switch (ColumnType.tagOf(colType)) {</b>
+<i class="no-highlight">582</i>&nbsp;                            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">583</i>&nbsp;                                r.putTimestamp(columnIndex, ent.getLongValue());</b>
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                                break;</b>
+<i class="no-highlight">585</i>&nbsp;
+<i class="no-highlight">586</i>&nbsp;                            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">587</i>&nbsp;                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);</b>
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                                break;</b>
+<i class="no-highlight">589</i>&nbsp;
+<i class="no-highlight">590</i>&nbsp;                            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">591</i>&nbsp;                                r.putSym(columnIndex, ent.getValue());</b>
+<b class="fc"><i class="no-highlight">592</i>&nbsp;                                break;</b>
+<i class="no-highlight">593</i>&nbsp;
+<i class="no-highlight">594</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">595</i>&nbsp;                                throw castError(&quot;timestamp&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">596</i>&nbsp;                        }
+<i class="no-highlight">597</i>&nbsp;                        break;
+<i class="no-highlight">598</i>&nbsp;                    }
+<i class="no-highlight">599</i>&nbsp;                    // parser would reject this condition based on config
+<i class="no-highlight">600</i>&nbsp;                    case LineTcpParser.ENTITY_TYPE_SYMBOL: {
+<b class="fc"><i class="no-highlight">601</i>&nbsp;                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {</b>
+<b class="fc"><i class="no-highlight">602</i>&nbsp;                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());</b>
+<i class="no-highlight">603</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">604</i>&nbsp;                            throw castError(&quot;symbol&quot;, i, colType, ent.getName());</b>
+<i class="no-highlight">605</i>&nbsp;                        }
+<i class="no-highlight">606</i>&nbsp;                        break;
+<i class="no-highlight">607</i>&nbsp;                    }
+<i class="no-highlight">608</i>&nbsp;                    default:
+<i class="no-highlight">609</i>&nbsp;                        // unsupported types are ignored
+<i class="no-highlight">610</i>&nbsp;                        break;
+<i class="no-highlight">611</i>&nbsp;                }
+<i class="no-highlight">612</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">613</i>&nbsp;            r.append();</b>
+<b class="fc"><i class="no-highlight">614</i>&nbsp;            tud.commitIfMaxUncommittedRowsCountReached();</b>
+<b class="nc"><i class="no-highlight">615</i>&nbsp;        } catch (CommitFailedException commitFailedException) {</b>
+<b class="nc"><i class="no-highlight">616</i>&nbsp;            throw commitFailedException;</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;        } catch (Throwable th) {</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;            LOG.error().$(&quot;could not write line protocol measurement [tableName=&quot;).$(tud.getTableNameUtf16()).$(&quot;, message=&quot;).$(th.getMessage()).$(th).I$();</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;            if (r != null) {</b>
+<b class="fc"><i class="no-highlight">620</i>&nbsp;                r.cancel();</b>
+<i class="no-highlight">621</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">622</i>&nbsp;        }</b>
+<i class="no-highlight">623</i>&nbsp;    }
+<i class="no-highlight">624</i>&nbsp;
+<i class="no-highlight">625</i>&nbsp;    private void closeLocals(LowerCaseCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tudUtf16) {
+<b class="fc"><i class="no-highlight">626</i>&nbsp;        ObjList&lt;CharSequence&gt; tableNames = tudUtf16.keys();</b>
+<b class="fc"><i class="no-highlight">627</i>&nbsp;        for (int n = 0, sz = tableNames.size(); n &lt; sz; n++) {</b>
+<b class="fc"><i class="no-highlight">628</i>&nbsp;            tudUtf16.get(tableNames.get(n)).closeLocals();</b>
+<i class="no-highlight">629</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">630</i>&nbsp;        tudUtf16.clear();</b>
+<i class="no-highlight">631</i>&nbsp;    }
+<i class="no-highlight">632</i>&nbsp;
+<i class="no-highlight">633</i>&nbsp;    private boolean dispatchEvent(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) {
+<b class="fc"><i class="no-highlight">634</i>&nbsp;        final int writerThreadId = tud.getWriterThreadId();</b>
+<b class="fc"><i class="no-highlight">635</i>&nbsp;        long seq = getNextPublisherEventSequence(writerThreadId);</b>
+<b class="fc"><i class="no-highlight">636</i>&nbsp;        if (seq &gt; -1) {</b>
+<i class="no-highlight">637</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">638</i>&nbsp;                if (tud.isWriterInError()) {</b>
+<b class="nc"><i class="no-highlight">639</i>&nbsp;                    throw CairoException.critical(0).put(&quot;writer is in error, aborting ILP pipeline&quot;);</b>
+<i class="no-highlight">640</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">641</i>&nbsp;                queue[writerThreadId].get(seq).createMeasurementEvent(tud, parser, netIoJob.getWorkerId());</b>
+<i class="no-highlight">642</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">643</i>&nbsp;                pubSeq[writerThreadId].done(seq);</b>
+<b class="fc"><i class="no-highlight">644</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">645</i>&nbsp;            tud.incrementEventsProcessedSinceReshuffle();</b>
+<b class="fc"><i class="no-highlight">646</i>&nbsp;            return false;</b>
+<i class="no-highlight">647</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">648</i>&nbsp;        return true;</b>
+<i class="no-highlight">649</i>&nbsp;    }
+<i class="no-highlight">650</i>&nbsp;
+<i class="no-highlight">651</i>&nbsp;    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
+<b class="fc"><i class="no-highlight">652</i>&nbsp;        final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();</b>
+<b class="fc"><i class="no-highlight">653</i>&nbsp;        TableUpdateDetails walCachedTud = walIdleUpdateDetailsUtf8.get(tableNameUtf8);</b>
+<b class="fc"><i class="no-highlight">654</i>&nbsp;        if (walCachedTud != null) {</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;            netIoJob.addTableUpdateDetails(walCachedTud.getTableNameUtf8(), walCachedTud);</b>
+<b class="fc"><i class="no-highlight">656</i>&nbsp;            return walCachedTud;</b>
+<i class="no-highlight">657</i>&nbsp;        }
+<i class="no-highlight">658</i>&nbsp;
+<b class="fc"><i class="no-highlight">659</i>&nbsp;        final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];</b>
+<b class="fc"><i class="no-highlight">660</i>&nbsp;        tableNameUtf16.clear();</b>
+<b class="fc"><i class="no-highlight">661</i>&nbsp;        Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);</b>
+<i class="no-highlight">662</i>&nbsp;
+<b class="fc"><i class="no-highlight">663</i>&nbsp;        tableUpdateDetailsLock.writeLock().lock();</b>
+<i class="no-highlight">664</i>&nbsp;        try {
+<i class="no-highlight">665</i>&nbsp;            TableUpdateDetails tud;
+<i class="no-highlight">666</i>&nbsp;            // check if the global cache has the table
+<b class="fc"><i class="no-highlight">667</i>&nbsp;            final int tudKeyIndex = tableUpdateDetailsUtf16.keyIndex(tableNameUtf16);</b>
+<b class="fc"><i class="no-highlight">668</i>&nbsp;            if (tudKeyIndex &lt; 0) {</b>
+<i class="no-highlight">669</i>&nbsp;                // it does, which means that table is non-WAL
+<i class="no-highlight">670</i>&nbsp;                // we should not have &quot;shared&quot; WAL tables
+<b class="fc"><i class="no-highlight">671</i>&nbsp;                tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);</b>
+<i class="no-highlight">672</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">673</i>&nbsp;                TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);</b>
+<b class="fc"><i class="no-highlight">674</i>&nbsp;                int status = engine.getStatus(securityContext, path, tableToken);</b>
+<b class="fc"><i class="no-highlight">675</i>&nbsp;                if (status != TableUtils.TABLE_EXISTS) {</b>
+<b class="fc"><i class="no-highlight">676</i>&nbsp;                    if (!autoCreateNewTables) {</b>
+<b class="fc"><i class="no-highlight">677</i>&nbsp;                        throw CairoException.nonCritical()</b>
+<b class="fc"><i class="no-highlight">678</i>&nbsp;                                .put(&quot;table does not exist, creating new tables is disabled [table=&quot;).put(tableNameUtf16)</b>
+<b class="fc"><i class="no-highlight">679</i>&nbsp;                                .put(&#39;]&#39;);</b>
+<i class="no-highlight">680</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">681</i>&nbsp;                    if (!autoCreateNewColumns) {</b>
+<b class="fc"><i class="no-highlight">682</i>&nbsp;                        throw CairoException.nonCritical()</b>
+<b class="fc"><i class="no-highlight">683</i>&nbsp;                                .put(&quot;table does not exist, cannot create table, creating new columns is disabled [table=&quot;).put(tableNameUtf16)</b>
+<b class="fc"><i class="no-highlight">684</i>&nbsp;                                .put(&#39;]&#39;);</b>
+<i class="no-highlight">685</i>&nbsp;                    }
+<i class="no-highlight">686</i>&nbsp;                    // validate that parser entities do not contain NULLs
+<b class="fc"><i class="no-highlight">687</i>&nbsp;                    TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);</b>
+<b class="fc"><i class="no-highlight">688</i>&nbsp;                    for (int i = 0, n = tsa.getColumnCount(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">689</i>&nbsp;                        if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {</b>
+<b class="fc"><i class="no-highlight">690</i>&nbsp;                            throw CairoException.nonCritical().put(&quot;unknown column type [columnName=&quot;).put(tsa.getColumnName(i)).put(&#39;]&#39;);</b>
+<i class="no-highlight">691</i>&nbsp;                        }
+<i class="no-highlight">692</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">693</i>&nbsp;                    LOG.info().$(&quot;creating table [tableName=&quot;).$(tableNameUtf16).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">694</i>&nbsp;                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);</b>
+<i class="no-highlight">695</i>&nbsp;                }
+<i class="no-highlight">696</i>&nbsp;
+<i class="no-highlight">697</i>&nbsp;                // by the time we get here, definitely exists on disk
+<i class="no-highlight">698</i>&nbsp;                // check the global idle cache - TUD can be there
+<b class="fc"><i class="no-highlight">699</i>&nbsp;                final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);</b>
+<b class="fc"><i class="no-highlight">700</i>&nbsp;                if (idleTudKeyIndex &lt; 0) {</b>
+<i class="no-highlight">701</i>&nbsp;                    // TUD is found in global idle cache - this meant it is non-WAL
+<b class="fc"><i class="no-highlight">702</i>&nbsp;                    tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);</b>
+<b class="fc"><i class="no-highlight">703</i>&nbsp;                    LOG.info().$(&quot;idle table going active [tableName=&quot;).$(tud.getTableNameUtf16()).I$();</b>
+<b class="fc"><i class="no-highlight">704</i>&nbsp;                    if (tud.getWriter() == null) {</b>
+<b class="fc"><i class="no-highlight">705</i>&nbsp;                        tud.closeNoLock();</b>
+<i class="no-highlight">706</i>&nbsp;                        // Use actual table name from the &quot;details&quot; to avoid case mismatches in the
+<i class="no-highlight">707</i>&nbsp;                        // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
+<i class="no-highlight">708</i>&nbsp;                        // to identify the cause
+<b class="fc"><i class="no-highlight">709</i>&nbsp;                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());</b>
+<i class="no-highlight">710</i>&nbsp;                    } else {
+<b class="nc"><i class="no-highlight">711</i>&nbsp;                        idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);</b>
+<b class="nc"><i class="no-highlight">712</i>&nbsp;                        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);</b>
+<i class="no-highlight">713</i>&nbsp;                    }
+<i class="no-highlight">714</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">715</i>&nbsp;                    TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);</b>
+<i class="no-highlight">716</i>&nbsp;                    // check if table on disk is WAL
+<b class="fc"><i class="no-highlight">717</i>&nbsp;                    path.of(engine.getConfiguration().getRoot());</b>
+<b class="fc"><i class="no-highlight">718</i>&nbsp;                    if (engine.isWalTable(tableToken)) {</b>
+<i class="no-highlight">719</i>&nbsp;                        // create WAL-oriented TUD and NOT add it to the global cache
+<b class="fc"><i class="no-highlight">720</i>&nbsp;                        tud = new TableUpdateDetails(</b>
+<i class="no-highlight">721</i>&nbsp;                                configuration,
+<i class="no-highlight">722</i>&nbsp;                                engine,
+<b class="fc"><i class="no-highlight">723</i>&nbsp;                                engine.getWalWriter(</b>
+<i class="no-highlight">724</i>&nbsp;                                        securityContext,
+<i class="no-highlight">725</i>&nbsp;                                        tableToken
+<i class="no-highlight">726</i>&nbsp;                                ),
+<i class="no-highlight">727</i>&nbsp;                                -1,
+<i class="no-highlight">728</i>&nbsp;                                netIoJobs,
+<i class="no-highlight">729</i>&nbsp;                                defaultColumnTypes,
+<b class="fc"><i class="no-highlight">730</i>&nbsp;                                ByteCharSequence.newInstance(tableNameUtf8)</b>
+<i class="no-highlight">731</i>&nbsp;                        );
+<i class="no-highlight">732</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">733</i>&nbsp;                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));</b>
+<i class="no-highlight">734</i>&nbsp;                    }
+<i class="no-highlight">735</i>&nbsp;                }
+<i class="no-highlight">736</i>&nbsp;            }
+<i class="no-highlight">737</i>&nbsp;
+<i class="no-highlight">738</i>&nbsp;            // tud.getTableNameUtf8() can be different case from incoming tableNameUtf8
+<b class="fc"><i class="no-highlight">739</i>&nbsp;            ByteCharSequence key = Chars.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : ByteCharSequence.newInstance(tableNameUtf8);</b>
+<b class="fc"><i class="no-highlight">740</i>&nbsp;            netIoJob.addTableUpdateDetails(key, tud);</b>
+<b class="fc"><i class="no-highlight">741</i>&nbsp;            return tud;</b>
+<i class="no-highlight">742</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">743</i>&nbsp;            tableUpdateDetailsLock.writeLock().unlock();</b>
+<b class="fc"><i class="no-highlight">744</i>&nbsp;        }</b>
+<i class="no-highlight">745</i>&nbsp;    }
+<i class="no-highlight">746</i>&nbsp;
+<i class="no-highlight">747</i>&nbsp;    private boolean isOpen() {
+<b class="fc"><i class="no-highlight">748</i>&nbsp;        return null != pubSeq;</b>
+<i class="no-highlight">749</i>&nbsp;    }
+<i class="no-highlight">750</i>&nbsp;
+<i class="no-highlight">751</i>&nbsp;    @NotNull
+<i class="no-highlight">752</i>&nbsp;    private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16, ByteCharSequence tableNameUtf8) {
+<b class="fc"><i class="no-highlight">753</i>&nbsp;        unsafeCalcThreadLoad();</b>
+<b class="fc"><i class="no-highlight">754</i>&nbsp;        long leastLoad = Long.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">755</i>&nbsp;        int threadId = 0;</b>
+<i class="no-highlight">756</i>&nbsp;
+<b class="fc"><i class="no-highlight">757</i>&nbsp;        for (int i = 0, n = loadByWriterThread.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">758</i>&nbsp;            if (loadByWriterThread[i] &lt; leastLoad) {</b>
+<b class="fc"><i class="no-highlight">759</i>&nbsp;                leastLoad = loadByWriterThread[i];</b>
+<b class="fc"><i class="no-highlight">760</i>&nbsp;                threadId = i;</b>
+<i class="no-highlight">761</i>&nbsp;            }
+<i class="no-highlight">762</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">763</i>&nbsp;        TableToken tableToken = engine.getTableToken(tableNameUtf16);</b>
+<b class="fc"><i class="no-highlight">764</i>&nbsp;        final TableUpdateDetails tud = new TableUpdateDetails(</b>
+<i class="no-highlight">765</i>&nbsp;                configuration,
+<i class="no-highlight">766</i>&nbsp;                engine,
+<i class="no-highlight">767</i>&nbsp;                // get writer here to avoid constructing
+<i class="no-highlight">768</i>&nbsp;                // object instance and potentially leaking memory if
+<i class="no-highlight">769</i>&nbsp;                // writer allocation fails
+<b class="fc"><i class="no-highlight">770</i>&nbsp;                engine.getTableWriterAPI(securityContext, tableToken, &quot;tcpIlp&quot;),</b>
+<i class="no-highlight">771</i>&nbsp;                threadId,
+<i class="no-highlight">772</i>&nbsp;                netIoJobs,
+<i class="no-highlight">773</i>&nbsp;                defaultColumnTypes,
+<i class="no-highlight">774</i>&nbsp;                tableNameUtf8
+<i class="no-highlight">775</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">776</i>&nbsp;        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);</b>
+<b class="fc"><i class="no-highlight">777</i>&nbsp;        LOG.info().$(&quot;assigned &quot;).$(tableToken).$(&quot; to thread &quot;).$(threadId).$();</b>
+<b class="fc"><i class="no-highlight">778</i>&nbsp;        return tud;</b>
+<i class="no-highlight">779</i>&nbsp;    }
+<i class="no-highlight">780</i>&nbsp;
+<i class="no-highlight">781</i>&nbsp;    private void unsafeCalcThreadLoad() {
+<b class="fc"><i class="no-highlight">782</i>&nbsp;        Arrays.fill(loadByWriterThread, 0);</b>
+<b class="fc"><i class="no-highlight">783</i>&nbsp;        ObjList&lt;CharSequence&gt; tableNames = tableUpdateDetailsUtf16.keys();</b>
+<b class="fc"><i class="no-highlight">784</i>&nbsp;        for (int n = 0, sz = tableNames.size(); n &lt; sz; n++) {</b>
+<b class="fc"><i class="no-highlight">785</i>&nbsp;            final CharSequence tableName = tableNames.getQuick(n);</b>
+<b class="fc"><i class="no-highlight">786</i>&nbsp;            final TableUpdateDetails stats = tableUpdateDetailsUtf16.get(tableName);</b>
+<b class="fc"><i class="no-highlight">787</i>&nbsp;            if (stats != null) {</b>
+<b class="fc"><i class="no-highlight">788</i>&nbsp;                loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();</b>
+<i class="no-highlight">789</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">790</i>&nbsp;                LOG.error().$(&quot;could not find statistic for table [name=&quot;).$(tableName).I$();</b>
+<i class="no-highlight">791</i>&nbsp;            }
+<i class="no-highlight">792</i>&nbsp;        }
+<i class="no-highlight">793</i>&nbsp;    }
+<i class="no-highlight">794</i>&nbsp;
+<i class="no-highlight">795</i>&nbsp;    protected NetworkIOJob createNetworkIOJob(IODispatcher&lt;LineTcpConnectionContext&gt; dispatcher, int workerId) {
+<b class="fc"><i class="no-highlight">796</i>&nbsp;        return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);</b>
+<i class="no-highlight">797</i>&nbsp;    }
+<i class="no-highlight">798</i>&nbsp;
+<i class="no-highlight">799</i>&nbsp;    long getNextPublisherEventSequence(int writerWorkerId) {
+<b class="fc"><i class="no-highlight">800</i>&nbsp;        assert isOpen();</b>
+<i class="no-highlight">801</i>&nbsp;        long seq;
+<b class="fc"><i class="no-highlight">802</i>&nbsp;        while ((seq = pubSeq[writerWorkerId].next()) == -2) {</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;            Os.pause();</b>
+<i class="no-highlight">804</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">805</i>&nbsp;        return seq;</b>
+<i class="no-highlight">806</i>&nbsp;    }
+<i class="no-highlight">807</i>&nbsp;
+<i class="no-highlight">808</i>&nbsp;    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+<b class="fc"><i class="no-highlight">809</i>&nbsp;        DirectByteCharSequence measurementName = parser.getMeasurementName();</b>
+<i class="no-highlight">810</i>&nbsp;        TableUpdateDetails tud;
+<i class="no-highlight">811</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">812</i>&nbsp;            tud = netIoJob.getLocalTableDetails(measurementName);</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;            if (tud == null || (tud.isWal() &amp;&amp; tud.isWriterInError())) {</b>
+<b class="fc"><i class="no-highlight">814</i>&nbsp;                if (tud != null) {</b>
+<b class="fc"><i class="no-highlight">815</i>&nbsp;                    TableUpdateDetails removed = netIoJob.removeTableUpdateDetails(measurementName);</b>
+<b class="fc"><i class="no-highlight">816</i>&nbsp;                    assert tud == removed;</b>
+<b class="fc"><i class="no-highlight">817</i>&nbsp;                    removed.releaseWriter(true);</b>
+<b class="fc"><i class="no-highlight">818</i>&nbsp;                    if (listener != null) {</b>
+<b class="fc"><i class="no-highlight">819</i>&nbsp;                        listener.onEvent(tud.getTableToken(), 1);</b>
+<i class="no-highlight">820</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">821</i>&nbsp;                    removed.close();</b>
+<i class="no-highlight">822</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">823</i>&nbsp;                tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);</b>
+<i class="no-highlight">824</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">825</i>&nbsp;        } catch (EntryUnavailableException ex) {</b>
+<i class="no-highlight">826</i>&nbsp;            // Table writer is locked
+<b class="fc"><i class="no-highlight">827</i>&nbsp;            LOG.info().$(&quot;could not get table writer [tableName=&quot;).$(measurementName)</b>
+<b class="fc"><i class="no-highlight">828</i>&nbsp;                    .$(&quot;, ex=`&quot;)</b>
+<b class="fc"><i class="no-highlight">829</i>&nbsp;                    .$(ex.getFlyweightMessage())</b>
+<b class="fc"><i class="no-highlight">830</i>&nbsp;                    .$(&quot;`]&quot;)</b>
+<b class="fc"><i class="no-highlight">831</i>&nbsp;                    .$();</b>
+<b class="fc"><i class="no-highlight">832</i>&nbsp;            return true;</b>
+<b class="fc"><i class="no-highlight">833</i>&nbsp;        } catch (CairoException ex) {</b>
+<i class="no-highlight">834</i>&nbsp;            // Table could not be created
+<b class="fc"><i class="no-highlight">835</i>&nbsp;            LOG.error().$(&quot;could not create table [tableName=&quot;).$(measurementName)</b>
+<b class="fc"><i class="no-highlight">836</i>&nbsp;                    .$(&quot;, errno=&quot;).$(ex.getErrno())</b>
+<b class="fc"><i class="no-highlight">837</i>&nbsp;                    .$(&quot;, ex=`&quot;)</b>
+<b class="fc"><i class="no-highlight">838</i>&nbsp;                    .$(ex.getFlyweightMessage())</b>
+<b class="fc"><i class="no-highlight">839</i>&nbsp;                    .$(&quot;`]&quot;)</b>
+<b class="fc"><i class="no-highlight">840</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">841</i>&nbsp;            // More details will be logged by catching thread
+<b class="fc"><i class="no-highlight">842</i>&nbsp;            throw ex;</b>
+<b class="fc"><i class="no-highlight">843</i>&nbsp;        }</b>
+<i class="no-highlight">844</i>&nbsp;
+<b class="fc"><i class="no-highlight">845</i>&nbsp;        if (tud.isWal()) {</b>
+<i class="no-highlight">846</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">847</i>&nbsp;                appendToWal(netIoJob, parser, tud);</b>
+<b class="fc"><i class="no-highlight">848</i>&nbsp;            } catch (Throwable ex) {</b>
+<b class="fc"><i class="no-highlight">849</i>&nbsp;                tud.setWriterInError();</b>
+<b class="fc"><i class="no-highlight">850</i>&nbsp;                LOG.critical().$(&quot;closing writer because of error [table=&quot;).$(tud.getTableNameUtf16())</b>
+<b class="fc"><i class="no-highlight">851</i>&nbsp;                        .$(&quot;,ex=&quot;)</b>
+<b class="fc"><i class="no-highlight">852</i>&nbsp;                        .$(ex)</b>
+<b class="fc"><i class="no-highlight">853</i>&nbsp;                        .I$();</b>
+<b class="fc"><i class="no-highlight">854</i>&nbsp;                throw CairoException.critical(0).put(&quot;could not append to WAL [tableName=&quot;).put(measurementName).put(&quot;, error=&quot;).put(ex.getMessage()).put(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">855</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">856</i>&nbsp;            return false;</b>
+<i class="no-highlight">857</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">858</i>&nbsp;        return dispatchEvent(netIoJob, parser, tud);</b>
+<i class="no-highlight">859</i>&nbsp;    }
+<i class="no-highlight">860</i>&nbsp;
+<i class="no-highlight">861</i>&nbsp;    @TestOnly
+<i class="no-highlight">862</i>&nbsp;    void setListener(LineTcpReceiver.SchedulerListener listener) {
+<b class="fc"><i class="no-highlight">863</i>&nbsp;        this.listener = listener;</b>
+<i class="no-highlight">864</i>&nbsp;    }
+<i class="no-highlight">865</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

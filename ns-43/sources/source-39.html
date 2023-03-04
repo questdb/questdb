@@ -1,0 +1,635 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > LongSort</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: LongSort (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">LongSort</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    80%
+  </span>
+  <span class="absValue">
+    (4/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    78.9%
+  </span>
+  <span class="absValue">
+    (150/190)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<b class="nc"><i class="no-highlight">27</i>&nbsp;public class LongSort {</b>
+<i class="no-highlight">28</i>&nbsp;    /**
+<i class="no-highlight">29</i>&nbsp;     * The maximum number of runs in merge sort.
+<i class="no-highlight">30</i>&nbsp;     */
+<i class="no-highlight">31</i>&nbsp;    public static final int MAX_RUN_COUNT = 67;
+<i class="no-highlight">32</i>&nbsp;    /**
+<i class="no-highlight">33</i>&nbsp;     * If the length of an array to be sorted is less than this
+<i class="no-highlight">34</i>&nbsp;     * constant, Quicksort is used in preference to merge sort.
+<i class="no-highlight">35</i>&nbsp;     */
+<i class="no-highlight">36</i>&nbsp;    public static final int QUICKSORT_THRESHOLD = 286;
+<i class="no-highlight">37</i>&nbsp;    /**
+<i class="no-highlight">38</i>&nbsp;     * If the length of an array to be sorted is less than this
+<i class="no-highlight">39</i>&nbsp;     * constant, insertion sort is used in preference to Quicksort.
+<i class="no-highlight">40</i>&nbsp;     */
+<i class="no-highlight">41</i>&nbsp;    private static final int INSERTION_SORT_THRESHOLD = 47;
+<i class="no-highlight">42</i>&nbsp;    /**
+<i class="no-highlight">43</i>&nbsp;     * The maximum length of run in merge sort.
+<i class="no-highlight">44</i>&nbsp;     */
+<i class="no-highlight">45</i>&nbsp;    private static final int MAX_RUN_LENGTH = 33;
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;    /**
+<i class="no-highlight">48</i>&nbsp;     * Sorts the specified range of the array.
+<i class="no-highlight">49</i>&nbsp;     *
+<i class="no-highlight">50</i>&nbsp;     * @param vec   vector of long values
+<i class="no-highlight">51</i>&nbsp;     * @param left  the index of the first element, inclusive, to be sorted
+<i class="no-highlight">52</i>&nbsp;     * @param right the index of the last element, inclusive, to be sorted
+<i class="no-highlight">53</i>&nbsp;     */
+<i class="no-highlight">54</i>&nbsp;    public static void sort(LongVec vec, int left, int right) {
+<i class="no-highlight">55</i>&nbsp;        // Use Quicksort on small arrays
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        if (right - left &lt; QUICKSORT_THRESHOLD) {</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;            sort(vec, left, right, true);</b>
+<i class="no-highlight">58</i>&nbsp;            return;
+<i class="no-highlight">59</i>&nbsp;        }
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;        /*
+<i class="no-highlight">62</i>&nbsp;         * Index run[i] is the start of i-th run
+<i class="no-highlight">63</i>&nbsp;         * (ascending or descending sequence).
+<i class="no-highlight">64</i>&nbsp;         */
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        int[] run = new int[MAX_RUN_COUNT + 1];</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        int count = 0;</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        run[0] = left;</b>
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;        // Check if the array is nearly sorted
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        for (int k = left; k &lt; right; run[count] = k) {</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;            if (vec.getQuick(k) &lt; vec.getQuick(k + 1)) { // ascending</b>
+<i class="no-highlight">72</i>&nbsp;                //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">73</i>&nbsp;                while (++k &lt;= right &amp;&amp; vec.getQuick(k - 1) &lt;= vec.getQuick(k)) ;</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;            } else if (vec.getQuick(k) &gt; vec.getQuick(k + 1)) { // descending</b>
+<i class="no-highlight">75</i>&nbsp;                //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">76</i>&nbsp;                while (++k &lt;= right &amp;&amp; vec.getQuick(k - 1) &gt;= vec.getQuick(k)) ;</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;                for (int lo = run[count] - 1, hi = k; ++lo &lt; --hi; ) {</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;                    swap(vec, lo, hi);</b>
+<i class="no-highlight">79</i>&nbsp;                }
+<i class="no-highlight">80</i>&nbsp;            } else { // equal
+<b class="nc"><i class="no-highlight">81</i>&nbsp;                for (int m = MAX_RUN_LENGTH; ++k &lt;= right &amp;&amp; vec.getQuick(k - 1) == vec.getQuick(k); ) {</b>
+<b class="nc"><i class="no-highlight">82</i>&nbsp;                    if (--m == 0) {</b>
+<b class="nc"><i class="no-highlight">83</i>&nbsp;                        sort(vec, left, right, true);</b>
+<i class="no-highlight">84</i>&nbsp;                        return;
+<i class="no-highlight">85</i>&nbsp;                    }
+<i class="no-highlight">86</i>&nbsp;                }
+<i class="no-highlight">87</i>&nbsp;            }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;            /*
+<i class="no-highlight">90</i>&nbsp;             * The array is not highly structured,
+<i class="no-highlight">91</i>&nbsp;             * use Quicksort instead of merge sort.
+<i class="no-highlight">92</i>&nbsp;             */
+<b class="fc"><i class="no-highlight">93</i>&nbsp;            if (++count == MAX_RUN_COUNT) {</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;                sort(vec, left, right, true);</b>
+<i class="no-highlight">95</i>&nbsp;                return;
+<i class="no-highlight">96</i>&nbsp;            }
+<i class="no-highlight">97</i>&nbsp;        }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;        // Check special cases
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        if (run[count] == right++) { // The last run contains one element</b>
+<b class="nc"><i class="no-highlight">101</i>&nbsp;            run[++count] = right;</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        } else if (count == 1) { // The array is already sorted</b>
+<i class="no-highlight">103</i>&nbsp;            return;
+<i class="no-highlight">104</i>&nbsp;        }
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;        /*
+<i class="no-highlight">107</i>&nbsp;         * Create temporary array, which is used for merging.
+<i class="no-highlight">108</i>&nbsp;         * Implementation note: variable &quot;right&quot; is increased by 1.
+<i class="no-highlight">109</i>&nbsp;         */
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;        LongVec a;
+<i class="no-highlight">112</i>&nbsp;        LongVec b;
+<i class="no-highlight">113</i>&nbsp;
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        byte odd = 0;</b>
+<i class="no-highlight">115</i>&nbsp;        //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        for (int n = 1; (n &lt;&lt;= 1) &lt; count; odd ^= 1) ;</b>
+<i class="no-highlight">117</i>&nbsp;
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        if (odd == 0) {</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;            b = vec;</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;            a = vec.newInstance();</b>
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;            //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">123</i>&nbsp;            for (int i = left - 1; ++i &lt; right; a.setQuick(i, b.getQuick(i))) ;</b>
+<i class="no-highlight">124</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            a = vec;</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;            b = vec.newInstance();</b>
+<i class="no-highlight">127</i>&nbsp;        }
+<i class="no-highlight">128</i>&nbsp;
+<i class="no-highlight">129</i>&nbsp;        // Merging
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        for (int last; count &gt; 1; count = last) {</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            for (int k = (last = 0) + 2; k &lt;= count; k += 2) {</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                int hi = run[k], mi = run[k - 1];</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                for (int i = run[k - 2], p = i, q = mi; i &lt; hi; ++i) {</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                    if (q &gt;= hi || p &lt; mi &amp;&amp; a.getQuick(p) &lt;= a.getQuick(q)) {</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                        b.setQuick(i, a.getQuick(p++));</b>
+<i class="no-highlight">136</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                        b.setQuick(i, a.getQuick(q++));</b>
+<i class="no-highlight">138</i>&nbsp;                    }
+<i class="no-highlight">139</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                run[++last] = hi;</b>
+<i class="no-highlight">141</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">142</i>&nbsp;            if ((count &amp; 1) != 0) {</b>
+<i class="no-highlight">143</i>&nbsp;                //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                for (int i = right, lo = run[count - 1]; --i &gt;= lo; b.setQuick(i, a.getQuick(i))) ;</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                run[++last] = right;</b>
+<i class="no-highlight">146</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">147</i>&nbsp;            LongVec t = a;</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;            a = b;</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;            b = t;</b>
+<i class="no-highlight">150</i>&nbsp;        }
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    private static void let(LongVec vec, int a, int b) {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        vec.setQuick(a, vec.getQuick(b));</b>
+<i class="no-highlight">155</i>&nbsp;    }
+<i class="no-highlight">156</i>&nbsp;
+<i class="no-highlight">157</i>&nbsp;    /**
+<i class="no-highlight">158</i>&nbsp;     * Sorts the specified range of the array by Dual-Pivot Quicksort.
+<i class="no-highlight">159</i>&nbsp;     *
+<i class="no-highlight">160</i>&nbsp;     * @param left     the index of the first element, inclusive, to be sorted
+<i class="no-highlight">161</i>&nbsp;     * @param right    the index of the last element, inclusive, to be sorted
+<i class="no-highlight">162</i>&nbsp;     * @param leftmost indicates if this part is the leftmost in the range
+<i class="no-highlight">163</i>&nbsp;     */
+<i class="no-highlight">164</i>&nbsp;    private static void sort(LongVec vec, int left, int right, boolean leftmost) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        int length = right - left + 1;</b>
+<i class="no-highlight">166</i>&nbsp;
+<i class="no-highlight">167</i>&nbsp;        // Use insertion sort on tiny arrays
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        if (length &lt; INSERTION_SORT_THRESHOLD) {</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;            if (leftmost) {</b>
+<i class="no-highlight">170</i>&nbsp;                /*
+<i class="no-highlight">171</i>&nbsp;                 * Traditional (without sentinel) insertion sort,
+<i class="no-highlight">172</i>&nbsp;                 * optimized for server VM, is used in case of
+<i class="no-highlight">173</i>&nbsp;                 * the leftmost part.
+<i class="no-highlight">174</i>&nbsp;                 */
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                for (int i = left, j = i; i &lt; right; j = ++i) {</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                    long ai = vec.getQuick(i + 1);</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                    while (ai &lt; vec.getQuick(j)) {</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                        let(vec, j + 1, j);</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                        if (j-- == left) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                            break;</b>
+<i class="no-highlight">181</i>&nbsp;                        }
+<i class="no-highlight">182</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                    vec.setQuick(j + 1, ai);</b>
+<i class="no-highlight">184</i>&nbsp;                }
+<i class="no-highlight">185</i>&nbsp;            } else {
+<i class="no-highlight">186</i>&nbsp;                /*
+<i class="no-highlight">187</i>&nbsp;                 * Skip the longest ascending sequence.
+<i class="no-highlight">188</i>&nbsp;                 */
+<i class="no-highlight">189</i>&nbsp;                do {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                    if (left &gt;= right) {</b>
+<i class="no-highlight">191</i>&nbsp;                        return;
+<i class="no-highlight">192</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                } while (vec.getQuick(++left) &gt;= vec.getQuick(left - 1));</b>
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;                /*
+<i class="no-highlight">196</i>&nbsp;                 * Every element from adjoining part plays the role
+<i class="no-highlight">197</i>&nbsp;                 * of sentinel, therefore this allows us to avoid the
+<i class="no-highlight">198</i>&nbsp;                 * left range check on each iteration. Moreover, we use
+<i class="no-highlight">199</i>&nbsp;                 * the more optimized algorithm, so called pair insertion
+<i class="no-highlight">200</i>&nbsp;                 * sort, which is faster (in the context of Quicksort)
+<i class="no-highlight">201</i>&nbsp;                 * than traditional implementation of insertion sort.
+<i class="no-highlight">202</i>&nbsp;                 */
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                for (int k = left; ++left &lt;= right; k = ++left) {</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                    long a1 = vec.getQuick(k), a2 = vec.getQuick(left);</b>
+<i class="no-highlight">205</i>&nbsp;
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                    if (a1 &lt; a2) {</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                        a2 = a1;</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                        a1 = vec.getQuick(left);</b>
+<i class="no-highlight">209</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                    while (a1 &lt; vec.getQuick(--k)) {</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                        let(vec, k + 2, k);</b>
+<i class="no-highlight">212</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                    vec.setQuick(++k + 1, a1);</b>
+<i class="no-highlight">214</i>&nbsp;
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                    while (a2 &lt; vec.getQuick(--k)) {</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                        let(vec, k + 1, k);</b>
+<i class="no-highlight">217</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">218</i>&nbsp;                    vec.setQuick(k + 1, a2);</b>
+<i class="no-highlight">219</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">220</i>&nbsp;                long last = vec.getQuick(right);</b>
+<i class="no-highlight">221</i>&nbsp;
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                while (last &lt; vec.getQuick(--right)) {</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                    let(vec, right + 1, right);</b>
+<i class="no-highlight">224</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">225</i>&nbsp;                vec.setQuick(right + 1, last);</b>
+<i class="no-highlight">226</i>&nbsp;            }
+<i class="no-highlight">227</i>&nbsp;            return;
+<i class="no-highlight">228</i>&nbsp;        }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;        // Inexpensive approximation of length / 7
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        int seventh = (length &gt;&gt; 3) + (length &gt;&gt; 6) + 1;</b>
+<i class="no-highlight">232</i>&nbsp;
+<i class="no-highlight">233</i>&nbsp;        /*
+<i class="no-highlight">234</i>&nbsp;         * Sort five evenly spaced elements around (and including) the
+<i class="no-highlight">235</i>&nbsp;         * center element in the range. These elements will be used for
+<i class="no-highlight">236</i>&nbsp;         * pivot selection as described below. The choice for spacing
+<i class="no-highlight">237</i>&nbsp;         * these elements was empirically determined to work well on
+<i class="no-highlight">238</i>&nbsp;         * a wide variety of inputs.
+<i class="no-highlight">239</i>&nbsp;         */
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        int e3 = (left + right) &gt;&gt;&gt; 1; // The midpoint</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        int e2 = e3 - seventh;</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        int e1 = e2 - seventh;</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        int e4 = e3 + seventh;</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        int e5 = e4 + seventh;</b>
+<i class="no-highlight">245</i>&nbsp;
+<i class="no-highlight">246</i>&nbsp;        // Sort these elements using insertion sort
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        if (vec.getQuick(e2) &lt; vec.getQuick(e1)) {</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;            swap(vec, e2, e1);</b>
+<i class="no-highlight">249</i>&nbsp;        }
+<i class="no-highlight">250</i>&nbsp;
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        if (vec.getQuick(e3) &lt; vec.getQuick(e2)) {</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;            long t = vec.getQuick(e3);</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;            let(vec, e3, e2);</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;            vec.setQuick(e2, t);</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            if (t &lt; vec.getQuick(e1)) {</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                let(vec, e2, e1);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                vec.setQuick(e1, t);</b>
+<i class="no-highlight">258</i>&nbsp;            }
+<i class="no-highlight">259</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        if (vec.getQuick(e4) &lt; vec.getQuick(e3)) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            long t = vec.getQuick(e4);</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            let(vec, e4, e3);</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;            vec.setQuick(e3, t);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;            if (t &lt; vec.getQuick(e2)) {</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                let(vec, e3, e2);</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;                vec.setQuick(e2, t);</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                if (t &lt; vec.getQuick(e1)) {</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;                    let(vec, e2, e1);</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                    vec.setQuick(e1, t);</b>
+<i class="no-highlight">270</i>&nbsp;                }
+<i class="no-highlight">271</i>&nbsp;            }
+<i class="no-highlight">272</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        if (vec.getQuick(e5) &lt; vec.getQuick(e4)) {</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;            long t = vec.getQuick(e5);</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            let(vec, e5, e4);</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            vec.setQuick(e4, t);</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            if (t &lt; vec.getQuick(e3)) {</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                let(vec, e4, e3);</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                vec.setQuick(e3, t);</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                if (t &lt; vec.getQuick(e2)) {</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;                    let(vec, e3, e2);</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                    vec.setQuick(e2, t);</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;                    if (t &lt; vec.getQuick(e1)) {</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;                        let(vec, e2, e1);</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                        vec.setQuick(e1, t);</b>
+<i class="no-highlight">286</i>&nbsp;                    }
+<i class="no-highlight">287</i>&nbsp;                }
+<i class="no-highlight">288</i>&nbsp;            }
+<i class="no-highlight">289</i>&nbsp;        }
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;        // Pointers
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        int less = left;  // The index of the first element of center part</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        int great = right; // The index before the first element of right part</b>
+<i class="no-highlight">294</i>&nbsp;
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        if (vec.getQuick(e1) != vec.getQuick(e2) &amp;&amp; vec.getQuick(e2) != vec.getQuick(e3) &amp;&amp; vec.getQuick(e3) != vec.getQuick(e4) &amp;&amp; vec.getQuick(e4) != vec.getQuick(e5)) {</b>
+<i class="no-highlight">296</i>&nbsp;            /*
+<i class="no-highlight">297</i>&nbsp;             * Use the second and fourth of the five sorted elements as pivots.
+<i class="no-highlight">298</i>&nbsp;             * These values are inexpensive approximations of the first and
+<i class="no-highlight">299</i>&nbsp;             * second terciles of the array. Note that pivot1 &lt;= pivot2.
+<i class="no-highlight">300</i>&nbsp;             */
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            long pivot1 = vec.getQuick(e2);</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;            long pivot2 = vec.getQuick(e4);</b>
+<i class="no-highlight">303</i>&nbsp;
+<i class="no-highlight">304</i>&nbsp;            /*
+<i class="no-highlight">305</i>&nbsp;             * The first and the last elements to be sorted are moved to the
+<i class="no-highlight">306</i>&nbsp;             * locations formerly occupied by the pivots. When partitioning
+<i class="no-highlight">307</i>&nbsp;             * is complete, the pivots are swapped back into their final
+<i class="no-highlight">308</i>&nbsp;             * positions, and excluded from subsequent sorting.
+<i class="no-highlight">309</i>&nbsp;             */
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            let(vec, e2, left);</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            let(vec, e4, right);</b>
+<i class="no-highlight">312</i>&nbsp;
+<i class="no-highlight">313</i>&nbsp;            /*
+<i class="no-highlight">314</i>&nbsp;             * Skip elements, which are less or greater than pivot values.
+<i class="no-highlight">315</i>&nbsp;             */
+<i class="no-highlight">316</i>&nbsp;            //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">317</i>&nbsp;            while (vec.getQuick(++less) &lt; pivot1) ;</b>
+<i class="no-highlight">318</i>&nbsp;            //noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">319</i>&nbsp;            while (vec.getQuick(--great) &gt; pivot2) ;</b>
+<i class="no-highlight">320</i>&nbsp;
+<i class="no-highlight">321</i>&nbsp;            /*
+<i class="no-highlight">322</i>&nbsp;             * Partitioning:
+<i class="no-highlight">323</i>&nbsp;             *
+<i class="no-highlight">324</i>&nbsp;             *   left part           center part                   right part
+<i class="no-highlight">325</i>&nbsp;             * +--------------------------------------------------------------+
+<i class="no-highlight">326</i>&nbsp;             * |  &lt; pivot1  |  pivot1 &lt;= &amp;&amp; &lt;= pivot2  |    ?    |  &gt; pivot2  |
+<i class="no-highlight">327</i>&nbsp;             * +--------------------------------------------------------------+
+<i class="no-highlight">328</i>&nbsp;             *               ^                          ^       ^
+<i class="no-highlight">329</i>&nbsp;             *               |                          |       |
+<i class="no-highlight">330</i>&nbsp;             *              less                        k     great
+<i class="no-highlight">331</i>&nbsp;             *
+<i class="no-highlight">332</i>&nbsp;             * Invariants:
+<i class="no-highlight">333</i>&nbsp;             *
+<i class="no-highlight">334</i>&nbsp;             *              all in (left, less)   &lt; pivot1
+<i class="no-highlight">335</i>&nbsp;             *    pivot1 &lt;= all in [less, k)     &lt;= pivot2
+<i class="no-highlight">336</i>&nbsp;             *              all in (great, right) &gt; pivot2
+<i class="no-highlight">337</i>&nbsp;             *
+<i class="no-highlight">338</i>&nbsp;             * Pointer k is the first index of ?-part.
+<i class="no-highlight">339</i>&nbsp;             */
+<i class="no-highlight">340</i>&nbsp;            outer:
+<b class="fc"><i class="no-highlight">341</i>&nbsp;            for (int k = less - 1; ++k &lt;= great; ) {</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                long ak = vec.getQuick(k);</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                if (ak &lt; pivot1) { // Move a[k] to left part</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                    let(vec, k, less);</b>
+<i class="no-highlight">345</i>&nbsp;                    /*
+<i class="no-highlight">346</i>&nbsp;                     * Here and below we use &quot;a[i] = b; i++;&quot; instead
+<i class="no-highlight">347</i>&nbsp;                     * of &quot;a[i++] = b;&quot; due to performance issue.
+<i class="no-highlight">348</i>&nbsp;                     */
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                    vec.setQuick(less, ak);</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                    ++less;</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                } else if (ak &gt; pivot2) { // Move a[k] to right part</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                    while (vec.getQuick(great) &gt; pivot2) {</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;                        if (great-- == k) {</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                            break outer;</b>
+<i class="no-highlight">355</i>&nbsp;                        }
+<i class="no-highlight">356</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                    if (vec.getQuick(great) &lt; pivot1) { // a[great] &lt;= pivot2</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                        let(vec, k, less);</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                        let(vec, less, great);</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                        ++less;</b>
+<i class="no-highlight">361</i>&nbsp;                    } else { // pivot1 &lt;= a[great] &lt;= pivot2
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                        let(vec, k, great);</b>
+<i class="no-highlight">363</i>&nbsp;                    }
+<i class="no-highlight">364</i>&nbsp;                    /*
+<i class="no-highlight">365</i>&nbsp;                     * Here and below we use &quot;a[i] = b; i--;&quot; instead
+<i class="no-highlight">366</i>&nbsp;                     * of &quot;a[i--] = b;&quot; due to performance issue.
+<i class="no-highlight">367</i>&nbsp;                     */
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                    vec.setQuick(great, ak);</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                    --great;</b>
+<i class="no-highlight">370</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">371</i>&nbsp;            }</b>
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;            // Swap pivots into their final positions
+<b class="fc"><i class="no-highlight">374</i>&nbsp;            let(vec, left, less - 1);</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;            vec.setQuick(less - 1, pivot1);</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;            let(vec, right, great + 1);</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            vec.setQuick(great + 1, pivot2);</b>
+<i class="no-highlight">378</i>&nbsp;
+<i class="no-highlight">379</i>&nbsp;            // Sort left and right parts recursively, excluding known pivots
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            sort(vec, left, less - 2, leftmost);</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;            sort(vec, great + 2, right, false);</b>
+<i class="no-highlight">382</i>&nbsp;
+<i class="no-highlight">383</i>&nbsp;            /*
+<i class="no-highlight">384</i>&nbsp;             * If center part is too large (comprises &gt; 4/7 of the array),
+<i class="no-highlight">385</i>&nbsp;             * swap internal pivot values to ends.
+<i class="no-highlight">386</i>&nbsp;             */
+<b class="fc"><i class="no-highlight">387</i>&nbsp;            if (less &lt; e1 &amp;&amp; e5 &lt; great) {</b>
+<i class="no-highlight">388</i>&nbsp;                /*
+<i class="no-highlight">389</i>&nbsp;                 * Skip elements, which are equal to pivot values.
+<i class="no-highlight">390</i>&nbsp;                 */
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                while (vec.getQuick(less) == pivot1) {</b>
+<b class="nc"><i class="no-highlight">392</i>&nbsp;                    ++less;</b>
+<i class="no-highlight">393</i>&nbsp;                }
+<i class="no-highlight">394</i>&nbsp;
+<b class="fc"><i class="no-highlight">395</i>&nbsp;                while (vec.getQuick(great) == pivot2) {</b>
+<b class="nc"><i class="no-highlight">396</i>&nbsp;                    --great;</b>
+<i class="no-highlight">397</i>&nbsp;                }
+<i class="no-highlight">398</i>&nbsp;
+<i class="no-highlight">399</i>&nbsp;                /*
+<i class="no-highlight">400</i>&nbsp;                 * Partitioning:
+<i class="no-highlight">401</i>&nbsp;                 *
+<i class="no-highlight">402</i>&nbsp;                 *   left part         center part                  right part
+<i class="no-highlight">403</i>&nbsp;                 * +----------------------------------------------------------+
+<i class="no-highlight">404</i>&nbsp;                 * | == pivot1 |  pivot1 &lt; &amp;&amp; &lt; pivot2  |    ?    | == pivot2 |
+<i class="no-highlight">405</i>&nbsp;                 * +----------------------------------------------------------+
+<i class="no-highlight">406</i>&nbsp;                 *              ^                        ^       ^
+<i class="no-highlight">407</i>&nbsp;                 *              |                        |       |
+<i class="no-highlight">408</i>&nbsp;                 *             less                      k     great
+<i class="no-highlight">409</i>&nbsp;                 *
+<i class="no-highlight">410</i>&nbsp;                 * Invariants:
+<i class="no-highlight">411</i>&nbsp;                 *
+<i class="no-highlight">412</i>&nbsp;                 *              all in (*,  less) == pivot1
+<i class="no-highlight">413</i>&nbsp;                 *     pivot1 &lt; all in [less,  k)  &lt; pivot2
+<i class="no-highlight">414</i>&nbsp;                 *              all in (great, *) == pivot2
+<i class="no-highlight">415</i>&nbsp;                 *
+<i class="no-highlight">416</i>&nbsp;                 * Pointer k is the first index of ?-part.
+<i class="no-highlight">417</i>&nbsp;                 */
+<i class="no-highlight">418</i>&nbsp;                outer:
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                for (int k = less - 1; ++k &lt;= great; ) {</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;                    long ak = vec.getQuick(k);</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                    if (ak == pivot1) { // Move a[k] to left part</b>
+<b class="nc"><i class="no-highlight">422</i>&nbsp;                        let(vec, k, less);</b>
+<b class="nc"><i class="no-highlight">423</i>&nbsp;                        vec.setQuick(less, ak);</b>
+<b class="nc"><i class="no-highlight">424</i>&nbsp;                        ++less;</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                    } else if (ak == pivot2) { // Move a[k] to right part</b>
+<b class="nc"><i class="no-highlight">426</i>&nbsp;                        while (vec.getQuick(great) == pivot2) {</b>
+<b class="nc"><i class="no-highlight">427</i>&nbsp;                            if (great-- == k) {</b>
+<b class="nc"><i class="no-highlight">428</i>&nbsp;                                break outer;</b>
+<i class="no-highlight">429</i>&nbsp;                            }
+<i class="no-highlight">430</i>&nbsp;                        }
+<b class="nc"><i class="no-highlight">431</i>&nbsp;                        if (vec.getQuick(great) == pivot1) { // a[great] &lt; pivot2</b>
+<b class="nc"><i class="no-highlight">432</i>&nbsp;                            let(vec, k, less);</b>
+<i class="no-highlight">433</i>&nbsp;                            /*
+<i class="no-highlight">434</i>&nbsp;                             * Even though a[great] equals to pivot1, the
+<i class="no-highlight">435</i>&nbsp;                             * assignment a[less] = pivot1 may be incorrect,
+<i class="no-highlight">436</i>&nbsp;                             * if a[great] and pivot1 are floating-point zeros
+<i class="no-highlight">437</i>&nbsp;                             * of different signs. Therefore in float and
+<i class="no-highlight">438</i>&nbsp;                             * double sorting methods we have to use more
+<i class="no-highlight">439</i>&nbsp;                             * accurate assignment a[less] = a[great].
+<i class="no-highlight">440</i>&nbsp;                             */
+<b class="nc"><i class="no-highlight">441</i>&nbsp;                            vec.setQuick(less, pivot1);</b>
+<b class="nc"><i class="no-highlight">442</i>&nbsp;                            ++less;</b>
+<i class="no-highlight">443</i>&nbsp;                        } else { // pivot1 &lt; a[great] &lt; pivot2
+<b class="nc"><i class="no-highlight">444</i>&nbsp;                            let(vec, k, great);</b>
+<i class="no-highlight">445</i>&nbsp;                        }
+<b class="nc"><i class="no-highlight">446</i>&nbsp;                        vec.setQuick(great, ak);</b>
+<b class="nc"><i class="no-highlight">447</i>&nbsp;                        --great;</b>
+<i class="no-highlight">448</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">449</i>&nbsp;                }</b>
+<i class="no-highlight">450</i>&nbsp;            }
+<i class="no-highlight">451</i>&nbsp;
+<i class="no-highlight">452</i>&nbsp;            // Sort center part recursively
+<b class="fc"><i class="no-highlight">453</i>&nbsp;            sort(vec, less, great, false);</b>
+<i class="no-highlight">454</i>&nbsp;
+<b class="fc"><i class="no-highlight">455</i>&nbsp;        } else { // Partitioning with one pivot</b>
+<i class="no-highlight">456</i>&nbsp;            /*
+<i class="no-highlight">457</i>&nbsp;             * Use the third of the five sorted elements as pivot.
+<i class="no-highlight">458</i>&nbsp;             * This value is inexpensive approximation of the median.
+<i class="no-highlight">459</i>&nbsp;             */
+<b class="nc"><i class="no-highlight">460</i>&nbsp;            long pivot = vec.getQuick(e3);</b>
+<i class="no-highlight">461</i>&nbsp;
+<i class="no-highlight">462</i>&nbsp;            /*
+<i class="no-highlight">463</i>&nbsp;             * Partitioning degenerates to the traditional 3-way
+<i class="no-highlight">464</i>&nbsp;             * (or &quot;Dutch National Flag&quot;) schema:
+<i class="no-highlight">465</i>&nbsp;             *
+<i class="no-highlight">466</i>&nbsp;             *   left part    center part              right part
+<i class="no-highlight">467</i>&nbsp;             * +-------------------------------------------------+
+<i class="no-highlight">468</i>&nbsp;             * |  &lt; pivot  |   == pivot   |     ?    |  &gt; pivot  |
+<i class="no-highlight">469</i>&nbsp;             * +-------------------------------------------------+
+<i class="no-highlight">470</i>&nbsp;             *              ^              ^        ^
+<i class="no-highlight">471</i>&nbsp;             *              |              |        |
+<i class="no-highlight">472</i>&nbsp;             *             less            k      great
+<i class="no-highlight">473</i>&nbsp;             *
+<i class="no-highlight">474</i>&nbsp;             * Invariants:
+<i class="no-highlight">475</i>&nbsp;             *
+<i class="no-highlight">476</i>&nbsp;             *   all in (left, less)   &lt; pivot
+<i class="no-highlight">477</i>&nbsp;             *   all in [less, k)     == pivot
+<i class="no-highlight">478</i>&nbsp;             *   all in (great, right) &gt; pivot
+<i class="no-highlight">479</i>&nbsp;             *
+<i class="no-highlight">480</i>&nbsp;             * Pointer k is the first index of ?-part.
+<i class="no-highlight">481</i>&nbsp;             */
+<b class="nc"><i class="no-highlight">482</i>&nbsp;            for (int k = less; k &lt;= great; ++k) {</b>
+<b class="nc"><i class="no-highlight">483</i>&nbsp;                if (vec.getQuick(k) == pivot) {</b>
+<b class="nc"><i class="no-highlight">484</i>&nbsp;                    continue;</b>
+<i class="no-highlight">485</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">486</i>&nbsp;                long ak = vec.getQuick(k);</b>
+<b class="nc"><i class="no-highlight">487</i>&nbsp;                if (ak &lt; pivot) { // Move a[k] to left part</b>
+<b class="nc"><i class="no-highlight">488</i>&nbsp;                    let(vec, k, less);</b>
+<b class="nc"><i class="no-highlight">489</i>&nbsp;                    vec.setQuick(less, ak);</b>
+<b class="nc"><i class="no-highlight">490</i>&nbsp;                    ++less;</b>
+<i class="no-highlight">491</i>&nbsp;                } else { // a[k] &gt; pivot - Move a[k] to right part
+<b class="nc"><i class="no-highlight">492</i>&nbsp;                    while (vec.getQuick(great) &gt; pivot) {</b>
+<b class="nc"><i class="no-highlight">493</i>&nbsp;                        --great;</b>
+<i class="no-highlight">494</i>&nbsp;                    }
+<b class="nc"><i class="no-highlight">495</i>&nbsp;                    if (vec.getQuick(great) &lt; pivot) { // a[great] &lt;= pivot</b>
+<b class="nc"><i class="no-highlight">496</i>&nbsp;                        let(vec, k, less);</b>
+<b class="nc"><i class="no-highlight">497</i>&nbsp;                        let(vec, less, great);</b>
+<b class="nc"><i class="no-highlight">498</i>&nbsp;                        ++less;</b>
+<i class="no-highlight">499</i>&nbsp;                    } else { // a[great] == pivot
+<i class="no-highlight">500</i>&nbsp;                        /*
+<i class="no-highlight">501</i>&nbsp;                         * Even though a[great] equals to pivot, the
+<i class="no-highlight">502</i>&nbsp;                         * assignment a[k] = pivot may be incorrect,
+<i class="no-highlight">503</i>&nbsp;                         * if a[great] and pivot are floating-point
+<i class="no-highlight">504</i>&nbsp;                         * zeros of different signs. Therefore in float
+<i class="no-highlight">505</i>&nbsp;                         * and double sorting methods we have to use
+<i class="no-highlight">506</i>&nbsp;                         * more accurate assignment a[k] = a[great].
+<i class="no-highlight">507</i>&nbsp;                         */
+<b class="nc"><i class="no-highlight">508</i>&nbsp;                        vec.setQuick(k, pivot);</b>
+<i class="no-highlight">509</i>&nbsp;                    }
+<b class="nc"><i class="no-highlight">510</i>&nbsp;                    vec.setQuick(great, ak);</b>
+<b class="nc"><i class="no-highlight">511</i>&nbsp;                    --great;</b>
+<i class="no-highlight">512</i>&nbsp;                }
+<i class="no-highlight">513</i>&nbsp;            }
+<i class="no-highlight">514</i>&nbsp;
+<i class="no-highlight">515</i>&nbsp;            /*
+<i class="no-highlight">516</i>&nbsp;             * Sort left and right parts recursively.
+<i class="no-highlight">517</i>&nbsp;             * All elements from center part are equal
+<i class="no-highlight">518</i>&nbsp;             * and, therefore, already sorted.
+<i class="no-highlight">519</i>&nbsp;             */
+<b class="nc"><i class="no-highlight">520</i>&nbsp;            sort(vec, left, less - 1, leftmost);</b>
+<b class="nc"><i class="no-highlight">521</i>&nbsp;            sort(vec, great + 1, right, false);</b>
+<i class="no-highlight">522</i>&nbsp;        }
+<i class="no-highlight">523</i>&nbsp;    }
+<i class="no-highlight">524</i>&nbsp;
+<i class="no-highlight">525</i>&nbsp;    private static void swap(LongVec vec, int a, int b) {
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        long tmp = vec.getQuick(a);</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;        vec.setQuick(a, vec.getQuick(b));</b>
+<b class="fc"><i class="no-highlight">528</i>&nbsp;        vec.setQuick(b, tmp);</b>
+<i class="no-highlight">529</i>&nbsp;    }
+<i class="no-highlight">530</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,263 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TelemetryWalTask</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.tasks</a>
+</div>
+
+<h1>Coverage Summary for Class: TelemetryWalTask (io.questdb.tasks)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TelemetryWalTask</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.2%
+  </span>
+  <span class="absValue">
+    (23/27)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TelemetryWalTask$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TelemetryWalTask$1$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (10/10)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    88.2%
+  </span>
+  <span class="absValue">
+    (30/34)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.tasks;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.Telemetry;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.TableWriter;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.ObjectFactory;
+<i class="no-highlight">34</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">35</i>&nbsp;
+<i class="no-highlight">36</i>&nbsp;public class TelemetryWalTask implements AbstractTelemetryTask {
+<i class="no-highlight">37</i>&nbsp;    public static final String TABLE_NAME = &quot;telemetry_wal&quot;;
+<b class="fc"><i class="no-highlight">38</i>&nbsp;    public static final Telemetry.TelemetryTypeBuilder&lt;TelemetryWalTask&gt; WAL_TELEMETRY = new Telemetry.TelemetryTypeBuilder&lt;TelemetryWalTask&gt;() {</b>
+<i class="no-highlight">39</i>&nbsp;        @Override
+<i class="no-highlight">40</i>&nbsp;        public Telemetry.TelemetryType&lt;TelemetryWalTask&gt; build(CairoConfiguration configuration) {
+<b class="fc"><i class="no-highlight">41</i>&nbsp;            String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;            return new Telemetry.TelemetryType&lt;TelemetryWalTask&gt;() {</b>
+<i class="no-highlight">43</i>&nbsp;                @Override
+<i class="no-highlight">44</i>&nbsp;                public String getCreateSql() {
+<b class="fc"><i class="no-highlight">45</i>&nbsp;                    return &quot;CREATE TABLE IF NOT EXISTS \&quot;&quot; + tableName + &quot;\&quot; (&quot; +</b>
+<i class="no-highlight">46</i>&nbsp;                            &quot;created timestamp, &quot; +
+<i class="no-highlight">47</i>&nbsp;                            &quot;event short, &quot; +
+<i class="no-highlight">48</i>&nbsp;                            &quot;tableId int, &quot; +
+<i class="no-highlight">49</i>&nbsp;                            &quot;walId int, &quot; +
+<i class="no-highlight">50</i>&nbsp;                            &quot;seqTxn long, &quot; +
+<i class="no-highlight">51</i>&nbsp;                            &quot;rowCount long,&quot; +
+<i class="no-highlight">52</i>&nbsp;                            &quot;physicalRowCount long,&quot; +
+<i class="no-highlight">53</i>&nbsp;                            &quot;latency float&quot; +
+<i class="no-highlight">54</i>&nbsp;                            &quot;) timestamp(created) partition by MONTH BYPASS WAL&quot;;
+<i class="no-highlight">55</i>&nbsp;                }
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;                @Override
+<i class="no-highlight">58</i>&nbsp;                public String getTableName() {
+<b class="fc"><i class="no-highlight">59</i>&nbsp;                    return tableName;</b>
+<i class="no-highlight">60</i>&nbsp;                }
+<i class="no-highlight">61</i>&nbsp;
+<i class="no-highlight">62</i>&nbsp;                @Override
+<i class="no-highlight">63</i>&nbsp;                public ObjectFactory&lt;TelemetryWalTask&gt; getTaskFactory() {
+<b class="fc"><i class="no-highlight">64</i>&nbsp;                    return TelemetryWalTask::new;</b>
+<i class="no-highlight">65</i>&nbsp;                }
+<i class="no-highlight">66</i>&nbsp;            };
+<i class="no-highlight">67</i>&nbsp;        }
+<i class="no-highlight">68</i>&nbsp;    };
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);</b>
+<i class="no-highlight">70</i>&nbsp;    private short event;
+<i class="no-highlight">71</i>&nbsp;    private float latency; // millis
+<i class="no-highlight">72</i>&nbsp;    private long physicalRowCount;
+<i class="no-highlight">73</i>&nbsp;    private long rowCount;
+<i class="no-highlight">74</i>&nbsp;    private long seqTxn;
+<i class="no-highlight">75</i>&nbsp;    private int tableId;
+<i class="no-highlight">76</i>&nbsp;    private int walId;
+<i class="no-highlight">77</i>&nbsp;
+<b class="fc"><i class="no-highlight">78</i>&nbsp;    private TelemetryWalTask() {</b>
+<i class="no-highlight">79</i>&nbsp;    }
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    public static void store(@NotNull Telemetry&lt;TelemetryWalTask&gt; telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        final TelemetryWalTask task = telemetry.nextTask();</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        if (task != null) {</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;            task.event = event;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;            task.tableId = tableId;</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;            task.walId = walId;</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;            task.seqTxn = seqTxn;</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;            task.rowCount = rowCount;</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;            task.physicalRowCount = physicalRowCount;</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;            task.latency = latencyUs / 1000.0f; // millis</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            telemetry.store();</b>
+<i class="no-highlight">92</i>&nbsp;        }
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    @Override
+<i class="no-highlight">96</i>&nbsp;    public void writeTo(TableWriter writer, long timestamp) {
+<i class="no-highlight">97</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;            final TableWriter.Row row = writer.newRow(timestamp);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;            row.putShort(1, event);</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;            row.putInt(2, tableId);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            row.putInt(3, walId);</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            row.putLong(4, seqTxn);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;            row.putLong(5, rowCount);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;            row.putLong(6, physicalRowCount);</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;            row.putFloat(7, latency);</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            row.append();</b>
+<b class="nc"><i class="no-highlight">107</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="nc"><i class="no-highlight">108</i>&nbsp;            LOG.error().$(&quot;Could not insert a new &quot;).$(TABLE_NAME).$(&quot; row [errno=&quot;).$(e.getErrno())</b>
+<b class="nc"><i class="no-highlight">109</i>&nbsp;                    .$(&quot;, error=&quot;).$(e.getFlyweightMessage())</b>
+<b class="nc"><i class="no-highlight">110</i>&nbsp;                    .$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        }</b>
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

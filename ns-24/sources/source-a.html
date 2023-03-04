@@ -1,0 +1,236 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > DumpThreadStacksFunctionFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.functions.catalogue</a>
+</div>
+
+<h1>Coverage Summary for Class: DumpThreadStacksFunctionFactory (io.questdb.griffin.engine.functions.catalogue)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">DumpThreadStacksFunctionFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (17/17)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">DumpThreadStacksFunctionFactory$DumpThreadStacksFunction</td>
+<td class="coverageStat">
+  <span class="percent">
+    75%
+  </span>
+  <span class="absValue">
+    (3/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    80%
+  </span>
+  <span class="absValue">
+    (4/5)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    88.9%
+  </span>
+  <span class="absValue">
+    (8/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.5%
+  </span>
+  <span class="absValue">
+    (21/22)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.functions.catalogue;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.FunctionFactory;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.engine.functions.BooleanFunction;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.log.LogRecord;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.IntList;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;import java.lang.management.ManagementFactory;
+<i class="no-highlight">41</i>&nbsp;import java.lang.management.ThreadInfo;
+<i class="no-highlight">42</i>&nbsp;import java.lang.management.ThreadMXBean;
+<i class="no-highlight">43</i>&nbsp;
+<b class="fc"><i class="no-highlight">44</i>&nbsp;public class DumpThreadStacksFunctionFactory implements FunctionFactory {</b>
+<i class="no-highlight">45</i>&nbsp;
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    private static final Log LOG = LogFactory.getLog(&quot;dump-thread-stacks&quot;);</b>
+<i class="no-highlight">47</i>&nbsp;
+<i class="no-highlight">48</i>&nbsp;    private static final String SIGNATURE = &quot;dump_thread_stacks()&quot;;
+<i class="no-highlight">49</i>&nbsp;
+<i class="no-highlight">50</i>&nbsp;    public static void dumpThreadStacks() {
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);</b>
+<i class="no-highlight">53</i>&nbsp;        // Each thread stack on its own LOG message to avoid overrunning log buffer
+<i class="no-highlight">54</i>&nbsp;        // Generally overrun will truncate the log message. We are likely to overrun considering how
+<i class="no-highlight">55</i>&nbsp;        // many threads we could be running
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        for (ThreadInfo threadInfo : threadInfos) {</b>
+<i class="no-highlight">57</i>&nbsp;            // it turns out it is possible to have null &quot;infos&quot;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;            if (threadInfo != null) {</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;                final LogRecord record = LOG.advisory();</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;                final Thread.State state = threadInfo.getThreadState();</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;                record.$(&#39;\n&#39;);</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;                record.$(&#39;\&#39;&#39;).$(threadInfo.getThreadName()).$(&quot;&#39;: &quot;).$(state);</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;                for (final StackTraceElement stackTraceElement : stackTraceElements) {</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;                    record.$(&quot;\n\t\tat &quot;).$(stackTraceElement);</b>
+<i class="no-highlight">66</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">67</i>&nbsp;                record.$(&quot;\n\n&quot;);</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;                record.$();</b>
+<i class="no-highlight">69</i>&nbsp;            }
+<i class="no-highlight">70</i>&nbsp;        }
+<i class="no-highlight">71</i>&nbsp;    }
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    @Override
+<i class="no-highlight">74</i>&nbsp;    public String getSignature() {
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        return SIGNATURE;</b>
+<i class="no-highlight">76</i>&nbsp;    }
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    @Override
+<i class="no-highlight">79</i>&nbsp;    public Function newInstance(int position,
+<i class="no-highlight">80</i>&nbsp;                                ObjList&lt;Function&gt; args,
+<i class="no-highlight">81</i>&nbsp;                                IntList argPositions,
+<i class="no-highlight">82</i>&nbsp;                                CairoConfiguration configuration,
+<i class="no-highlight">83</i>&nbsp;                                SqlExecutionContext sqlExecutionContext
+<i class="no-highlight">84</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        return new DumpThreadStacksFunction();</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<b class="fc"><i class="no-highlight">88</i>&nbsp;    private static class DumpThreadStacksFunction extends BooleanFunction {</b>
+<i class="no-highlight">89</i>&nbsp;        @Override
+<i class="no-highlight">90</i>&nbsp;        public boolean getBool(Record rec) {
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            dumpThreadStacks();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;            return true;</b>
+<i class="no-highlight">93</i>&nbsp;        }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;        @Override
+<i class="no-highlight">96</i>&nbsp;        public boolean isReadThreadSafe() {
+<b class="nc"><i class="no-highlight">97</i>&nbsp;            return true;</b>
+<i class="no-highlight">98</i>&nbsp;        }
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;        @Override
+<i class="no-highlight">101</i>&nbsp;        public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            sink.val(SIGNATURE);</b>
+<i class="no-highlight">103</i>&nbsp;        }
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

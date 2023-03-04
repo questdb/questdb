@@ -1,0 +1,1207 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > FastDoubleMath</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.fastdouble</a>
+</div>
+
+<h1>Coverage Summary for Class: FastDoubleMath (io.questdb.std.fastdouble)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">FastDoubleMath</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.9%
+  </span>
+  <span class="absValue">
+    (86/87)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.fastdouble;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;/**
+<i class="no-highlight">28</i>&nbsp; * This class provides the mathematical functions needed by {@link FastDoubleParser}.
+<i class="no-highlight">29</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">30</i>&nbsp; * References:
+<i class="no-highlight">31</i>&nbsp; * &lt;dl&gt;
+<i class="no-highlight">32</i>&nbsp; *     &lt;dt&gt;Daniel Lemire. fast_double_parser. 4x faster than strtod.
+<i class="no-highlight">33</i>&nbsp; *     Apache License 2.0 or Boost Software License.&lt;/dt&gt;
+<i class="no-highlight">34</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://github.com/lemire/fast_double_parser&quot;&gt;github.com&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">35</i>&nbsp; *
+<i class="no-highlight">36</i>&nbsp; *     &lt;dt&gt;Daniel Lemire. fast_float number parsing library: 4x faster than strtod.
+<i class="no-highlight">37</i>&nbsp; *     Apache License 2.0.&lt;/dt&gt;
+<i class="no-highlight">38</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://github.com/fastfloat/fast_float&quot;&gt;github.com&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">39</i>&nbsp; *
+<i class="no-highlight">40</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, Number Parsing at a Gigabyte per Second,
+<i class="no-highlight">41</i>&nbsp; *     Software: Practice and Experience 51 (8), 2021.
+<i class="no-highlight">42</i>&nbsp; *     arXiv.2101.11408v3 [cs.DS] 24 Feb 2021&lt;/dt&gt;
+<i class="no-highlight">43</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://arxiv.org/pdf/2101.11408.pdf&quot;&gt;arxiv.org&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">44</i>&nbsp; *
+<i class="no-highlight">45</i>&nbsp; *     &lt;dt&gt;Clinger WD (1990). How to read floating point numbers accurately. ACM SIGPLAN Notices.&lt;/dt&gt;
+<i class="no-highlight">46</i>&nbsp; *     &lt;dd&gt;- no link -&lt;/dd&gt;
+<i class="no-highlight">47</i>&nbsp; * &lt;/dl&gt;
+<i class="no-highlight">48</i>&nbsp; * &lt;/p&gt;
+<i class="no-highlight">49</i>&nbsp; */
+<i class="no-highlight">50</i>&nbsp;class FastDoubleMath {
+<i class="no-highlight">51</i>&nbsp;    /**
+<i class="no-highlight">52</i>&nbsp;     * Bias used in the exponent of a double.
+<i class="no-highlight">53</i>&nbsp;     */
+<i class="no-highlight">54</i>&nbsp;    public static final int DOUBLE_EXPONENT_BIAS = 1023;
+<i class="no-highlight">55</i>&nbsp;    /**
+<i class="no-highlight">56</i>&nbsp;     * The number of bits in the significand, including the implicit bit.
+<i class="no-highlight">57</i>&nbsp;     */
+<i class="no-highlight">58</i>&nbsp;    public static final int DOUBLE_SIGNIFICAND_WIDTH = 53;
+<i class="no-highlight">59</i>&nbsp;    /**
+<i class="no-highlight">60</i>&nbsp;     * Largest power of 10 value of the exponent.
+<i class="no-highlight">61</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">62</i>&nbsp;     * Any number of form w * 10^309 where {@literal w &gt;= 1} is going to be
+<i class="no-highlight">63</i>&nbsp;     * infinite in a double, so we never need to worry about powers
+<i class="no-highlight">64</i>&nbsp;     * of 10 greater than 308.
+<i class="no-highlight">65</i>&nbsp;     */
+<i class="no-highlight">66</i>&nbsp;    final static int DOUBLE_MAX_EXPONENT_POWER_OF_TEN = 308;
+<i class="no-highlight">67</i>&nbsp;    /**
+<i class="no-highlight">68</i>&nbsp;     * Smallest power of 10 value of the exponent.
+<i class="no-highlight">69</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">70</i>&nbsp;     * The smallest non-zero double is 2^−1074.
+<i class="no-highlight">71</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">72</i>&nbsp;     * We take as input numbers of the form w x 10^q where w &lt; 2^64.
+<i class="no-highlight">73</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">74</i>&nbsp;     * We have that {@literal w * 10^-343 &lt; 2^(63-343) * 5^-343 &lt; 2^-1076}.
+<i class="no-highlight">75</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">76</i>&nbsp;     * However, we have that
+<i class="no-highlight">77</i>&nbsp;     * {@literal (2^64-1) * 10^-342 = (2^64 - 1) * 2^-342 * 5^-342 &gt; 2^−1074}.
+<i class="no-highlight">78</i>&nbsp;     * Thus, it is possible for a number of the form w * 10^-342 where
+<i class="no-highlight">79</i>&nbsp;     * w is a 64-bit value to be a non-zero double.
+<i class="no-highlight">80</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">81</i>&nbsp;     * ********
+<i class="no-highlight">82</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">83</i>&nbsp;     * If we are solely interested in the *normal* numbers then the
+<i class="no-highlight">84</i>&nbsp;     * smallest value is 2^-1022. We can generate a value larger
+<i class="no-highlight">85</i>&nbsp;     * than 2^-1022 with expressions of the form w * 10^-326.
+<i class="no-highlight">86</i>&nbsp;     * Thus, we need to pick SMALLEST_POWER_OF_TEN &gt;= -326.
+<i class="no-highlight">87</i>&nbsp;     */
+<i class="no-highlight">88</i>&nbsp;    final static int DOUBLE_MIN_EXPONENT_POWER_OF_TEN = -325;
+<i class="no-highlight">89</i>&nbsp;    /**
+<i class="no-highlight">90</i>&nbsp;     * A complement to mantissa_64 complete to a
+<i class="no-highlight">91</i>&nbsp;     * 128-bit mantissa.
+<i class="no-highlight">92</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">93</i>&nbsp;     * Uses about 5KB but is rarely accessed.
+<i class="no-highlight">94</i>&nbsp;     * &lt;pre&gt;
+<i class="no-highlight">95</i>&nbsp;     * UInt128 getMantissa128(int q) {
+<i class="no-highlight">96</i>&nbsp;     *     return new UInt128(
+<i class="no-highlight">97</i>&nbsp;     *        MANTISSA_64[q - SMALLEST_POWER_OF_TEN],
+<i class="no-highlight">98</i>&nbsp;     *        MANTISSA_128[q - SMALLEST_POWER_OF_TEN];
+<i class="no-highlight">99</i>&nbsp;     *     );
+<i class="no-highlight">100</i>&nbsp;     * }
+<i class="no-highlight">101</i>&nbsp;     * &lt;/pre&gt;
+<i class="no-highlight">102</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">103</i>&nbsp;    final static long[] MANTISSA_128 = {</b>
+<i class="no-highlight">104</i>&nbsp;            0x419ea3bd35385e2dL, 0x52064cac828675b9L,
+<i class="no-highlight">105</i>&nbsp;            0x7343efebd1940993L, 0x1014ebe6c5f90bf8L,
+<i class="no-highlight">106</i>&nbsp;            0xd41a26e077774ef6L, 0x8920b098955522b4L,
+<i class="no-highlight">107</i>&nbsp;            0x55b46e5f5d5535b0L, 0xeb2189f734aa831dL,
+<i class="no-highlight">108</i>&nbsp;            0xa5e9ec7501d523e4L, 0x47b233c92125366eL,
+<i class="no-highlight">109</i>&nbsp;            0x999ec0bb696e840aL, 0xc00670ea43ca250dL,
+<i class="no-highlight">110</i>&nbsp;            0x380406926a5e5728L, 0xc605083704f5ecf2L,
+<i class="no-highlight">111</i>&nbsp;            0xf7864a44c633682eL, 0x7ab3ee6afbe0211dL,
+<i class="no-highlight">112</i>&nbsp;            0x5960ea05bad82964L, 0x6fb92487298e33bdL,
+<i class="no-highlight">113</i>&nbsp;            0xa5d3b6d479f8e056L, 0x8f48a4899877186cL,
+<i class="no-highlight">114</i>&nbsp;            0x331acdabfe94de87L, 0x9ff0c08b7f1d0b14L,
+<i class="no-highlight">115</i>&nbsp;            0x7ecf0ae5ee44dd9L, 0xc9e82cd9f69d6150L,
+<i class="no-highlight">116</i>&nbsp;            0xbe311c083a225cd2L, 0x6dbd630a48aaf406L,
+<i class="no-highlight">117</i>&nbsp;            0x92cbbccdad5b108L, 0x25bbf56008c58ea5L,
+<i class="no-highlight">118</i>&nbsp;            0xaf2af2b80af6f24eL, 0x1af5af660db4aee1L,
+<i class="no-highlight">119</i>&nbsp;            0x50d98d9fc890ed4dL, 0xe50ff107bab528a0L,
+<i class="no-highlight">120</i>&nbsp;            0x1e53ed49a96272c8L, 0x25e8e89c13bb0f7aL,
+<i class="no-highlight">121</i>&nbsp;            0x77b191618c54e9acL, 0xd59df5b9ef6a2417L,
+<i class="no-highlight">122</i>&nbsp;            0x4b0573286b44ad1dL, 0x4ee367f9430aec32L,
+<i class="no-highlight">123</i>&nbsp;            0x229c41f793cda73fL, 0x6b43527578c1110fL,
+<i class="no-highlight">124</i>&nbsp;            0x830a13896b78aaa9L, 0x23cc986bc656d553L,
+<i class="no-highlight">125</i>&nbsp;            0x2cbfbe86b7ec8aa8L, 0x7bf7d71432f3d6a9L,
+<i class="no-highlight">126</i>&nbsp;            0xdaf5ccd93fb0cc53L, 0xd1b3400f8f9cff68L,
+<i class="no-highlight">127</i>&nbsp;            0x23100809b9c21fa1L, 0xabd40a0c2832a78aL,
+<i class="no-highlight">128</i>&nbsp;            0x16c90c8f323f516cL, 0xae3da7d97f6792e3L,
+<i class="no-highlight">129</i>&nbsp;            0x99cd11cfdf41779cL, 0x40405643d711d583L,
+<i class="no-highlight">130</i>&nbsp;            0x482835ea666b2572L, 0xda3243650005eecfL,
+<i class="no-highlight">131</i>&nbsp;            0x90bed43e40076a82L, 0x5a7744a6e804a291L,
+<i class="no-highlight">132</i>&nbsp;            0x711515d0a205cb36L, 0xd5a5b44ca873e03L,
+<i class="no-highlight">133</i>&nbsp;            0xe858790afe9486c2L, 0x626e974dbe39a872L,
+<i class="no-highlight">134</i>&nbsp;            0xfb0a3d212dc8128fL, 0x7ce66634bc9d0b99L,
+<i class="no-highlight">135</i>&nbsp;            0x1c1fffc1ebc44e80L, 0xa327ffb266b56220L,
+<i class="no-highlight">136</i>&nbsp;            0x4bf1ff9f0062baa8L, 0x6f773fc3603db4a9L,
+<i class="no-highlight">137</i>&nbsp;            0xcb550fb4384d21d3L, 0x7e2a53a146606a48L,
+<i class="no-highlight">138</i>&nbsp;            0x2eda7444cbfc426dL, 0xfa911155fefb5308L,
+<i class="no-highlight">139</i>&nbsp;            0x793555ab7eba27caL, 0x4bc1558b2f3458deL,
+<i class="no-highlight">140</i>&nbsp;            0x9eb1aaedfb016f16L, 0x465e15a979c1cadcL,
+<i class="no-highlight">141</i>&nbsp;            0xbfacd89ec191ec9L, 0xcef980ec671f667bL,
+<i class="no-highlight">142</i>&nbsp;            0x82b7e12780e7401aL, 0xd1b2ecb8b0908810L,
+<i class="no-highlight">143</i>&nbsp;            0x861fa7e6dcb4aa15L, 0x67a791e093e1d49aL,
+<i class="no-highlight">144</i>&nbsp;            0xe0c8bb2c5c6d24e0L, 0x58fae9f773886e18L,
+<i class="no-highlight">145</i>&nbsp;            0xaf39a475506a899eL, 0x6d8406c952429603L,
+<i class="no-highlight">146</i>&nbsp;            0xc8e5087ba6d33b83L, 0xfb1e4a9a90880a64L,
+<i class="no-highlight">147</i>&nbsp;            0x5cf2eea09a55067fL, 0xf42faa48c0ea481eL,
+<i class="no-highlight">148</i>&nbsp;            0xf13b94daf124da26L, 0x76c53d08d6b70858L,
+<i class="no-highlight">149</i>&nbsp;            0x54768c4b0c64ca6eL, 0xa9942f5dcf7dfd09L,
+<i class="no-highlight">150</i>&nbsp;            0xd3f93b35435d7c4cL, 0xc47bc5014a1a6dafL,
+<i class="no-highlight">151</i>&nbsp;            0x359ab6419ca1091bL, 0xc30163d203c94b62L,
+<i class="no-highlight">152</i>&nbsp;            0x79e0de63425dcf1dL, 0x985915fc12f542e4L,
+<i class="no-highlight">153</i>&nbsp;            0x3e6f5b7b17b2939dL, 0xa705992ceecf9c42L,
+<i class="no-highlight">154</i>&nbsp;            0x50c6ff782a838353L, 0xa4f8bf5635246428L,
+<i class="no-highlight">155</i>&nbsp;            0x871b7795e136be99L, 0x28e2557b59846e3fL,
+<i class="no-highlight">156</i>&nbsp;            0x331aeada2fe589cfL, 0x3ff0d2c85def7621L,
+<i class="no-highlight">157</i>&nbsp;            0xfed077a756b53a9L, 0xd3e8495912c62894L,
+<i class="no-highlight">158</i>&nbsp;            0x64712dd7abbbd95cL, 0xbd8d794d96aacfb3L,
+<i class="no-highlight">159</i>&nbsp;            0xecf0d7a0fc5583a0L, 0xf41686c49db57244L,
+<i class="no-highlight">160</i>&nbsp;            0x311c2875c522ced5L, 0x7d633293366b828bL,
+<i class="no-highlight">161</i>&nbsp;            0xae5dff9c02033197L, 0xd9f57f830283fdfcL,
+<i class="no-highlight">162</i>&nbsp;            0xd072df63c324fd7bL, 0x4247cb9e59f71e6dL,
+<i class="no-highlight">163</i>&nbsp;            0x52d9be85f074e608L, 0x67902e276c921f8bL,
+<i class="no-highlight">164</i>&nbsp;            0xba1cd8a3db53b6L, 0x80e8a40eccd228a4L,
+<i class="no-highlight">165</i>&nbsp;            0x6122cd128006b2cdL, 0x796b805720085f81L,
+<i class="no-highlight">166</i>&nbsp;            0xcbe3303674053bb0L, 0xbedbfc4411068a9cL,
+<i class="no-highlight">167</i>&nbsp;            0xee92fb5515482d44L, 0x751bdd152d4d1c4aL,
+<i class="no-highlight">168</i>&nbsp;            0xd262d45a78a0635dL, 0x86fb897116c87c34L,
+<i class="no-highlight">169</i>&nbsp;            0xd45d35e6ae3d4da0L, 0x8974836059cca109L,
+<i class="no-highlight">170</i>&nbsp;            0x2bd1a438703fc94bL, 0x7b6306a34627ddcfL,
+<i class="no-highlight">171</i>&nbsp;            0x1a3bc84c17b1d542L, 0x20caba5f1d9e4a93L,
+<i class="no-highlight">172</i>&nbsp;            0x547eb47b7282ee9cL, 0xe99e619a4f23aa43L,
+<i class="no-highlight">173</i>&nbsp;            0x6405fa00e2ec94d4L, 0xde83bc408dd3dd04L,
+<i class="no-highlight">174</i>&nbsp;            0x9624ab50b148d445L, 0x3badd624dd9b0957L,
+<i class="no-highlight">175</i>&nbsp;            0xe54ca5d70a80e5d6L, 0x5e9fcf4ccd211f4cL,
+<i class="no-highlight">176</i>&nbsp;            0x7647c3200069671fL, 0x29ecd9f40041e073L,
+<i class="no-highlight">177</i>&nbsp;            0xf468107100525890L, 0x7182148d4066eeb4L,
+<i class="no-highlight">178</i>&nbsp;            0xc6f14cd848405530L, 0xb8ada00e5a506a7cL,
+<i class="no-highlight">179</i>&nbsp;            0xa6d90811f0e4851cL, 0x908f4a166d1da663L,
+<i class="no-highlight">180</i>&nbsp;            0x9a598e4e043287feL, 0x40eff1e1853f29fdL,
+<i class="no-highlight">181</i>&nbsp;            0xd12bee59e68ef47cL, 0x82bb74f8301958ceL,
+<i class="no-highlight">182</i>&nbsp;            0xe36a52363c1faf01L, 0xdc44e6c3cb279ac1L,
+<i class="no-highlight">183</i>&nbsp;            0x29ab103a5ef8c0b9L, 0x7415d448f6b6f0e7L,
+<i class="no-highlight">184</i>&nbsp;            0x111b495b3464ad21L, 0xcab10dd900beec34L,
+<i class="no-highlight">185</i>&nbsp;            0x3d5d514f40eea742L, 0xcb4a5a3112a5112L,
+<i class="no-highlight">186</i>&nbsp;            0x47f0e785eaba72abL, 0x59ed216765690f56L,
+<i class="no-highlight">187</i>&nbsp;            0x306869c13ec3532cL, 0x1e414218c73a13fbL,
+<i class="no-highlight">188</i>&nbsp;            0xe5d1929ef90898faL, 0xdf45f746b74abf39L,
+<i class="no-highlight">189</i>&nbsp;            0x6b8bba8c328eb783L, 0x66ea92f3f326564L,
+<i class="no-highlight">190</i>&nbsp;            0xc80a537b0efefebdL, 0xbd06742ce95f5f36L,
+<i class="no-highlight">191</i>&nbsp;            0x2c48113823b73704L, 0xf75a15862ca504c5L,
+<i class="no-highlight">192</i>&nbsp;            0x9a984d73dbe722fbL, 0xc13e60d0d2e0ebbaL,
+<i class="no-highlight">193</i>&nbsp;            0x318df905079926a8L, 0xfdf17746497f7052L,
+<i class="no-highlight">194</i>&nbsp;            0xfeb6ea8bedefa633L, 0xfe64a52ee96b8fc0L,
+<i class="no-highlight">195</i>&nbsp;            0x3dfdce7aa3c673b0L, 0x6bea10ca65c084eL,
+<i class="no-highlight">196</i>&nbsp;            0x486e494fcff30a62L, 0x5a89dba3c3efccfaL,
+<i class="no-highlight">197</i>&nbsp;            0xf89629465a75e01cL, 0xf6bbb397f1135823L,
+<i class="no-highlight">198</i>&nbsp;            0x746aa07ded582e2cL, 0xa8c2a44eb4571cdcL,
+<i class="no-highlight">199</i>&nbsp;            0x92f34d62616ce413L, 0x77b020baf9c81d17L,
+<i class="no-highlight">200</i>&nbsp;            0xace1474dc1d122eL, 0xd819992132456baL,
+<i class="no-highlight">201</i>&nbsp;            0x10e1fff697ed6c69L, 0xca8d3ffa1ef463c1L,
+<i class="no-highlight">202</i>&nbsp;            0xbd308ff8a6b17cb2L, 0xac7cb3f6d05ddbdeL,
+<i class="no-highlight">203</i>&nbsp;            0x6bcdf07a423aa96bL, 0x86c16c98d2c953c6L,
+<i class="no-highlight">204</i>&nbsp;            0xe871c7bf077ba8b7L, 0x11471cd764ad4972L,
+<i class="no-highlight">205</i>&nbsp;            0xd598e40d3dd89bcfL, 0x4aff1d108d4ec2c3L,
+<i class="no-highlight">206</i>&nbsp;            0xcedf722a585139baL, 0xc2974eb4ee658828L,
+<i class="no-highlight">207</i>&nbsp;            0x733d226229feea32L, 0x806357d5a3f525fL,
+<i class="no-highlight">208</i>&nbsp;            0xca07c2dcb0cf26f7L, 0xfc89b393dd02f0b5L,
+<i class="no-highlight">209</i>&nbsp;            0xbbac2078d443ace2L, 0xd54b944b84aa4c0dL,
+<i class="no-highlight">210</i>&nbsp;            0xa9e795e65d4df11L, 0x4d4617b5ff4a16d5L,
+<i class="no-highlight">211</i>&nbsp;            0x504bced1bf8e4e45L, 0xe45ec2862f71e1d6L,
+<i class="no-highlight">212</i>&nbsp;            0x5d767327bb4e5a4cL, 0x3a6a07f8d510f86fL,
+<i class="no-highlight">213</i>&nbsp;            0x890489f70a55368bL, 0x2b45ac74ccea842eL,
+<i class="no-highlight">214</i>&nbsp;            0x3b0b8bc90012929dL, 0x9ce6ebb40173744L,
+<i class="no-highlight">215</i>&nbsp;            0xcc420a6a101d0515L, 0x9fa946824a12232dL,
+<i class="no-highlight">216</i>&nbsp;            0x47939822dc96abf9L, 0x59787e2b93bc56f7L,
+<i class="no-highlight">217</i>&nbsp;            0x57eb4edb3c55b65aL, 0xede622920b6b23f1L,
+<i class="no-highlight">218</i>&nbsp;            0xe95fab368e45ecedL, 0x11dbcb0218ebb414L,
+<i class="no-highlight">219</i>&nbsp;            0xd652bdc29f26a119L, 0x4be76d3346f0495fL,
+<i class="no-highlight">220</i>&nbsp;            0x6f70a4400c562ddbL, 0xcb4ccd500f6bb952L,
+<i class="no-highlight">221</i>&nbsp;            0x7e2000a41346a7a7L, 0x8ed400668c0c28c8L,
+<i class="no-highlight">222</i>&nbsp;            0x728900802f0f32faL, 0x4f2b40a03ad2ffb9L,
+<i class="no-highlight">223</i>&nbsp;            0xe2f610c84987bfa8L, 0xdd9ca7d2df4d7c9L,
+<i class="no-highlight">224</i>&nbsp;            0x91503d1c79720dbbL, 0x75a44c6397ce912aL,
+<i class="no-highlight">225</i>&nbsp;            0xc986afbe3ee11abaL, 0xfbe85badce996168L,
+<i class="no-highlight">226</i>&nbsp;            0xfae27299423fb9c3L, 0xdccd879fc967d41aL,
+<i class="no-highlight">227</i>&nbsp;            0x5400e987bbc1c920L, 0x290123e9aab23b68L,
+<i class="no-highlight">228</i>&nbsp;            0xf9a0b6720aaf6521L, 0xf808e40e8d5b3e69L,
+<i class="no-highlight">229</i>&nbsp;            0xb60b1d1230b20e04L, 0xb1c6f22b5e6f48c2L,
+<i class="no-highlight">230</i>&nbsp;            0x1e38aeb6360b1af3L, 0x25c6da63c38de1b0L,
+<i class="no-highlight">231</i>&nbsp;            0x579c487e5a38ad0eL, 0x2d835a9df0c6d851L,
+<i class="no-highlight">232</i>&nbsp;            0xf8e431456cf88e65L, 0x1b8e9ecb641b58ffL,
+<i class="no-highlight">233</i>&nbsp;            0xe272467e3d222f3fL, 0x5b0ed81dcc6abb0fL,
+<i class="no-highlight">234</i>&nbsp;            0x98e947129fc2b4e9L, 0x3f2398d747b36224L,
+<i class="no-highlight">235</i>&nbsp;            0x8eec7f0d19a03aadL, 0x1953cf68300424acL,
+<i class="no-highlight">236</i>&nbsp;            0x5fa8c3423c052dd7L, 0x3792f412cb06794dL,
+<i class="no-highlight">237</i>&nbsp;            0xe2bbd88bbee40bd0L, 0x5b6aceaeae9d0ec4L,
+<i class="no-highlight">238</i>&nbsp;            0xf245825a5a445275L, 0xeed6e2f0f0d56712L,
+<i class="no-highlight">239</i>&nbsp;            0x55464dd69685606bL, 0xaa97e14c3c26b886L,
+<i class="no-highlight">240</i>&nbsp;            0xd53dd99f4b3066a8L, 0xe546a8038efe4029L,
+<i class="no-highlight">241</i>&nbsp;            0xde98520472bdd033L, 0x963e66858f6d4440L,
+<i class="no-highlight">242</i>&nbsp;            0xdde7001379a44aa8L, 0x5560c018580d5d52L,
+<i class="no-highlight">243</i>&nbsp;            0xaab8f01e6e10b4a6L, 0xcab3961304ca70e8L,
+<i class="no-highlight">244</i>&nbsp;            0x3d607b97c5fd0d22L, 0x8cb89a7db77c506aL,
+<i class="no-highlight">245</i>&nbsp;            0x77f3608e92adb242L, 0x55f038b237591ed3L,
+<i class="no-highlight">246</i>&nbsp;            0x6b6c46dec52f6688L, 0x2323ac4b3b3da015L,
+<i class="no-highlight">247</i>&nbsp;            0xabec975e0a0d081aL, 0x96e7bd358c904a21L,
+<i class="no-highlight">248</i>&nbsp;            0x7e50d64177da2e54L, 0xdde50bd1d5d0b9e9L,
+<i class="no-highlight">249</i>&nbsp;            0x955e4ec64b44e864L, 0xbd5af13bef0b113eL,
+<i class="no-highlight">250</i>&nbsp;            0xecb1ad8aeacdd58eL, 0x67de18eda5814af2L,
+<i class="no-highlight">251</i>&nbsp;            0x80eacf948770ced7L, 0xa1258379a94d028dL,
+<i class="no-highlight">252</i>&nbsp;            0x96ee45813a04330L, 0x8bca9d6e188853fcL,
+<i class="no-highlight">253</i>&nbsp;            0x775ea264cf55347dL, 0x95364afe032a819dL,
+<i class="no-highlight">254</i>&nbsp;            0x3a83ddbd83f52204L, 0xc4926a9672793542L,
+<i class="no-highlight">255</i>&nbsp;            0x75b7053c0f178293L, 0x5324c68b12dd6338L,
+<i class="no-highlight">256</i>&nbsp;            0xd3f6fc16ebca5e03L, 0x88f4bb1ca6bcf584L,
+<i class="no-highlight">257</i>&nbsp;            0x2b31e9e3d06c32e5L, 0x3aff322e62439fcfL,
+<i class="no-highlight">258</i>&nbsp;            0x9befeb9fad487c2L, 0x4c2ebe687989a9b3L,
+<i class="no-highlight">259</i>&nbsp;            0xf9d37014bf60a10L, 0x538484c19ef38c94L,
+<i class="no-highlight">260</i>&nbsp;            0x2865a5f206b06fb9L, 0xf93f87b7442e45d3L,
+<i class="no-highlight">261</i>&nbsp;            0xf78f69a51539d748L, 0xb573440e5a884d1bL,
+<i class="no-highlight">262</i>&nbsp;            0x31680a88f8953030L, 0xfdc20d2b36ba7c3dL,
+<i class="no-highlight">263</i>&nbsp;            0x3d32907604691b4cL, 0xa63f9a49c2c1b10fL,
+<i class="no-highlight">264</i>&nbsp;            0xfcf80dc33721d53L, 0xd3c36113404ea4a8L,
+<i class="no-highlight">265</i>&nbsp;            0x645a1cac083126e9L, 0x3d70a3d70a3d70a3L,
+<i class="no-highlight">266</i>&nbsp;            0xccccccccccccccccL, 0x0L,
+<i class="no-highlight">267</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">268</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">269</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">270</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">271</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">272</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">273</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">274</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">275</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">276</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">277</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">278</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">279</i>&nbsp;            0x0L, 0x0L,
+<i class="no-highlight">280</i>&nbsp;            0x0L, 0x4000000000000000L,
+<i class="no-highlight">281</i>&nbsp;            0x5000000000000000L, 0xa400000000000000L,
+<i class="no-highlight">282</i>&nbsp;            0x4d00000000000000L, 0xf020000000000000L,
+<i class="no-highlight">283</i>&nbsp;            0x6c28000000000000L, 0xc732000000000000L,
+<i class="no-highlight">284</i>&nbsp;            0x3c7f400000000000L, 0x4b9f100000000000L,
+<i class="no-highlight">285</i>&nbsp;            0x1e86d40000000000L, 0x1314448000000000L,
+<i class="no-highlight">286</i>&nbsp;            0x17d955a000000000L, 0x5dcfab0800000000L,
+<i class="no-highlight">287</i>&nbsp;            0x5aa1cae500000000L, 0xf14a3d9e40000000L,
+<i class="no-highlight">288</i>&nbsp;            0x6d9ccd05d0000000L, 0xe4820023a2000000L,
+<i class="no-highlight">289</i>&nbsp;            0xdda2802c8a800000L, 0xd50b2037ad200000L,
+<i class="no-highlight">290</i>&nbsp;            0x4526f422cc340000L, 0x9670b12b7f410000L,
+<i class="no-highlight">291</i>&nbsp;            0x3c0cdd765f114000L, 0xa5880a69fb6ac800L,
+<i class="no-highlight">292</i>&nbsp;            0x8eea0d047a457a00L, 0x72a4904598d6d880L,
+<i class="no-highlight">293</i>&nbsp;            0x47a6da2b7f864750L, 0x999090b65f67d924L,
+<i class="no-highlight">294</i>&nbsp;            0xfff4b4e3f741cf6dL, 0xbff8f10e7a8921a4L,
+<i class="no-highlight">295</i>&nbsp;            0xaff72d52192b6a0dL, 0x9bf4f8a69f764490L,
+<i class="no-highlight">296</i>&nbsp;            0x2f236d04753d5b4L, 0x1d762422c946590L,
+<i class="no-highlight">297</i>&nbsp;            0x424d3ad2b7b97ef5L, 0xd2e0898765a7deb2L,
+<i class="no-highlight">298</i>&nbsp;            0x63cc55f49f88eb2fL, 0x3cbf6b71c76b25fbL,
+<i class="no-highlight">299</i>&nbsp;            0x8bef464e3945ef7aL, 0x97758bf0e3cbb5acL,
+<i class="no-highlight">300</i>&nbsp;            0x3d52eeed1cbea317L, 0x4ca7aaa863ee4bddL,
+<i class="no-highlight">301</i>&nbsp;            0x8fe8caa93e74ef6aL, 0xb3e2fd538e122b44L,
+<i class="no-highlight">302</i>&nbsp;            0x60dbbca87196b616L, 0xbc8955e946fe31cdL,
+<i class="no-highlight">303</i>&nbsp;            0x6babab6398bdbe41L, 0xc696963c7eed2dd1L,
+<i class="no-highlight">304</i>&nbsp;            0xfc1e1de5cf543ca2L, 0x3b25a55f43294bcbL,
+<i class="no-highlight">305</i>&nbsp;            0x49ef0eb713f39ebeL, 0x6e3569326c784337L,
+<i class="no-highlight">306</i>&nbsp;            0x49c2c37f07965404L, 0xdc33745ec97be906L,
+<i class="no-highlight">307</i>&nbsp;            0x69a028bb3ded71a3L, 0xc40832ea0d68ce0cL,
+<i class="no-highlight">308</i>&nbsp;            0xf50a3fa490c30190L, 0x792667c6da79e0faL,
+<i class="no-highlight">309</i>&nbsp;            0x577001b891185938L, 0xed4c0226b55e6f86L,
+<i class="no-highlight">310</i>&nbsp;            0x544f8158315b05b4L, 0x696361ae3db1c721L,
+<i class="no-highlight">311</i>&nbsp;            0x3bc3a19cd1e38e9L, 0x4ab48a04065c723L,
+<i class="no-highlight">312</i>&nbsp;            0x62eb0d64283f9c76L, 0x3ba5d0bd324f8394L,
+<i class="no-highlight">313</i>&nbsp;            0xca8f44ec7ee36479L, 0x7e998b13cf4e1ecbL,
+<i class="no-highlight">314</i>&nbsp;            0x9e3fedd8c321a67eL, 0xc5cfe94ef3ea101eL,
+<i class="no-highlight">315</i>&nbsp;            0xbba1f1d158724a12L, 0x2a8a6e45ae8edc97L,
+<i class="no-highlight">316</i>&nbsp;            0xf52d09d71a3293bdL, 0x593c2626705f9c56L,
+<i class="no-highlight">317</i>&nbsp;            0x6f8b2fb00c77836cL, 0xb6dfb9c0f956447L,
+<i class="no-highlight">318</i>&nbsp;            0x4724bd4189bd5eacL, 0x58edec91ec2cb657L,
+<i class="no-highlight">319</i>&nbsp;            0x2f2967b66737e3edL, 0xbd79e0d20082ee74L,
+<i class="no-highlight">320</i>&nbsp;            0xecd8590680a3aa11L, 0xe80e6f4820cc9495L,
+<i class="no-highlight">321</i>&nbsp;            0x3109058d147fdcddL, 0xbd4b46f0599fd415L,
+<i class="no-highlight">322</i>&nbsp;            0x6c9e18ac7007c91aL, 0x3e2cf6bc604ddb0L,
+<i class="no-highlight">323</i>&nbsp;            0x84db8346b786151cL, 0xe612641865679a63L,
+<i class="no-highlight">324</i>&nbsp;            0x4fcb7e8f3f60c07eL, 0xe3be5e330f38f09dL,
+<i class="no-highlight">325</i>&nbsp;            0x5cadf5bfd3072cc5L, 0x73d9732fc7c8f7f6L,
+<i class="no-highlight">326</i>&nbsp;            0x2867e7fddcdd9afaL, 0xb281e1fd541501b8L,
+<i class="no-highlight">327</i>&nbsp;            0x1f225a7ca91a4226L, 0x3375788de9b06958L,
+<i class="no-highlight">328</i>&nbsp;            0x52d6b1641c83aeL, 0xc0678c5dbd23a49aL,
+<i class="no-highlight">329</i>&nbsp;            0xf840b7ba963646e0L, 0xb650e5a93bc3d898L,
+<i class="no-highlight">330</i>&nbsp;            0xa3e51f138ab4cebeL, 0xc66f336c36b10137L,
+<i class="no-highlight">331</i>&nbsp;            0xb80b0047445d4184L, 0xa60dc059157491e5L,
+<i class="no-highlight">332</i>&nbsp;            0x87c89837ad68db2fL, 0x29babe4598c311fbL,
+<i class="no-highlight">333</i>&nbsp;            0xf4296dd6fef3d67aL, 0x1899e4a65f58660cL,
+<i class="no-highlight">334</i>&nbsp;            0x5ec05dcff72e7f8fL, 0x76707543f4fa1f73L,
+<i class="no-highlight">335</i>&nbsp;            0x6a06494a791c53a8L, 0x487db9d17636892L,
+<i class="no-highlight">336</i>&nbsp;            0x45a9d2845d3c42b6L, 0xb8a2392ba45a9b2L,
+<i class="no-highlight">337</i>&nbsp;            0x8e6cac7768d7141eL, 0x3207d795430cd926L,
+<i class="no-highlight">338</i>&nbsp;            0x7f44e6bd49e807b8L, 0x5f16206c9c6209a6L,
+<i class="no-highlight">339</i>&nbsp;            0x36dba887c37a8c0fL, 0xc2494954da2c9789L,
+<i class="no-highlight">340</i>&nbsp;            0xf2db9baa10b7bd6cL, 0x6f92829494e5acc7L,
+<i class="no-highlight">341</i>&nbsp;            0xcb772339ba1f17f9L, 0xff2a760414536efbL,
+<i class="no-highlight">342</i>&nbsp;            0xfef5138519684abaL, 0x7eb258665fc25d69L,
+<i class="no-highlight">343</i>&nbsp;            0xef2f773ffbd97a61L, 0xaafb550ffacfd8faL,
+<i class="no-highlight">344</i>&nbsp;            0x95ba2a53f983cf38L, 0xdd945a747bf26183L,
+<i class="no-highlight">345</i>&nbsp;            0x94f971119aeef9e4L, 0x7a37cd5601aab85dL,
+<i class="no-highlight">346</i>&nbsp;            0xac62e055c10ab33aL, 0x577b986b314d6009L,
+<i class="no-highlight">347</i>&nbsp;            0xed5a7e85fda0b80bL, 0x14588f13be847307L,
+<i class="no-highlight">348</i>&nbsp;            0x596eb2d8ae258fc8L, 0x6fca5f8ed9aef3bbL,
+<i class="no-highlight">349</i>&nbsp;            0x25de7bb9480d5854L, 0xaf561aa79a10ae6aL,
+<i class="no-highlight">350</i>&nbsp;            0x1b2ba1518094da04L, 0x90fb44d2f05d0842L,
+<i class="no-highlight">351</i>&nbsp;            0x353a1607ac744a53L, 0x42889b8997915ce8L,
+<i class="no-highlight">352</i>&nbsp;            0x69956135febada11L, 0x43fab9837e699095L,
+<i class="no-highlight">353</i>&nbsp;            0x94f967e45e03f4bbL, 0x1d1be0eebac278f5L,
+<i class="no-highlight">354</i>&nbsp;            0x6462d92a69731732L, 0x7d7b8f7503cfdcfeL,
+<i class="no-highlight">355</i>&nbsp;            0x5cda735244c3d43eL, 0x3a0888136afa64a7L,
+<i class="no-highlight">356</i>&nbsp;            0x88aaa1845b8fdd0L, 0x8aad549e57273d45L,
+<i class="no-highlight">357</i>&nbsp;            0x36ac54e2f678864bL, 0x84576a1bb416a7ddL,
+<i class="no-highlight">358</i>&nbsp;            0x656d44a2a11c51d5L, 0x9f644ae5a4b1b325L,
+<i class="no-highlight">359</i>&nbsp;            0x873d5d9f0dde1feeL, 0xa90cb506d155a7eaL,
+<i class="no-highlight">360</i>&nbsp;            0x9a7f12442d588f2L, 0xc11ed6d538aeb2fL,
+<i class="no-highlight">361</i>&nbsp;            0x8f1668c8a86da5faL, 0xf96e017d694487bcL,
+<i class="no-highlight">362</i>&nbsp;            0x37c981dcc395a9acL, 0x85bbe253f47b1417L,
+<i class="no-highlight">363</i>&nbsp;            0x93956d7478ccec8eL, 0x387ac8d1970027b2L,
+<i class="no-highlight">364</i>&nbsp;            0x6997b05fcc0319eL, 0x441fece3bdf81f03L,
+<i class="no-highlight">365</i>&nbsp;            0xd527e81cad7626c3L, 0x8a71e223d8d3b074L,
+<i class="no-highlight">366</i>&nbsp;            0xf6872d5667844e49L, 0xb428f8ac016561dbL,
+<i class="no-highlight">367</i>&nbsp;            0xe13336d701beba52L, 0xecc0024661173473L,
+<i class="no-highlight">368</i>&nbsp;            0x27f002d7f95d0190L, 0x31ec038df7b441f4L,
+<i class="no-highlight">369</i>&nbsp;            0x7e67047175a15271L, 0xf0062c6e984d386L,
+<i class="no-highlight">370</i>&nbsp;            0x52c07b78a3e60868L, 0xa7709a56ccdf8a82L,
+<i class="no-highlight">371</i>&nbsp;            0x88a66076400bb691L, 0x6acff893d00ea435L,
+<i class="no-highlight">372</i>&nbsp;            0x583f6b8c4124d43L, 0xc3727a337a8b704aL,
+<i class="no-highlight">373</i>&nbsp;            0x744f18c0592e4c5cL, 0x1162def06f79df73L,
+<i class="no-highlight">374</i>&nbsp;            0x8addcb5645ac2ba8L, 0x6d953e2bd7173692L,
+<i class="no-highlight">375</i>&nbsp;            0xc8fa8db6ccdd0437L, 0x1d9c9892400a22a2L,
+<i class="no-highlight">376</i>&nbsp;            0x2503beb6d00cab4bL, 0x2e44ae64840fd61dL,
+<i class="no-highlight">377</i>&nbsp;            0x5ceaecfed289e5d2L, 0x7425a83e872c5f47L,
+<i class="no-highlight">378</i>&nbsp;            0xd12f124e28f77719L, 0x82bd6b70d99aaa6fL,
+<i class="no-highlight">379</i>&nbsp;            0x636cc64d1001550bL, 0x3c47f7e05401aa4eL,
+<i class="no-highlight">380</i>&nbsp;            0x65acfaec34810a71L, 0x7f1839a741a14d0dL,
+<i class="no-highlight">381</i>&nbsp;            0x1ede48111209a050L, 0x934aed0aab460432L,
+<i class="no-highlight">382</i>&nbsp;            0xf81da84d5617853fL, 0x36251260ab9d668eL,
+<i class="no-highlight">383</i>&nbsp;            0xc1d72b7c6b426019L, 0xb24cf65b8612f81fL,
+<i class="no-highlight">384</i>&nbsp;            0xdee033f26797b627L, 0x169840ef017da3b1L,
+<i class="no-highlight">385</i>&nbsp;            0x8e1f289560ee864eL, 0xf1a6f2bab92a27e2L,
+<i class="no-highlight">386</i>&nbsp;            0xae10af696774b1dbL, 0xacca6da1e0a8ef29L,
+<i class="no-highlight">387</i>&nbsp;            0x17fd090a58d32af3L, 0xddfc4b4cef07f5b0L,
+<i class="no-highlight">388</i>&nbsp;            0x4abdaf101564f98eL, 0x9d6d1ad41abe37f1L,
+<i class="no-highlight">389</i>&nbsp;            0x84c86189216dc5edL, 0x32fd3cf5b4e49bb4L,
+<i class="no-highlight">390</i>&nbsp;            0x3fbc8c33221dc2a1L, 0xfabaf3feaa5334aL,
+<i class="no-highlight">391</i>&nbsp;            0x29cb4d87f2a7400eL, 0x743e20e9ef511012L,
+<i class="no-highlight">392</i>&nbsp;            0x914da9246b255416L, 0x1ad089b6c2f7548eL,
+<i class="no-highlight">393</i>&nbsp;            0xa184ac2473b529b1L, 0xc9e5d72d90a2741eL,
+<i class="no-highlight">394</i>&nbsp;            0x7e2fa67c7a658892L, 0xddbb901b98feeab7L,
+<i class="no-highlight">395</i>&nbsp;            0x552a74227f3ea565L, 0xd53a88958f87275fL,
+<i class="no-highlight">396</i>&nbsp;            0x8a892abaf368f137L, 0x2d2b7569b0432d85L,
+<i class="no-highlight">397</i>&nbsp;            0x9c3b29620e29fc73L, 0x8349f3ba91b47b8fL,
+<i class="no-highlight">398</i>&nbsp;            0x241c70a936219a73L, 0xed238cd383aa0110L,
+<i class="no-highlight">399</i>&nbsp;            0xf4363804324a40aaL, 0xb143c6053edcd0d5L,
+<i class="no-highlight">400</i>&nbsp;            0xdd94b7868e94050aL, 0xca7cf2b4191c8326L,
+<i class="no-highlight">401</i>&nbsp;            0xfd1c2f611f63a3f0L, 0xbc633b39673c8cecL,
+<i class="no-highlight">402</i>&nbsp;            0xd5be0503e085d813L, 0x4b2d8644d8a74e18L,
+<i class="no-highlight">403</i>&nbsp;            0xddf8e7d60ed1219eL, 0xcabb90e5c942b503L,
+<i class="no-highlight">404</i>&nbsp;            0x3d6a751f3b936243L, 0xcc512670a783ad4L,
+<i class="no-highlight">405</i>&nbsp;            0x27fb2b80668b24c5L, 0xb1f9f660802dedf6L,
+<i class="no-highlight">406</i>&nbsp;            0x5e7873f8a0396973L, 0xdb0b487b6423e1e8L,
+<i class="no-highlight">407</i>&nbsp;            0x91ce1a9a3d2cda62L, 0x7641a140cc7810fbL,
+<i class="no-highlight">408</i>&nbsp;            0xa9e904c87fcb0a9dL, 0x546345fa9fbdcd44L,
+<i class="no-highlight">409</i>&nbsp;            0xa97c177947ad4095L, 0x49ed8eabcccc485dL,
+<i class="no-highlight">410</i>&nbsp;            0x5c68f256bfff5a74L, 0x73832eec6fff3111L,
+<i class="no-highlight">411</i>&nbsp;            0xc831fd53c5ff7eabL, 0xba3e7ca8b77f5e55L,
+<i class="no-highlight">412</i>&nbsp;            0x28ce1bd2e55f35ebL, 0x7980d163cf5b81b3L,
+<i class="no-highlight">413</i>&nbsp;            0xd7e105bcc332621fL, 0x8dd9472bf3fefaa7L,
+<i class="no-highlight">414</i>&nbsp;            0xb14f98f6f0feb951L, 0x6ed1bf9a569f33d3L,
+<i class="no-highlight">415</i>&nbsp;            0xa862f80ec4700c8L, 0xcd27bb612758c0faL,
+<i class="no-highlight">416</i>&nbsp;            0x8038d51cb897789cL, 0xe0470a63e6bd56c3L,
+<i class="no-highlight">417</i>&nbsp;            0x1858ccfce06cac74L, 0xf37801e0c43ebc8L,
+<i class="no-highlight">418</i>&nbsp;            0xd30560258f54e6baL, 0x47c6b82ef32a2069L,
+<i class="no-highlight">419</i>&nbsp;            0x4cdc331d57fa5441L, 0xe0133fe4adf8e952L,
+<i class="no-highlight">420</i>&nbsp;            0x58180fddd97723a6L, 0x570f09eaa7ea7648L};
+<i class="no-highlight">421</i>&nbsp;    /**
+<i class="no-highlight">422</i>&nbsp;     * When mapping numbers from decimal to binary, we go from w * 10^q to
+<i class="no-highlight">423</i>&nbsp;     * m * 2^p, but we have 10^q = 5^q * 2^q, so effectively we are trying to match
+<i class="no-highlight">424</i>&nbsp;     * w * 2^q * 5^q to m * 2^p.
+<i class="no-highlight">425</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">426</i>&nbsp;     * Thus, the powers of two are not a concern since they can be represented
+<i class="no-highlight">427</i>&nbsp;     * exactly using the binary notation, only the powers of five affect the
+<i class="no-highlight">428</i>&nbsp;     * binary significand.
+<i class="no-highlight">429</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">430</i>&nbsp;     * The mantissas of powers of ten from -308 to 308, extended out to sixty-four
+<i class="no-highlight">431</i>&nbsp;     * bits. The array contains the powers of ten approximated
+<i class="no-highlight">432</i>&nbsp;     * as a 64-bit mantissa. It goes from 10^{@value #DOUBLE_MIN_EXPONENT_POWER_OF_TEN} to
+<i class="no-highlight">433</i>&nbsp;     * 10^{@value #DOUBLE_MAX_EXPONENT_POWER_OF_TEN} (inclusively). The mantissa is truncated, and
+<i class="no-highlight">434</i>&nbsp;     * never rounded up. Uses about 5 KB.
+<i class="no-highlight">435</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">436</i>&nbsp;     * &lt;pre&gt;
+<i class="no-highlight">437</i>&nbsp;     * long getMantissaHigh(int q) {
+<i class="no-highlight">438</i>&nbsp;     *  MANTISSA_64[q - SMALLEST_POWER_OF_TEN];
+<i class="no-highlight">439</i>&nbsp;     * }
+<i class="no-highlight">440</i>&nbsp;     * &lt;/pre&gt;
+<i class="no-highlight">441</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">442</i>&nbsp;    static final long[] MANTISSA_64 = {</b>
+<i class="no-highlight">443</i>&nbsp;            0xa5ced43b7e3e9188L, 0xcf42894a5dce35eaL,
+<i class="no-highlight">444</i>&nbsp;            0x818995ce7aa0e1b2L, 0xa1ebfb4219491a1fL,
+<i class="no-highlight">445</i>&nbsp;            0xca66fa129f9b60a6L, 0xfd00b897478238d0L,
+<i class="no-highlight">446</i>&nbsp;            0x9e20735e8cb16382L, 0xc5a890362fddbc62L,
+<i class="no-highlight">447</i>&nbsp;            0xf712b443bbd52b7bL, 0x9a6bb0aa55653b2dL,
+<i class="no-highlight">448</i>&nbsp;            0xc1069cd4eabe89f8L, 0xf148440a256e2c76L,
+<i class="no-highlight">449</i>&nbsp;            0x96cd2a865764dbcaL, 0xbc807527ed3e12bcL,
+<i class="no-highlight">450</i>&nbsp;            0xeba09271e88d976bL, 0x93445b8731587ea3L,
+<i class="no-highlight">451</i>&nbsp;            0xb8157268fdae9e4cL, 0xe61acf033d1a45dfL,
+<i class="no-highlight">452</i>&nbsp;            0x8fd0c16206306babL, 0xb3c4f1ba87bc8696L,
+<i class="no-highlight">453</i>&nbsp;            0xe0b62e2929aba83cL, 0x8c71dcd9ba0b4925L,
+<i class="no-highlight">454</i>&nbsp;            0xaf8e5410288e1b6fL, 0xdb71e91432b1a24aL,
+<i class="no-highlight">455</i>&nbsp;            0x892731ac9faf056eL, 0xab70fe17c79ac6caL,
+<i class="no-highlight">456</i>&nbsp;            0xd64d3d9db981787dL, 0x85f0468293f0eb4eL,
+<i class="no-highlight">457</i>&nbsp;            0xa76c582338ed2621L, 0xd1476e2c07286faaL,
+<i class="no-highlight">458</i>&nbsp;            0x82cca4db847945caL, 0xa37fce126597973cL,
+<i class="no-highlight">459</i>&nbsp;            0xcc5fc196fefd7d0cL, 0xff77b1fcbebcdc4fL,
+<i class="no-highlight">460</i>&nbsp;            0x9faacf3df73609b1L, 0xc795830d75038c1dL,
+<i class="no-highlight">461</i>&nbsp;            0xf97ae3d0d2446f25L, 0x9becce62836ac577L,
+<i class="no-highlight">462</i>&nbsp;            0xc2e801fb244576d5L, 0xf3a20279ed56d48aL,
+<i class="no-highlight">463</i>&nbsp;            0x9845418c345644d6L, 0xbe5691ef416bd60cL,
+<i class="no-highlight">464</i>&nbsp;            0xedec366b11c6cb8fL, 0x94b3a202eb1c3f39L,
+<i class="no-highlight">465</i>&nbsp;            0xb9e08a83a5e34f07L, 0xe858ad248f5c22c9L,
+<i class="no-highlight">466</i>&nbsp;            0x91376c36d99995beL, 0xb58547448ffffb2dL,
+<i class="no-highlight">467</i>&nbsp;            0xe2e69915b3fff9f9L, 0x8dd01fad907ffc3bL,
+<i class="no-highlight">468</i>&nbsp;            0xb1442798f49ffb4aL, 0xdd95317f31c7fa1dL,
+<i class="no-highlight">469</i>&nbsp;            0x8a7d3eef7f1cfc52L, 0xad1c8eab5ee43b66L,
+<i class="no-highlight">470</i>&nbsp;            0xd863b256369d4a40L, 0x873e4f75e2224e68L,
+<i class="no-highlight">471</i>&nbsp;            0xa90de3535aaae202L, 0xd3515c2831559a83L,
+<i class="no-highlight">472</i>&nbsp;            0x8412d9991ed58091L, 0xa5178fff668ae0b6L,
+<i class="no-highlight">473</i>&nbsp;            0xce5d73ff402d98e3L, 0x80fa687f881c7f8eL,
+<i class="no-highlight">474</i>&nbsp;            0xa139029f6a239f72L, 0xc987434744ac874eL,
+<i class="no-highlight">475</i>&nbsp;            0xfbe9141915d7a922L, 0x9d71ac8fada6c9b5L,
+<i class="no-highlight">476</i>&nbsp;            0xc4ce17b399107c22L, 0xf6019da07f549b2bL,
+<i class="no-highlight">477</i>&nbsp;            0x99c102844f94e0fbL, 0xc0314325637a1939L,
+<i class="no-highlight">478</i>&nbsp;            0xf03d93eebc589f88L, 0x96267c7535b763b5L,
+<i class="no-highlight">479</i>&nbsp;            0xbbb01b9283253ca2L, 0xea9c227723ee8bcbL,
+<i class="no-highlight">480</i>&nbsp;            0x92a1958a7675175fL, 0xb749faed14125d36L,
+<i class="no-highlight">481</i>&nbsp;            0xe51c79a85916f484L, 0x8f31cc0937ae58d2L,
+<i class="no-highlight">482</i>&nbsp;            0xb2fe3f0b8599ef07L, 0xdfbdcece67006ac9L,
+<i class="no-highlight">483</i>&nbsp;            0x8bd6a141006042bdL, 0xaecc49914078536dL,
+<i class="no-highlight">484</i>&nbsp;            0xda7f5bf590966848L, 0x888f99797a5e012dL,
+<i class="no-highlight">485</i>&nbsp;            0xaab37fd7d8f58178L, 0xd5605fcdcf32e1d6L,
+<i class="no-highlight">486</i>&nbsp;            0x855c3be0a17fcd26L, 0xa6b34ad8c9dfc06fL,
+<i class="no-highlight">487</i>&nbsp;            0xd0601d8efc57b08bL, 0x823c12795db6ce57L,
+<i class="no-highlight">488</i>&nbsp;            0xa2cb1717b52481edL, 0xcb7ddcdda26da268L,
+<i class="no-highlight">489</i>&nbsp;            0xfe5d54150b090b02L, 0x9efa548d26e5a6e1L,
+<i class="no-highlight">490</i>&nbsp;            0xc6b8e9b0709f109aL, 0xf867241c8cc6d4c0L,
+<i class="no-highlight">491</i>&nbsp;            0x9b407691d7fc44f8L, 0xc21094364dfb5636L,
+<i class="no-highlight">492</i>&nbsp;            0xf294b943e17a2bc4L, 0x979cf3ca6cec5b5aL,
+<i class="no-highlight">493</i>&nbsp;            0xbd8430bd08277231L, 0xece53cec4a314ebdL,
+<i class="no-highlight">494</i>&nbsp;            0x940f4613ae5ed136L, 0xb913179899f68584L,
+<i class="no-highlight">495</i>&nbsp;            0xe757dd7ec07426e5L, 0x9096ea6f3848984fL,
+<i class="no-highlight">496</i>&nbsp;            0xb4bca50b065abe63L, 0xe1ebce4dc7f16dfbL,
+<i class="no-highlight">497</i>&nbsp;            0x8d3360f09cf6e4bdL, 0xb080392cc4349decL,
+<i class="no-highlight">498</i>&nbsp;            0xdca04777f541c567L, 0x89e42caaf9491b60L,
+<i class="no-highlight">499</i>&nbsp;            0xac5d37d5b79b6239L, 0xd77485cb25823ac7L,
+<i class="no-highlight">500</i>&nbsp;            0x86a8d39ef77164bcL, 0xa8530886b54dbdebL,
+<i class="no-highlight">501</i>&nbsp;            0xd267caa862a12d66L, 0x8380dea93da4bc60L,
+<i class="no-highlight">502</i>&nbsp;            0xa46116538d0deb78L, 0xcd795be870516656L,
+<i class="no-highlight">503</i>&nbsp;            0x806bd9714632dff6L, 0xa086cfcd97bf97f3L,
+<i class="no-highlight">504</i>&nbsp;            0xc8a883c0fdaf7df0L, 0xfad2a4b13d1b5d6cL,
+<i class="no-highlight">505</i>&nbsp;            0x9cc3a6eec6311a63L, 0xc3f490aa77bd60fcL,
+<i class="no-highlight">506</i>&nbsp;            0xf4f1b4d515acb93bL, 0x991711052d8bf3c5L,
+<i class="no-highlight">507</i>&nbsp;            0xbf5cd54678eef0b6L, 0xef340a98172aace4L,
+<i class="no-highlight">508</i>&nbsp;            0x9580869f0e7aac0eL, 0xbae0a846d2195712L,
+<i class="no-highlight">509</i>&nbsp;            0xe998d258869facd7L, 0x91ff83775423cc06L,
+<i class="no-highlight">510</i>&nbsp;            0xb67f6455292cbf08L, 0xe41f3d6a7377eecaL,
+<i class="no-highlight">511</i>&nbsp;            0x8e938662882af53eL, 0xb23867fb2a35b28dL,
+<i class="no-highlight">512</i>&nbsp;            0xdec681f9f4c31f31L, 0x8b3c113c38f9f37eL,
+<i class="no-highlight">513</i>&nbsp;            0xae0b158b4738705eL, 0xd98ddaee19068c76L,
+<i class="no-highlight">514</i>&nbsp;            0x87f8a8d4cfa417c9L, 0xa9f6d30a038d1dbcL,
+<i class="no-highlight">515</i>&nbsp;            0xd47487cc8470652bL, 0x84c8d4dfd2c63f3bL,
+<i class="no-highlight">516</i>&nbsp;            0xa5fb0a17c777cf09L, 0xcf79cc9db955c2ccL,
+<i class="no-highlight">517</i>&nbsp;            0x81ac1fe293d599bfL, 0xa21727db38cb002fL,
+<i class="no-highlight">518</i>&nbsp;            0xca9cf1d206fdc03bL, 0xfd442e4688bd304aL,
+<i class="no-highlight">519</i>&nbsp;            0x9e4a9cec15763e2eL, 0xc5dd44271ad3cdbaL,
+<i class="no-highlight">520</i>&nbsp;            0xf7549530e188c128L, 0x9a94dd3e8cf578b9L,
+<i class="no-highlight">521</i>&nbsp;            0xc13a148e3032d6e7L, 0xf18899b1bc3f8ca1L,
+<i class="no-highlight">522</i>&nbsp;            0x96f5600f15a7b7e5L, 0xbcb2b812db11a5deL,
+<i class="no-highlight">523</i>&nbsp;            0xebdf661791d60f56L, 0x936b9fcebb25c995L,
+<i class="no-highlight">524</i>&nbsp;            0xb84687c269ef3bfbL, 0xe65829b3046b0afaL,
+<i class="no-highlight">525</i>&nbsp;            0x8ff71a0fe2c2e6dcL, 0xb3f4e093db73a093L,
+<i class="no-highlight">526</i>&nbsp;            0xe0f218b8d25088b8L, 0x8c974f7383725573L,
+<i class="no-highlight">527</i>&nbsp;            0xafbd2350644eeacfL, 0xdbac6c247d62a583L,
+<i class="no-highlight">528</i>&nbsp;            0x894bc396ce5da772L, 0xab9eb47c81f5114fL,
+<i class="no-highlight">529</i>&nbsp;            0xd686619ba27255a2L, 0x8613fd0145877585L,
+<i class="no-highlight">530</i>&nbsp;            0xa798fc4196e952e7L, 0xd17f3b51fca3a7a0L,
+<i class="no-highlight">531</i>&nbsp;            0x82ef85133de648c4L, 0xa3ab66580d5fdaf5L,
+<i class="no-highlight">532</i>&nbsp;            0xcc963fee10b7d1b3L, 0xffbbcfe994e5c61fL,
+<i class="no-highlight">533</i>&nbsp;            0x9fd561f1fd0f9bd3L, 0xc7caba6e7c5382c8L,
+<i class="no-highlight">534</i>&nbsp;            0xf9bd690a1b68637bL, 0x9c1661a651213e2dL,
+<i class="no-highlight">535</i>&nbsp;            0xc31bfa0fe5698db8L, 0xf3e2f893dec3f126L,
+<i class="no-highlight">536</i>&nbsp;            0x986ddb5c6b3a76b7L, 0xbe89523386091465L,
+<i class="no-highlight">537</i>&nbsp;            0xee2ba6c0678b597fL, 0x94db483840b717efL,
+<i class="no-highlight">538</i>&nbsp;            0xba121a4650e4ddebL, 0xe896a0d7e51e1566L,
+<i class="no-highlight">539</i>&nbsp;            0x915e2486ef32cd60L, 0xb5b5ada8aaff80b8L,
+<i class="no-highlight">540</i>&nbsp;            0xe3231912d5bf60e6L, 0x8df5efabc5979c8fL,
+<i class="no-highlight">541</i>&nbsp;            0xb1736b96b6fd83b3L, 0xddd0467c64bce4a0L,
+<i class="no-highlight">542</i>&nbsp;            0x8aa22c0dbef60ee4L, 0xad4ab7112eb3929dL,
+<i class="no-highlight">543</i>&nbsp;            0xd89d64d57a607744L, 0x87625f056c7c4a8bL,
+<i class="no-highlight">544</i>&nbsp;            0xa93af6c6c79b5d2dL, 0xd389b47879823479L,
+<i class="no-highlight">545</i>&nbsp;            0x843610cb4bf160cbL, 0xa54394fe1eedb8feL,
+<i class="no-highlight">546</i>&nbsp;            0xce947a3da6a9273eL, 0x811ccc668829b887L,
+<i class="no-highlight">547</i>&nbsp;            0xa163ff802a3426a8L, 0xc9bcff6034c13052L,
+<i class="no-highlight">548</i>&nbsp;            0xfc2c3f3841f17c67L, 0x9d9ba7832936edc0L,
+<i class="no-highlight">549</i>&nbsp;            0xc5029163f384a931L, 0xf64335bcf065d37dL,
+<i class="no-highlight">550</i>&nbsp;            0x99ea0196163fa42eL, 0xc06481fb9bcf8d39L,
+<i class="no-highlight">551</i>&nbsp;            0xf07da27a82c37088L, 0x964e858c91ba2655L,
+<i class="no-highlight">552</i>&nbsp;            0xbbe226efb628afeaL, 0xeadab0aba3b2dbe5L,
+<i class="no-highlight">553</i>&nbsp;            0x92c8ae6b464fc96fL, 0xb77ada0617e3bbcbL,
+<i class="no-highlight">554</i>&nbsp;            0xe55990879ddcaabdL, 0x8f57fa54c2a9eab6L,
+<i class="no-highlight">555</i>&nbsp;            0xb32df8e9f3546564L, 0xdff9772470297ebdL,
+<i class="no-highlight">556</i>&nbsp;            0x8bfbea76c619ef36L, 0xaefae51477a06b03L,
+<i class="no-highlight">557</i>&nbsp;            0xdab99e59958885c4L, 0x88b402f7fd75539bL,
+<i class="no-highlight">558</i>&nbsp;            0xaae103b5fcd2a881L, 0xd59944a37c0752a2L,
+<i class="no-highlight">559</i>&nbsp;            0x857fcae62d8493a5L, 0xa6dfbd9fb8e5b88eL,
+<i class="no-highlight">560</i>&nbsp;            0xd097ad07a71f26b2L, 0x825ecc24c873782fL,
+<i class="no-highlight">561</i>&nbsp;            0xa2f67f2dfa90563bL, 0xcbb41ef979346bcaL,
+<i class="no-highlight">562</i>&nbsp;            0xfea126b7d78186bcL, 0x9f24b832e6b0f436L,
+<i class="no-highlight">563</i>&nbsp;            0xc6ede63fa05d3143L, 0xf8a95fcf88747d94L,
+<i class="no-highlight">564</i>&nbsp;            0x9b69dbe1b548ce7cL, 0xc24452da229b021bL,
+<i class="no-highlight">565</i>&nbsp;            0xf2d56790ab41c2a2L, 0x97c560ba6b0919a5L,
+<i class="no-highlight">566</i>&nbsp;            0xbdb6b8e905cb600fL, 0xed246723473e3813L,
+<i class="no-highlight">567</i>&nbsp;            0x9436c0760c86e30bL, 0xb94470938fa89bceL,
+<i class="no-highlight">568</i>&nbsp;            0xe7958cb87392c2c2L, 0x90bd77f3483bb9b9L,
+<i class="no-highlight">569</i>&nbsp;            0xb4ecd5f01a4aa828L, 0xe2280b6c20dd5232L,
+<i class="no-highlight">570</i>&nbsp;            0x8d590723948a535fL, 0xb0af48ec79ace837L,
+<i class="no-highlight">571</i>&nbsp;            0xdcdb1b2798182244L, 0x8a08f0f8bf0f156bL,
+<i class="no-highlight">572</i>&nbsp;            0xac8b2d36eed2dac5L, 0xd7adf884aa879177L,
+<i class="no-highlight">573</i>&nbsp;            0x86ccbb52ea94baeaL, 0xa87fea27a539e9a5L,
+<i class="no-highlight">574</i>&nbsp;            0xd29fe4b18e88640eL, 0x83a3eeeef9153e89L,
+<i class="no-highlight">575</i>&nbsp;            0xa48ceaaab75a8e2bL, 0xcdb02555653131b6L,
+<i class="no-highlight">576</i>&nbsp;            0x808e17555f3ebf11L, 0xa0b19d2ab70e6ed6L,
+<i class="no-highlight">577</i>&nbsp;            0xc8de047564d20a8bL, 0xfb158592be068d2eL,
+<i class="no-highlight">578</i>&nbsp;            0x9ced737bb6c4183dL, 0xc428d05aa4751e4cL,
+<i class="no-highlight">579</i>&nbsp;            0xf53304714d9265dfL, 0x993fe2c6d07b7fabL,
+<i class="no-highlight">580</i>&nbsp;            0xbf8fdb78849a5f96L, 0xef73d256a5c0f77cL,
+<i class="no-highlight">581</i>&nbsp;            0x95a8637627989aadL, 0xbb127c53b17ec159L,
+<i class="no-highlight">582</i>&nbsp;            0xe9d71b689dde71afL, 0x9226712162ab070dL,
+<i class="no-highlight">583</i>&nbsp;            0xb6b00d69bb55c8d1L, 0xe45c10c42a2b3b05L,
+<i class="no-highlight">584</i>&nbsp;            0x8eb98a7a9a5b04e3L, 0xb267ed1940f1c61cL,
+<i class="no-highlight">585</i>&nbsp;            0xdf01e85f912e37a3L, 0x8b61313bbabce2c6L,
+<i class="no-highlight">586</i>&nbsp;            0xae397d8aa96c1b77L, 0xd9c7dced53c72255L,
+<i class="no-highlight">587</i>&nbsp;            0x881cea14545c7575L, 0xaa242499697392d2L,
+<i class="no-highlight">588</i>&nbsp;            0xd4ad2dbfc3d07787L, 0x84ec3c97da624ab4L,
+<i class="no-highlight">589</i>&nbsp;            0xa6274bbdd0fadd61L, 0xcfb11ead453994baL,
+<i class="no-highlight">590</i>&nbsp;            0x81ceb32c4b43fcf4L, 0xa2425ff75e14fc31L,
+<i class="no-highlight">591</i>&nbsp;            0xcad2f7f5359a3b3eL, 0xfd87b5f28300ca0dL,
+<i class="no-highlight">592</i>&nbsp;            0x9e74d1b791e07e48L, 0xc612062576589ddaL,
+<i class="no-highlight">593</i>&nbsp;            0xf79687aed3eec551L, 0x9abe14cd44753b52L,
+<i class="no-highlight">594</i>&nbsp;            0xc16d9a0095928a27L, 0xf1c90080baf72cb1L,
+<i class="no-highlight">595</i>&nbsp;            0x971da05074da7beeL, 0xbce5086492111aeaL,
+<i class="no-highlight">596</i>&nbsp;            0xec1e4a7db69561a5L, 0x9392ee8e921d5d07L,
+<i class="no-highlight">597</i>&nbsp;            0xb877aa3236a4b449L, 0xe69594bec44de15bL,
+<i class="no-highlight">598</i>&nbsp;            0x901d7cf73ab0acd9L, 0xb424dc35095cd80fL,
+<i class="no-highlight">599</i>&nbsp;            0xe12e13424bb40e13L, 0x8cbccc096f5088cbL,
+<i class="no-highlight">600</i>&nbsp;            0xafebff0bcb24aafeL, 0xdbe6fecebdedd5beL,
+<i class="no-highlight">601</i>&nbsp;            0x89705f4136b4a597L, 0xabcc77118461cefcL,
+<i class="no-highlight">602</i>&nbsp;            0xd6bf94d5e57a42bcL, 0x8637bd05af6c69b5L,
+<i class="no-highlight">603</i>&nbsp;            0xa7c5ac471b478423L, 0xd1b71758e219652bL,
+<i class="no-highlight">604</i>&nbsp;            0x83126e978d4fdf3bL, 0xa3d70a3d70a3d70aL,
+<i class="no-highlight">605</i>&nbsp;            0xccccccccccccccccL, 0x8000000000000000L,
+<i class="no-highlight">606</i>&nbsp;            0xa000000000000000L, 0xc800000000000000L,
+<i class="no-highlight">607</i>&nbsp;            0xfa00000000000000L, 0x9c40000000000000L,
+<i class="no-highlight">608</i>&nbsp;            0xc350000000000000L, 0xf424000000000000L,
+<i class="no-highlight">609</i>&nbsp;            0x9896800000000000L, 0xbebc200000000000L,
+<i class="no-highlight">610</i>&nbsp;            0xee6b280000000000L, 0x9502f90000000000L,
+<i class="no-highlight">611</i>&nbsp;            0xba43b74000000000L, 0xe8d4a51000000000L,
+<i class="no-highlight">612</i>&nbsp;            0x9184e72a00000000L, 0xb5e620f480000000L,
+<i class="no-highlight">613</i>&nbsp;            0xe35fa931a0000000L, 0x8e1bc9bf04000000L,
+<i class="no-highlight">614</i>&nbsp;            0xb1a2bc2ec5000000L, 0xde0b6b3a76400000L,
+<i class="no-highlight">615</i>&nbsp;            0x8ac7230489e80000L, 0xad78ebc5ac620000L,
+<i class="no-highlight">616</i>&nbsp;            0xd8d726b7177a8000L, 0x878678326eac9000L,
+<i class="no-highlight">617</i>&nbsp;            0xa968163f0a57b400L, 0xd3c21bcecceda100L,
+<i class="no-highlight">618</i>&nbsp;            0x84595161401484a0L, 0xa56fa5b99019a5c8L,
+<i class="no-highlight">619</i>&nbsp;            0xcecb8f27f4200f3aL, 0x813f3978f8940984L,
+<i class="no-highlight">620</i>&nbsp;            0xa18f07d736b90be5L, 0xc9f2c9cd04674edeL,
+<i class="no-highlight">621</i>&nbsp;            0xfc6f7c4045812296L, 0x9dc5ada82b70b59dL,
+<i class="no-highlight">622</i>&nbsp;            0xc5371912364ce305L, 0xf684df56c3e01bc6L,
+<i class="no-highlight">623</i>&nbsp;            0x9a130b963a6c115cL, 0xc097ce7bc90715b3L,
+<i class="no-highlight">624</i>&nbsp;            0xf0bdc21abb48db20L, 0x96769950b50d88f4L,
+<i class="no-highlight">625</i>&nbsp;            0xbc143fa4e250eb31L, 0xeb194f8e1ae525fdL,
+<i class="no-highlight">626</i>&nbsp;            0x92efd1b8d0cf37beL, 0xb7abc627050305adL,
+<i class="no-highlight">627</i>&nbsp;            0xe596b7b0c643c719L, 0x8f7e32ce7bea5c6fL,
+<i class="no-highlight">628</i>&nbsp;            0xb35dbf821ae4f38bL, 0xe0352f62a19e306eL,
+<i class="no-highlight">629</i>&nbsp;            0x8c213d9da502de45L, 0xaf298d050e4395d6L,
+<i class="no-highlight">630</i>&nbsp;            0xdaf3f04651d47b4cL, 0x88d8762bf324cd0fL,
+<i class="no-highlight">631</i>&nbsp;            0xab0e93b6efee0053L, 0xd5d238a4abe98068L,
+<i class="no-highlight">632</i>&nbsp;            0x85a36366eb71f041L, 0xa70c3c40a64e6c51L,
+<i class="no-highlight">633</i>&nbsp;            0xd0cf4b50cfe20765L, 0x82818f1281ed449fL,
+<i class="no-highlight">634</i>&nbsp;            0xa321f2d7226895c7L, 0xcbea6f8ceb02bb39L,
+<i class="no-highlight">635</i>&nbsp;            0xfee50b7025c36a08L, 0x9f4f2726179a2245L,
+<i class="no-highlight">636</i>&nbsp;            0xc722f0ef9d80aad6L, 0xf8ebad2b84e0d58bL,
+<i class="no-highlight">637</i>&nbsp;            0x9b934c3b330c8577L, 0xc2781f49ffcfa6d5L,
+<i class="no-highlight">638</i>&nbsp;            0xf316271c7fc3908aL, 0x97edd871cfda3a56L,
+<i class="no-highlight">639</i>&nbsp;            0xbde94e8e43d0c8ecL, 0xed63a231d4c4fb27L,
+<i class="no-highlight">640</i>&nbsp;            0x945e455f24fb1cf8L, 0xb975d6b6ee39e436L,
+<i class="no-highlight">641</i>&nbsp;            0xe7d34c64a9c85d44L, 0x90e40fbeea1d3a4aL,
+<i class="no-highlight">642</i>&nbsp;            0xb51d13aea4a488ddL, 0xe264589a4dcdab14L,
+<i class="no-highlight">643</i>&nbsp;            0x8d7eb76070a08aecL, 0xb0de65388cc8ada8L,
+<i class="no-highlight">644</i>&nbsp;            0xdd15fe86affad912L, 0x8a2dbf142dfcc7abL,
+<i class="no-highlight">645</i>&nbsp;            0xacb92ed9397bf996L, 0xd7e77a8f87daf7fbL,
+<i class="no-highlight">646</i>&nbsp;            0x86f0ac99b4e8dafdL, 0xa8acd7c0222311bcL,
+<i class="no-highlight">647</i>&nbsp;            0xd2d80db02aabd62bL, 0x83c7088e1aab65dbL,
+<i class="no-highlight">648</i>&nbsp;            0xa4b8cab1a1563f52L, 0xcde6fd5e09abcf26L,
+<i class="no-highlight">649</i>&nbsp;            0x80b05e5ac60b6178L, 0xa0dc75f1778e39d6L,
+<i class="no-highlight">650</i>&nbsp;            0xc913936dd571c84cL, 0xfb5878494ace3a5fL,
+<i class="no-highlight">651</i>&nbsp;            0x9d174b2dcec0e47bL, 0xc45d1df942711d9aL,
+<i class="no-highlight">652</i>&nbsp;            0xf5746577930d6500L, 0x9968bf6abbe85f20L,
+<i class="no-highlight">653</i>&nbsp;            0xbfc2ef456ae276e8L, 0xefb3ab16c59b14a2L,
+<i class="no-highlight">654</i>&nbsp;            0x95d04aee3b80ece5L, 0xbb445da9ca61281fL,
+<i class="no-highlight">655</i>&nbsp;            0xea1575143cf97226L, 0x924d692ca61be758L,
+<i class="no-highlight">656</i>&nbsp;            0xb6e0c377cfa2e12eL, 0xe498f455c38b997aL,
+<i class="no-highlight">657</i>&nbsp;            0x8edf98b59a373fecL, 0xb2977ee300c50fe7L,
+<i class="no-highlight">658</i>&nbsp;            0xdf3d5e9bc0f653e1L, 0x8b865b215899f46cL,
+<i class="no-highlight">659</i>&nbsp;            0xae67f1e9aec07187L, 0xda01ee641a708de9L,
+<i class="no-highlight">660</i>&nbsp;            0x884134fe908658b2L, 0xaa51823e34a7eedeL,
+<i class="no-highlight">661</i>&nbsp;            0xd4e5e2cdc1d1ea96L, 0x850fadc09923329eL,
+<i class="no-highlight">662</i>&nbsp;            0xa6539930bf6bff45L, 0xcfe87f7cef46ff16L,
+<i class="no-highlight">663</i>&nbsp;            0x81f14fae158c5f6eL, 0xa26da3999aef7749L,
+<i class="no-highlight">664</i>&nbsp;            0xcb090c8001ab551cL, 0xfdcb4fa002162a63L,
+<i class="no-highlight">665</i>&nbsp;            0x9e9f11c4014dda7eL, 0xc646d63501a1511dL,
+<i class="no-highlight">666</i>&nbsp;            0xf7d88bc24209a565L, 0x9ae757596946075fL,
+<i class="no-highlight">667</i>&nbsp;            0xc1a12d2fc3978937L, 0xf209787bb47d6b84L,
+<i class="no-highlight">668</i>&nbsp;            0x9745eb4d50ce6332L, 0xbd176620a501fbffL,
+<i class="no-highlight">669</i>&nbsp;            0xec5d3fa8ce427affL, 0x93ba47c980e98cdfL,
+<i class="no-highlight">670</i>&nbsp;            0xb8a8d9bbe123f017L, 0xe6d3102ad96cec1dL,
+<i class="no-highlight">671</i>&nbsp;            0x9043ea1ac7e41392L, 0xb454e4a179dd1877L,
+<i class="no-highlight">672</i>&nbsp;            0xe16a1dc9d8545e94L, 0x8ce2529e2734bb1dL,
+<i class="no-highlight">673</i>&nbsp;            0xb01ae745b101e9e4L, 0xdc21a1171d42645dL,
+<i class="no-highlight">674</i>&nbsp;            0x899504ae72497ebaL, 0xabfa45da0edbde69L,
+<i class="no-highlight">675</i>&nbsp;            0xd6f8d7509292d603L, 0x865b86925b9bc5c2L,
+<i class="no-highlight">676</i>&nbsp;            0xa7f26836f282b732L, 0xd1ef0244af2364ffL,
+<i class="no-highlight">677</i>&nbsp;            0x8335616aed761f1fL, 0xa402b9c5a8d3a6e7L,
+<i class="no-highlight">678</i>&nbsp;            0xcd036837130890a1L, 0x802221226be55a64L,
+<i class="no-highlight">679</i>&nbsp;            0xa02aa96b06deb0fdL, 0xc83553c5c8965d3dL,
+<i class="no-highlight">680</i>&nbsp;            0xfa42a8b73abbf48cL, 0x9c69a97284b578d7L,
+<i class="no-highlight">681</i>&nbsp;            0xc38413cf25e2d70dL, 0xf46518c2ef5b8cd1L,
+<i class="no-highlight">682</i>&nbsp;            0x98bf2f79d5993802L, 0xbeeefb584aff8603L,
+<i class="no-highlight">683</i>&nbsp;            0xeeaaba2e5dbf6784L, 0x952ab45cfa97a0b2L,
+<i class="no-highlight">684</i>&nbsp;            0xba756174393d88dfL, 0xe912b9d1478ceb17L,
+<i class="no-highlight">685</i>&nbsp;            0x91abb422ccb812eeL, 0xb616a12b7fe617aaL,
+<i class="no-highlight">686</i>&nbsp;            0xe39c49765fdf9d94L, 0x8e41ade9fbebc27dL,
+<i class="no-highlight">687</i>&nbsp;            0xb1d219647ae6b31cL, 0xde469fbd99a05fe3L,
+<i class="no-highlight">688</i>&nbsp;            0x8aec23d680043beeL, 0xada72ccc20054ae9L,
+<i class="no-highlight">689</i>&nbsp;            0xd910f7ff28069da4L, 0x87aa9aff79042286L,
+<i class="no-highlight">690</i>&nbsp;            0xa99541bf57452b28L, 0xd3fa922f2d1675f2L,
+<i class="no-highlight">691</i>&nbsp;            0x847c9b5d7c2e09b7L, 0xa59bc234db398c25L,
+<i class="no-highlight">692</i>&nbsp;            0xcf02b2c21207ef2eL, 0x8161afb94b44f57dL,
+<i class="no-highlight">693</i>&nbsp;            0xa1ba1ba79e1632dcL, 0xca28a291859bbf93L,
+<i class="no-highlight">694</i>&nbsp;            0xfcb2cb35e702af78L, 0x9defbf01b061adabL,
+<i class="no-highlight">695</i>&nbsp;            0xc56baec21c7a1916L, 0xf6c69a72a3989f5bL,
+<i class="no-highlight">696</i>&nbsp;            0x9a3c2087a63f6399L, 0xc0cb28a98fcf3c7fL,
+<i class="no-highlight">697</i>&nbsp;            0xf0fdf2d3f3c30b9fL, 0x969eb7c47859e743L,
+<i class="no-highlight">698</i>&nbsp;            0xbc4665b596706114L, 0xeb57ff22fc0c7959L,
+<i class="no-highlight">699</i>&nbsp;            0x9316ff75dd87cbd8L, 0xb7dcbf5354e9beceL,
+<i class="no-highlight">700</i>&nbsp;            0xe5d3ef282a242e81L, 0x8fa475791a569d10L,
+<i class="no-highlight">701</i>&nbsp;            0xb38d92d760ec4455L, 0xe070f78d3927556aL,
+<i class="no-highlight">702</i>&nbsp;            0x8c469ab843b89562L, 0xaf58416654a6babbL,
+<i class="no-highlight">703</i>&nbsp;            0xdb2e51bfe9d0696aL, 0x88fcf317f22241e2L,
+<i class="no-highlight">704</i>&nbsp;            0xab3c2fddeeaad25aL, 0xd60b3bd56a5586f1L,
+<i class="no-highlight">705</i>&nbsp;            0x85c7056562757456L, 0xa738c6bebb12d16cL,
+<i class="no-highlight">706</i>&nbsp;            0xd106f86e69d785c7L, 0x82a45b450226b39cL,
+<i class="no-highlight">707</i>&nbsp;            0xa34d721642b06084L, 0xcc20ce9bd35c78a5L,
+<i class="no-highlight">708</i>&nbsp;            0xff290242c83396ceL, 0x9f79a169bd203e41L,
+<i class="no-highlight">709</i>&nbsp;            0xc75809c42c684dd1L, 0xf92e0c3537826145L,
+<i class="no-highlight">710</i>&nbsp;            0x9bbcc7a142b17ccbL, 0xc2abf989935ddbfeL,
+<i class="no-highlight">711</i>&nbsp;            0xf356f7ebf83552feL, 0x98165af37b2153deL,
+<i class="no-highlight">712</i>&nbsp;            0xbe1bf1b059e9a8d6L, 0xeda2ee1c7064130cL,
+<i class="no-highlight">713</i>&nbsp;            0x9485d4d1c63e8be7L, 0xb9a74a0637ce2ee1L,
+<i class="no-highlight">714</i>&nbsp;            0xe8111c87c5c1ba99L, 0x910ab1d4db9914a0L,
+<i class="no-highlight">715</i>&nbsp;            0xb54d5e4a127f59c8L, 0xe2a0b5dc971f303aL,
+<i class="no-highlight">716</i>&nbsp;            0x8da471a9de737e24L, 0xb10d8e1456105dadL,
+<i class="no-highlight">717</i>&nbsp;            0xdd50f1996b947518L, 0x8a5296ffe33cc92fL,
+<i class="no-highlight">718</i>&nbsp;            0xace73cbfdc0bfb7bL, 0xd8210befd30efa5aL,
+<i class="no-highlight">719</i>&nbsp;            0x8714a775e3e95c78L, 0xa8d9d1535ce3b396L,
+<i class="no-highlight">720</i>&nbsp;            0xd31045a8341ca07cL, 0x83ea2b892091e44dL,
+<i class="no-highlight">721</i>&nbsp;            0xa4e4b66b68b65d60L, 0xce1de40642e3f4b9L,
+<i class="no-highlight">722</i>&nbsp;            0x80d2ae83e9ce78f3L, 0xa1075a24e4421730L,
+<i class="no-highlight">723</i>&nbsp;            0xc94930ae1d529cfcL, 0xfb9b7cd9a4a7443cL,
+<i class="no-highlight">724</i>&nbsp;            0x9d412e0806e88aa5L, 0xc491798a08a2ad4eL,
+<i class="no-highlight">725</i>&nbsp;            0xf5b5d7ec8acb58a2L, 0x9991a6f3d6bf1765L,
+<i class="no-highlight">726</i>&nbsp;            0xbff610b0cc6edd3fL, 0xeff394dcff8a948eL,
+<i class="no-highlight">727</i>&nbsp;            0x95f83d0a1fb69cd9L, 0xbb764c4ca7a4440fL,
+<i class="no-highlight">728</i>&nbsp;            0xea53df5fd18d5513L, 0x92746b9be2f8552cL,
+<i class="no-highlight">729</i>&nbsp;            0xb7118682dbb66a77L, 0xe4d5e82392a40515L,
+<i class="no-highlight">730</i>&nbsp;            0x8f05b1163ba6832dL, 0xb2c71d5bca9023f8L,
+<i class="no-highlight">731</i>&nbsp;            0xdf78e4b2bd342cf6L, 0x8bab8eefb6409c1aL,
+<i class="no-highlight">732</i>&nbsp;            0xae9672aba3d0c320L, 0xda3c0f568cc4f3e8L,
+<i class="no-highlight">733</i>&nbsp;            0x8865899617fb1871L, 0xaa7eebfb9df9de8dL,
+<i class="no-highlight">734</i>&nbsp;            0xd51ea6fa85785631L, 0x8533285c936b35deL,
+<i class="no-highlight">735</i>&nbsp;            0xa67ff273b8460356L, 0xd01fef10a657842cL,
+<i class="no-highlight">736</i>&nbsp;            0x8213f56a67f6b29bL, 0xa298f2c501f45f42L,
+<i class="no-highlight">737</i>&nbsp;            0xcb3f2f7642717713L, 0xfe0efb53d30dd4d7L,
+<i class="no-highlight">738</i>&nbsp;            0x9ec95d1463e8a506L, 0xc67bb4597ce2ce48L,
+<i class="no-highlight">739</i>&nbsp;            0xf81aa16fdc1b81daL, 0x9b10a4e5e9913128L,
+<i class="no-highlight">740</i>&nbsp;            0xc1d4ce1f63f57d72L, 0xf24a01a73cf2dccfL,
+<i class="no-highlight">741</i>&nbsp;            0x976e41088617ca01L, 0xbd49d14aa79dbc82L,
+<i class="no-highlight">742</i>&nbsp;            0xec9c459d51852ba2L, 0x93e1ab8252f33b45L,
+<i class="no-highlight">743</i>&nbsp;            0xb8da1662e7b00a17L, 0xe7109bfba19c0c9dL,
+<i class="no-highlight">744</i>&nbsp;            0x906a617d450187e2L, 0xb484f9dc9641e9daL,
+<i class="no-highlight">745</i>&nbsp;            0xe1a63853bbd26451L, 0x8d07e33455637eb2L,
+<i class="no-highlight">746</i>&nbsp;            0xb049dc016abc5e5fL, 0xdc5c5301c56b75f7L,
+<i class="no-highlight">747</i>&nbsp;            0x89b9b3e11b6329baL, 0xac2820d9623bf429L,
+<i class="no-highlight">748</i>&nbsp;            0xd732290fbacaf133L, 0x867f59a9d4bed6c0L,
+<i class="no-highlight">749</i>&nbsp;            0xa81f301449ee8c70L, 0xd226fc195c6a2f8cL,
+<i class="no-highlight">750</i>&nbsp;            0x83585d8fd9c25db7L, 0xa42e74f3d032f525L,
+<i class="no-highlight">751</i>&nbsp;            0xcd3a1230c43fb26fL, 0x80444b5e7aa7cf85L,
+<i class="no-highlight">752</i>&nbsp;            0xa0555e361951c366L, 0xc86ab5c39fa63440L,
+<i class="no-highlight">753</i>&nbsp;            0xfa856334878fc150L, 0x9c935e00d4b9d8d2L,
+<i class="no-highlight">754</i>&nbsp;            0xc3b8358109e84f07L, 0xf4a642e14c6262c8L,
+<i class="no-highlight">755</i>&nbsp;            0x98e7e9cccfbd7dbdL, 0xbf21e44003acdd2cL,
+<i class="no-highlight">756</i>&nbsp;            0xeeea5d5004981478L, 0x95527a5202df0ccbL,
+<i class="no-highlight">757</i>&nbsp;            0xbaa718e68396cffdL, 0xe950df20247c83fdL,
+<i class="no-highlight">758</i>&nbsp;            0x91d28b7416cdd27eL, 0xb6472e511c81471dL,
+<i class="no-highlight">759</i>&nbsp;            0xe3d8f9e563a198e5L, 0x8e679c2f5e44ff8fL};
+<i class="no-highlight">760</i>&nbsp;    private final static int DOUBLE_MAX_EXPONENT_POWER_OF_TWO = Double.MAX_EXPONENT;
+<i class="no-highlight">761</i>&nbsp;    private final static int DOUBLE_MIN_EXPONENT_POWER_OF_TWO = Double.MIN_EXPONENT;
+<i class="no-highlight">762</i>&nbsp;    /**
+<i class="no-highlight">763</i>&nbsp;     * Precomputed powers of ten from 10^0 to 10^22. These
+<i class="no-highlight">764</i>&nbsp;     * can be represented exactly using the double type.
+<i class="no-highlight">765</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">766</i>&nbsp;    private static final double[] DOUBLE_POWERS_OF_TEN = {</b>
+<i class="no-highlight">767</i>&nbsp;            1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+<i class="no-highlight">768</i>&nbsp;            1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+<i class="no-highlight">769</i>&nbsp;
+<i class="no-highlight">770</i>&nbsp;    /**
+<i class="no-highlight">771</i>&nbsp;     * Don&#39;t let anyone instantiate this class.
+<i class="no-highlight">772</i>&nbsp;     */
+<i class="no-highlight">773</i>&nbsp;    private FastDoubleMath() {
+<i class="no-highlight">774</i>&nbsp;
+<i class="no-highlight">775</i>&nbsp;    }
+<i class="no-highlight">776</i>&nbsp;
+<i class="no-highlight">777</i>&nbsp;    /**
+<i class="no-highlight">778</i>&nbsp;     * Tries to compute {@code significand * 10^power} exactly using
+<i class="no-highlight">779</i>&nbsp;     * a fast algorithm; and if {@code isNegative} is true, negate the result.
+<i class="no-highlight">780</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">781</i>&nbsp;     * This function will only work in some cases, when it does not work it
+<i class="no-highlight">782</i>&nbsp;     * returns NaN. This should work *most of the time* (like 99% of the time).
+<i class="no-highlight">783</i>&nbsp;     * We assume that power is in the
+<i class="no-highlight">784</i>&nbsp;     * [{@value #DOUBLE_MIN_EXPONENT_POWER_OF_TEN}, {@value #DOUBLE_MAX_EXPONENT_POWER_OF_TEN}]
+<i class="no-highlight">785</i>&nbsp;     * interval: the caller is responsible for this check.
+<i class="no-highlight">786</i>&nbsp;     *
+<i class="no-highlight">787</i>&nbsp;     * @param isNegative  whether the number is negative
+<i class="no-highlight">788</i>&nbsp;     * @param significand uint64 the significand
+<i class="no-highlight">789</i>&nbsp;     * @param power       the exponent number (the power)
+<i class="no-highlight">790</i>&nbsp;     * @return the computed double on success, {@link Double#NaN} on failure
+<i class="no-highlight">791</i>&nbsp;     */
+<i class="no-highlight">792</i>&nbsp;    static double tryDecFloatToDouble(boolean isNegative, long significand, int power) {
+<i class="no-highlight">793</i>&nbsp;        // we start with a fast path
+<i class="no-highlight">794</i>&nbsp;        // It was described in Clinger WD (1990).
+<b class="fc"><i class="no-highlight">795</i>&nbsp;        if (-22 &lt;= power &amp;&amp; power &lt;= 22 &amp;&amp; Long.compareUnsigned(significand, (1L &lt;&lt; DOUBLE_SIGNIFICAND_WIDTH) - 1) &lt;= 0) {</b>
+<i class="no-highlight">796</i>&nbsp;            // convert the integer into a double. This is lossless since
+<i class="no-highlight">797</i>&nbsp;            // 0 &lt;= i &lt;= 2^53 - 1.
+<b class="fc"><i class="no-highlight">798</i>&nbsp;            double d = (double) significand;</b>
+<i class="no-highlight">799</i>&nbsp;            //
+<i class="no-highlight">800</i>&nbsp;            // The general idea is as follows.
+<i class="no-highlight">801</i>&nbsp;            // If 0 &lt;= s &lt; 2^53 and if 10^0 &lt;= p &lt;= 10^22 then
+<i class="no-highlight">802</i>&nbsp;            // 1) Both s and p can be represented exactly as 64-bit floating-point values
+<i class="no-highlight">803</i>&nbsp;            // 2) Because s and p can be represented exactly as floating-point values,
+<i class="no-highlight">804</i>&nbsp;            // then s * p and s / p will produce correctly rounded values.
+<i class="no-highlight">805</i>&nbsp;            //
+<b class="fc"><i class="no-highlight">806</i>&nbsp;            if (power &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">807</i>&nbsp;                d = d / DOUBLE_POWERS_OF_TEN[-power];</b>
+<i class="no-highlight">808</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">809</i>&nbsp;                d = d * DOUBLE_POWERS_OF_TEN[power];</b>
+<i class="no-highlight">810</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">811</i>&nbsp;            return (isNegative) ? -d : d;</b>
+<i class="no-highlight">812</i>&nbsp;        }
+<i class="no-highlight">813</i>&nbsp;
+<i class="no-highlight">814</i>&nbsp;
+<i class="no-highlight">815</i>&nbsp;        // The fast path has now failed, so we are falling back on the slower path.
+<i class="no-highlight">816</i>&nbsp;
+<i class="no-highlight">817</i>&nbsp;        // We are going to need to do some 64-bit arithmetic to get a more precise product.
+<i class="no-highlight">818</i>&nbsp;        // We use a table lookup approach.
+<i class="no-highlight">819</i>&nbsp;        // It is safe because
+<i class="no-highlight">820</i>&nbsp;        // power &gt;= DOUBLE_MIN_EXPONENT_POWER_OF_TEN
+<i class="no-highlight">821</i>&nbsp;        // and power &lt;= DOUBLE_MAX_EXPONENT_POWER_OF_TEN
+<i class="no-highlight">822</i>&nbsp;        // We recover the mantissa of the power, it has a leading 1. It is always
+<i class="no-highlight">823</i>&nbsp;        // rounded down.
+<b class="fc"><i class="no-highlight">824</i>&nbsp;        long factorMantissa = MANTISSA_64[power - DOUBLE_MIN_EXPONENT_POWER_OF_TEN];</b>
+<i class="no-highlight">825</i>&nbsp;
+<i class="no-highlight">826</i>&nbsp;
+<i class="no-highlight">827</i>&nbsp;        // The exponent is 1023 + 64 + power + floor(log(5**power)/log(2)).
+<i class="no-highlight">828</i>&nbsp;        //
+<i class="no-highlight">829</i>&nbsp;        // 1023 is the exponent bias.
+<i class="no-highlight">830</i>&nbsp;        // The 64 comes from the fact that we use a 64-bit word.
+<i class="no-highlight">831</i>&nbsp;        //
+<i class="no-highlight">832</i>&nbsp;        // Computing floor(log(5**power)/log(2)) could be
+<i class="no-highlight">833</i>&nbsp;        // slow. Instead, we use a fast function.
+<i class="no-highlight">834</i>&nbsp;        //
+<i class="no-highlight">835</i>&nbsp;        // For power in (-400,350), we have that
+<i class="no-highlight">836</i>&nbsp;        // (((152170 + 65536) * power ) &gt;&gt; 16);
+<i class="no-highlight">837</i>&nbsp;        // is equal to
+<i class="no-highlight">838</i>&nbsp;        //  floor(log(5**power)/log(2)) + power when power &gt;= 0,
+<i class="no-highlight">839</i>&nbsp;        // and it is equal to
+<i class="no-highlight">840</i>&nbsp;        //  ceil(log(5**-power)/log(2)) + power when power &lt; 0
+<i class="no-highlight">841</i>&nbsp;        //
+<i class="no-highlight">842</i>&nbsp;        //
+<i class="no-highlight">843</i>&nbsp;        // The 65536 is (1&lt;&lt;16) and corresponds to
+<i class="no-highlight">844</i>&nbsp;        // (65536 * power) &gt;&gt; 16 ---&gt; power
+<i class="no-highlight">845</i>&nbsp;        //
+<i class="no-highlight">846</i>&nbsp;        // ((152170 * power ) &gt;&gt; 16) is equal to
+<i class="no-highlight">847</i>&nbsp;        // floor(log(5**power)/log(2))
+<i class="no-highlight">848</i>&nbsp;        //
+<i class="no-highlight">849</i>&nbsp;        // Note that this is not magic: 152170/(1&lt;&lt;16) is
+<i class="no-highlight">850</i>&nbsp;        // approximately equal to log(5)/log(2).
+<i class="no-highlight">851</i>&nbsp;        // The 1&lt;&lt;16 value is a power of two; we could use a
+<i class="no-highlight">852</i>&nbsp;        // larger power of 2 if we wanted to.
+<i class="no-highlight">853</i>&nbsp;        //
+<b class="fc"><i class="no-highlight">854</i>&nbsp;        long exponent = (((152170L + 65536L) * power) &gt;&gt; 16) + DOUBLE_EXPONENT_BIAS + 64;</b>
+<i class="no-highlight">855</i>&nbsp;        // We want the most significant bit of digits to be 1. Shift if needed.
+<b class="fc"><i class="no-highlight">856</i>&nbsp;        int lz = Long.numberOfLeadingZeros(significand);</b>
+<b class="fc"><i class="no-highlight">857</i>&nbsp;        significand &lt;&lt;= lz;</b>
+<i class="no-highlight">858</i>&nbsp;        // We want the most significant 64 bits of the product. We know
+<i class="no-highlight">859</i>&nbsp;        // this will be non-zero because the most significant bit of digits is
+<i class="no-highlight">860</i>&nbsp;        // 1.
+<b class="fc"><i class="no-highlight">861</i>&nbsp;        long x01 = significand &amp; 0xffffffffL, x11 = significand &gt;&gt;&gt; 32;</b>
+<b class="fc"><i class="no-highlight">862</i>&nbsp;        long y01 = factorMantissa &amp; 0xffffffffL, y11 = factorMantissa &gt;&gt;&gt; 32;</b>
+<b class="fc"><i class="no-highlight">863</i>&nbsp;        long p111 = x11 * y11, p011 = x01 * y11;</b>
+<b class="fc"><i class="no-highlight">864</i>&nbsp;        long p101 = x11 * y01, p001 = x01 * y01;</b>
+<i class="no-highlight">865</i>&nbsp;
+<i class="no-highlight">866</i>&nbsp;        // 64-bit product + two 32-bit values
+<b class="fc"><i class="no-highlight">867</i>&nbsp;        long middle1 = p101 + (p001 &gt;&gt;&gt; 32) + (p011 &amp; 0xffffffffL);</b>
+<b class="fc"><i class="no-highlight">868</i>&nbsp;        long lower = (middle1 &lt;&lt; 32) | (p001 &amp; 0xffffffffL);</b>
+<b class="fc"><i class="no-highlight">869</i>&nbsp;        long upper = p111 + (middle1 &gt;&gt;&gt; 32) + (p011 &gt;&gt;&gt; 32);</b>
+<i class="no-highlight">870</i>&nbsp;        // We know that upper has at most one leading zero because
+<i class="no-highlight">871</i>&nbsp;        // both i and factor_mantissa have a leading one. This means
+<i class="no-highlight">872</i>&nbsp;        // that the result is at least as large as ((1&lt;&lt;63)*(1&lt;&lt;63))/(1&lt;&lt;64).
+<i class="no-highlight">873</i>&nbsp;
+<i class="no-highlight">874</i>&nbsp;        // As long as the first 9 bits of &quot;upper&quot; are not &quot;1&quot;, then we
+<i class="no-highlight">875</i>&nbsp;        // know that we have an exact computed value for the leading
+<i class="no-highlight">876</i>&nbsp;        // 55 bits because any imprecision would play out as a +1, in
+<i class="no-highlight">877</i>&nbsp;        // the worst case.
+<i class="no-highlight">878</i>&nbsp;        // Having 55 bits is necessary because
+<i class="no-highlight">879</i>&nbsp;        // we need 53 bits for the mantissa, but we have to have one rounding bit and
+<i class="no-highlight">880</i>&nbsp;        // we can waste a bit if the most significant bit of the product is zero.
+<i class="no-highlight">881</i>&nbsp;        // We expect this next branch to be rarely taken (say 1% of the time).
+<i class="no-highlight">882</i>&nbsp;        // When (upper &amp; 0x1FF) == 0x1FF, it can be common for
+<i class="no-highlight">883</i>&nbsp;        // lower + i &lt; lower to be true (proba. much higher than 1%).
+<b class="fc"><i class="no-highlight">884</i>&nbsp;        if ((upper &amp; 0x1ffL) == 0x1ffL &amp;&amp; Long.compareUnsigned(lower + significand, lower) &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">885</i>&nbsp;            long factorMantissaLow =</b>
+<i class="no-highlight">886</i>&nbsp;                    MANTISSA_128[power - DOUBLE_MIN_EXPONENT_POWER_OF_TEN];
+<i class="no-highlight">887</i>&nbsp;            // next, we compute the 64-bit x 128-bit multiplication, getting a 192-bit
+<i class="no-highlight">888</i>&nbsp;            // result (three 64-bit values)
+<i class="no-highlight">889</i>&nbsp;            //before Java 18
+<b class="fc"><i class="no-highlight">890</i>&nbsp;            long x0 = significand &amp; 0xffffffffL, x1 = significand &gt;&gt;&gt; 32;</b>
+<b class="fc"><i class="no-highlight">891</i>&nbsp;            long y0 = factorMantissaLow &amp; 0xffffffffL, y1 = factorMantissaLow &gt;&gt;&gt; 32;</b>
+<b class="fc"><i class="no-highlight">892</i>&nbsp;            long p11 = x1 * y1, p01 = x0 * y1;</b>
+<b class="fc"><i class="no-highlight">893</i>&nbsp;            long p10 = x1 * y0, p00 = x0 * y0;</b>
+<i class="no-highlight">894</i>&nbsp;
+<i class="no-highlight">895</i>&nbsp;            // 64-bit product + two 32-bit values
+<b class="fc"><i class="no-highlight">896</i>&nbsp;            long middle = p10 + (p00 &gt;&gt;&gt; 32) + (p01 &amp; 0xffffffffL);</b>
+<b class="fc"><i class="no-highlight">897</i>&nbsp;            long productLow = (middle &lt;&lt; 32) | (p00 &amp; 0xffffffffL);</b>
+<b class="fc"><i class="no-highlight">898</i>&nbsp;            long productMiddle2 = p11 + (middle &gt;&gt;&gt; 32) + (p01 &gt;&gt;&gt; 32);</b>
+<b class="fc"><i class="no-highlight">899</i>&nbsp;            long productHigh = upper;</b>
+<b class="fc"><i class="no-highlight">900</i>&nbsp;            long productMiddle = lower + productMiddle2;</b>
+<b class="fc"><i class="no-highlight">901</i>&nbsp;            if (Long.compareUnsigned(productMiddle, lower) &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">902</i>&nbsp;                productHigh++; // overflow carry</b>
+<i class="no-highlight">903</i>&nbsp;            }
+<i class="no-highlight">904</i>&nbsp;
+<i class="no-highlight">905</i>&nbsp;            // we want to check whether mantissa *i + i would affect our result
+<i class="no-highlight">906</i>&nbsp;            // This does happen, e.g. with 7.3177701707893310e+15
+<b class="fc"><i class="no-highlight">907</i>&nbsp;            if (((productMiddle + 1 == 0) &amp;&amp; ((productHigh &amp; 0x1ffL) == 0x1ffL) &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">908</i>&nbsp;                    (productLow + Long.compareUnsigned(significand, productLow) &lt; 0))) { // let us be prudent and bail out.</b>
+<b class="fc"><i class="no-highlight">909</i>&nbsp;                return Double.NaN;</b>
+<i class="no-highlight">910</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">911</i>&nbsp;            upper = productHigh;</b>
+<i class="no-highlight">912</i>&nbsp;            //lower = product_middle;
+<i class="no-highlight">913</i>&nbsp;        }
+<i class="no-highlight">914</i>&nbsp;
+<i class="no-highlight">915</i>&nbsp;        // The final mantissa should be 53 bits with a leading 1.
+<i class="no-highlight">916</i>&nbsp;        // We shift it so that it occupies 54 bits with a leading 1.
+<b class="fc"><i class="no-highlight">917</i>&nbsp;        long upperbit = upper &gt;&gt;&gt; 63;</b>
+<b class="fc"><i class="no-highlight">918</i>&nbsp;        long mantissa = upper &gt;&gt;&gt; (upperbit + 9);</b>
+<b class="fc"><i class="no-highlight">919</i>&nbsp;        lz += (int) (1 ^ upperbit);</b>
+<i class="no-highlight">920</i>&nbsp;        // Here we have mantissa &lt; (1&lt;&lt;54).
+<i class="no-highlight">921</i>&nbsp;
+<i class="no-highlight">922</i>&nbsp;        // We have to round to even. The &quot;to even&quot; part
+<i class="no-highlight">923</i>&nbsp;        // is only a problem when we are right in between two floating-point values
+<i class="no-highlight">924</i>&nbsp;        // which we guard against.
+<i class="no-highlight">925</i>&nbsp;        // If we have lots of trailing zeros, we may fall right between two
+<i class="no-highlight">926</i>&nbsp;        // floating-point values.
+<b class="fc"><i class="no-highlight">927</i>&nbsp;        if (((upper &amp; 0x1ff) == 0x1ff)</b>
+<i class="no-highlight">928</i>&nbsp;                || ((upper &amp; 0x1ff) == 0) &amp;&amp; (mantissa &amp; 3) == 1) {
+<i class="no-highlight">929</i>&nbsp;            // if mantissa &amp; 1 == 1 we might need to round up.
+<i class="no-highlight">930</i>&nbsp;            //
+<i class="no-highlight">931</i>&nbsp;            // Scenarios:
+<i class="no-highlight">932</i>&nbsp;            // 1. We are not in the middle. Then we should round up.
+<i class="no-highlight">933</i>&nbsp;            //
+<i class="no-highlight">934</i>&nbsp;            // 2. We are right in the middle. Whether we round up depends
+<i class="no-highlight">935</i>&nbsp;            // on the last significant bit: if it is &quot;one&quot; then we round
+<i class="no-highlight">936</i>&nbsp;            // up (round to even) otherwise, we do not.
+<i class="no-highlight">937</i>&nbsp;            //
+<i class="no-highlight">938</i>&nbsp;            // So if the last significant bit is 1, we can safely round up.
+<i class="no-highlight">939</i>&nbsp;            // Hence, we only need to bail out if (mantissa &amp; 3) == 1.
+<i class="no-highlight">940</i>&nbsp;            // Otherwise, we may need more accuracy or analysis to determine whether
+<i class="no-highlight">941</i>&nbsp;            // we are exactly between two floating-point numbers.
+<i class="no-highlight">942</i>&nbsp;            // It can be triggered with 1e23.
+<i class="no-highlight">943</i>&nbsp;            // Note: because the factor_mantissa and factor_mantissa_low are
+<i class="no-highlight">944</i>&nbsp;            // almost always rounded down (except for small positive powers),
+<i class="no-highlight">945</i>&nbsp;            // almost always should round up.
+<b class="fc"><i class="no-highlight">946</i>&nbsp;            return Double.NaN;</b>
+<i class="no-highlight">947</i>&nbsp;        }
+<i class="no-highlight">948</i>&nbsp;
+<b class="fc"><i class="no-highlight">949</i>&nbsp;        mantissa += 1;</b>
+<b class="fc"><i class="no-highlight">950</i>&nbsp;        mantissa &gt;&gt;&gt;= 1;</b>
+<i class="no-highlight">951</i>&nbsp;
+<i class="no-highlight">952</i>&nbsp;        // Here we have mantissa &lt; (1&lt;&lt;53), unless there was an overflow
+<b class="fc"><i class="no-highlight">953</i>&nbsp;        if (mantissa &gt;= (1L &lt;&lt; DOUBLE_SIGNIFICAND_WIDTH)) {</b>
+<i class="no-highlight">954</i>&nbsp;            // This will happen when parsing values such as 7.2057594037927933e+16
+<b class="fc"><i class="no-highlight">955</i>&nbsp;            mantissa = (1L &lt;&lt; (DOUBLE_SIGNIFICAND_WIDTH - 1));</b>
+<b class="fc"><i class="no-highlight">956</i>&nbsp;            lz--; // undo previous addition</b>
+<i class="no-highlight">957</i>&nbsp;        }
+<i class="no-highlight">958</i>&nbsp;
+<b class="fc"><i class="no-highlight">959</i>&nbsp;        mantissa &amp;= ~(1L &lt;&lt; (DOUBLE_SIGNIFICAND_WIDTH - 1));</b>
+<i class="no-highlight">960</i>&nbsp;
+<b class="fc"><i class="no-highlight">961</i>&nbsp;        long realExponent = exponent - lz;</b>
+<i class="no-highlight">962</i>&nbsp;        // we have to check that realExponent is in range, otherwise we bail out
+<b class="fc"><i class="no-highlight">963</i>&nbsp;        if ((realExponent &lt; 1) || (realExponent &gt; DOUBLE_MAX_EXPONENT_POWER_OF_TWO + DOUBLE_EXPONENT_BIAS)) {</b>
+<b class="fc"><i class="no-highlight">964</i>&nbsp;            return Double.NaN;</b>
+<i class="no-highlight">965</i>&nbsp;        }
+<i class="no-highlight">966</i>&nbsp;
+<b class="fc"><i class="no-highlight">967</i>&nbsp;        long bits = mantissa | realExponent &lt;&lt; (DOUBLE_SIGNIFICAND_WIDTH - 1)</b>
+<b class="fc"><i class="no-highlight">968</i>&nbsp;                | (isNegative ? 1L &lt;&lt; 63 : 0L);</b>
+<b class="fc"><i class="no-highlight">969</i>&nbsp;        return Double.longBitsToDouble(bits);</b>
+<i class="no-highlight">970</i>&nbsp;    }
+<i class="no-highlight">971</i>&nbsp;
+<i class="no-highlight">972</i>&nbsp;    /**
+<i class="no-highlight">973</i>&nbsp;     * Tries to compute {@code significand * 10^exponent} exactly using a fast
+<i class="no-highlight">974</i>&nbsp;     * algorithm; and if {@code isNegative} is true, negate the result;
+<i class="no-highlight">975</i>&nbsp;     * the significand can be truncated.
+<i class="no-highlight">976</i>&nbsp;     *
+<i class="no-highlight">977</i>&nbsp;     * @param isNegative                     true if the sign is negative
+<i class="no-highlight">978</i>&nbsp;     * @param significand                    the significand
+<i class="no-highlight">979</i>&nbsp;     * @param exponent                       the exponent number (the power)
+<i class="no-highlight">980</i>&nbsp;     * @param isSignificandTruncated         true if significand has been truncated
+<i class="no-highlight">981</i>&nbsp;     * @param exponentOfTruncatedSignificand the exponent number of the truncated significand
+<i class="no-highlight">982</i>&nbsp;     * @return the double value,
+<i class="no-highlight">983</i>&nbsp;     * or {@link Double#NaN} if the fast path failed.
+<i class="no-highlight">984</i>&nbsp;     */
+<i class="no-highlight">985</i>&nbsp;    static double tryDecFloatToDoubleTruncated(boolean isNegative, long significand, int exponent,
+<i class="no-highlight">986</i>&nbsp;                                               boolean isSignificandTruncated,
+<i class="no-highlight">987</i>&nbsp;                                               final int exponentOfTruncatedSignificand) {
+<b class="fc"><i class="no-highlight">988</i>&nbsp;        if (significand == 0) {</b>
+<b class="fc"><i class="no-highlight">989</i>&nbsp;            return isNegative ? -0.0 : 0.0;</b>
+<i class="no-highlight">990</i>&nbsp;        }
+<i class="no-highlight">991</i>&nbsp;
+<i class="no-highlight">992</i>&nbsp;        final double result;
+<b class="fc"><i class="no-highlight">993</i>&nbsp;        if (isSignificandTruncated) {</b>
+<i class="no-highlight">994</i>&nbsp;            // We have too many digits. We may have to round up.
+<i class="no-highlight">995</i>&nbsp;            // To know whether rounding up is needed, we may have to examine up to 768 digits.
+<i class="no-highlight">996</i>&nbsp;
+<i class="no-highlight">997</i>&nbsp;            // There are cases, in which rounding has no effect.
+<b class="fc"><i class="no-highlight">998</i>&nbsp;            if (DOUBLE_MIN_EXPONENT_POWER_OF_TEN &lt;= exponentOfTruncatedSignificand</b>
+<i class="no-highlight">999</i>&nbsp;                    &amp;&amp; exponentOfTruncatedSignificand &lt;= DOUBLE_MAX_EXPONENT_POWER_OF_TEN) {
+<b class="fc"><i class="no-highlight">1000</i>&nbsp;                double withoutRounding = tryDecFloatToDouble(isNegative, significand, exponentOfTruncatedSignificand);</b>
+<b class="fc"><i class="no-highlight">1001</i>&nbsp;                double roundedUp = tryDecFloatToDouble(isNegative, significand + 1, exponentOfTruncatedSignificand);</b>
+<b class="fc"><i class="no-highlight">1002</i>&nbsp;                if (!Double.isNaN(withoutRounding) &amp;&amp; roundedUp == withoutRounding) {</b>
+<b class="fc"><i class="no-highlight">1003</i>&nbsp;                    return withoutRounding;</b>
+<i class="no-highlight">1004</i>&nbsp;                }
+<i class="no-highlight">1005</i>&nbsp;            }
+<i class="no-highlight">1006</i>&nbsp;
+<i class="no-highlight">1007</i>&nbsp;            // We have to take a slow path.
+<i class="no-highlight">1008</i>&nbsp;            //return Double.parseDouble(str.toString());
+<b class="fc"><i class="no-highlight">1009</i>&nbsp;            result = Double.NaN;</b>
+<i class="no-highlight">1010</i>&nbsp;
+<b class="fc"><i class="no-highlight">1011</i>&nbsp;        } else if (DOUBLE_MIN_EXPONENT_POWER_OF_TEN &lt;= exponent &amp;&amp; exponent &lt;= DOUBLE_MAX_EXPONENT_POWER_OF_TEN) {</b>
+<b class="fc"><i class="no-highlight">1012</i>&nbsp;            result = tryDecFloatToDouble(isNegative, significand, exponent);</b>
+<i class="no-highlight">1013</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1014</i>&nbsp;            result = Double.NaN;</b>
+<i class="no-highlight">1015</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1016</i>&nbsp;        return result;</b>
+<i class="no-highlight">1017</i>&nbsp;    }
+<i class="no-highlight">1018</i>&nbsp;
+<i class="no-highlight">1019</i>&nbsp;    /**
+<i class="no-highlight">1020</i>&nbsp;     * Tries to compute {@code significand * 2^power} exactly using a fast
+<i class="no-highlight">1021</i>&nbsp;     * algorithm; and if {@code isNegative} is true, negate the result.
+<i class="no-highlight">1022</i>&nbsp;     *
+<i class="no-highlight">1023</i>&nbsp;     * @param isNegative  true if the sign is negative
+<i class="no-highlight">1024</i>&nbsp;     * @param significand the significand
+<i class="no-highlight">1025</i>&nbsp;     * @param power       the power of the exponent
+<i class="no-highlight">1026</i>&nbsp;     * @return the double value,
+<i class="no-highlight">1027</i>&nbsp;     * or {@link Double#NaN} if the fast path failed.
+<i class="no-highlight">1028</i>&nbsp;     */
+<i class="no-highlight">1029</i>&nbsp;    static double tryHexFloatToDouble(boolean isNegative, long significand, int power) {
+<i class="no-highlight">1030</i>&nbsp;
+<i class="no-highlight">1031</i>&nbsp;        // we start with a fast path
+<i class="no-highlight">1032</i>&nbsp;        // We try to mimic the fast described by Clinger WD for decimal
+<i class="no-highlight">1033</i>&nbsp;        // float number literals. How to read floating point numbers accurately.
+<i class="no-highlight">1034</i>&nbsp;        // ACM SIGPLAN Notices. 1990
+<b class="fc"><i class="no-highlight">1035</i>&nbsp;        if (Long.compareUnsigned(significand, 0x1fffffffffffffL) &lt;= 0) {</b>
+<i class="no-highlight">1036</i>&nbsp;            // convert the integer into a double. This is lossless since
+<i class="no-highlight">1037</i>&nbsp;            // 0 &lt;= i &lt;= 2^53 - 1.
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;            double d = (double) significand;</b>
+<i class="no-highlight">1039</i>&nbsp;            //
+<i class="no-highlight">1040</i>&nbsp;            // The general idea is as follows.
+<i class="no-highlight">1041</i>&nbsp;            // If 0 &lt;= s &lt; 2^53  then
+<i class="no-highlight">1042</i>&nbsp;            // 1) Both s and p can be represented exactly as 64-bit floating-point
+<i class="no-highlight">1043</i>&nbsp;            // values (binary64).
+<i class="no-highlight">1044</i>&nbsp;            // 2) Because s and p can be represented exactly as floating-point values,
+<i class="no-highlight">1045</i>&nbsp;            // then s * p will produce correctly rounded values.
+<i class="no-highlight">1046</i>&nbsp;            //
+<b class="fc"><i class="no-highlight">1047</i>&nbsp;            d = d * Math.scalb(1d, power);</b>
+<b class="fc"><i class="no-highlight">1048</i>&nbsp;            if (isNegative) {</b>
+<b class="fc"><i class="no-highlight">1049</i>&nbsp;                d = -d;</b>
+<i class="no-highlight">1050</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1051</i>&nbsp;            return d;</b>
+<i class="no-highlight">1052</i>&nbsp;        }
+<i class="no-highlight">1053</i>&nbsp;
+<i class="no-highlight">1054</i>&nbsp;        // The fast path has failed
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;        return Double.NaN;</b>
+<i class="no-highlight">1056</i>&nbsp;    }
+<i class="no-highlight">1057</i>&nbsp;
+<i class="no-highlight">1058</i>&nbsp;    /**
+<i class="no-highlight">1059</i>&nbsp;     * Tries to compute {@code significand * 2^exponent} exactly using a fast
+<i class="no-highlight">1060</i>&nbsp;     * algorithm; and if {@code isNegative} is true, negate the result;
+<i class="no-highlight">1061</i>&nbsp;     * the significand can be truncated.
+<i class="no-highlight">1062</i>&nbsp;     *
+<i class="no-highlight">1063</i>&nbsp;     * @param isNegative                     true if the sign is negative
+<i class="no-highlight">1064</i>&nbsp;     * @param significand                    the significand
+<i class="no-highlight">1065</i>&nbsp;     * @param exponent                       the exponent number (the power)
+<i class="no-highlight">1066</i>&nbsp;     * @param isSignificandTruncated         true if significand has been truncated
+<i class="no-highlight">1067</i>&nbsp;     * @param exponentOfTruncatedSignificand the exponent number of the truncated significand
+<i class="no-highlight">1068</i>&nbsp;     * @return the double value,
+<i class="no-highlight">1069</i>&nbsp;     * or {@link Double#NaN} if the fast path failed.
+<i class="no-highlight">1070</i>&nbsp;     */
+<i class="no-highlight">1071</i>&nbsp;    static double tryHexFloatToDoubleTruncated(boolean isNegative, long significand, long exponent, boolean isSignificandTruncated,
+<i class="no-highlight">1072</i>&nbsp;                                               long exponentOfTruncatedSignificand) {
+<b class="fc"><i class="no-highlight">1073</i>&nbsp;        if (significand == 0) {</b>
+<b class="fc"><i class="no-highlight">1074</i>&nbsp;            return isNegative ? -0.0 : 0.0;</b>
+<i class="no-highlight">1075</i>&nbsp;        }
+<i class="no-highlight">1076</i>&nbsp;
+<i class="no-highlight">1077</i>&nbsp;        final double outDouble;
+<b class="fc"><i class="no-highlight">1078</i>&nbsp;        if (isSignificandTruncated) {</b>
+<i class="no-highlight">1079</i>&nbsp;
+<i class="no-highlight">1080</i>&nbsp;            // We have too many digits. We may have to round up.
+<i class="no-highlight">1081</i>&nbsp;            // To know whether rounding up is needed, we may have to examine up to 768 digits.
+<i class="no-highlight">1082</i>&nbsp;
+<i class="no-highlight">1083</i>&nbsp;            // There are cases, in which rounding has no effect.
+<b class="fc"><i class="no-highlight">1084</i>&nbsp;            if (DOUBLE_MIN_EXPONENT_POWER_OF_TWO &lt;= exponentOfTruncatedSignificand &amp;&amp; exponentOfTruncatedSignificand &lt;= DOUBLE_MAX_EXPONENT_POWER_OF_TWO) {</b>
+<b class="fc"><i class="no-highlight">1085</i>&nbsp;                double withoutRounding = tryHexFloatToDouble(isNegative, significand, (int) exponentOfTruncatedSignificand);</b>
+<b class="fc"><i class="no-highlight">1086</i>&nbsp;                double roundedUp = tryHexFloatToDouble(isNegative, significand + 1, (int) exponentOfTruncatedSignificand);</b>
+<b class="fc"><i class="no-highlight">1087</i>&nbsp;                if (!Double.isNaN(withoutRounding) &amp;&amp; roundedUp == withoutRounding) {</b>
+<b class="nc"><i class="no-highlight">1088</i>&nbsp;                    return withoutRounding;</b>
+<i class="no-highlight">1089</i>&nbsp;                }
+<i class="no-highlight">1090</i>&nbsp;            }
+<i class="no-highlight">1091</i>&nbsp;
+<i class="no-highlight">1092</i>&nbsp;            // We have to take a slow path.
+<b class="fc"><i class="no-highlight">1093</i>&nbsp;            outDouble = Double.NaN;</b>
+<i class="no-highlight">1094</i>&nbsp;
+<b class="fc"><i class="no-highlight">1095</i>&nbsp;        } else if (DOUBLE_MIN_EXPONENT_POWER_OF_TWO &lt;= exponent &amp;&amp; exponent &lt;= DOUBLE_MAX_EXPONENT_POWER_OF_TWO) {</b>
+<b class="fc"><i class="no-highlight">1096</i>&nbsp;            outDouble = tryHexFloatToDouble(isNegative, significand, (int) exponent);</b>
+<i class="no-highlight">1097</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1098</i>&nbsp;            outDouble = Double.NaN;</b>
+<i class="no-highlight">1099</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1100</i>&nbsp;        return outDouble;</b>
+<i class="no-highlight">1101</i>&nbsp;    }
+<i class="no-highlight">1102</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

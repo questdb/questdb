@@ -1,0 +1,224 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > Constants</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.functions.constants</a>
+</div>
+
+<h1>Coverage Summary for Class: Constants (io.questdb.griffin.engine.functions.constants)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">Constants</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.3%
+  </span>
+  <span class="absValue">
+    (5/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.3%
+  </span>
+  <span class="absValue">
+    (57/58)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.functions.constants;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.GeoHashes;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.griffin.TypeConstant;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">31</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">32</i>&nbsp;
+<b class="nc"><i class="no-highlight">33</i>&nbsp;public final class Constants {</b>
+<b class="fc"><i class="no-highlight">34</i>&nbsp;    private static final ObjList&lt;ConstantFunction&gt; geoNullConstants = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">35</i>&nbsp;    private static final ObjList&lt;ConstantFunction&gt; nullConstants = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">36</i>&nbsp;    private static final ObjList&lt;TypeConstant&gt; typeConstants = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;    public static ConstantFunction getGeoHashConstant(long hash, int bits) {
+<b class="fc"><i class="no-highlight">39</i>&nbsp;        final int type = ColumnType.getGeoHashTypeWithBits(bits);</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;        return getGeoHashConstantWithType(hash, type);</b>
+<i class="no-highlight">41</i>&nbsp;    }
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;    @NotNull
+<i class="no-highlight">44</i>&nbsp;    public static ConstantFunction getGeoHashConstantWithType(long hash, int type) {
+<b class="fc"><i class="no-highlight">45</i>&nbsp;        switch (ColumnType.tagOf(type)) {</b>
+<i class="no-highlight">46</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">47</i>&nbsp;                return new GeoByteConstant((byte) hash, type);</b>
+<i class="no-highlight">48</i>&nbsp;            case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">49</i>&nbsp;                return new GeoShortConstant((short) hash, type);</b>
+<i class="no-highlight">50</i>&nbsp;            case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">51</i>&nbsp;                return new GeoIntConstant((int) hash, type);</b>
+<i class="no-highlight">52</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">53</i>&nbsp;                return new GeoLongConstant(hash, type);</b>
+<i class="no-highlight">54</i>&nbsp;        }
+<i class="no-highlight">55</i>&nbsp;    }
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;    public static ConstantFunction getNullConstant(int columnType) {
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        int typeTag = ColumnType.tagOf(columnType);</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;        if (typeTag &gt;= ColumnType.GEOBYTE &amp;&amp;</b>
+<i class="no-highlight">60</i>&nbsp;                typeTag &lt;= ColumnType.GEOLONG) {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;            int bits = ColumnType.getGeoHashBits(columnType);</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;            if (bits != 0) {</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;                return geoNullConstants.get(bits);</b>
+<i class="no-highlight">64</i>&nbsp;            }
+<i class="no-highlight">65</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        return nullConstants.getQuick(typeTag);</b>
+<i class="no-highlight">67</i>&nbsp;    }
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;    public static TypeConstant getTypeConstant(int columnType) {
+<i class="no-highlight">70</i>&nbsp;        // GEOHASH takes a different path, no need to extract tag
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        return typeConstants.getQuick(columnType);</b>
+<i class="no-highlight">72</i>&nbsp;    }
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        nullConstants.extendAndSet(ColumnType.GEOBYTE, GeoByteConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        nullConstants.extendAndSet(ColumnType.GEOSHORT, GeoShortConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        nullConstants.extendAndSet(ColumnType.GEOINT, GeoIntConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);</b>
+<i class="no-highlight">95</i>&nbsp;
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        typeConstants.extendAndSet(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);</b>
+<i class="no-highlight">114</i>&nbsp;
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        for (int b = 1; b &lt;= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;            geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));</b>
+<i class="no-highlight">117</i>&nbsp;        }
+<i class="no-highlight">118</i>&nbsp;    }
+<i class="no-highlight">119</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

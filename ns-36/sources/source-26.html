@@ -1,0 +1,360 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > SimpleMapValue</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.groupby</a>
+</div>
+
+<h1>Coverage Summary for Class: SimpleMapValue (io.questdb.griffin.engine.groupby)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">SimpleMapValue</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    78.6%
+  </span>
+  <span class="absValue">
+    (33/42)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.6%
+  </span>
+  <span class="absValue">
+    (51/61)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.groupby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.map.MapValue;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.Long256;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.Long256Impl;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Long256Util;
+<i class="no-highlight">31</i>&nbsp;
+<b class="fc"><i class="no-highlight">32</i>&nbsp;public class SimpleMapValue implements MapValue {</b>
+<b class="fc"><i class="no-highlight">33</i>&nbsp;    private final Long256Impl long256 = new Long256Impl();</b>
+<i class="no-highlight">34</i>&nbsp;    private final long[] values;
+<i class="no-highlight">35</i>&nbsp;
+<b class="fc"><i class="no-highlight">36</i>&nbsp;    public SimpleMapValue(int columnCount) {</b>
+<b class="fc"><i class="no-highlight">37</i>&nbsp;        this.values = new long[4 * columnCount];</b>
+<i class="no-highlight">38</i>&nbsp;    }
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;    @Override
+<i class="no-highlight">41</i>&nbsp;    public void addByte(int index, byte value) {
+<b class="nc"><i class="no-highlight">42</i>&nbsp;        values[4 * index] += value;</b>
+<i class="no-highlight">43</i>&nbsp;    }
+<i class="no-highlight">44</i>&nbsp;
+<i class="no-highlight">45</i>&nbsp;    @Override
+<i class="no-highlight">46</i>&nbsp;    public void addDouble(int index, double value) {
+<b class="fc"><i class="no-highlight">47</i>&nbsp;        final double d = Double.longBitsToDouble(values[4 * index]);</b>
+<b class="fc"><i class="no-highlight">48</i>&nbsp;        values[4 * index] = Double.doubleToLongBits(value + d);</b>
+<i class="no-highlight">49</i>&nbsp;    }
+<i class="no-highlight">50</i>&nbsp;
+<i class="no-highlight">51</i>&nbsp;    @Override
+<i class="no-highlight">52</i>&nbsp;    public void addFloat(int index, float value) {
+<b class="nc"><i class="no-highlight">53</i>&nbsp;        final float d = Float.intBitsToFloat((int) values[4 * index]);</b>
+<b class="nc"><i class="no-highlight">54</i>&nbsp;        values[4 * index] = Float.floatToIntBits(value + d);</b>
+<i class="no-highlight">55</i>&nbsp;    }
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;    @Override
+<i class="no-highlight">58</i>&nbsp;    public void addInt(int index, int value) {
+<b class="nc"><i class="no-highlight">59</i>&nbsp;        values[4 * index] += value;</b>
+<i class="no-highlight">60</i>&nbsp;    }
+<i class="no-highlight">61</i>&nbsp;
+<i class="no-highlight">62</i>&nbsp;    @Override
+<i class="no-highlight">63</i>&nbsp;    public void addLong(int index, long value) {
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        values[4 * index] += value;</b>
+<i class="no-highlight">65</i>&nbsp;    }
+<i class="no-highlight">66</i>&nbsp;
+<i class="no-highlight">67</i>&nbsp;    @Override
+<i class="no-highlight">68</i>&nbsp;    public void addLong256(int index, Long256 value) {
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        Long256 acc = getLong256A(index);</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        Long256Util.add(acc, value);</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        final int idx = 4 * index;</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        values[idx] = acc.getLong0();</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        values[idx + 1] = acc.getLong1();</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        values[idx + 2] = acc.getLong2();</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        values[idx + 3] = acc.getLong3();</b>
+<i class="no-highlight">76</i>&nbsp;    }
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    @Override
+<i class="no-highlight">79</i>&nbsp;    public void addShort(int index, short value) {
+<b class="nc"><i class="no-highlight">80</i>&nbsp;        values[4 * index] += value;</b>
+<i class="no-highlight">81</i>&nbsp;    }
+<i class="no-highlight">82</i>&nbsp;
+<i class="no-highlight">83</i>&nbsp;    public void copy(SimpleMapValue other) {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        assert values.length &gt;= other.values.length;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        System.arraycopy(other.values, 0, values, 0, other.values.length);</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    @Override
+<i class="no-highlight">89</i>&nbsp;    public long getAddress() {
+<b class="nc"><i class="no-highlight">90</i>&nbsp;        throw new UnsupportedOperationException();</b>
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    @Override
+<i class="no-highlight">94</i>&nbsp;    public boolean getBool(int index) {
+<b class="nc"><i class="no-highlight">95</i>&nbsp;        return values[4 * index] == 0;</b>
+<i class="no-highlight">96</i>&nbsp;    }
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    @Override
+<i class="no-highlight">99</i>&nbsp;    public byte getByte(int index) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        return (byte) values[4 * index];</b>
+<i class="no-highlight">101</i>&nbsp;    }
+<i class="no-highlight">102</i>&nbsp;
+<i class="no-highlight">103</i>&nbsp;    @Override
+<i class="no-highlight">104</i>&nbsp;    public char getChar(int index) {
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        return (char) values[4 * index];</b>
+<i class="no-highlight">106</i>&nbsp;    }
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;    @Override
+<i class="no-highlight">109</i>&nbsp;    public long getDate(int index) {
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        return values[4 * index];</b>
+<i class="no-highlight">111</i>&nbsp;    }
+<i class="no-highlight">112</i>&nbsp;
+<i class="no-highlight">113</i>&nbsp;    @Override
+<i class="no-highlight">114</i>&nbsp;    public double getDouble(int index) {
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        return Double.longBitsToDouble(values[4 * index]);</b>
+<i class="no-highlight">116</i>&nbsp;    }
+<i class="no-highlight">117</i>&nbsp;
+<i class="no-highlight">118</i>&nbsp;    @Override
+<i class="no-highlight">119</i>&nbsp;    public float getFloat(int index) {
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        return Float.intBitsToFloat((int) values[4 * index]);</b>
+<i class="no-highlight">121</i>&nbsp;    }
+<i class="no-highlight">122</i>&nbsp;
+<i class="no-highlight">123</i>&nbsp;    @Override
+<i class="no-highlight">124</i>&nbsp;    public byte getGeoByte(int col) {
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        return (byte) values[4 * col];</b>
+<i class="no-highlight">126</i>&nbsp;    }
+<i class="no-highlight">127</i>&nbsp;
+<i class="no-highlight">128</i>&nbsp;    @Override
+<i class="no-highlight">129</i>&nbsp;    public int getGeoInt(int col) {
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        return (int) values[4 * col];</b>
+<i class="no-highlight">131</i>&nbsp;    }
+<i class="no-highlight">132</i>&nbsp;
+<i class="no-highlight">133</i>&nbsp;    @Override
+<i class="no-highlight">134</i>&nbsp;    public long getGeoLong(int col) {
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        return values[4 * col];</b>
+<i class="no-highlight">136</i>&nbsp;    }
+<i class="no-highlight">137</i>&nbsp;
+<i class="no-highlight">138</i>&nbsp;    @Override
+<i class="no-highlight">139</i>&nbsp;    public short getGeoShort(int col) {
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        return (short) values[4 * col];</b>
+<i class="no-highlight">141</i>&nbsp;    }
+<i class="no-highlight">142</i>&nbsp;
+<i class="no-highlight">143</i>&nbsp;    @Override
+<i class="no-highlight">144</i>&nbsp;    public int getInt(int index) {
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        return (int) values[4 * index];</b>
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    @Override
+<i class="no-highlight">149</i>&nbsp;    public long getLong(int index) {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        return values[4 * index];</b>
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    @Override
+<i class="no-highlight">154</i>&nbsp;    public long getLong128Hi(int col) {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        return values[4 * col + 1];</b>
+<i class="no-highlight">156</i>&nbsp;    }
+<i class="no-highlight">157</i>&nbsp;
+<i class="no-highlight">158</i>&nbsp;    @Override
+<i class="no-highlight">159</i>&nbsp;    public long getLong128Lo(int col) {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        return values[4 * col];</b>
+<i class="no-highlight">161</i>&nbsp;    }
+<i class="no-highlight">162</i>&nbsp;
+<i class="no-highlight">163</i>&nbsp;    @Override
+<i class="no-highlight">164</i>&nbsp;    public Long256 getLong256A(int index) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        final int idx = 4 * index;</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        long256.setAll(values[idx], values[idx + 1], values[idx + 2], values[idx + 3]);</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        return long256;</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    @Override
+<i class="no-highlight">171</i>&nbsp;    public short getShort(int index) {
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        return (short) values[4 * index];</b>
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    @Override
+<i class="no-highlight">176</i>&nbsp;    public long getTimestamp(int index) {
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        return values[4 * index];</b>
+<i class="no-highlight">178</i>&nbsp;    }
+<i class="no-highlight">179</i>&nbsp;
+<i class="no-highlight">180</i>&nbsp;    @Override
+<i class="no-highlight">181</i>&nbsp;    public boolean isNew() {
+<b class="nc"><i class="no-highlight">182</i>&nbsp;        return false;</b>
+<i class="no-highlight">183</i>&nbsp;    }
+<i class="no-highlight">184</i>&nbsp;
+<i class="no-highlight">185</i>&nbsp;    @Override
+<i class="no-highlight">186</i>&nbsp;    public void putBool(int index, boolean value) {
+<b class="nc"><i class="no-highlight">187</i>&nbsp;        values[4 * index] = value ? 0 : 1;</b>
+<i class="no-highlight">188</i>&nbsp;    }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;    @Override
+<i class="no-highlight">191</i>&nbsp;    public void putByte(int index, byte value) {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    @Override
+<i class="no-highlight">196</i>&nbsp;    public void putChar(int index, char value) {
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">198</i>&nbsp;    }
+<i class="no-highlight">199</i>&nbsp;
+<i class="no-highlight">200</i>&nbsp;    @Override
+<i class="no-highlight">201</i>&nbsp;    public void putDate(int index, long value) {
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">203</i>&nbsp;    }
+<i class="no-highlight">204</i>&nbsp;
+<i class="no-highlight">205</i>&nbsp;    @Override
+<i class="no-highlight">206</i>&nbsp;    public void putDouble(int index, double value) {
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        values[4 * index] = Double.doubleToLongBits(value);</b>
+<i class="no-highlight">208</i>&nbsp;    }
+<i class="no-highlight">209</i>&nbsp;
+<i class="no-highlight">210</i>&nbsp;    @Override
+<i class="no-highlight">211</i>&nbsp;    public void putFloat(int index, float value) {
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        values[4 * index] = Float.floatToIntBits(value);</b>
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    @Override
+<i class="no-highlight">216</i>&nbsp;    public void putInt(int index, int value) {
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">218</i>&nbsp;    }
+<i class="no-highlight">219</i>&nbsp;
+<i class="no-highlight">220</i>&nbsp;    @Override
+<i class="no-highlight">221</i>&nbsp;    public void putLong(int index, long value) {
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">223</i>&nbsp;    }
+<i class="no-highlight">224</i>&nbsp;
+<i class="no-highlight">225</i>&nbsp;    @Override
+<i class="no-highlight">226</i>&nbsp;    public void putLong128(int index, long lo, long hi) {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        final int idx = 4 * index;</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        values[idx] = lo;</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;        values[idx + 1] = hi;</b>
+<i class="no-highlight">230</i>&nbsp;    }
+<i class="no-highlight">231</i>&nbsp;
+<i class="no-highlight">232</i>&nbsp;    @Override
+<i class="no-highlight">233</i>&nbsp;    public void putLong256(int index, Long256 value) {
+<b class="fc"><i class="no-highlight">234</i>&nbsp;        final int idx = 4 * index;</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        values[idx] = value.getLong0();</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        values[idx + 1] = value.getLong1();</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;        values[idx + 2] = value.getLong2();</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        values[idx + 3] = value.getLong3();</b>
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    @Override
+<i class="no-highlight">242</i>&nbsp;    public void putShort(int index, short value) {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">244</i>&nbsp;    }
+<i class="no-highlight">245</i>&nbsp;
+<i class="no-highlight">246</i>&nbsp;    @Override
+<i class="no-highlight">247</i>&nbsp;    public void putTimestamp(int index, long value) {
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        values[4 * index] = value;</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    @Override
+<i class="no-highlight">252</i>&nbsp;    public void setMapRecordHere() {
+<b class="nc"><i class="no-highlight">253</i>&nbsp;        throw new UnsupportedOperationException();</b>
+<i class="no-highlight">254</i>&nbsp;    }
+<i class="no-highlight">255</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

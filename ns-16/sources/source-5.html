@@ -1,0 +1,433 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > LineUdpParserSupport</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.line.udp</a>
+</div>
+
+<h1>Coverage Summary for Class: LineUdpParserSupport (io.questdb.cutlass.line.udp)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">LineUdpParserSupport</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (6/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    92.2%
+  </span>
+  <span class="absValue">
+    (119/129)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">LineUdpParserSupport$BadCastException</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/2)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    66.7%
+  </span>
+  <span class="absValue">
+    (6/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    90.8%
+  </span>
+  <span class="absValue">
+    (119/131)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.line.udp;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.griffin.SqlKeywords;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.NumericException;
+<i class="no-highlight">33</i>&nbsp;
+<b class="nc"><i class="no-highlight">34</i>&nbsp;public class LineUdpParserSupport {</b>
+<b class="fc"><i class="no-highlight">35</i>&nbsp;    private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);</b>
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;    public static int getValueType(CharSequence value) {
+<b class="fc"><i class="no-highlight">38</i>&nbsp;        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG);</b>
+<i class="no-highlight">39</i>&nbsp;    }
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType) {
+<i class="no-highlight">42</i>&nbsp;        // method called for inbound ilp messages on each value.
+<i class="no-highlight">43</i>&nbsp;        // returning UNDEFINED makes the whole line be skipped.
+<i class="no-highlight">44</i>&nbsp;        // 0 len values, return null type.
+<i class="no-highlight">45</i>&nbsp;        // the goal of this method is to guess the potential type
+<i class="no-highlight">46</i>&nbsp;        // and then it will be parsed accordingly by &#39;putValue&#39;.
+<b class="fc"><i class="no-highlight">47</i>&nbsp;        int valueLen = value.length();</b>
+<b class="fc"><i class="no-highlight">48</i>&nbsp;        if (valueLen &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;            char first = value.charAt(0);</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;            char last = value.charAt(valueLen - 1); // see AbstractLineSender.field methods</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;            switch (last) {</b>
+<i class="no-highlight">52</i>&nbsp;                case &#39;i&#39;:
+<b class="fc"><i class="no-highlight">53</i>&nbsp;                    if (valueLen &gt; 3 &amp;&amp; value.charAt(0) == &#39;0&#39; &amp;&amp; value.charAt(1) == &#39;x&#39;) {</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;                        return ColumnType.LONG256;</b>
+<i class="no-highlight">55</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">56</i>&nbsp;                    return valueLen == 1 ? ColumnType.SYMBOL : defaultIntegerColumnType;</b>
+<i class="no-highlight">57</i>&nbsp;                case &#39;t&#39;:
+<b class="fc"><i class="no-highlight">58</i>&nbsp;                    if (valueLen &gt; 1 &amp;&amp; ((first &gt;= &#39;0&#39; &amp;&amp; first &lt;= &#39;9&#39;) || first == &#39;-&#39;)) {</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;                        return ColumnType.TIMESTAMP;</b>
+<i class="no-highlight">60</i>&nbsp;                    }
+<i class="no-highlight">61</i>&nbsp;                    // fall through
+<i class="no-highlight">62</i>&nbsp;                case &#39;T&#39;:
+<i class="no-highlight">63</i>&nbsp;                    // t
+<i class="no-highlight">64</i>&nbsp;                    // T
+<i class="no-highlight">65</i>&nbsp;                case &#39;e&#39;:
+<i class="no-highlight">66</i>&nbsp;                case &#39;E&#39;:
+<i class="no-highlight">67</i>&nbsp;                    // tru(e)
+<i class="no-highlight">68</i>&nbsp;                    // fals(e)
+<i class="no-highlight">69</i>&nbsp;                case &#39;f&#39;:
+<i class="no-highlight">70</i>&nbsp;                case &#39;F&#39;:
+<i class="no-highlight">71</i>&nbsp;                    // f
+<i class="no-highlight">72</i>&nbsp;                    // F
+<b class="fc"><i class="no-highlight">73</i>&nbsp;                    if (valueLen == 1) {</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;                        return last != &#39;e&#39; ? ColumnType.BOOLEAN : ColumnType.SYMBOL;</b>
+<i class="no-highlight">75</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">76</i>&nbsp;                    return SqlKeywords.isTrueKeyword(value) || SqlKeywords.isFalseKeyword(value) ?</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;                            ColumnType.BOOLEAN : ColumnType.SYMBOL;</b>
+<i class="no-highlight">78</i>&nbsp;                case &#39;&quot;&#39;:
+<b class="fc"><i class="no-highlight">79</i>&nbsp;                    if (valueLen &lt; 2 || value.charAt(0) != &#39;\&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;                        LOG.error().$(&quot;incorrectly quoted string: &quot;).$(value).$();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;                        return ColumnType.UNDEFINED;</b>
+<i class="no-highlight">82</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">83</i>&nbsp;                    return ColumnType.STRING;</b>
+<i class="no-highlight">84</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">85</i>&nbsp;                    if (last &gt;= &#39;0&#39; &amp;&amp; last &lt;= &#39;9&#39; &amp;&amp; ((first &gt;= &#39;0&#39; &amp;&amp; first &lt;= &#39;9&#39;) || first == &#39;-&#39; || first == &#39;.&#39;)) {</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;                        return defaultFloatColumnType;</b>
+<i class="no-highlight">87</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">88</i>&nbsp;                    if (SqlKeywords.isNanKeyword(value)) {</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;                        return defaultFloatColumnType;</b>
+<i class="no-highlight">90</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">91</i>&nbsp;                    if (value.charAt(0) == &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;                        return ColumnType.UNDEFINED;</b>
+<i class="no-highlight">93</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">94</i>&nbsp;                    return ColumnType.SYMBOL;</b>
+<i class="no-highlight">95</i>&nbsp;            }
+<i class="no-highlight">96</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        return ColumnType.NULL;</b>
+<i class="no-highlight">98</i>&nbsp;    }
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;    /**
+<i class="no-highlight">101</i>&nbsp;     * Writes column value to table row. CharSequence value is interpreted depending on
+<i class="no-highlight">102</i>&nbsp;     * column type and written to column, identified by columnIndex. If value cannot be
+<i class="no-highlight">103</i>&nbsp;     * cast to column type, #BadCastException is thrown.
+<i class="no-highlight">104</i>&nbsp;     *
+<i class="no-highlight">105</i>&nbsp;     * @param row            table row
+<i class="no-highlight">106</i>&nbsp;     * @param columnType     column type value will be cast to
+<i class="no-highlight">107</i>&nbsp;     * @param columnTypeMeta if columnType&#39;s tag is GeoHash it contains bits precision (low short)
+<i class="no-highlight">108</i>&nbsp;     *                       and tag size (high short negative), otherwise -1
+<i class="no-highlight">109</i>&nbsp;     * @param columnIndex    index of column to write value to
+<i class="no-highlight">110</i>&nbsp;     * @param value          value characters
+<i class="no-highlight">111</i>&nbsp;     */
+<i class="no-highlight">112</i>&nbsp;    public static void putValue(
+<i class="no-highlight">113</i>&nbsp;            TableWriter.Row row,
+<i class="no-highlight">114</i>&nbsp;            int columnType,
+<i class="no-highlight">115</i>&nbsp;            int columnTypeMeta,
+<i class="no-highlight">116</i>&nbsp;            int columnIndex,
+<i class="no-highlight">117</i>&nbsp;            CharSequence value
+<i class="no-highlight">118</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        if (value.length() &gt; 0) {</b>
+<i class="no-highlight">120</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">122</i>&nbsp;                    case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                        row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                        break;</b>
+<i class="no-highlight">125</i>&nbsp;                    case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                        row.putBool(columnIndex, isTrue(value));</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                        break;</b>
+<i class="no-highlight">128</i>&nbsp;                    case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                        row.putStr(columnIndex, value, 1, value.length() - 2);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                        break;</b>
+<i class="no-highlight">131</i>&nbsp;                    case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                        row.putSym(columnIndex, value);</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                        break;</b>
+<i class="no-highlight">134</i>&nbsp;                    case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                        row.putDouble(columnIndex, Numbers.parseDouble(value));</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                        break;</b>
+<i class="no-highlight">137</i>&nbsp;                    case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                        row.putFloat(columnIndex, Numbers.parseFloat(value));</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;                        break;</b>
+<i class="no-highlight">140</i>&nbsp;                    case ColumnType.INT:
+<b class="fc"><i class="no-highlight">141</i>&nbsp;                        row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                        break;</b>
+<i class="no-highlight">143</i>&nbsp;                    case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                        row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                        break;</b>
+<i class="no-highlight">146</i>&nbsp;                    case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                        long v = Numbers.parseLong(value, 0, value.length() - 1);</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                        if (v &lt; Byte.MIN_VALUE || v &gt; Byte.MAX_VALUE) {</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                            throw CairoException.nonCritical()</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                                    .put(&quot;line protocol integer is out of byte bounds [columnIndex=&quot;)</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                                    .put(columnIndex)</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;                                    .put(&quot;, v=&quot;)</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;                                    .put(v)</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">155</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                        row.putByte(columnIndex, (byte) v);</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                        break;</b>
+<i class="no-highlight">158</i>&nbsp;                    case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                        row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                        break;</b>
+<i class="no-highlight">161</i>&nbsp;                    case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">162</i>&nbsp;                        int limit = value.length() - 1;</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;                        if (value.charAt(limit) != &#39;i&#39;) {</b>
+<b class="nc"><i class="no-highlight">164</i>&nbsp;                            limit++;</b>
+<i class="no-highlight">165</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                        row.putLong256(columnIndex, value, 2, limit);</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                        break;</b>
+<i class="no-highlight">168</i>&nbsp;                    case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                        row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                        break;</b>
+<i class="no-highlight">171</i>&nbsp;                    case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                        row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;                        break;</b>
+<i class="no-highlight">174</i>&nbsp;                    case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                        row.putByte(</b>
+<i class="no-highlight">176</i>&nbsp;                                columnIndex,  // skip quotes
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                                (byte) GeoHashes.fromStringTruncatingNl(</b>
+<i class="no-highlight">178</i>&nbsp;                                        value,
+<i class="no-highlight">179</i>&nbsp;                                        1,
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                                        value.length() - 1,</b>
+<i class="no-highlight">181</i>&nbsp;                                        columnTypeMeta
+<i class="no-highlight">182</i>&nbsp;                                )
+<i class="no-highlight">183</i>&nbsp;                        );
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                        break;</b>
+<i class="no-highlight">185</i>&nbsp;                    case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                        row.putShort(</b>
+<i class="no-highlight">187</i>&nbsp;                                columnIndex,
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                                (short) GeoHashes.fromStringTruncatingNl(</b>
+<i class="no-highlight">189</i>&nbsp;                                        value,
+<i class="no-highlight">190</i>&nbsp;                                        1,
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                                        value.length() - 1,</b>
+<i class="no-highlight">192</i>&nbsp;                                        columnTypeMeta
+<i class="no-highlight">193</i>&nbsp;                                )
+<i class="no-highlight">194</i>&nbsp;                        );
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                        break;</b>
+<i class="no-highlight">196</i>&nbsp;                    case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                        row.putInt(</b>
+<i class="no-highlight">198</i>&nbsp;                                columnIndex,
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                                (int) GeoHashes.fromStringTruncatingNl(</b>
+<i class="no-highlight">200</i>&nbsp;                                        value,
+<i class="no-highlight">201</i>&nbsp;                                        1,
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                                        value.length() - 1,</b>
+<i class="no-highlight">203</i>&nbsp;                                        columnTypeMeta
+<i class="no-highlight">204</i>&nbsp;                                )
+<i class="no-highlight">205</i>&nbsp;                        );
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                        break;</b>
+<i class="no-highlight">207</i>&nbsp;                    case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                        row.putLong(</b>
+<i class="no-highlight">209</i>&nbsp;                                columnIndex,
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                                GeoHashes.fromStringTruncatingNl(</b>
+<i class="no-highlight">211</i>&nbsp;                                        value,
+<i class="no-highlight">212</i>&nbsp;                                        1,
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                                        value.length() - 1,</b>
+<i class="no-highlight">214</i>&nbsp;                                        columnTypeMeta
+<i class="no-highlight">215</i>&nbsp;                                )
+<i class="no-highlight">216</i>&nbsp;                        );
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                        break;</b>
+<i class="no-highlight">218</i>&nbsp;                    case ColumnType.NULL:
+<i class="no-highlight">219</i>&nbsp;                    default:
+<i class="no-highlight">220</i>&nbsp;                        // unsupported types and null are ignored
+<i class="no-highlight">221</i>&nbsp;                        break;
+<i class="no-highlight">222</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">223</i>&nbsp;            } catch (NumericException | ImplicitCastException e) {</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                LOG.info()</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;                        .$(&quot;cast error [value=&quot;)</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;                        .$(value).$(&quot;, toType=&quot;)</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                        .$(ColumnType.nameOf(columnType))</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                        .$(&#39;]&#39;)</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                        .$();</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;            }</b>
+<i class="no-highlight">231</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            putNullValue(row, columnIndex, columnType);</b>
+<i class="no-highlight">233</i>&nbsp;        }
+<i class="no-highlight">234</i>&nbsp;    }
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;    private static boolean isTrue(CharSequence value) {
+<b class="fc"><i class="no-highlight">237</i>&nbsp;        return (value.charAt(0) | 32) == &#39;t&#39;;</b>
+<i class="no-highlight">238</i>&nbsp;    }
+<i class="no-highlight">239</i>&nbsp;
+<i class="no-highlight">240</i>&nbsp;    private static void putNullValue(TableWriter.Row row, int columnIndex, int columnType) {
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">242</i>&nbsp;            case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                row.putBool(columnIndex, false);</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;                break;</b>
+<i class="no-highlight">245</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                row.putStr(columnIndex, null);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                break;</b>
+<i class="no-highlight">248</i>&nbsp;            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">249</i>&nbsp;                row.putSym(columnIndex, null);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                break;</b>
+<i class="no-highlight">251</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">252</i>&nbsp;                row.putDouble(columnIndex, Double.NaN);</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                break;</b>
+<i class="no-highlight">254</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                row.putFloat(columnIndex, Float.NaN);</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                break;</b>
+<i class="no-highlight">257</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                row.putLong(columnIndex, Numbers.LONG_NaN);</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                break;</b>
+<i class="no-highlight">260</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                row.putInt(columnIndex, Numbers.INT_NaN);</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                break;</b>
+<i class="no-highlight">263</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">264</i>&nbsp;                row.putShort(columnIndex, (short) 0);</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                break;</b>
+<i class="no-highlight">266</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                row.putByte(columnIndex, (byte) 0);</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;                break;</b>
+<i class="no-highlight">269</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                row.putChar(columnIndex, (char) 0);</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                break;</b>
+<i class="no-highlight">272</i>&nbsp;            case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                row.putDate(columnIndex, Numbers.LONG_NaN);</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                break;</b>
+<i class="no-highlight">275</i>&nbsp;            case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">276</i>&nbsp;                row.putTimestamp(columnIndex, Numbers.LONG_NaN);</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                break;</b>
+<i class="no-highlight">278</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                row.putLong256(columnIndex, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                break;</b>
+<i class="no-highlight">281</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="nc"><i class="no-highlight">282</i>&nbsp;                row.putByte(columnIndex, GeoHashes.BYTE_NULL);</b>
+<b class="nc"><i class="no-highlight">283</i>&nbsp;                break;</b>
+<i class="no-highlight">284</i>&nbsp;            case ColumnType.GEOSHORT:
+<b class="nc"><i class="no-highlight">285</i>&nbsp;                row.putShort(columnIndex, GeoHashes.SHORT_NULL);</b>
+<b class="nc"><i class="no-highlight">286</i>&nbsp;                break;</b>
+<i class="no-highlight">287</i>&nbsp;            case ColumnType.GEOINT:
+<b class="nc"><i class="no-highlight">288</i>&nbsp;                row.putInt(columnIndex, GeoHashes.INT_NULL);</b>
+<b class="nc"><i class="no-highlight">289</i>&nbsp;                break;</b>
+<i class="no-highlight">290</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="nc"><i class="no-highlight">291</i>&nbsp;                row.putLong(columnIndex, GeoHashes.NULL);</b>
+<b class="nc"><i class="no-highlight">292</i>&nbsp;                break;</b>
+<i class="no-highlight">293</i>&nbsp;            default:
+<i class="no-highlight">294</i>&nbsp;                // unsupported types are ignored
+<i class="no-highlight">295</i>&nbsp;                break;
+<i class="no-highlight">296</i>&nbsp;        }
+<i class="no-highlight">297</i>&nbsp;    }
+<i class="no-highlight">298</i>&nbsp;
+<b class="nc"><i class="no-highlight">299</i>&nbsp;    public static class BadCastException extends Exception {</b>
+<b class="nc"><i class="no-highlight">300</i>&nbsp;        public static final BadCastException INSTANCE = new BadCastException();</b>
+<i class="no-highlight">301</i>&nbsp;    }
+<i class="no-highlight">302</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,610 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > LogAlertSocket</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.log</a>
+</div>
+
+<h1>Coverage Summary for Class: LogAlertSocket (io.questdb.log)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">LogAlertSocket</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.4%
+  </span>
+  <span class="absValue">
+    (27/28)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.1%
+  </span>
+  <span class="absValue">
+    (234/246)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.log;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.network.NetworkFacade;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">31</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">34</i>&nbsp;import java.net.InetAddress;
+<i class="no-highlight">35</i>&nbsp;import java.net.UnknownHostException;
+<i class="no-highlight">36</i>&nbsp;import java.util.concurrent.locks.LockSupport;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;public class LogAlertSocket implements Closeable {
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;    public static final String DEFAULT_HOST = &quot;127.0.0.1&quot;;
+<i class="no-highlight">41</i>&nbsp;    public static final int DEFAULT_PORT = 9093;
+<i class="no-highlight">42</i>&nbsp;    public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
+<i class="no-highlight">43</i>&nbsp;    public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
+<i class="no-highlight">44</i>&nbsp;    public static final long RECONNECT_DELAY_NANO = 250_000_000; // 1/4th sec
+<i class="no-highlight">45</i>&nbsp;    public static final String localHostIp;
+<i class="no-highlight">46</i>&nbsp;    private static final int HOSTS_LIMIT = 12;
+<b class="fc"><i class="no-highlight">47</i>&nbsp;    private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx &lt; alertHostsCount</b>
+<b class="fc"><i class="no-highlight">48</i>&nbsp;    private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx &lt; alertHostsCount</b>
+<i class="no-highlight">49</i>&nbsp;    private final String defaultHost;
+<i class="no-highlight">50</i>&nbsp;    private final int defaultPort;
+<i class="no-highlight">51</i>&nbsp;    private final int inBufferSize;
+<i class="no-highlight">52</i>&nbsp;    private final Log log;
+<i class="no-highlight">53</i>&nbsp;    private final NetworkFacade nf;
+<i class="no-highlight">54</i>&nbsp;    private final int outBufferSize;
+<i class="no-highlight">55</i>&nbsp;    private final Rnd rand;
+<i class="no-highlight">56</i>&nbsp;    private final long reconnectDelay;
+<b class="fc"><i class="no-highlight">57</i>&nbsp;    private final Runnable onReconnectRef = this::onReconnect;</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private final StringSink responseSink = new StringSink();</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private long addressInfoAddr = -1; // tcp/ip host:port address</b>
+<i class="no-highlight">60</i>&nbsp;    private int alertHostIdx;
+<i class="no-highlight">61</i>&nbsp;    private int alertHostsCount;
+<i class="no-highlight">62</i>&nbsp;    private String alertTargets; // host[:port](,host[:port])*
+<i class="no-highlight">63</i>&nbsp;    private long inBufferPtr;
+<i class="no-highlight">64</i>&nbsp;    private long outBufferPtr;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    private int socketFd = -1;</b>
+<i class="no-highlight">66</i>&nbsp;
+<i class="no-highlight">67</i>&nbsp;    public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        this(</b>
+<i class="no-highlight">69</i>&nbsp;                nf,
+<i class="no-highlight">70</i>&nbsp;                alertTargets,
+<i class="no-highlight">71</i>&nbsp;                IN_BUFFER_SIZE,
+<i class="no-highlight">72</i>&nbsp;                OUT_BUFFER_SIZE,
+<i class="no-highlight">73</i>&nbsp;                RECONNECT_DELAY_NANO,
+<i class="no-highlight">74</i>&nbsp;                DEFAULT_HOST,
+<i class="no-highlight">75</i>&nbsp;                DEFAULT_PORT,
+<i class="no-highlight">76</i>&nbsp;                log
+<i class="no-highlight">77</i>&nbsp;        );
+<i class="no-highlight">78</i>&nbsp;    }
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;    public LogAlertSocket(
+<i class="no-highlight">81</i>&nbsp;            NetworkFacade nf,
+<i class="no-highlight">82</i>&nbsp;            String alertTargets,
+<i class="no-highlight">83</i>&nbsp;            int inBufferSize,
+<i class="no-highlight">84</i>&nbsp;            int outBufferSize,
+<i class="no-highlight">85</i>&nbsp;            long reconnectDelay,
+<i class="no-highlight">86</i>&nbsp;            String defaultHost,
+<i class="no-highlight">87</i>&nbsp;            int defaultPort,
+<i class="no-highlight">88</i>&nbsp;            Log log
+<b class="fc"><i class="no-highlight">89</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        this.nf = nf;</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        this.log = log;</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        this.rand = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        this.alertTargets = alertTargets;</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        this.defaultHost = defaultHost;</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        this.defaultPort = defaultPort;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        parseAlertTargets();</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        this.inBufferSize = inBufferSize;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        this.outBufferSize = outBufferSize;</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        this.reconnectDelay = reconnectDelay;</b>
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    @Override
+<i class="no-highlight">105</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        freeSocketAndAddress();</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        if (outBufferPtr != 0) {</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;            outBufferPtr = 0;</b>
+<i class="no-highlight">110</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        if (inBufferPtr != 0) {</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;            inBufferPtr = 0;</b>
+<i class="no-highlight">114</i>&nbsp;        }
+<i class="no-highlight">115</i>&nbsp;    }
+<i class="no-highlight">116</i>&nbsp;
+<i class="no-highlight">117</i>&nbsp;    public void connect() {
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        addressInfoAddr = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        if (addressInfoAddr == -1) {</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;            logNetworkConnectError(&quot;Could not create addr info with&quot;);</b>
+<i class="no-highlight">121</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">122</i>&nbsp;            socketFd = nf.socketTcp(true);</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;            if (socketFd &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                if (nf.connectAddrInfo(socketFd, addressInfoAddr) != 0) {</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                    logNetworkConnectError(&quot;Could not connect with&quot;);</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                    freeSocketAndAddress();</b>
+<i class="no-highlight">127</i>&nbsp;                }
+<i class="no-highlight">128</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">129</i>&nbsp;                logNetworkConnectError(&quot;Could not create TCP socket with&quot;);</b>
+<b class="nc"><i class="no-highlight">130</i>&nbsp;                freeSocketAndAddress();</b>
+<i class="no-highlight">131</i>&nbsp;            }
+<i class="no-highlight">132</i>&nbsp;        }
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    public long getInBufferPtr() {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        return inBufferPtr;</b>
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    public int getInBufferSize() {
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        return inBufferSize;</b>
+<i class="no-highlight">141</i>&nbsp;    }
+<i class="no-highlight">142</i>&nbsp;
+<i class="no-highlight">143</i>&nbsp;    public long getOutBufferPtr() {
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        return outBufferPtr;</b>
+<i class="no-highlight">145</i>&nbsp;    }
+<i class="no-highlight">146</i>&nbsp;
+<i class="no-highlight">147</i>&nbsp;    public int getOutBufferSize() {
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        return outBufferSize;</b>
+<i class="no-highlight">149</i>&nbsp;    }
+<i class="no-highlight">150</i>&nbsp;
+<i class="no-highlight">151</i>&nbsp;    public boolean send(int len) {
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        return send(len, onReconnectRef);</b>
+<i class="no-highlight">153</i>&nbsp;    }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    public boolean send(int len, Runnable onReconnect) {
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        if (len &lt; 1) {</b>
+<b class="nc"><i class="no-highlight">157</i>&nbsp;            return false;</b>
+<i class="no-highlight">158</i>&nbsp;        }
+<i class="no-highlight">159</i>&nbsp;
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        final int maxSendAttempts = 2 * alertHostsCount;</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        int sendAttempts = maxSendAttempts; // empirical, say twice per host at most</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        while (sendAttempts &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            if (socketFd &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;                int remaining = len;</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;                long p = outBufferPtr;</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                boolean sendFail = false;</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                while (remaining &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                    int n = nf.send(socketFd, p, remaining);</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                    if (n &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                        remaining -= n;</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                        p += n;</b>
+<i class="no-highlight">172</i>&nbsp;                    } else {
+<b class="nc"><i class="no-highlight">173</i>&nbsp;                        $currentAlertHost(log.info().$(&quot;Could not send&quot;))</b>
+<b class="nc"><i class="no-highlight">174</i>&nbsp;                                .$(&quot; [errno=&quot;).$(nf.errno())</b>
+<b class="nc"><i class="no-highlight">175</i>&nbsp;                                .$(&quot;, size=&quot;).$(n)</b>
+<b class="nc"><i class="no-highlight">176</i>&nbsp;                                .$(&quot;, log=&quot;).$utf8(outBufferPtr, outBufferPtr + len).I$();</b>
+<b class="nc"><i class="no-highlight">177</i>&nbsp;                        sendFail = true;</b>
+<i class="no-highlight">178</i>&nbsp;                        // do fail over, could not send
+<b class="nc"><i class="no-highlight">179</i>&nbsp;                        break;</b>
+<i class="no-highlight">180</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                if (!sendFail) {</b>
+<i class="no-highlight">183</i>&nbsp;                    // receive ack
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                    p = inBufferPtr;</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                    final int n = nf.recv(socketFd, p, inBufferSize);</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                    if (n &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                        logResponse(n);</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                        break;</b>
+<i class="no-highlight">189</i>&nbsp;                    }
+<i class="no-highlight">190</i>&nbsp;                    // do fail over, ack was not received
+<i class="no-highlight">191</i>&nbsp;                }
+<i class="no-highlight">192</i>&nbsp;            }
+<i class="no-highlight">193</i>&nbsp;
+<i class="no-highlight">194</i>&nbsp;            // fail to the next host and attempt to send again
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            freeSocketAndAddress();</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;            int alertHostIdx = this.alertHostIdx;</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;            LogRecord logFailOver = $alertHost(</b>
+<i class="no-highlight">199</i>&nbsp;                    this.alertHostIdx,
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                    $alertHost(</b>
+<i class="no-highlight">201</i>&nbsp;                            alertHostIdx,
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                            log.info().$(&quot;Failing over from&quot;)</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    ).$(&quot; to&quot;));</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            if (alertHostIdx == this.alertHostIdx) {</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                logFailOver.$(&quot; with a delay of &quot;)</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                        .$(reconnectDelay / 1000000)</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                        .$(&quot; millis (as it is the same alert manager)&quot;)</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                        .$();</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                onReconnect.run();</b>
+<i class="no-highlight">210</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                logFailOver.$();</b>
+<i class="no-highlight">212</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">213</i>&nbsp;            connect();</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            sendAttempts--;</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        boolean success = sendAttempts &gt; 0;</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        if (!success) {</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;            log.info()</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;                    .$(&quot;None of the configured alert managers are accepting alerts.\n&quot;)</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;                    .$(&quot;Giving up sending after &quot;)</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;                    .$(maxSendAttempts)</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                    .$(&quot; attempts: [&quot;)</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                    .$utf8(outBufferPtr, outBufferPtr + len)</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                    .I$();</b>
+<i class="no-highlight">225</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        return success;</b>
+<i class="no-highlight">227</i>&nbsp;    }
+<i class="no-highlight">228</i>&nbsp;
+<i class="no-highlight">229</i>&nbsp;    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        return hi - lo &gt; 13 &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;c&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;o&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;n&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;t&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;e&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;n&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;t&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;-&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;l&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;e&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;n&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;g&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                (tok.charAt(lo++) | 32) == &#39;t&#39; &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;                (tok.charAt(lo) | 32) == &#39;h&#39;;</b>
+<i class="no-highlight">245</i>&nbsp;    }
+<i class="no-highlight">246</i>&nbsp;
+<i class="no-highlight">247</i>&nbsp;    private LogRecord $alertHost(int idx, LogRecord logRecord) {
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        return logRecord.$(&quot; [&quot;).$(idx).$(&quot;] &quot;).$(alertHosts[idx]).$(&#39;:&#39;).$(alertPorts[idx]);</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    private LogRecord $currentAlertHost(LogRecord logRecord) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        return $alertHost(alertHostIdx, logRecord);</b>
+<i class="no-highlight">253</i>&nbsp;    }
+<i class="no-highlight">254</i>&nbsp;
+<i class="no-highlight">255</i>&nbsp;    private void freeSocketAndAddress() {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        if (addressInfoAddr != -1) {</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;            nf.freeAddrInfo(addressInfoAddr);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            addressInfoAddr = -1;</b>
+<i class="no-highlight">259</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        if (socketFd != -1) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            nf.close(socketFd, log);</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            socketFd = -1;</b>
+<i class="no-highlight">263</i>&nbsp;        }
+<i class="no-highlight">264</i>&nbsp;    }
+<i class="no-highlight">265</i>&nbsp;
+<i class="no-highlight">266</i>&nbsp;    private void logNetworkConnectError(CharSequence message) {
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        $currentAlertHost(log.info().$(message)).$(&quot; [errno=&quot;).$(nf.errno()).I$();</b>
+<i class="no-highlight">268</i>&nbsp;    }
+<i class="no-highlight">269</i>&nbsp;
+<i class="no-highlight">270</i>&nbsp;    private void onReconnect() {
+<b class="nc"><i class="no-highlight">271</i>&nbsp;        LockSupport.parkNanos(reconnectDelay);</b>
+<i class="no-highlight">272</i>&nbsp;    }
+<i class="no-highlight">273</i>&nbsp;
+<i class="no-highlight">274</i>&nbsp;    private void parseAlertTargets() {
+<b class="fc"><i class="no-highlight">275</i>&nbsp;        if (alertTargets == null || alertTargets.isEmpty()) {</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            setDefaultHostPort();</b>
+<i class="no-highlight">277</i>&nbsp;            return;
+<i class="no-highlight">278</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        int startIdx = 0;</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        int endIdx = alertTargets.length();</b>
+<i class="no-highlight">281</i>&nbsp;
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        if (Chars.isQuoted(alertTargets)) {</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            startIdx++;</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            endIdx--;</b>
+<i class="no-highlight">285</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        while (alertTargets.charAt(startIdx) == &#39; &#39; &amp;&amp; startIdx &lt; endIdx - 1) {</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            startIdx++;</b>
+<i class="no-highlight">288</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        while (alertTargets.charAt(endIdx - 1) == &#39; &#39; &amp;&amp; endIdx &gt; startIdx) {</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            endIdx--;</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        final int len = endIdx - startIdx;</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        if (len == 0) {</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;            setDefaultHostPort();</b>
+<i class="no-highlight">295</i>&nbsp;            return;
+<i class="no-highlight">296</i>&nbsp;        }
+<i class="no-highlight">297</i>&nbsp;
+<i class="no-highlight">298</i>&nbsp;        // expected format: host[:port](,host[:port])*
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        int hostIdx = startIdx;</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        int portIdx = -1;</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        for (int i = startIdx; i &lt; endIdx; ++i) {</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;            char c = alertTargets.charAt(i);</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            switch (c) {</b>
+<i class="no-highlight">304</i>&nbsp;                case &#39;:&#39;:
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                    if (portIdx != -1) {</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;                        throw new LogError(String.format(</b>
+<i class="no-highlight">307</i>&nbsp;                                &quot;Unexpected &#39;:&#39; found at position %d: %s&quot;,
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                                i,</b>
+<i class="no-highlight">309</i>&nbsp;                                alertTargets));
+<i class="no-highlight">310</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">311</i>&nbsp;                    portIdx = i;</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                    break;</b>
+<i class="no-highlight">313</i>&nbsp;
+<i class="no-highlight">314</i>&nbsp;                case &#39;,&#39;:
+<b class="fc"><i class="no-highlight">315</i>&nbsp;                    setHostPort(hostIdx, portIdx, i);</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;                    hostIdx = i + 1;</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;                    portIdx = -1;</b>
+<i class="no-highlight">318</i>&nbsp;                    break;
+<i class="no-highlight">319</i>&nbsp;            }
+<i class="no-highlight">320</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        setHostPort(hostIdx, portIdx, len);</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        alertHostIdx = rand.nextInt(alertHostsCount);</b>
+<i class="no-highlight">323</i>&nbsp;    }
+<i class="no-highlight">324</i>&nbsp;
+<i class="no-highlight">325</i>&nbsp;    private void setDefaultHostPort() {
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        alertHosts[alertHostIdx] = defaultHost;</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        alertPorts[alertHostIdx] = defaultPort;</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        alertTargets = defaultHost + &quot;:&quot; + defaultPort;</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        alertHostIdx = 0;</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        alertHostsCount = 1;</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        $currentAlertHost(log.info().$(&quot;Added default alert manager&quot;)).$();</b>
+<i class="no-highlight">332</i>&nbsp;    }
+<i class="no-highlight">333</i>&nbsp;
+<i class="no-highlight">334</i>&nbsp;    private void setHostPort(int hostIdx, int portLimit, int hostLimit) {
+<i class="no-highlight">335</i>&nbsp;        // host0:port0, host1 : port1 , ..., host9:port9
+<i class="no-highlight">336</i>&nbsp;        //              ^     ^       ^
+<i class="no-highlight">337</i>&nbsp;        //              |     |       hostEnd
+<i class="no-highlight">338</i>&nbsp;        //              |     portLimit
+<i class="no-highlight">339</i>&nbsp;        //              hostIdx
+<i class="no-highlight">340</i>&nbsp;
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        boolean hostResolved = false;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        int hostEnd = hostLimit;</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        if (portLimit == -1) { // no &#39;:&#39; was found</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            if (hostIdx + 1 &gt; hostLimit) {</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                alertHosts[alertHostsCount] = defaultHost;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                hostResolved = true;</b>
+<i class="no-highlight">347</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">348</i>&nbsp;            alertPorts[alertHostsCount] = defaultPort;</b>
+<i class="no-highlight">349</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">350</i>&nbsp;            if (hostIdx + 1 &gt; portLimit) {</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                alertHosts[alertHostsCount] = defaultHost;</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                hostResolved = true;</b>
+<i class="no-highlight">353</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                hostEnd = portLimit;</b>
+<i class="no-highlight">355</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">356</i>&nbsp;            if (portLimit + 2 &gt; hostLimit) {</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                alertPorts[alertHostsCount] = defaultPort;</b>
+<i class="no-highlight">358</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                int port = 0;</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                int scale = 1;</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                for (int i = hostLimit - 1; i &gt; portLimit; i--) {</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                    int c = alertTargets.charAt(i) - &#39;0&#39;;</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                    if (c &gt; -1 &amp;&amp; c &lt; 10) {</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                        port += c * scale;</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                        scale *= 10;</b>
+<i class="no-highlight">366</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                        throw new LogError(String.format(</b>
+<i class="no-highlight">368</i>&nbsp;                                &quot;Invalid port value [%s] at position %d for alertTargets: %s&quot;,
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                                alertTargets.substring(portLimit + 1, hostLimit),</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                                portLimit + 1,</b>
+<i class="no-highlight">371</i>&nbsp;                                alertTargets
+<i class="no-highlight">372</i>&nbsp;                        ));
+<i class="no-highlight">373</i>&nbsp;                    }
+<i class="no-highlight">374</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                alertPorts[alertHostsCount] = port;</b>
+<i class="no-highlight">376</i>&nbsp;            }
+<i class="no-highlight">377</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">378</i>&nbsp;        LogRecord logRecord = log.info()</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                .$(&quot;Added alert manager [&quot;)</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                .$(alertHostsCount)</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                .$(&quot;]: &quot;);</b>
+<i class="no-highlight">382</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">383</i>&nbsp;            if (!hostResolved) {</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                String host = alertTargets.substring(hostIdx, hostEnd).trim();</b>
+<i class="no-highlight">385</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                    alertHosts[alertHostsCount] = InetAddress.getByName(host).getHostAddress();</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                    logRecord.$(host).$(&quot; (&quot;).$(alertHosts[alertHostsCount]).$(&#39;)&#39;);</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                } catch (UnknownHostException e) {</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                    throw new LogError(String.format(</b>
+<i class="no-highlight">390</i>&nbsp;                            &quot;Invalid host value [%s] at position %d for alertTargets: %s&quot;,
+<i class="no-highlight">391</i>&nbsp;                            host,
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                            hostIdx,</b>
+<i class="no-highlight">393</i>&nbsp;                            alertTargets
+<i class="no-highlight">394</i>&nbsp;                    ));
+<b class="fc"><i class="no-highlight">395</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;                logRecord.$(alertHosts[alertHostsCount]);</b>
+<i class="no-highlight">398</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">399</i>&nbsp;            logRecord.$(&#39;:&#39;).$(alertPorts[alertHostsCount]);</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;            alertHostsCount++;</b>
+<i class="no-highlight">401</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">402</i>&nbsp;            logRecord.$();</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;        }</b>
+<i class="no-highlight">404</i>&nbsp;    }
+<i class="no-highlight">405</i>&nbsp;
+<i class="no-highlight">406</i>&nbsp;    @TestOnly
+<i class="no-highlight">407</i>&nbsp;    String[] getAlertHosts() {
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        return alertHosts;</b>
+<i class="no-highlight">409</i>&nbsp;    }
+<i class="no-highlight">410</i>&nbsp;
+<i class="no-highlight">411</i>&nbsp;    @TestOnly
+<i class="no-highlight">412</i>&nbsp;    int getAlertHostsCount() {
+<b class="fc"><i class="no-highlight">413</i>&nbsp;        return alertHostsCount;</b>
+<i class="no-highlight">414</i>&nbsp;    }
+<i class="no-highlight">415</i>&nbsp;
+<i class="no-highlight">416</i>&nbsp;    @TestOnly
+<i class="no-highlight">417</i>&nbsp;    int[] getAlertPorts() {
+<b class="fc"><i class="no-highlight">418</i>&nbsp;        return alertPorts;</b>
+<i class="no-highlight">419</i>&nbsp;    }
+<i class="no-highlight">420</i>&nbsp;
+<i class="no-highlight">421</i>&nbsp;    @TestOnly
+<i class="no-highlight">422</i>&nbsp;    String getAlertTargets() {
+<b class="fc"><i class="no-highlight">423</i>&nbsp;        return alertTargets;</b>
+<i class="no-highlight">424</i>&nbsp;    }
+<i class="no-highlight">425</i>&nbsp;
+<i class="no-highlight">426</i>&nbsp;    @TestOnly
+<i class="no-highlight">427</i>&nbsp;    String getDefaultAlertHost() {
+<b class="fc"><i class="no-highlight">428</i>&nbsp;        return defaultHost;</b>
+<i class="no-highlight">429</i>&nbsp;    }
+<i class="no-highlight">430</i>&nbsp;
+<i class="no-highlight">431</i>&nbsp;    @TestOnly
+<i class="no-highlight">432</i>&nbsp;    int getDefaultAlertPort() {
+<b class="fc"><i class="no-highlight">433</i>&nbsp;        return defaultPort;</b>
+<i class="no-highlight">434</i>&nbsp;    }
+<i class="no-highlight">435</i>&nbsp;
+<i class="no-highlight">436</i>&nbsp;    @TestOnly
+<i class="no-highlight">437</i>&nbsp;    long getReconnectDelay() {
+<b class="fc"><i class="no-highlight">438</i>&nbsp;        return reconnectDelay;</b>
+<i class="no-highlight">439</i>&nbsp;    }
+<i class="no-highlight">440</i>&nbsp;
+<i class="no-highlight">441</i>&nbsp;    @TestOnly
+<i class="no-highlight">442</i>&nbsp;    void logResponse(int len) {
+<b class="fc"><i class="no-highlight">443</i>&nbsp;        responseSink.clear();</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;        final int responseLen = responseSink.length();</b>
+<b class="fc"><i class="no-highlight">446</i>&nbsp;        int contentLength = 0;</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;        int lineStart = 0;</b>
+<b class="fc"><i class="no-highlight">448</i>&nbsp;        int colonIdx = -1;</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        boolean headerEndFound = false;</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        for (int i = 0; i &lt; responseLen; i++) {</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            switch (responseSink.charAt(i)) {</b>
+<i class="no-highlight">452</i>&nbsp;                case &#39;:&#39;:
+<b class="fc"><i class="no-highlight">453</i>&nbsp;                    if (colonIdx == -1) { // values may contain &#39;:&#39;, e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                        colonIdx = i;</b>
+<i class="no-highlight">455</i>&nbsp;                    }
+<i class="no-highlight">456</i>&nbsp;                    break;
+<i class="no-highlight">457</i>&nbsp;
+<i class="no-highlight">458</i>&nbsp;                case &#39;\n&#39;:
+<b class="fc"><i class="no-highlight">459</i>&nbsp;                    if (colonIdx != -1) {</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                        if (isContentLength(responseSink, lineStart, colonIdx)) {</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;                            int startSize = colonIdx + 1;</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;                            int limSize = i - 1;</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                            while (startSize &lt; responseLen &amp;&amp; responseSink.charAt(startSize) == &#39; &#39;) {</b>
+<b class="fc"><i class="no-highlight">464</i>&nbsp;                                startSize++;</b>
+<i class="no-highlight">465</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                            while (limSize &gt; startSize) {</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                                char c = responseSink.charAt(limSize);</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                                if (c == &#39;\r&#39; || c == &#39; &#39;) {</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;                                    limSize--;</b>
+<i class="no-highlight">470</i>&nbsp;                                } else {
+<i class="no-highlight">471</i>&nbsp;                                    break;
+<i class="no-highlight">472</i>&nbsp;                                }
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                            }</b>
+<i class="no-highlight">474</i>&nbsp;                            try {
+<b class="fc"><i class="no-highlight">475</i>&nbsp;                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;                            } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">477</i>&nbsp;                                $currentAlertHost(log.info().$(&quot;Received&quot;)).$(&quot;: &quot;).$(responseSink).$();</b>
+<i class="no-highlight">478</i>&nbsp;                                return;
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                            }</b>
+<i class="no-highlight">480</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">481</i>&nbsp;                        colonIdx = -1;</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;                    } else if (i - lineStart == 1 &amp;&amp; responseSink.charAt(i - 1) == &#39;\r&#39;) {</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                        lineStart = i + 1;</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                        headerEndFound = true;</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;                        break; // for loop</b>
+<i class="no-highlight">486</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                    lineStart = i + 1;</b>
+<i class="no-highlight">488</i>&nbsp;                    break;
+<i class="no-highlight">489</i>&nbsp;            }
+<i class="no-highlight">490</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">491</i>&nbsp;        int start = headerEndFound &amp;&amp; contentLength == responseLen - lineStart ? lineStart : 0;</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;        $currentAlertHost(log.info().$(&quot;Received&quot;))</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                .$(&quot;: &quot;)</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;                .$(responseSink, start, responseLen)</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                .$();</b>
+<i class="no-highlight">496</i>&nbsp;    }
+<i class="no-highlight">497</i>&nbsp;
+<i class="no-highlight">498</i>&nbsp;    static {
+<i class="no-highlight">499</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">500</i>&nbsp;            localHostIp = InetAddress.getLocalHost().getHostAddress();</b>
+<b class="nc"><i class="no-highlight">501</i>&nbsp;        } catch (UnknownHostException e) {</b>
+<b class="nc"><i class="no-highlight">502</i>&nbsp;            throw new LogError(&quot;Cannot access our ip address info&quot;);</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;        }</b>
+<i class="no-highlight">504</i>&nbsp;    }
+<i class="no-highlight">505</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

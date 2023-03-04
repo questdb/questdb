@@ -1,0 +1,406 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > GeoHashes</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: GeoHashes (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">GeoHashes</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (26/26)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.3%
+  </span>
+  <span class="absValue">
+    (107/110)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.LongList;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.NumericException;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">34</i>&nbsp;
+<b class="fc"><i class="no-highlight">35</i>&nbsp;public class GeoHashes {</b>
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;    // geohash null value: -1
+<i class="no-highlight">38</i>&nbsp;    // we use the highest bit of every storage size (byte, short, int, long)
+<i class="no-highlight">39</i>&nbsp;    // to indicate null value. When a null value is cast down, nullity is
+<i class="no-highlight">40</i>&nbsp;    // preserved, i.e. highest bit remains set:
+<i class="no-highlight">41</i>&nbsp;    //     long nullLong = -1L;
+<i class="no-highlight">42</i>&nbsp;    //     short nullShort = (short) nullLong;
+<i class="no-highlight">43</i>&nbsp;    //     nullShort == nullLong;
+<i class="no-highlight">44</i>&nbsp;    // in addition, -1 is the first negative non geohash value.
+<i class="no-highlight">45</i>&nbsp;    public static final byte BYTE_NULL = -1;
+<i class="no-highlight">46</i>&nbsp;    public static final int INT_NULL = -1;
+<i class="no-highlight">47</i>&nbsp;    public static final int MAX_STRING_LENGTH = 12;
+<i class="no-highlight">48</i>&nbsp;    public static final long NULL = -1L;
+<i class="no-highlight">49</i>&nbsp;    public static final short SHORT_NULL = -1;
+<i class="no-highlight">50</i>&nbsp;    // we fill this array with BYTE_NULL (-1)
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    static final byte[] base32Indexes = {</b>
+<i class="no-highlight">52</i>&nbsp;            0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, &#39;0&#39;..&#39;7&#39;
+<i class="no-highlight">53</i>&nbsp;            8, 9, -1, -1, -1, -1, -1, -1,   // 38-2F, &#39;8&#39;,&#39;9&#39;
+<i class="no-highlight">54</i>&nbsp;            -1, -1, 10, 11, 12, 13, 14, 15, // 40-47, &#39;B&#39;..&#39;G&#39;
+<i class="no-highlight">55</i>&nbsp;            16, -1, 17, 18, -1, 19, 20, -1, // 48-4F, &#39;H&#39;,&#39;J&#39;,&#39;K&#39;,&#39;M&#39;,&#39;N&#39;
+<i class="no-highlight">56</i>&nbsp;            21, 22, 23, 24, 25, 26, 27, 28, // 50-57, &#39;P&#39;..&#39;W&#39;
+<i class="no-highlight">57</i>&nbsp;            29, 30, 31, -1, -1, -1, -1, -1, // 58-5F, &#39;X&#39;..&#39;Z&#39;
+<i class="no-highlight">58</i>&nbsp;            -1, -1, 10, 11, 12, 13, 14, 15, // 60-67, &#39;b&#39;..&#39;g&#39;
+<i class="no-highlight">59</i>&nbsp;            16, -1, 17, 18, -1, 19, 20, -1, // 68-6F, &#39;h&#39;,&#39;j&#39;,&#39;k&#39;,&#39;m&#39;,&#39;n&#39;
+<i class="no-highlight">60</i>&nbsp;            21, 22, 23, 24, 25, 26, 27, 28, // 70-77, &#39;p&#39;..&#39;w&#39;
+<i class="no-highlight">61</i>&nbsp;            29, 30, 31, -1, -1, -1, -1, -1  // 78-7A, &#39;x&#39;..&#39;z&#39;
+<i class="no-highlight">62</i>&nbsp;    };
+<i class="no-highlight">63</i>&nbsp;
+<b class="fc"><i class="no-highlight">64</i>&nbsp;    private static final char[] base32 = {</b>
+<i class="no-highlight">65</i>&nbsp;            &#39;0&#39;, &#39;1&#39;, &#39;2&#39;, &#39;3&#39;, &#39;4&#39;, &#39;5&#39;, &#39;6&#39;, &#39;7&#39;,
+<i class="no-highlight">66</i>&nbsp;            &#39;8&#39;, &#39;9&#39;, &#39;b&#39;, &#39;c&#39;, &#39;d&#39;, &#39;e&#39;, &#39;f&#39;, &#39;g&#39;,
+<i class="no-highlight">67</i>&nbsp;            &#39;h&#39;, &#39;j&#39;, &#39;k&#39;, &#39;m&#39;, &#39;n&#39;, &#39;p&#39;, &#39;q&#39;, &#39;r&#39;,
+<i class="no-highlight">68</i>&nbsp;            &#39;s&#39;, &#39;t&#39;, &#39;u&#39;, &#39;v&#39;, &#39;w&#39;, &#39;x&#39;, &#39;y&#39;, &#39;z&#39;
+<i class="no-highlight">69</i>&nbsp;    };
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        final int bits = ColumnType.getGeoHashBits(prefixType);</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        final int columnSize = ColumnType.sizeOf(columnType);</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        final int columnBits = ColumnType.getGeoHashBits(columnType);</b>
+<i class="no-highlight">75</i>&nbsp;
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        if (hash == NULL || bits &gt; columnBits) {</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">78</i>&nbsp;        }
+<i class="no-highlight">79</i>&nbsp;
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        final int shift = columnBits - bits;</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        long norm = hash &lt;&lt; shift;</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        long mask = GeoHashes.bitmask(bits, shift);</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        mask |= 1L &lt;&lt; (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching</b>
+<i class="no-highlight">84</i>&nbsp;
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        prefixes.add(norm);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        prefixes.add(mask);</b>
+<i class="no-highlight">87</i>&nbsp;    }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;    public static void append(long hash, int bits, CharSink sink) {
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        if (hash == GeoHashes.NULL) {</b>
+<b class="nc"><i class="no-highlight">91</i>&nbsp;            sink.put(&quot;null&quot;);</b>
+<i class="no-highlight">92</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">93</i>&nbsp;            sink.put(&#39;\&quot;&#39;);</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;            if (bits &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">95</i>&nbsp;                GeoHashes.appendCharsUnsafe(hash, -bits, sink);</b>
+<i class="no-highlight">96</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">97</i>&nbsp;                GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);</b>
+<i class="no-highlight">98</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">99</i>&nbsp;            sink.put(&#39;\&quot;&#39;);</b>
+<i class="no-highlight">100</i>&nbsp;        }
+<i class="no-highlight">101</i>&nbsp;    }
+<i class="no-highlight">102</i>&nbsp;
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    public static void appendBinary(long hash, int bits, CharSink sink) {
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        if (hash != NULL) {</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            appendBinaryStringUnsafe(hash, bits, sink);</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink sink) {
+<i class="no-highlight">111</i>&nbsp;        // Below assertion can happen if there is corrupt metadata
+<i class="no-highlight">112</i>&nbsp;        // which should not happen in production code since reader and writer check table metadata
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        assert bits &gt; 0 &amp;&amp; bits &lt;= ColumnType.GEO_HASH_MAX_BITS_LENGTH;</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        for (int i = bits - 1; i &gt;= 0; --i) {</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;            sink.put(((hash &gt;&gt; i) &amp; 1) == 1 ? &#39;1&#39; : &#39;0&#39;);</b>
+<i class="no-highlight">116</i>&nbsp;        }
+<i class="no-highlight">117</i>&nbsp;    }
+<i class="no-highlight">118</i>&nbsp;
+<i class="no-highlight">119</i>&nbsp;    public static void appendChars(long hash, int chars, CharSink sink) {
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        if (hash != NULL) {</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;            appendCharsUnsafe(hash, chars, sink);</b>
+<i class="no-highlight">122</i>&nbsp;        }
+<i class="no-highlight">123</i>&nbsp;    }
+<i class="no-highlight">124</i>&nbsp;
+<i class="no-highlight">125</i>&nbsp;    public static void appendCharsUnsafe(long hash, int chars, CharSink sink) {
+<i class="no-highlight">126</i>&nbsp;        // Below assertion can happen if there is corrupt metadata
+<i class="no-highlight">127</i>&nbsp;        // which should not happen in production code since reader and writer check table metadata
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        assert chars &gt; 0 &amp;&amp; chars &lt;= MAX_STRING_LENGTH;</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        for (int i = chars - 1; i &gt;= 0; --i) {</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;            sink.put(base32[(int) ((hash &gt;&gt; i * 5) &amp; 0x1F)]);</b>
+<i class="no-highlight">131</i>&nbsp;        }
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    public static long bitmask(int count, int shift) {
+<i class="no-highlight">135</i>&nbsp;        // e.g. 3, 4 -&gt; 1110000
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        return ((1L &lt;&lt; count) - 1) &lt;&lt; shift;</b>
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    public static byte encodeChar(char c) {
+<i class="no-highlight">140</i>&nbsp;        // element at index 11 is -1
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        return base32Indexes[c &gt; 47 &amp;&amp; c &lt; 123 ? c - 48 : 11];</b>
+<i class="no-highlight">142</i>&nbsp;    }
+<i class="no-highlight">143</i>&nbsp;
+<i class="no-highlight">144</i>&nbsp;    public static long fromBitString(CharSequence bits, int start) throws NumericException {
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));</b>
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        int len = bits.length();</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        if (len - start &lt;= 0) {</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;            return NULL;</b>
+<i class="no-highlight">152</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));</b>
+<i class="no-highlight">154</i>&nbsp;    }
+<i class="no-highlight">155</i>&nbsp;
+<i class="no-highlight">156</i>&nbsp;    public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        if (lat &lt; -90.0 || lat &gt; 90.0) {</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">159</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        if (lon &lt; -180.0 || lon &gt; 180.0) {</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">162</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        if (bits &lt; 0 || bits &gt; ColumnType.GEO_HASH_MAX_BITS_LENGTH) {</b>
+<b class="nc"><i class="no-highlight">164</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">165</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        return fromCoordinatesDegUnsafe(lat, lon, bits);</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    public static long fromCoordinatesDegUnsafe(double lat, double lon, int bits) {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        long latq = (long) Math.scalb((lat + 90.0) / 180.0, 32);</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        long lngq = (long) Math.scalb((lon + 180.0) / 360.0, 32);</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        return Numbers.interleaveBits(latq, lngq) &gt;&gt;&gt; (64 - bits);</b>
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    public static long fromString(CharSequence hash) throws NumericException {
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        return fromString(hash, 0, hash.length());</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    public static long fromString(CharSequence hash, int start, int end) throws NumericException {
+<i class="no-highlight">180</i>&nbsp;        // no bounds/length/nullity checks
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        long geohash = 0;</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        for (int i = start; i &lt; end; ++i) {</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            geohash = appendChar(geohash, hash.charAt(i));</b>
+<i class="no-highlight">184</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        return geohash;</b>
+<i class="no-highlight">186</i>&nbsp;    }
+<i class="no-highlight">187</i>&nbsp;
+<i class="no-highlight">188</i>&nbsp;    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        if (length &lt;= 0 || geohash == null || geohash.length() == 0) {</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;            return GeoHashes.NULL;</b>
+<i class="no-highlight">191</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int toBits) throws NumericException {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        if (start == end) {</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            return NULL;</b>
+<i class="no-highlight">198</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        final int chars = Math.min(end - start, MAX_STRING_LENGTH);</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        int fromBits = 5 * chars;</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        if (fromBits &lt; toBits) {</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">203</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        return widen(fromString(hash, start, start + chars), fromBits, toBits);</b>
+<i class="no-highlight">205</i>&nbsp;    }
+<i class="no-highlight">206</i>&nbsp;
+<i class="no-highlight">207</i>&nbsp;    public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        if (lo == hi) {</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;            return NULL;</b>
+<i class="no-highlight">210</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        int actualBits = 5 * chars;</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;        if (actualBits &lt; bits || bits == 0) {</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">215</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        long geohash = 0;</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        for (long p = lo, limit = p + chars; p &lt; limit; p++) {</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;            geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32</b>
+<i class="no-highlight">219</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        return widen(geohash, actualBits, bits);</b>
+<i class="no-highlight">221</i>&nbsp;    }
+<i class="no-highlight">222</i>&nbsp;
+<i class="no-highlight">223</i>&nbsp;    public static int getBitFlags(int columnType) {
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        if (!ColumnType.isGeoHash(columnType)) {</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            return 0;</b>
+<i class="no-highlight">226</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        final int bits = ColumnType.getGeoHashBits(columnType);</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        if (bits &gt; 0 &amp;&amp; bits % 5 == 0) {</b>
+<i class="no-highlight">229</i>&nbsp;            // It&#39;s 5 bit per char. If it&#39;s integer number of chars value to be serialized as chars
+<b class="fc"><i class="no-highlight">230</i>&nbsp;            return -bits / 5;</b>
+<i class="no-highlight">231</i>&nbsp;        }
+<i class="no-highlight">232</i>&nbsp;        // Value to be serialized as bit array.
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        return bits;</b>
+<i class="no-highlight">234</i>&nbsp;    }
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;    public static long getGeoLong(int type, Function func, Record rec) {
+<b class="fc"><i class="no-highlight">237</i>&nbsp;        switch (ColumnType.tagOf(type)) {</b>
+<i class="no-highlight">238</i>&nbsp;            case ColumnType.GEOBYTE:
+<b class="fc"><i class="no-highlight">239</i>&nbsp;                return func.getGeoByte(rec);</b>
+<i class="no-highlight">240</i>&nbsp;            case ColumnType.GEOSHORT:
+<b class="fc"><i class="no-highlight">241</i>&nbsp;                return func.getGeoShort(rec);</b>
+<i class="no-highlight">242</i>&nbsp;            case ColumnType.GEOINT:
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                return func.getGeoInt(rec);</b>
+<i class="no-highlight">244</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                return func.getGeoLong(rec);</b>
+<i class="no-highlight">246</i>&nbsp;        }
+<i class="no-highlight">247</i>&nbsp;    }
+<i class="no-highlight">248</i>&nbsp;
+<i class="no-highlight">249</i>&nbsp;    public static boolean isValidBits(CharSequence tok, int start) {
+<i class="no-highlight">250</i>&nbsp;        int idx;
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        int len = tok.length();</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        for (int i = start; i &lt; len; i++) {</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;            idx = tok.charAt(i);</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;            if (idx &lt; &#39;0&#39; || idx &gt; &#39;1&#39;) {</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                return false;</b>
+<i class="no-highlight">256</i>&nbsp;            }
+<i class="no-highlight">257</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        return start &lt; len;</b>
+<i class="no-highlight">259</i>&nbsp;    }
+<i class="no-highlight">260</i>&nbsp;
+<i class="no-highlight">261</i>&nbsp;    public static boolean isValidChars(CharSequence tok, int start) {
+<i class="no-highlight">262</i>&nbsp;        char c;
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        int len = tok.length();</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        for (int i = start; i &lt; len; i++) {</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;            c = tok.charAt(i);</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;            if (encodeChar(c) == -1) {</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                return false;</b>
+<i class="no-highlight">268</i>&nbsp;            }
+<i class="no-highlight">269</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        return start &lt; len;</b>
+<i class="no-highlight">271</i>&nbsp;    }
+<i class="no-highlight">272</i>&nbsp;
+<i class="no-highlight">273</i>&nbsp;    public static long widen(long hash, int fromBits, int toBits) {
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        return hash &gt;&gt; (fromBits - toBits);</b>
+<i class="no-highlight">275</i>&nbsp;    }
+<i class="no-highlight">276</i>&nbsp;
+<i class="no-highlight">277</i>&nbsp;    private static long appendChar(long hash, char c) throws NumericException {
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        final byte idx = encodeChar(c);</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        if (idx &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            return (hash &lt;&lt; 5) | idx;</b>
+<i class="no-highlight">281</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        throw NumericException.INSTANCE;</b>
+<i class="no-highlight">283</i>&nbsp;    }
+<i class="no-highlight">284</i>&nbsp;
+<i class="no-highlight">285</i>&nbsp;    private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        long result = 0;</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;        for (int i = start; i &lt; limit; i++) {</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            switch (bits.charAt(i)) {</b>
+<i class="no-highlight">289</i>&nbsp;                case &#39;0&#39;:
+<b class="fc"><i class="no-highlight">290</i>&nbsp;                    result = result &lt;&lt; 1;</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;                    break;</b>
+<i class="no-highlight">292</i>&nbsp;                case &#39;1&#39;:
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                    result = (result &lt;&lt; 1) | 1;</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                    break;</b>
+<i class="no-highlight">295</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">296</i>&nbsp;                    throw NumericException.INSTANCE;</b>
+<i class="no-highlight">297</i>&nbsp;            }
+<i class="no-highlight">298</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        return result;</b>
+<i class="no-highlight">300</i>&nbsp;    }
+<i class="no-highlight">301</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

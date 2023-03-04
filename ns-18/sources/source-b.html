@@ -1,0 +1,394 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TextDelimiterScanner</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.text</a>
+</div>
+
+<h1>Coverage Summary for Class: TextDelimiterScanner (io.questdb.cutlass.text)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TextDelimiterScanner</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (8/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (135/135)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.text;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.MemoryTag;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.Vect;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">35</i>&nbsp;import java.util.Arrays;
+<i class="no-highlight">36</i>&nbsp;
+<b class="fc"><i class="no-highlight">37</i>&nbsp;public class TextDelimiterScanner implements Closeable {</b>
+<i class="no-highlight">38</i>&nbsp;    private static final double DOUBLE_TOLERANCE = 0.05d;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;    private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    private static final byte[] potentialDelimiterBytes = new byte[256];</b>
+<b class="fc"><i class="no-highlight">41</i>&nbsp;    private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];</b>
+<i class="no-highlight">42</i>&nbsp;    private final int lineCountLimit;
+<i class="no-highlight">43</i>&nbsp;    private final long matrix;
+<i class="no-highlight">44</i>&nbsp;    private final int matrixRowSize;
+<i class="no-highlight">45</i>&nbsp;    private final int matrixSize;
+<i class="no-highlight">46</i>&nbsp;    private final double maxRequiredDelimiterStdDev;
+<i class="no-highlight">47</i>&nbsp;    private final double maxRequiredLineLengthStdDev;
+<i class="no-highlight">48</i>&nbsp;    private CharSequence tableName;
+<i class="no-highlight">49</i>&nbsp;
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    public TextDelimiterScanner(TextConfiguration configuration) {</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        this.lineCountLimit = configuration.getTextAnalysisMaxLines();</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        this.matrixRowSize = 256 * Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        this.matrixSize = matrixRowSize * lineCountLimit;</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();</b>
+<i class="no-highlight">57</i>&nbsp;    }
+<i class="no-highlight">58</i>&nbsp;
+<i class="no-highlight">59</i>&nbsp;    @Override
+<i class="no-highlight">60</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<i class="no-highlight">62</i>&nbsp;    }
+<i class="no-highlight">63</i>&nbsp;
+<i class="no-highlight">64</i>&nbsp;    private static void configurePriority(byte value, byte priority) {
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        assert value &gt; -1;</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        priorities[value] = priority;</b>
+<i class="no-highlight">67</i>&nbsp;    }
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;    private static byte getPriority(byte value) {
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        return priorities[value];</b>
+<i class="no-highlight">71</i>&nbsp;    }
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    private void bumpCountAt(int line, byte bytePosition, int increment) {
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        if (bytePosition &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;            final long pos = matrix + ((long) line * matrixRowSize + bytePosition * Integer.BYTES);</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);</b>
+<i class="no-highlight">77</i>&nbsp;        }
+<i class="no-highlight">78</i>&nbsp;    }
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;    byte scan(long address, long hi) throws TextException {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        int lineCount = 0;</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        boolean quotes = false;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        long cursor = address;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        boolean delayedClosingQuote = false;</b>
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;        // bit field that has bit set for bytes
+<i class="no-highlight">87</i>&nbsp;        // that occurred in this text
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        long byteBitFieldLo = 0;</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        long byteBitFieldHi = 0;</b>
+<i class="no-highlight">90</i>&nbsp;
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        int lineLen = 0;</b>
+<i class="no-highlight">92</i>&nbsp;
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        Vect.memset(matrix, matrixSize, 0);</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        while (cursor &lt; hi &amp;&amp; lineCount &lt; lineCountLimit) {</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;            byte b = Unsafe.getUnsafe().getByte(cursor++);</b>
+<i class="no-highlight">96</i>&nbsp;
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            if (delayedClosingQuote) {</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;                delayedClosingQuote = false;</b>
+<i class="no-highlight">99</i>&nbsp;                // this is double quote &#39;&quot;&quot;&#39; situation
+<b class="fc"><i class="no-highlight">100</i>&nbsp;                if (b == &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;                    lineLen++;</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;                    continue;</b>
+<i class="no-highlight">103</i>&nbsp;                } else {
+<i class="no-highlight">104</i>&nbsp;                    // last quote was genuine closing one
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                    quotes = false;</b>
+<i class="no-highlight">106</i>&nbsp;                }
+<i class="no-highlight">107</i>&nbsp;            }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;            // ignore everything that is in quotes
+<b class="fc"><i class="no-highlight">110</i>&nbsp;            if (quotes) {</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;                if (b == &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                    delayedClosingQuote = true;</b>
+<i class="no-highlight">113</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                lineLen++;</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                continue;</b>
+<i class="no-highlight">116</i>&nbsp;            }
+<i class="no-highlight">117</i>&nbsp;
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            switch (b) {</b>
+<i class="no-highlight">119</i>&nbsp;                case &#39;\n&#39;:
+<i class="no-highlight">120</i>&nbsp;                case &#39;\r&#39;:
+<i class="no-highlight">121</i>&nbsp;                    // if line doesn&#39;t have content we just ignore
+<i class="no-highlight">122</i>&nbsp;                    // line end, thus skipping empty lines as well
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                    if (lineLen &gt; 0) {</b>
+<i class="no-highlight">124</i>&nbsp;                        // we are going to be storing this line length in &#39;A&#39; byte
+<i class="no-highlight">125</i>&nbsp;                        // we don&#39;t collect frequencies on printable characters when trying to determine
+<i class="no-highlight">126</i>&nbsp;                        // column delimiter, therefore &#39;A&#39; is free to use.
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                        bumpCountAt(lineCount, (byte) &#39;A&#39;, lineLen);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                        byteBitFieldHi = byteBitFieldHi | (1L &lt;&lt; (Byte.MAX_VALUE - &#39;A&#39;));</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                        lineCount++;</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                        lineLen = 0;</b>
+<i class="no-highlight">131</i>&nbsp;                    }
+<i class="no-highlight">132</i>&nbsp;                    continue;
+<i class="no-highlight">133</i>&nbsp;                case &#39;&quot;&#39;:
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                    lineLen++;</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                    quotes = true;</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                    continue;</b>
+<i class="no-highlight">137</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                    lineLen++;</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;                    if (potentialDelimiterBytes[b &amp; 0xff] == 1) {</b>
+<i class="no-highlight">140</i>&nbsp;                        break;
+<i class="no-highlight">141</i>&nbsp;                    }
+<i class="no-highlight">142</i>&nbsp;                    continue;
+<i class="no-highlight">143</i>&nbsp;            }
+<i class="no-highlight">144</i>&nbsp;
+<b class="fc"><i class="no-highlight">145</i>&nbsp;            bumpCountAt(lineCount, b, 1);</b>
+<i class="no-highlight">146</i>&nbsp;
+<b class="fc"><i class="no-highlight">147</i>&nbsp;            if (b &lt; 64) {</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                byteBitFieldLo = byteBitFieldLo | (1L &lt;&lt; b);</b>
+<i class="no-highlight">149</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                byteBitFieldHi = byteBitFieldHi | (1L &lt;&lt; (Byte.MAX_VALUE - b));</b>
+<i class="no-highlight">151</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        }</b>
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;        // calculate standard deviation for every byte in the matrix
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        byte delimiter = Byte.MIN_VALUE;</b>
+<i class="no-highlight">156</i>&nbsp;
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        if (lineCount &lt; 2) {</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            LOG.info().$(&quot;not enough lines [table=&quot;).$(tableName).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;            throw NotEnoughLinesException.$(&quot;not enough lines [table=&quot;).put(tableName).put(&#39;]&#39;);</b>
+<i class="no-highlight">160</i>&nbsp;        }
+<i class="no-highlight">161</i>&nbsp;
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        double lastDelimiterStdDev = Double.POSITIVE_INFINITY;</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        byte lastDelimiterPriority = Byte.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        double lastDelimiterMean = 0;</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        double lineLengthStdDev = 0;</b>
+<i class="no-highlight">166</i>&nbsp;
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        for (int i = 0, n = Byte.MAX_VALUE + 1; i &lt; n; i++) {</b>
+<i class="no-highlight">168</i>&nbsp;            boolean set;
+<i class="no-highlight">169</i>&nbsp;
+<b class="fc"><i class="no-highlight">170</i>&nbsp;            if (i &lt; 64) {</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                set = (byteBitFieldLo &amp; (1L &lt;&lt; i)) != 0;</b>
+<i class="no-highlight">172</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;                set = (byteBitFieldHi &amp; (1L &lt;&lt; (Byte.MAX_VALUE - i))) != 0;</b>
+<i class="no-highlight">174</i>&nbsp;            }
+<i class="no-highlight">175</i>&nbsp;
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            if (set) {</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                long offset = i * 4L;</b>
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;                // calculate mean
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                long sum = 0;</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                for (int l = 0; l &lt; lineCount; l++) {</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                    sum += Unsafe.getUnsafe().getInt(matrix + offset);</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                    offset += matrixRowSize;</b>
+<i class="no-highlight">184</i>&nbsp;                }
+<i class="no-highlight">185</i>&nbsp;
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                offset = i * 4L;</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                final double mean = (double) sum / lineCount;</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                if (mean &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                    double squareSum = 0.0;</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                    for (int l = 0; l &lt; lineCount; l++) {</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                        double x = Unsafe.getUnsafe().getInt(matrix + offset) - mean;</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                        squareSum += x * x;</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                        offset += matrixRowSize;</b>
+<i class="no-highlight">194</i>&nbsp;                    }
+<i class="no-highlight">195</i>&nbsp;
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                    final double stdDev = Math.sqrt(squareSum / lineCount);</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                    if (i == &#39;A&#39;) {</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                        lineLengthStdDev = stdDev;</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                        continue;</b>
+<i class="no-highlight">200</i>&nbsp;                    }
+<i class="no-highlight">201</i>&nbsp;
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                    final byte thisPriority = getPriority((byte) i);</b>
+<i class="no-highlight">203</i>&nbsp;
+<i class="no-highlight">204</i>&nbsp;                    // when stddev of this is less than last - use this
+<i class="no-highlight">205</i>&nbsp;                    // when stddev of this is the same as last then
+<i class="no-highlight">206</i>&nbsp;                    //    choose on priority (higher is better)
+<i class="no-highlight">207</i>&nbsp;                    //    when priority is the same choose on mean (higher is better)
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                    if (stdDev &lt; lastDelimiterStdDev</b>
+<i class="no-highlight">209</i>&nbsp;                            || (
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                            (Math.abs(stdDev - lastDelimiterStdDev) &lt; DOUBLE_TOLERANCE)</b>
+<i class="no-highlight">211</i>&nbsp;                                    &amp;&amp;
+<i class="no-highlight">212</i>&nbsp;                                    (lastDelimiterPriority &lt; thisPriority || lastDelimiterPriority == thisPriority &amp;&amp; lastDelimiterMean &gt; mean)
+<i class="no-highlight">213</i>&nbsp;                    )) {
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                        lastDelimiterStdDev = stdDev;</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                        lastDelimiterPriority = thisPriority;</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                        lastDelimiterMean = mean;</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                        delimiter = (byte) i;</b>
+<i class="no-highlight">218</i>&nbsp;                    }
+<i class="no-highlight">219</i>&nbsp;                }
+<i class="no-highlight">220</i>&nbsp;            }
+<i class="no-highlight">221</i>&nbsp;        }
+<i class="no-highlight">222</i>&nbsp;
+<i class="no-highlight">223</i>&nbsp;        // exclude &#39;.&#39; as delimiter
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        if (delimiter != &#39;.&#39; &amp;&amp; lastDelimiterStdDev &lt; maxRequiredDelimiterStdDev) {</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            LOG.info()</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;                    .$(&quot;scan result [table=`&quot;).$(tableName)</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                    .$(&quot;`, delimiter=&#39;&quot;).$((char) delimiter)</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                    .$(&quot;&#39;, priority=&quot;).$(lastDelimiterPriority)</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                    .$(&quot;, mean=&quot;).$(lastDelimiterMean)</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                    .$(&quot;, stddev=&quot;).$(lastDelimiterStdDev)</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                    .$(&#39;]&#39;).$();</b>
+<i class="no-highlight">232</i>&nbsp;
+<b class="fc"><i class="no-highlight">233</i>&nbsp;            return delimiter;</b>
+<i class="no-highlight">234</i>&nbsp;        }
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;        // it appears we could not establish delimiter
+<i class="no-highlight">237</i>&nbsp;        // we could treat input as single column of data if line length change stays within tolerance
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        if (lineLengthStdDev &lt; maxRequiredLineLengthStdDev) {</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;            return &#39;,&#39;;</b>
+<i class="no-highlight">240</i>&nbsp;        }
+<i class="no-highlight">241</i>&nbsp;
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        LOG.info()</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                .$(&quot;min deviation is too high [delimiterStdDev=&quot;).$(lastDelimiterStdDev)</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;                .$(&quot;, delimiterMaxStdDev=&quot;).$(maxRequiredDelimiterStdDev)</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                .$(&quot;, lineLengthStdDev=&quot;).$(lineLengthStdDev)</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                .$(&quot;, lineLengthMaxStdDev=&quot;).$(maxRequiredLineLengthStdDev)</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                .$(&quot;, lineCountLimit=&quot;).$(lineCountLimit)</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;                .$(&quot;, lineCount=&quot;).$(lineCount)</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;                .$(&#39;]&#39;).$();</b>
+<i class="no-highlight">250</i>&nbsp;
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        throw TextException.$(&quot;min deviation is too high [delimiterStdDev=&quot;)</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;                .put(lastDelimiterStdDev)</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                .put(&quot;, delimiterMaxStdDev=&quot;).put(maxRequiredDelimiterStdDev)</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;                .put(&quot;, lineLengthStdDev=&quot;).put(lineLengthStdDev)</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                .put(&quot;, lineLengthMaxStdDev=&quot;).put(maxRequiredLineLengthStdDev)</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                .put(&quot;, lineCountLimit=&quot;).put(lineCountLimit)</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                .put(&quot;, lineCount=&quot;).put(lineCount)</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                .put(&#39;]&#39;);</b>
+<i class="no-highlight">259</i>&nbsp;    }
+<i class="no-highlight">260</i>&nbsp;
+<i class="no-highlight">261</i>&nbsp;    void setTableName(CharSequence tableName) {
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        this.tableName = tableName;</b>
+<i class="no-highlight">263</i>&nbsp;    }
+<i class="no-highlight">264</i>&nbsp;
+<i class="no-highlight">265</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        configurePriority((byte) &#39;,&#39;, (byte) 10);</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        configurePriority((byte) &#39;\t&#39;, (byte) 10);</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        configurePriority((byte) &#39;|&#39;, (byte) 10);</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        configurePriority((byte) &#39;:&#39;, (byte) 9);</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        configurePriority((byte) &#39; &#39;, (byte) 8);</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;        configurePriority((byte) &#39;;&#39;, (byte) 8);</b>
+<i class="no-highlight">272</i>&nbsp;
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        Arrays.fill(potentialDelimiterBytes, (byte) 0);</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        for (int i = 1; i &lt; &#39;0&#39;; i++) {</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            potentialDelimiterBytes[i] = 1;</b>
+<i class="no-highlight">276</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        for (int i = &#39;9&#39; + 1; i &lt; &#39;A&#39;; i++) {</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            potentialDelimiterBytes[i] = 1;</b>
+<i class="no-highlight">279</i>&nbsp;        }
+<i class="no-highlight">280</i>&nbsp;
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        for (int i = &#39;Z&#39;; i &lt; &#39;a&#39;; i++) {</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;            potentialDelimiterBytes[i] = 1;</b>
+<i class="no-highlight">283</i>&nbsp;        }
+<i class="no-highlight">284</i>&nbsp;
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        for (int i = &#39;z&#39; + 1; i &lt; 255; i++) {</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;            potentialDelimiterBytes[i] = 1;</b>
+<i class="no-highlight">287</i>&nbsp;        }
+<i class="no-highlight">288</i>&nbsp;    }
+<i class="no-highlight">289</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

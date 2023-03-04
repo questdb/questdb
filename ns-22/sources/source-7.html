@@ -1,0 +1,322 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > InSymbolFunctionFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.functions.bool</a>
+</div>
+
+<h1>Coverage Summary for Class: InSymbolFunctionFactory (io.questdb.griffin.engine.functions.bool)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">InSymbolFunctionFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    92.6%
+  </span>
+  <span class="absValue">
+    (25/27)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">InSymbolFunctionFactory$Func</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (6/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    68.4%
+  </span>
+  <span class="absValue">
+    (26/38)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">InSymbolFunctionFactory$TestFunc</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    90%
+  </span>
+  <span class="absValue">
+    (9/10)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    78.5%
+  </span>
+  <span class="absValue">
+    (51/65)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.functions.bool;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoConfiguration;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.StaticSymbolTable;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.SymbolTableSource;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.FunctionFactory;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.griffin.engine.functions.BooleanFunction;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.griffin.engine.functions.SymbolFunction;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.griffin.engine.functions.UnaryFunction;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">42</i>&nbsp;
+<b class="fc"><i class="no-highlight">43</i>&nbsp;public class InSymbolFunctionFactory implements FunctionFactory {</b>
+<i class="no-highlight">44</i>&nbsp;    @Override
+<i class="no-highlight">45</i>&nbsp;    public String getSignature() {
+<b class="fc"><i class="no-highlight">46</i>&nbsp;        return &quot;in(Kv)&quot;;</b>
+<i class="no-highlight">47</i>&nbsp;    }
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;    @Override
+<i class="no-highlight">50</i>&nbsp;    public Function newInstance(
+<i class="no-highlight">51</i>&nbsp;            int position,
+<i class="no-highlight">52</i>&nbsp;            ObjList&lt;Function&gt; args,
+<i class="no-highlight">53</i>&nbsp;            IntList argPositions,
+<i class="no-highlight">54</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">55</i>&nbsp;            SqlExecutionContext sqlExecutionContext
+<i class="no-highlight">56</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        CharSequenceHashSet set = new CharSequenceHashSet();</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        int n = args.size();</b>
+<i class="no-highlight">59</i>&nbsp;
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        if (n == 1) {</b>
+<b class="nc"><i class="no-highlight">61</i>&nbsp;            return BooleanConstant.FALSE;</b>
+<i class="no-highlight">62</i>&nbsp;        }
+<i class="no-highlight">63</i>&nbsp;
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        ObjList&lt;Function&gt; deferredValues = null;</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        for (int i = 1; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;            Function func = args.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;            switch (ColumnType.tagOf(func.getType())) {</b>
+<i class="no-highlight">68</i>&nbsp;                case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">69</i>&nbsp;                    if (func.isRuntimeConstant()) {</b>
+<i class="no-highlight">70</i>&nbsp;                        // string bind variable case
+<b class="fc"><i class="no-highlight">71</i>&nbsp;                        if (deferredValues == null) {</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;                            deferredValues = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">73</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">74</i>&nbsp;                        deferredValues.add(func);</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;                        continue;</b>
+<i class="no-highlight">76</i>&nbsp;                    }
+<i class="no-highlight">77</i>&nbsp;                    // fall through
+<i class="no-highlight">78</i>&nbsp;                case ColumnType.SYMBOL:
+<i class="no-highlight">79</i>&nbsp;                case ColumnType.NULL:
+<b class="fc"><i class="no-highlight">80</i>&nbsp;                    CharSequence value = func.getStr(null);</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;                    if (value == null) {</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;                        set.add(null);</b>
+<i class="no-highlight">83</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;                        set.add(Chars.toString(value));</b>
+<i class="no-highlight">85</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">86</i>&nbsp;                    break;</b>
+<i class="no-highlight">87</i>&nbsp;                case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">88</i>&nbsp;                    set.add(String.valueOf(func.getChar(null)));</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;                    break;</b>
+<i class="no-highlight">90</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">91</i>&nbsp;                    throw SqlException.$(argPositions.getQuick(i), &quot;STRING constant expected&quot;);</b>
+<i class="no-highlight">92</i>&nbsp;            }
+<i class="no-highlight">93</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        SymbolFunction var = (SymbolFunction) args.getQuick(0);</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        if (var.isConstant() &amp;&amp; deferredValues == null) {</b>
+<i class="no-highlight">96</i>&nbsp;            // Fast path for all constants case.
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            return BooleanConstant.of(set.contains(var.getSymbol(null)));</b>
+<i class="no-highlight">98</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        return new Func(var, set, deferredValues);</b>
+<i class="no-highlight">100</i>&nbsp;    }
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    @FunctionalInterface
+<i class="no-highlight">103</i>&nbsp;    private interface TestFunc {
+<i class="no-highlight">104</i>&nbsp;        boolean test(Record rec);
+<i class="no-highlight">105</i>&nbsp;    }
+<i class="no-highlight">106</i>&nbsp;
+<i class="no-highlight">107</i>&nbsp;    private static class Func extends BooleanFunction implements UnaryFunction {
+<i class="no-highlight">108</i>&nbsp;        private final SymbolFunction arg;
+<i class="no-highlight">109</i>&nbsp;        private final CharSequenceHashSet deferredSet;
+<i class="no-highlight">110</i>&nbsp;        private final ObjList&lt;Function&gt; deferredValues;
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        private final IntHashSet intSet = new IntHashSet();</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        private final TestFunc intTest = this::testAsInt;</b>
+<i class="no-highlight">113</i>&nbsp;        private final CharSequenceHashSet set;
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        private final TestFunc strTest = this::testAsString;</b>
+<i class="no-highlight">115</i>&nbsp;        private TestFunc testFunc;
+<i class="no-highlight">116</i>&nbsp;
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        public Func(SymbolFunction arg, CharSequenceHashSet set, ObjList&lt;Function&gt; deferredValues) {</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            this.arg = arg;</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;            this.set = set;</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;            this.deferredValues = deferredValues;</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;            this.deferredSet = deferredValues != null ? new CharSequenceHashSet() : null;</b>
+<i class="no-highlight">122</i>&nbsp;        }
+<i class="no-highlight">123</i>&nbsp;
+<i class="no-highlight">124</i>&nbsp;        @Override
+<i class="no-highlight">125</i>&nbsp;        public Function getArg() {
+<b class="fc"><i class="no-highlight">126</i>&nbsp;            return arg;</b>
+<i class="no-highlight">127</i>&nbsp;        }
+<i class="no-highlight">128</i>&nbsp;
+<i class="no-highlight">129</i>&nbsp;        @Override
+<i class="no-highlight">130</i>&nbsp;        public boolean getBool(Record rec) {
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            return testFunc.test(rec);</b>
+<i class="no-highlight">132</i>&nbsp;        }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;        @Override
+<i class="no-highlight">135</i>&nbsp;        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;            arg.init(symbolTableSource, executionContext);</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;            if (deferredValues != null) {</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                for (int i = 0, n = deferredValues.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;                    deferredValues.getQuick(i).init(symbolTableSource, executionContext);</b>
+<i class="no-highlight">140</i>&nbsp;                }
+<i class="no-highlight">141</i>&nbsp;            }
+<i class="no-highlight">142</i>&nbsp;
+<b class="fc"><i class="no-highlight">143</i>&nbsp;            final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;            if (symbolTable != null) {</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                intSet.clear();</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;                for (int i = 0, n = set.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                    intSet.add(symbolTable.keyOf(set.get(i)));</b>
+<i class="no-highlight">148</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                if (deferredValues != null) {</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                    for (int i = 0, n = deferredValues.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                        final Function func = deferredValues.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;                        intSet.add(symbolTable.keyOf(func.getStr(null)));</b>
+<i class="no-highlight">153</i>&nbsp;                    }
+<i class="no-highlight">154</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">155</i>&nbsp;                testFunc = intTest;</b>
+<i class="no-highlight">156</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">157</i>&nbsp;                if (deferredValues != null) {</b>
+<b class="nc"><i class="no-highlight">158</i>&nbsp;                    deferredSet.clear();</b>
+<b class="nc"><i class="no-highlight">159</i>&nbsp;                    for (int i = 0, n = deferredValues.size(); i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">160</i>&nbsp;                        final Function func = deferredValues.getQuick(i);</b>
+<b class="nc"><i class="no-highlight">161</i>&nbsp;                        deferredSet.add(func.getStr(null));</b>
+<i class="no-highlight">162</i>&nbsp;                    }
+<i class="no-highlight">163</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">164</i>&nbsp;                testFunc = strTest;</b>
+<i class="no-highlight">165</i>&nbsp;            }
+<i class="no-highlight">166</i>&nbsp;        }
+<i class="no-highlight">167</i>&nbsp;
+<i class="no-highlight">168</i>&nbsp;        @Override
+<i class="no-highlight">169</i>&nbsp;        public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;            sink.val(arg).val(&quot; in &quot;).val(set);</b>
+<i class="no-highlight">171</i>&nbsp;        }
+<i class="no-highlight">172</i>&nbsp;
+<i class="no-highlight">173</i>&nbsp;        private boolean testAsInt(Record rec) {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            return intSet.contains(arg.getInt(rec));</b>
+<i class="no-highlight">175</i>&nbsp;        }
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;        private boolean testAsString(Record rec) {
+<b class="nc"><i class="no-highlight">178</i>&nbsp;            final CharSequence symbol = arg.getSymbol(rec);</b>
+<b class="nc"><i class="no-highlight">179</i>&nbsp;            if (set.contains(symbol)) {</b>
+<b class="nc"><i class="no-highlight">180</i>&nbsp;                return true;</b>
+<i class="no-highlight">181</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">182</i>&nbsp;            if (deferredSet != null) {</b>
+<b class="nc"><i class="no-highlight">183</i>&nbsp;                return deferredSet.contains(symbol);</b>
+<i class="no-highlight">184</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">185</i>&nbsp;            return false;</b>
+<i class="no-highlight">186</i>&nbsp;        }
+<i class="no-highlight">187</i>&nbsp;    }
+<i class="no-highlight">188</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

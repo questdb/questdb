@@ -1,0 +1,451 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > RebuildColumnBase</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: RebuildColumnBase (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">RebuildColumnBase</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (15/15)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.1%
+  </span>
+  <span class="absValue">
+    (109/110)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.FilesFacade;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.Misc;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Mutable;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.datetime.DateFormat;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.datetime.millitime.MillisecondClock;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">35</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+<i class="no-highlight">40</i>&nbsp;import static io.questdb.cairo.TableUtils.lockName;
+<i class="no-highlight">41</i>&nbsp;
+<b class="fc"><i class="no-highlight">42</i>&nbsp;public abstract class RebuildColumnBase implements Closeable, Mutable {</b>
+<i class="no-highlight">43</i>&nbsp;    static final int REBUILD_ALL_COLUMNS = -1;
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    protected final String unsupportedTableMessage = &quot;Table does not have any indexes&quot;;</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    private final StringSink tempStringSink = new StringSink();</b>
+<i class="no-highlight">46</i>&nbsp;    protected CairoConfiguration configuration;
+<i class="no-highlight">47</i>&nbsp;    protected FilesFacade ff;
+<b class="fc"><i class="no-highlight">48</i>&nbsp;    protected Path path = new Path();</b>
+<i class="no-highlight">49</i>&nbsp;    protected int rootLen;
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    protected String unsupportedColumnMessage = &quot;Wrong column type&quot;;</b>
+<i class="no-highlight">51</i>&nbsp;    private MillisecondClock clock;
+<i class="no-highlight">52</i>&nbsp;    private int lockFd;
+<i class="no-highlight">53</i>&nbsp;
+<i class="no-highlight">54</i>&nbsp;    @Override
+<i class="no-highlight">55</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        path.trimTo(0);</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        tempStringSink.clear();</b>
+<i class="no-highlight">58</i>&nbsp;    }
+<i class="no-highlight">59</i>&nbsp;
+<i class="no-highlight">60</i>&nbsp;    @Override
+<i class="no-highlight">61</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        this.path = Misc.free(path);</b>
+<i class="no-highlight">63</i>&nbsp;    }
+<i class="no-highlight">64</i>&nbsp;
+<i class="no-highlight">65</i>&nbsp;    public RebuildColumnBase of(CharSequence tablePath, CairoConfiguration configuration) {
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        this.path.of(tablePath);</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        this.rootLen = tablePath.length();</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        this.configuration = configuration;</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        this.ff = configuration.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        this.clock = configuration.getMillisecondClock();</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        return this;</b>
+<i class="no-highlight">72</i>&nbsp;    }
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    public void rebuildAll() {
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        reindex(null, null);</b>
+<i class="no-highlight">76</i>&nbsp;    }
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    public void reindex(
+<i class="no-highlight">79</i>&nbsp;            @Nullable CharSequence partitionName,
+<i class="no-highlight">80</i>&nbsp;            @Nullable CharSequence columnName
+<i class="no-highlight">81</i>&nbsp;    ) {
+<i class="no-highlight">82</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">83</i>&nbsp;            lock(ff);</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;                final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;                columnVersionReader.readSafe(clock, deadline);</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;                path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;                reindex0(columnVersionReader, partitionName, columnName);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;            }</b>
+<i class="no-highlight">91</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">92</i>&nbsp;            lockName(path);</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;            releaseLock(ff);</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        }</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    public void reindexAfterUpdate(long partitionTimestamp, CharSequence columnName, TableWriter tableWriter) {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        TxReader txReader = tableWriter.getTxReader();</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        int partitionIndex = txReader.getPartitionIndex(partitionTimestamp);</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        assert partitionIndex &gt; -1L;</b>
+<i class="no-highlight">101</i>&nbsp;
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        final RecordMetadata metadata = tableWriter.getMetadata();</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        final int columnIndex = tableWriter.getColumnIndex(columnName);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        assert indexValueBlockCapacity &gt; 0;</b>
+<i class="no-highlight">106</i>&nbsp;
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        final long partitionSize = partitionIndex == txReader.getPartitionCount() - 1</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                ? txReader.getTransientRowCount()</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                : txReader.getPartitionSize(partitionIndex);</b>
+<i class="no-highlight">110</i>&nbsp;
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);</b>
+<i class="no-highlight">112</i>&nbsp;
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        tempStringSink.clear();</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(tableWriter.getPartitionBy());</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);</b>
+<i class="no-highlight">116</i>&nbsp;
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        doReindex(</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                tableWriter.getColumnVersionReader(),</b>
+<i class="no-highlight">119</i>&nbsp;                // this may not be needed, because table writer&#39;s column index is the same
+<i class="no-highlight">120</i>&nbsp;                // as metadata writers&#39; index.
+<i class="no-highlight">121</i>&nbsp;                columnIndex,
+<i class="no-highlight">122</i>&nbsp;                columnName,
+<i class="no-highlight">123</i>&nbsp;                tempStringSink, // partition name
+<i class="no-highlight">124</i>&nbsp;                partitionNameTxn,
+<i class="no-highlight">125</i>&nbsp;                partitionSize,
+<i class="no-highlight">126</i>&nbsp;                partitionTimestamp,
+<i class="no-highlight">127</i>&nbsp;                indexValueBlockCapacity
+<i class="no-highlight">128</i>&nbsp;        );
+<i class="no-highlight">129</i>&nbsp;    }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;    public void reindexAllInPartition(CharSequence partitionName) {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        reindex(partitionName, null);</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    public void reindexColumn(CharSequence columnName) {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        reindex(null, columnName);</b>
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    public void reindexColumn(
+<i class="no-highlight">140</i>&nbsp;            ColumnVersionReader columnVersionReader,
+<i class="no-highlight">141</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">142</i>&nbsp;            int columnIndex,
+<i class="no-highlight">143</i>&nbsp;            CharSequence partitionName,
+<i class="no-highlight">144</i>&nbsp;            long partitionNameTxn,
+<i class="no-highlight">145</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">146</i>&nbsp;            long partitionSize
+<i class="no-highlight">147</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        doReindex(</b>
+<i class="no-highlight">149</i>&nbsp;                columnVersionReader,
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                metadata.getWriterIndex(columnIndex),</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                metadata.getColumnName(columnIndex),</b>
+<i class="no-highlight">152</i>&nbsp;                partitionName,
+<i class="no-highlight">153</i>&nbsp;                partitionNameTxn,
+<i class="no-highlight">154</i>&nbsp;                partitionSize,
+<i class="no-highlight">155</i>&nbsp;                partitionTimestamp,
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                metadata.getIndexValueBlockCapacity(columnIndex)</b>
+<i class="no-highlight">157</i>&nbsp;        );
+<i class="no-highlight">158</i>&nbsp;    }
+<i class="no-highlight">159</i>&nbsp;
+<i class="no-highlight">160</i>&nbsp;    private void lock(FilesFacade ff) {
+<i class="no-highlight">161</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">162</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            lockName(path);</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            this.lockFd = TableUtils.lock(ff, path);</b>
+<i class="no-highlight">165</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        }</b>
+<i class="no-highlight">168</i>&nbsp;
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        if (this.lockFd == -1) {</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;            throw CairoException.nonCritical().put(&quot;Cannot lock table: &quot;).put(path.$());</b>
+<i class="no-highlight">171</i>&nbsp;        }
+<i class="no-highlight">172</i>&nbsp;    }
+<i class="no-highlight">173</i>&nbsp;
+<i class="no-highlight">174</i>&nbsp;    // this method is not used by UPDATE SQL
+<i class="no-highlight">175</i>&nbsp;    private void reindex0(
+<i class="no-highlight">176</i>&nbsp;            ColumnVersionReader columnVersionReader,
+<i class="no-highlight">177</i>&nbsp;            @Nullable CharSequence partitionName, // will reindex all partitions if partition name is not provided
+<i class="no-highlight">178</i>&nbsp;            @Nullable CharSequence columnName // will reindex all columns if name is not provided
+<i class="no-highlight">179</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            metadata.load(path.$());</b>
+<i class="no-highlight">183</i>&nbsp;            // Resolve column id if the column name specified
+<i class="no-highlight">184</i>&nbsp;            final int columnIndex;
+<b class="fc"><i class="no-highlight">185</i>&nbsp;            if (columnName != null) {</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                columnIndex = metadata.getColumnIndex(columnName);</b>
+<i class="no-highlight">187</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                columnIndex = REBUILD_ALL_COLUMNS;</b>
+<i class="no-highlight">189</i>&nbsp;            }
+<i class="no-highlight">190</i>&nbsp;
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            final int partitionBy = metadata.getPartitionBy();</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            final DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);</b>
+<i class="no-highlight">194</i>&nbsp;
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                txReader.unsafeLoadAll();</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                path.trimTo(rootLen);</b>
+<i class="no-highlight">198</i>&nbsp;
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                if (PartitionBy.isPartitioned(partitionBy)) {</b>
+<i class="no-highlight">200</i>&nbsp;                    // Resolve partition timestamp if partition name specified
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                    if (partitionName != null) {</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                        final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                        int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                        if (partitionIndex &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                            reindexPartition(</b>
+<i class="no-highlight">206</i>&nbsp;                                    metadata,
+<i class="no-highlight">207</i>&nbsp;                                    columnVersionReader,
+<i class="no-highlight">208</i>&nbsp;                                    txReader,
+<i class="no-highlight">209</i>&nbsp;                                    columnIndex,
+<i class="no-highlight">210</i>&nbsp;                                    partitionIndex,
+<i class="no-highlight">211</i>&nbsp;                                    partitionDirFormatMethod,
+<i class="no-highlight">212</i>&nbsp;                                    partitionTimestamp
+<i class="no-highlight">213</i>&nbsp;                            );
+<i class="no-highlight">214</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                    } else {</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                        for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex &gt; -1; partitionIndex--) {</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                            reindexPartition(</b>
+<i class="no-highlight">218</i>&nbsp;                                    metadata,
+<i class="no-highlight">219</i>&nbsp;                                    columnVersionReader,
+<i class="no-highlight">220</i>&nbsp;                                    txReader,
+<i class="no-highlight">221</i>&nbsp;                                    columnIndex,
+<i class="no-highlight">222</i>&nbsp;                                    partitionIndex,
+<i class="no-highlight">223</i>&nbsp;                                    partitionDirFormatMethod,
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                                    txReader.getPartitionTimestamp(partitionIndex)</b>
+<i class="no-highlight">225</i>&nbsp;                            );
+<i class="no-highlight">226</i>&nbsp;                        }
+<i class="no-highlight">227</i>&nbsp;                    }
+<i class="no-highlight">228</i>&nbsp;                } else {
+<i class="no-highlight">229</i>&nbsp;                    // reindexing columns in non-partitioned table
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                    reindexOneOrAllColumns(</b>
+<i class="no-highlight">231</i>&nbsp;                            metadata,
+<i class="no-highlight">232</i>&nbsp;                            columnVersionReader,
+<i class="no-highlight">233</i>&nbsp;                            columnIndex,
+<i class="no-highlight">234</i>&nbsp;                            partitionDirFormatMethod,
+<i class="no-highlight">235</i>&nbsp;                            -1L,
+<i class="no-highlight">236</i>&nbsp;                            0L,
+<b class="fc"><i class="no-highlight">237</i>&nbsp;                            txReader.getTransientRowCount()</b>
+<i class="no-highlight">238</i>&nbsp;                    );
+<i class="no-highlight">239</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">240</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        } finally {</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;            path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        }</b>
+<i class="no-highlight">244</i>&nbsp;    }
+<i class="no-highlight">245</i>&nbsp;
+<i class="no-highlight">246</i>&nbsp;    private void reindexOneOrAllColumns(
+<i class="no-highlight">247</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">248</i>&nbsp;            ColumnVersionReader columnVersionReader,
+<i class="no-highlight">249</i>&nbsp;            int columnIndex,
+<i class="no-highlight">250</i>&nbsp;            DateFormat partitionDirFormatMethod,
+<i class="no-highlight">251</i>&nbsp;            long partitionNameTxn,
+<i class="no-highlight">252</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">253</i>&nbsp;            long partitionSize
+<i class="no-highlight">254</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">255</i>&nbsp;        boolean isIndexed = false;</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        tempStringSink.clear();</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);</b>
+<i class="no-highlight">258</i>&nbsp;
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        if (columnIndex == REBUILD_ALL_COLUMNS) {</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;            for (int i = 0, n = metadata.getColumnCount(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                if (isSupportedColumn(metadata, i)) {</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                    isIndexed = true;</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                    reindexColumn(</b>
+<i class="no-highlight">264</i>&nbsp;                            columnVersionReader,
+<i class="no-highlight">265</i>&nbsp;                            metadata,
+<i class="no-highlight">266</i>&nbsp;                            i,
+<i class="no-highlight">267</i>&nbsp;                            tempStringSink,
+<i class="no-highlight">268</i>&nbsp;                            partitionNameTxn,
+<i class="no-highlight">269</i>&nbsp;                            partitionTimestamp,
+<i class="no-highlight">270</i>&nbsp;                            partitionSize
+<i class="no-highlight">271</i>&nbsp;                    );
+<i class="no-highlight">272</i>&nbsp;                }
+<i class="no-highlight">273</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">274</i>&nbsp;            if (!isIndexed) {</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                throw CairoException.nonCritical().put(unsupportedTableMessage);</b>
+<i class="no-highlight">276</i>&nbsp;            }
+<i class="no-highlight">277</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            if (isSupportedColumn(metadata, columnIndex)) {</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                reindexColumn(</b>
+<i class="no-highlight">280</i>&nbsp;                        columnVersionReader,
+<i class="no-highlight">281</i>&nbsp;                        metadata,
+<i class="no-highlight">282</i>&nbsp;                        columnIndex,
+<i class="no-highlight">283</i>&nbsp;                        tempStringSink,
+<i class="no-highlight">284</i>&nbsp;                        partitionNameTxn,
+<i class="no-highlight">285</i>&nbsp;                        partitionTimestamp,
+<i class="no-highlight">286</i>&nbsp;                        partitionSize
+<i class="no-highlight">287</i>&nbsp;                );
+<i class="no-highlight">288</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">289</i>&nbsp;                throw CairoException.nonCritical().put(unsupportedColumnMessage);</b>
+<i class="no-highlight">290</i>&nbsp;            }
+<i class="no-highlight">291</i>&nbsp;        }
+<i class="no-highlight">292</i>&nbsp;    }
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;    private void reindexPartition(
+<i class="no-highlight">295</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">296</i>&nbsp;            ColumnVersionReader columnVersionReader,
+<i class="no-highlight">297</i>&nbsp;            TxReader txReader,
+<i class="no-highlight">298</i>&nbsp;            int columnIndex,
+<i class="no-highlight">299</i>&nbsp;            int partitionIndex,
+<i class="no-highlight">300</i>&nbsp;            DateFormat partitionDirFormatMethod,
+<i class="no-highlight">301</i>&nbsp;            long partitionTimestamp
+<i class="no-highlight">302</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        final long partitionSize = partitionIndex == txReader.getPartitionCount() - 1</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                ? txReader.getTransientRowCount()</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                : txReader.getPartitionSize(partitionIndex);</b>
+<i class="no-highlight">306</i>&nbsp;
+<b class="fc"><i class="no-highlight">307</i>&nbsp;        reindexOneOrAllColumns(</b>
+<i class="no-highlight">308</i>&nbsp;                metadata,
+<i class="no-highlight">309</i>&nbsp;                columnVersionReader,
+<i class="no-highlight">310</i>&nbsp;                columnIndex,
+<i class="no-highlight">311</i>&nbsp;                partitionDirFormatMethod,
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                txReader.getPartitionNameTxn(partitionIndex),</b>
+<i class="no-highlight">313</i>&nbsp;                partitionTimestamp,
+<i class="no-highlight">314</i>&nbsp;                partitionSize
+<i class="no-highlight">315</i>&nbsp;        );
+<i class="no-highlight">316</i>&nbsp;    }
+<i class="no-highlight">317</i>&nbsp;
+<i class="no-highlight">318</i>&nbsp;    private void releaseLock(FilesFacade ff) {
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        if (lockFd != -1L) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;            ff.close(lockFd);</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;            lockFd = -1;</b>
+<i class="no-highlight">322</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;                lockName(path);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                if (ff.exists(path) &amp;&amp; !ff.remove(path)) {</b>
+<b class="nc"><i class="no-highlight">326</i>&nbsp;                    throw CairoException.critical(ff.errno()).put(&quot;Cannot remove &quot;).put(path);</b>
+<i class="no-highlight">327</i>&nbsp;                }
+<i class="no-highlight">328</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                path.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;            }</b>
+<i class="no-highlight">331</i>&nbsp;        }
+<i class="no-highlight">332</i>&nbsp;    }
+<i class="no-highlight">333</i>&nbsp;
+<i class="no-highlight">334</i>&nbsp;    abstract protected void doReindex(
+<i class="no-highlight">335</i>&nbsp;            ColumnVersionReader columnVersionReader,
+<i class="no-highlight">336</i>&nbsp;            int columnWriterIndex,
+<i class="no-highlight">337</i>&nbsp;            CharSequence columnName,
+<i class="no-highlight">338</i>&nbsp;            CharSequence partitionName,
+<i class="no-highlight">339</i>&nbsp;            long partitionNameTxn,
+<i class="no-highlight">340</i>&nbsp;            long partitionSize,
+<i class="no-highlight">341</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">342</i>&nbsp;            int indexValueBlockCapacity
+<i class="no-highlight">343</i>&nbsp;    );
+<i class="no-highlight">344</i>&nbsp;
+<i class="no-highlight">345</i>&nbsp;    protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
+<i class="no-highlight">346</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

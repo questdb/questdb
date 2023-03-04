@@ -1,0 +1,430 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > FastDoubleSwar</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.fastdouble</a>
+</div>
+
+<h1>Coverage Summary for Class: FastDoubleSwar (io.questdb.std.fastdouble)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">FastDoubleSwar</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    90.9%
+  </span>
+  <span class="absValue">
+    (10/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.1%
+  </span>
+  <span class="absValue">
+    (53/54)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.fastdouble;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.Unsafe;
+<i class="no-highlight">28</i>&nbsp;
+<i class="no-highlight">29</i>&nbsp;/**
+<i class="no-highlight">30</i>&nbsp; * This class provides methods for parsing multiple characters at once using
+<i class="no-highlight">31</i>&nbsp; * the &quot;SIMD with a register&quot; (SWAR) technique.
+<i class="no-highlight">32</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">33</i>&nbsp; * References:
+<i class="no-highlight">34</i>&nbsp; * &lt;dl&gt;
+<i class="no-highlight">35</i>&nbsp; *     &lt;dt&gt;Leslie Lamport, Multiple Byte Processing with Full-Word Instructions&lt;/dt&gt;
+<i class="no-highlight">36</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://lamport.azurewebsites.net/pubs/multiple-byte.pdf&quot;&gt;azurewebsites.net&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">37</i>&nbsp; *
+<i class="no-highlight">38</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, fast_double_parser, 4x faster than strtod.
+<i class="no-highlight">39</i>&nbsp; *     Apache License 2.0 or Boost Software License.&lt;/dt&gt;
+<i class="no-highlight">40</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://github.com/lemire/fast_double_parser&quot;&gt;github.com&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">41</i>&nbsp; *
+<i class="no-highlight">42</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, fast_float number parsing library: 4x faster than strtod.
+<i class="no-highlight">43</i>&nbsp; *     Apache License 2.0.&lt;/dt&gt;
+<i class="no-highlight">44</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://github.com/fastfloat/fast_float&quot;&gt;github.com&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">45</i>&nbsp; *
+<i class="no-highlight">46</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, Number Parsing at a Gigabyte per Second,
+<i class="no-highlight">47</i>&nbsp; *     Software: Practice and Experience 51 (8), 2021.
+<i class="no-highlight">48</i>&nbsp; *     arXiv.2101.11408v3 [cs.DS] 24 Feb 2021&lt;/dt&gt;
+<i class="no-highlight">49</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://arxiv.org/pdf/2101.11408.pdf&quot;&gt;arxiv.org&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">50</i>&nbsp; * &lt;/dl&gt;
+<i class="no-highlight">51</i>&nbsp; * &lt;/p&gt;
+<i class="no-highlight">52</i>&nbsp; */
+<b class="nc"><i class="no-highlight">53</i>&nbsp;class FastDoubleSwar {</b>
+<i class="no-highlight">54</i>&nbsp;    static long getChunk(byte[] a, int offset) {
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        return Unsafe.getUnsafe().getLong(a, Unsafe.BYTE_OFFSET + offset);</b>
+<i class="no-highlight">56</i>&nbsp;    }
+<i class="no-highlight">57</i>&nbsp;
+<i class="no-highlight">58</i>&nbsp;    /**
+<i class="no-highlight">59</i>&nbsp;     * Tries to parse eight decimal digits from a char array using the
+<i class="no-highlight">60</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">61</i>&nbsp;     *
+<i class="no-highlight">62</i>&nbsp;     * @param a      contains 8 utf-16 characters starting at offset
+<i class="no-highlight">63</i>&nbsp;     * @param offset the offset into the array
+<i class="no-highlight">64</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">65</i>&nbsp;     * returns a negative value if {@code value} does not contain 8 hex digits
+<i class="no-highlight">66</i>&nbsp;     */
+<i class="no-highlight">67</i>&nbsp;
+<i class="no-highlight">68</i>&nbsp;    static int tryToParseEightDigitsUtf16(char[] a, int offset) {
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        long first = a[offset]</b>
+<i class="no-highlight">70</i>&nbsp;                | (long) a[offset + 1] &lt;&lt; 16
+<i class="no-highlight">71</i>&nbsp;                | (long) a[offset + 2] &lt;&lt; 32
+<i class="no-highlight">72</i>&nbsp;                | (long) a[offset + 3] &lt;&lt; 48;
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        long second = a[offset + 4]</b>
+<i class="no-highlight">74</i>&nbsp;                | (long) a[offset + 5] &lt;&lt; 16
+<i class="no-highlight">75</i>&nbsp;                | (long) a[offset + 6] &lt;&lt; 32
+<i class="no-highlight">76</i>&nbsp;                | (long) a[offset + 7] &lt;&lt; 48;
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        return FastDoubleSwar.tryToParseEightDigitsUtf16(first, second);</b>
+<i class="no-highlight">78</i>&nbsp;    }
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;    /**
+<i class="no-highlight">81</i>&nbsp;     * Tries to parse eight decimal digits at once using the
+<i class="no-highlight">82</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">83</i>&nbsp;     *
+<i class="no-highlight">84</i>&nbsp;     * &lt;pre&gt;{@literal
+<i class="no-highlight">85</i>&nbsp;     * char[] chars = ...;
+<i class="no-highlight">86</i>&nbsp;     * long first  = chars[0]|(chars[1]&lt;&lt;16)|(chars[2]&lt;&lt;32)|(chars[3]&lt;&lt;48);
+<i class="no-highlight">87</i>&nbsp;     * long second = chars[4]|(chars[5]&lt;&lt;16)|(chars[6]&lt;&lt;32)|(chars[7]&lt;&lt;48);
+<i class="no-highlight">88</i>&nbsp;     * }&lt;/pre&gt;
+<i class="no-highlight">89</i>&nbsp;     *
+<i class="no-highlight">90</i>&nbsp;     * @param first  the first four characters in big endian order
+<i class="no-highlight">91</i>&nbsp;     * @param second the second four characters in big endian order
+<i class="no-highlight">92</i>&nbsp;     * @return the parsed digits or -1
+<i class="no-highlight">93</i>&nbsp;     */
+<i class="no-highlight">94</i>&nbsp;    static int tryToParseEightDigitsUtf16(long first, long second) {//since Java 18
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        long fval = first - 0x0030_0030_0030_0030L;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        long sval = second - 0x0030_0030_0030_0030L;</b>
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;        // Create a predicate for all bytes which are smaller than &#39;0&#39; (0x0030)
+<i class="no-highlight">99</i>&nbsp;        // or greater than &#39;9&#39; (0x0039).
+<i class="no-highlight">100</i>&nbsp;        // We have 0x007f - 0x0039 = 0x0046.
+<i class="no-highlight">101</i>&nbsp;        // The predicate is true if the hsb of a byte is set: (predicate &amp; 0xff80) != 0.
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        long fpre = first + 0x0046_0046_0046_0046L | fval;</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        long spre = second + 0x0046_0046_0046_0046L | sval;</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        if (((fpre | spre) &amp; 0xff80_ff80_ff80_ff80L) != 0L) {</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;            return -1;</b>
+<i class="no-highlight">106</i>&nbsp;        }
+<i class="no-highlight">107</i>&nbsp;
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        return (int) (sval * 0x03e8_0064_000a_0001L &gt;&gt;&gt; 48)</b>
+<i class="no-highlight">109</i>&nbsp;                + (int) (fval * 0x03e8_0064_000a_0001L &gt;&gt;&gt; 48) * 10000;
+<i class="no-highlight">110</i>&nbsp;    }
+<i class="no-highlight">111</i>&nbsp;
+<i class="no-highlight">112</i>&nbsp;    /**
+<i class="no-highlight">113</i>&nbsp;     * Tries to parse eight digits from a long using the
+<i class="no-highlight">114</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">115</i>&nbsp;     *
+<i class="no-highlight">116</i>&nbsp;     * &lt;pre&gt;{@literal
+<i class="no-highlight">117</i>&nbsp;     * byte[] bytes = ...;
+<i class="no-highlight">118</i>&nbsp;     * long value  = ((bytes[7]&amp;0xffL)&lt;&lt;56)
+<i class="no-highlight">119</i>&nbsp;     *             | ((bytes[6]&amp;0xffL)&lt;&lt;48)
+<i class="no-highlight">120</i>&nbsp;     *             | ((bytes[5]&amp;0xffL)&lt;&lt;40)
+<i class="no-highlight">121</i>&nbsp;     *             | ((bytes[4]&amp;0xffL)&lt;&lt;32)
+<i class="no-highlight">122</i>&nbsp;     *             | ((bytes[3]&amp;0xffL)&lt;&lt;24)
+<i class="no-highlight">123</i>&nbsp;     *             | ((bytes[2]&amp;0xffL)&lt;&lt;16)
+<i class="no-highlight">124</i>&nbsp;     *             | ((bytes[1]&amp;0xffL)&lt;&lt; 8)
+<i class="no-highlight">125</i>&nbsp;     *             |  (bytes[0]&amp;0xffL);
+<i class="no-highlight">126</i>&nbsp;     * }&lt;/pre&gt;
+<i class="no-highlight">127</i>&nbsp;     *
+<i class="no-highlight">128</i>&nbsp;     * @param chunk contains 8 ascii characters in little endian order
+<i class="no-highlight">129</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">130</i>&nbsp;     * returns a negative value if {@code value} does not contain 8 digits
+<i class="no-highlight">131</i>&nbsp;     */
+<i class="no-highlight">132</i>&nbsp;    static int tryToParseEightDigitsUtf8(long chunk) {
+<i class="no-highlight">133</i>&nbsp;        // Create a predicate for all bytes which are greater than &#39;0&#39; (0x30).
+<i class="no-highlight">134</i>&nbsp;        // The predicate is true if the hsb of a byte is set: (predicate &amp; 0x80) != 0.
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        long val = chunk - 0x3030303030303030L;</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        long predicate = ((chunk + 0x4646464646464646L) | val) &amp; 0x8080808080808080L;</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        if (predicate != 0L) {</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;            return -1;</b>
+<i class="no-highlight">139</i>&nbsp;        }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;        // The last 2 multiplications are independent of each other.
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        val = val * (1 + (10 &lt;&lt; 8)) &gt;&gt;&gt; 8;</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        val = (val &amp; 0xff_000000ffL) * (100 + (100_0000L &lt;&lt; 32))</b>
+<i class="no-highlight">144</i>&nbsp;                + (val &gt;&gt;&gt; 16 &amp; 0xff_000000ffL) * (1 + (1_0000L &lt;&lt; 32)) &gt;&gt;&gt; 32;
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        return (int) val;</b>
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    /**
+<i class="no-highlight">149</i>&nbsp;     * Tries to parse eight decimal digits from a byte array using the
+<i class="no-highlight">150</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">151</i>&nbsp;     *
+<i class="no-highlight">152</i>&nbsp;     * @param a      contains 8 ascii characters
+<i class="no-highlight">153</i>&nbsp;     * @param offset the offset of the first character in {@code a}
+<i class="no-highlight">154</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">155</i>&nbsp;     * returns a negative value if {@code value} does not contain 8 digits
+<i class="no-highlight">156</i>&nbsp;     */
+<i class="no-highlight">157</i>&nbsp;    static int tryToParseEightDigitsUtf8(byte[] a, int offset) {
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return tryToParseEightDigitsUtf8(getChunk(a, offset));</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    /**
+<i class="no-highlight">162</i>&nbsp;     * Tries to parse eight hex digits from a char array using the
+<i class="no-highlight">163</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">164</i>&nbsp;     *
+<i class="no-highlight">165</i>&nbsp;     * @param a      contains 8 utf-16 characters starting at offset
+<i class="no-highlight">166</i>&nbsp;     * @param offset the offset into the array
+<i class="no-highlight">167</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">168</i>&nbsp;     * returns a negative value if {@code value} does not contain 8 hex digits
+<i class="no-highlight">169</i>&nbsp;     */
+<i class="no-highlight">170</i>&nbsp;    static long tryToParseEightHexDigitsUtf16(char[] a, int offset) {
+<i class="no-highlight">171</i>&nbsp;        // Performance: We extract the chars in two steps so that we
+<i class="no-highlight">172</i>&nbsp;        //              can benefit from out of order execution in the CPU.
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        long first = (long) a[offset] &lt;&lt; 48</b>
+<i class="no-highlight">174</i>&nbsp;                | (long) a[offset + 1] &lt;&lt; 32
+<i class="no-highlight">175</i>&nbsp;                | (long) a[offset + 2] &lt;&lt; 16
+<i class="no-highlight">176</i>&nbsp;                | (long) a[offset + 3];
+<i class="no-highlight">177</i>&nbsp;
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        long second = (long) a[offset + 4] &lt;&lt; 48</b>
+<i class="no-highlight">179</i>&nbsp;                | (long) a[offset + 5] &lt;&lt; 32
+<i class="no-highlight">180</i>&nbsp;                | (long) a[offset + 6] &lt;&lt; 16
+<i class="no-highlight">181</i>&nbsp;                | (long) a[offset + 7];
+<i class="no-highlight">182</i>&nbsp;
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        return FastDoubleSwar.tryToParseEightHexDigitsUtf16(first, second);</b>
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    /**
+<i class="no-highlight">187</i>&nbsp;     * Tries to parse eight hex digits from two longs using the
+<i class="no-highlight">188</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">189</i>&nbsp;     *
+<i class="no-highlight">190</i>&nbsp;     * &lt;pre&gt;{@code
+<i class="no-highlight">191</i>&nbsp;     * char[] chars = ...;
+<i class="no-highlight">192</i>&nbsp;     * long first  = (long) chars[0] &lt;&lt; 48
+<i class="no-highlight">193</i>&nbsp;     *             | (long) chars[1] &lt;&lt; 32
+<i class="no-highlight">194</i>&nbsp;     *             | (long) chars[2] &lt;&lt; 16
+<i class="no-highlight">195</i>&nbsp;     *             | (long) chars[3];
+<i class="no-highlight">196</i>&nbsp;     *
+<i class="no-highlight">197</i>&nbsp;     * long second = (long) chars[4] &lt;&lt; 48
+<i class="no-highlight">198</i>&nbsp;     *             | (long) chars[5] &lt;&lt; 32
+<i class="no-highlight">199</i>&nbsp;     *             | (long) chars[6] &lt;&lt; 16
+<i class="no-highlight">200</i>&nbsp;     *             | (long) chars[7];
+<i class="no-highlight">201</i>&nbsp;     * }&lt;/pre&gt;
+<i class="no-highlight">202</i>&nbsp;     *
+<i class="no-highlight">203</i>&nbsp;     * @param first  contains 4 utf-16 characters in big endian order
+<i class="no-highlight">204</i>&nbsp;     * @param second contains 4 utf-16 characters in big endian order
+<i class="no-highlight">205</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">206</i>&nbsp;     * returns a negative value if the two longs do not contain 8 hex digits
+<i class="no-highlight">207</i>&nbsp;     */
+<i class="no-highlight">208</i>&nbsp;    static long tryToParseEightHexDigitsUtf16(long first, long second) {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        long lfirst = tryToParseFourHexDigitsUtf16(first);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        long lsecond = tryToParseFourHexDigitsUtf16(second);</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        return (lfirst &lt;&lt; 16) | lsecond;</b>
+<i class="no-highlight">212</i>&nbsp;    }
+<i class="no-highlight">213</i>&nbsp;
+<i class="no-highlight">214</i>&nbsp;    /**
+<i class="no-highlight">215</i>&nbsp;     * Tries to parse eight hex digits from a byte array using the
+<i class="no-highlight">216</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">217</i>&nbsp;     *
+<i class="no-highlight">218</i>&nbsp;     * @param a      contains 8 ascii characters
+<i class="no-highlight">219</i>&nbsp;     * @param offset the offset of the first character in {@code a}
+<i class="no-highlight">220</i>&nbsp;     *               returns a negative value if {@code value} does not contain 8 digits
+<i class="no-highlight">221</i>&nbsp;     */
+<i class="no-highlight">222</i>&nbsp;    static long tryToParseEightHexDigitsUtf8(byte[] a, int offset) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        return tryToParseEightHexDigitsUtf8(</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                Long.reverseBytes(getChunk(a, offset))</b>
+<i class="no-highlight">225</i>&nbsp;        );
+<i class="no-highlight">226</i>&nbsp;    }
+<i class="no-highlight">227</i>&nbsp;
+<i class="no-highlight">228</i>&nbsp;    /**
+<i class="no-highlight">229</i>&nbsp;     * Tries to parse eight digits from a long using the
+<i class="no-highlight">230</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">231</i>&nbsp;     *
+<i class="no-highlight">232</i>&nbsp;     * @param chunk contains 8 ascii characters in big endian order
+<i class="no-highlight">233</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">234</i>&nbsp;     * returns a negative value if {@code value} does not contain 8 digits
+<i class="no-highlight">235</i>&nbsp;     */
+<i class="no-highlight">236</i>&nbsp;    static long tryToParseEightHexDigitsUtf8(long chunk) {
+<i class="no-highlight">237</i>&nbsp;        // The following code is based on the technique presented in the paper
+<i class="no-highlight">238</i>&nbsp;        // by Leslie Lamport.
+<i class="no-highlight">239</i>&nbsp;
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;        // Subtract character &#39;0&#39; (0x30) from each of the eight characters
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        long vec = chunk - 0x30_30_30_30_30_30_30_30L;</b>
+<i class="no-highlight">243</i>&nbsp;
+<i class="no-highlight">244</i>&nbsp;        // Create a predicate for all bytes which are greater than &#39;9&#39;-&#39;0&#39; (0x09).
+<i class="no-highlight">245</i>&nbsp;        // The predicate is true if the hsb of a byte is set: (predicate &amp; 0x80) != 0.
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        long gt_09 = vec + (0x09_09_09_09_09_09_09_09L ^ 0x7f_7f_7f_7f_7f_7f_7f_7fL);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        gt_09 &amp;= 0x80_80_80_80_80_80_80_80L;</b>
+<i class="no-highlight">248</i>&nbsp;        // Create a predicate for all bytes which are greater or equal &#39;a&#39;-&#39;0&#39; (0x30).
+<i class="no-highlight">249</i>&nbsp;        // The predicate is true if the hsb of a byte is set.
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        long ge_30 = vec + (0x30303030_30303030L ^ 0x7f_7f_7f_7f_7f_7f_7f_7fL);</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        ge_30 &amp;= 0x80_80_80_80_80_80_80_80L;</b>
+<i class="no-highlight">252</i>&nbsp;
+<i class="no-highlight">253</i>&nbsp;        // Create a predicate for all bytes which are smaller equal than &#39;f&#39;-&#39;0&#39; (0x37).
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        long le_37 = 0x37_37_37_37_37_37_37_37L + (vec ^ 0x7f_7f_7f_7f_7f_7f_7f_7fL);</b>
+<i class="no-highlight">255</i>&nbsp;        // we don&#39;t need to &#39;and&#39; with 0x80…L here, because we &#39;and&#39; this with ge_30 anyway.
+<i class="no-highlight">256</i>&nbsp;        //le_37 &amp;= 0x80_80_80_80_80_80_80_80L;
+<i class="no-highlight">257</i>&nbsp;
+<i class="no-highlight">258</i>&nbsp;
+<i class="no-highlight">259</i>&nbsp;        // If a character is greater than &#39;9&#39; then it must be greater equal &#39;a&#39;
+<i class="no-highlight">260</i>&nbsp;        // and smaller  &#39;f&#39;.
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        if (gt_09 != (ge_30 &amp; le_37)) {</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            return -1;</b>
+<i class="no-highlight">263</i>&nbsp;        }
+<i class="no-highlight">264</i>&nbsp;
+<i class="no-highlight">265</i>&nbsp;        // Expand the predicate to a byte mask
+<b class="fc"><i class="no-highlight">266</i>&nbsp;        long gt_09mask = (gt_09 &gt;&gt;&gt; 7) * 0xffL;</b>
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;        // Subtract &#39;a&#39;-&#39;0&#39;+10 (0x27) from all bytes that are greater than 0x09.
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        long v = vec &amp; ~gt_09mask | vec - (0x27272727_27272727L &amp; gt_09mask);</b>
+<i class="no-highlight">270</i>&nbsp;
+<i class="no-highlight">271</i>&nbsp;        // Compact all nibbles
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        long v2 = v | v &gt;&gt;&gt; 4;</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        long v3 = v2 &amp; 0x00ff00ff_00ff00ffL;</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;        long v4 = v3 | v3 &gt;&gt;&gt; 8;</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;        return ((v4 &gt;&gt;&gt; 16) &amp; 0xffff_0000L) | v4 &amp; 0xffffL;</b>
+<i class="no-highlight">276</i>&nbsp;    }
+<i class="no-highlight">277</i>&nbsp;
+<i class="no-highlight">278</i>&nbsp;    /**
+<i class="no-highlight">279</i>&nbsp;     * Tries to parse four hex digits from a long using the
+<i class="no-highlight">280</i>&nbsp;     * &#39;SIMD within a register technique&#39; (SWAR).
+<i class="no-highlight">281</i>&nbsp;     *
+<i class="no-highlight">282</i>&nbsp;     * @param chunk contains 4 utf-16 characters in big endian order
+<i class="no-highlight">283</i>&nbsp;     * @return the parsed number,
+<i class="no-highlight">284</i>&nbsp;     * returns a negative value if {@code value} does not contain 8 digits
+<i class="no-highlight">285</i>&nbsp;     */
+<i class="no-highlight">286</i>&nbsp;    static long tryToParseFourHexDigitsUtf16(long chunk) {
+<i class="no-highlight">287</i>&nbsp;        // The following code is based on the technique presented in the paper
+<i class="no-highlight">288</i>&nbsp;        // by Leslie Lamport.
+<i class="no-highlight">289</i>&nbsp;
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;        // Subtract character &#39;0&#39; (0x0030) from each of the four characters
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        long vec = chunk - 0x0030_0030_0030_0030L;</b>
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;        // Create a predicate for all bytes which are greater than &#39;9&#39;-&#39;0&#39; (0x0009).
+<i class="no-highlight">295</i>&nbsp;        // The predicate is true if the hsb of a byte is set: (predicate &amp; 0xa000) != 0.
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        long gt_09 = vec + (0x0009_0009_0009_0009L ^ 0x7fff_7fff_7fff_7fffL);</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        gt_09 = gt_09 &amp; 0x8000_8000_8000_8000L;</b>
+<i class="no-highlight">298</i>&nbsp;        // Create a predicate for all bytes which are greater or equal &#39;a&#39;-&#39;0&#39; (0x0030).
+<i class="no-highlight">299</i>&nbsp;        // The predicate is true if the hsb of a byte is set.
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        long ge_30 = vec + (0x0030_0030_0030_0030L ^ 0x7fff_7fff_7fff_7fffL);</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        ge_30 = ge_30 &amp; 0x8000_8000_8000_8000L;</b>
+<i class="no-highlight">302</i>&nbsp;
+<i class="no-highlight">303</i>&nbsp;        // Create a predicate for all bytes which are smaller equal than &#39;f&#39;-&#39;0&#39; (0x0037).
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        long le_37 = 0x0037_0037_0037_0037L + (vec ^ 0x7fff_7fff_7fff_7fffL);</b>
+<i class="no-highlight">305</i>&nbsp;        // Not needed, because we are going to and this value with ge_30 anyway.
+<i class="no-highlight">306</i>&nbsp;        //le_37 = le_37 &amp; 0x8000_8000_8000_8000L;
+<i class="no-highlight">307</i>&nbsp;
+<i class="no-highlight">308</i>&nbsp;
+<i class="no-highlight">309</i>&nbsp;        // If a character is greater than &#39;9&#39; then it must be greater equal &#39;a&#39;
+<i class="no-highlight">310</i>&nbsp;        // and smaller equal &#39;f&#39;.
+<b class="fc"><i class="no-highlight">311</i>&nbsp;        if (gt_09 != (ge_30 &amp; le_37)) {</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;            return -1;</b>
+<i class="no-highlight">313</i>&nbsp;        }
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;        // Expand the predicate to a char mask
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        long gt_09mask = (gt_09 &gt;&gt;&gt; 15) * 0xffffL;</b>
+<i class="no-highlight">317</i>&nbsp;
+<i class="no-highlight">318</i>&nbsp;        // Subtract &#39;a&#39;-&#39;0&#39;+10 (0x0027) from all bytes that are greater than 0x09.
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        long v = vec &amp; ~gt_09mask | vec - (0x0027_0027_0027_0027L &amp; gt_09mask);</b>
+<i class="no-highlight">320</i>&nbsp;
+<i class="no-highlight">321</i>&nbsp;        // Compact all nibbles
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        long v2 = v | v &gt;&gt;&gt; 12;</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        return (v2 | v2 &gt;&gt;&gt; 24) &amp; 0xffffL;</b>
+<i class="no-highlight">324</i>&nbsp;    }
+<i class="no-highlight">325</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,353 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > Os</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: Os (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">Os</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    64.3%
+  </span>
+  <span class="absValue">
+    (9/14)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    45.9%
+  </span>
+  <span class="absValue">
+    (45/98)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.ex.FatalError;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.ex.KerberosException;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.str.CharSequenceZ;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">31</i>&nbsp;
+<i class="no-highlight">32</i>&nbsp;import java.io.File;
+<i class="no-highlight">33</i>&nbsp;import java.io.FileOutputStream;
+<i class="no-highlight">34</i>&nbsp;import java.io.IOException;
+<i class="no-highlight">35</i>&nbsp;import java.io.InputStream;
+<i class="no-highlight">36</i>&nbsp;import java.util.concurrent.locks.LockSupport;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;public final class Os {
+<i class="no-highlight">39</i>&nbsp;    public static final int FREEBSD = 5;
+<i class="no-highlight">40</i>&nbsp;    public static final int LINUX_AMD64 = 2;
+<i class="no-highlight">41</i>&nbsp;    public static final int LINUX_ARM64 = 4;
+<i class="no-highlight">42</i>&nbsp;    public static final int OSX_AMD64 = 1;
+<i class="no-highlight">43</i>&nbsp;    public static final int OSX_ARM64 = 6;
+<i class="no-highlight">44</i>&nbsp;    public static final int WINDOWS = 3;
+<i class="no-highlight">45</i>&nbsp;    public static final int _32Bit = -2;
+<i class="no-highlight">46</i>&nbsp;    public static final int type;
+<i class="no-highlight">47</i>&nbsp;
+<i class="no-highlight">48</i>&nbsp;    private Os() {
+<i class="no-highlight">49</i>&nbsp;    }
+<i class="no-highlight">50</i>&nbsp;
+<i class="no-highlight">51</i>&nbsp;    public static native long compareAndSwap(long mem, long oldValue, long newValue);
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    public static native long currentTimeMicros();
+<i class="no-highlight">54</i>&nbsp;
+<i class="no-highlight">55</i>&nbsp;    public static native long currentTimeNanos();
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;    public static native int errno();
+<i class="no-highlight">58</i>&nbsp;
+<i class="no-highlight">59</i>&nbsp;    public static long forkExec(CharSequence args) {
+<b class="nc"><i class="no-highlight">60</i>&nbsp;        ObjList&lt;Path&gt; paths = Chars.splitLpsz(args);</b>
+<b class="nc"><i class="no-highlight">61</i>&nbsp;        int n = paths.size();</b>
+<i class="no-highlight">62</i>&nbsp;        try {
+<b class="nc"><i class="no-highlight">63</i>&nbsp;            long argv = Unsafe.malloc((n + 1) * 8L, MemoryTag.NATIVE_DEFAULT);</b>
+<i class="no-highlight">64</i>&nbsp;            try {
+<b class="nc"><i class="no-highlight">65</i>&nbsp;                long p = argv;</b>
+<b class="nc"><i class="no-highlight">66</i>&nbsp;                for (int i = 0; i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">67</i>&nbsp;                    Unsafe.getUnsafe().putLong(p, paths.getQuick(i).address());</b>
+<b class="nc"><i class="no-highlight">68</i>&nbsp;                    p += 8;</b>
+<i class="no-highlight">69</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">70</i>&nbsp;                Unsafe.getUnsafe().putLong(p, 0);</b>
+<b class="nc"><i class="no-highlight">71</i>&nbsp;                return forkExec(argv);</b>
+<i class="no-highlight">72</i>&nbsp;            } finally {
+<b class="nc"><i class="no-highlight">73</i>&nbsp;                Unsafe.free(argv, n + 1, MemoryTag.NATIVE_DEFAULT);</b>
+<b class="nc"><i class="no-highlight">74</i>&nbsp;            }</b>
+<i class="no-highlight">75</i>&nbsp;        } finally {
+<b class="nc"><i class="no-highlight">76</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">77</i>&nbsp;                paths.getQuick(i).close();</b>
+<i class="no-highlight">78</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">79</i>&nbsp;        }</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    public static int forkExecPid(long forkExecT) {
+<b class="nc"><i class="no-highlight">83</i>&nbsp;        return Unsafe.getUnsafe().getInt(forkExecT + 8);</b>
+<i class="no-highlight">84</i>&nbsp;    }
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;    public static int forkExecReadFd(long forkExecT) {
+<b class="nc"><i class="no-highlight">87</i>&nbsp;        return Unsafe.getUnsafe().getInt(forkExecT);</b>
+<i class="no-highlight">88</i>&nbsp;    }
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;    public static int forkExecWriteFd(long forkExecT) {
+<b class="nc"><i class="no-highlight">91</i>&nbsp;        return Unsafe.getUnsafe().getInt(forkExecT + 4);</b>
+<i class="no-highlight">92</i>&nbsp;    }
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;    public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
+<b class="nc"><i class="no-highlight">95</i>&nbsp;        try (CharSequenceZ cs = new CharSequenceZ(spn)) {</b>
+<b class="nc"><i class="no-highlight">96</i>&nbsp;            final long struct = generateKrbToken(cs.address());</b>
+<b class="nc"><i class="no-highlight">97</i>&nbsp;            int status = Unsafe.getUnsafe().getInt(struct);</b>
+<b class="nc"><i class="no-highlight">98</i>&nbsp;            int bufLen = Unsafe.getUnsafe().getInt(struct + 4);</b>
+<b class="nc"><i class="no-highlight">99</i>&nbsp;            long ptoken = Unsafe.getUnsafe().getLong(struct + 8);</b>
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;
+<b class="nc"><i class="no-highlight">102</i>&nbsp;            if (status != 0) {</b>
+<b class="nc"><i class="no-highlight">103</i>&nbsp;                freeKrbToken(struct);</b>
+<b class="nc"><i class="no-highlight">104</i>&nbsp;                throw new KerberosException(status);</b>
+<i class="no-highlight">105</i>&nbsp;            }
+<i class="no-highlight">106</i>&nbsp;
+<b class="nc"><i class="no-highlight">107</i>&nbsp;            byte[] token = new byte[bufLen];</b>
+<b class="nc"><i class="no-highlight">108</i>&nbsp;            for (int i = 0; i &lt; bufLen; i++) {</b>
+<b class="nc"><i class="no-highlight">109</i>&nbsp;                token[i] = Unsafe.getUnsafe().getByte(ptoken + i);</b>
+<i class="no-highlight">110</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">111</i>&nbsp;            freeKrbToken(struct);</b>
+<i class="no-highlight">112</i>&nbsp;
+<b class="nc"><i class="no-highlight">113</i>&nbsp;            return token;</b>
+<b class="nc"><i class="no-highlight">114</i>&nbsp;        }</b>
+<i class="no-highlight">115</i>&nbsp;    }
+<i class="no-highlight">116</i>&nbsp;
+<i class="no-highlight">117</i>&nbsp;    public static native int getPid();
+<i class="no-highlight">118</i>&nbsp;
+<i class="no-highlight">119</i>&nbsp;    /**
+<i class="no-highlight">120</i>&nbsp;     * Returns physical memory used by this process (Resident Set Size/Working Set Size).
+<i class="no-highlight">121</i>&nbsp;     *
+<i class="no-highlight">122</i>&nbsp;     * @return used RSS memory in bytes
+<i class="no-highlight">123</i>&nbsp;     */
+<i class="no-highlight">124</i>&nbsp;    public static native long getRss();
+<i class="no-highlight">125</i>&nbsp;
+<i class="no-highlight">126</i>&nbsp;    @SuppressWarnings(&quot;EmptyMethod&quot;)
+<i class="no-highlight">127</i>&nbsp;    public static void init() {
+<b class="fc"><i class="no-highlight">128</i>&nbsp;    }</b>
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;    public static boolean isLinux() {
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        return type == LINUX_AMD64 || type == LINUX_ARM64;</b>
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    public static boolean isPosix() {
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        return type != Os.WINDOWS;</b>
+<i class="no-highlight">136</i>&nbsp;    }
+<i class="no-highlight">137</i>&nbsp;
+<i class="no-highlight">138</i>&nbsp;    public static boolean isWindows() {
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        return type == Os.WINDOWS;</b>
+<i class="no-highlight">140</i>&nbsp;    }
+<i class="no-highlight">141</i>&nbsp;
+<i class="no-highlight">142</i>&nbsp;    public static void pause() {
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        if (Os.type != Os.WINDOWS) {</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;            LockSupport.parkNanos(1);</b>
+<i class="no-highlight">145</i>&nbsp;        } else {
+<i class="no-highlight">146</i>&nbsp;            try {
+<b class="nc"><i class="no-highlight">147</i>&nbsp;                Thread.sleep(0);</b>
+<b class="nc"><i class="no-highlight">148</i>&nbsp;            } catch (InterruptedException ignore) {</b>
+<b class="nc"><i class="no-highlight">149</i>&nbsp;            }</b>
+<i class="no-highlight">150</i>&nbsp;        }
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    public static int setCurrentThreadAffinity(int cpu) {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        if (cpu == -1) {</b>
+<b class="nc"><i class="no-highlight">155</i>&nbsp;            return 0;</b>
+<i class="no-highlight">156</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        return setCurrentThreadAffinity0(cpu);</b>
+<i class="no-highlight">158</i>&nbsp;    }
+<i class="no-highlight">159</i>&nbsp;
+<i class="no-highlight">160</i>&nbsp;    public static void sleep(long millis) {
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        long t = System.currentTimeMillis();</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        long deadline = millis;</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        while (deadline &gt; 0) {</b>
+<i class="no-highlight">164</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;                Thread.sleep(deadline);</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                break;</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;            } catch (InterruptedException e) {</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                long t2 = System.currentTimeMillis();</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                deadline -= t2 - t;</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                t = t2;</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;            }</b>
+<i class="no-highlight">172</i>&nbsp;        }
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    private static native long forkExec(long argv);
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;    private static native void freeKrbToken(long struct);
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    private static native long generateKrbToken(long spn);
+<i class="no-highlight">180</i>&nbsp;
+<i class="no-highlight">181</i>&nbsp;    private static void loadLib(String lib) {
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        InputStream is = Os.class.getResourceAsStream(lib);</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        if (is == null) {</b>
+<b class="nc"><i class="no-highlight">184</i>&nbsp;            throw new FatalError(&quot;Internal error: cannot find &quot; + lib + &quot;, broken package?&quot;);</b>
+<i class="no-highlight">185</i>&nbsp;        }
+<i class="no-highlight">186</i>&nbsp;
+<i class="no-highlight">187</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;            File tempLib = null;</b>
+<i class="no-highlight">189</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                int dot = lib.indexOf(&#39;.&#39;);</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));</b>
+<i class="no-highlight">192</i>&nbsp;                // copy to tempLib
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                try (FileOutputStream out = new FileOutputStream(tempLib)) {</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;                    byte[] buf = new byte[4096];</b>
+<i class="no-highlight">195</i>&nbsp;                    while (true) {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                        int read = is.read(buf);</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                        if (read == -1) {</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                            break;</b>
+<i class="no-highlight">199</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                        out.write(buf, 0, read);</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                } finally {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    tempLib.deleteOnExit();</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                System.load(tempLib.getAbsolutePath());</b>
+<b class="nc"><i class="no-highlight">206</i>&nbsp;            } catch (IOException e) {</b>
+<b class="nc"><i class="no-highlight">207</i>&nbsp;                throw new FatalError(&quot;Internal error: cannot unpack &quot; + tempLib, e);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;            }</b>
+<i class="no-highlight">209</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">210</i>&nbsp;            Misc.free(is);</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        }</b>
+<i class="no-highlight">212</i>&nbsp;    }
+<i class="no-highlight">213</i>&nbsp;
+<i class="no-highlight">214</i>&nbsp;    private static native int setCurrentThreadAffinity0(int cpu);
+<i class="no-highlight">215</i>&nbsp;
+<i class="no-highlight">216</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        if (&quot;64&quot;.equals(System.getProperty(&quot;sun.arch.data.model&quot;))) {</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;            String osName = System.getProperty(&quot;os.name&quot;);</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;            if (osName.contains(&quot;Linux&quot;)) {</b>
+<b class="nc"><i class="no-highlight">220</i>&nbsp;                if (&quot;aarch64&quot;.equals(System.getProperty(&quot;os.arch&quot;))) {</b>
+<b class="nc"><i class="no-highlight">221</i>&nbsp;                    type = LINUX_ARM64;</b>
+<b class="nc"><i class="no-highlight">222</i>&nbsp;                    loadLib(&quot;/io/questdb/bin/armlinux/libquestdb.so&quot;);</b>
+<i class="no-highlight">223</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">224</i>&nbsp;                    type = LINUX_AMD64;</b>
+<b class="nc"><i class="no-highlight">225</i>&nbsp;                    loadLib(&quot;/io/questdb/bin/linux/libquestdb.so&quot;);</b>
+<i class="no-highlight">226</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">227</i>&nbsp;            } else if (osName.contains(&quot;Mac&quot;)) {</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                if (&quot;aarch64&quot;.equals(System.getProperty(&quot;os.arch&quot;))) {</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                    type = OSX_ARM64;</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                    loadLib(&quot;/io/questdb/bin/armosx/libquestdb.dylib&quot;);</b>
+<i class="no-highlight">231</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">232</i>&nbsp;                    type = OSX_AMD64; // darwin</b>
+<b class="nc"><i class="no-highlight">233</i>&nbsp;                    loadLib(&quot;/io/questdb/bin/osx/libquestdb.dylib&quot;);</b>
+<i class="no-highlight">234</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">235</i>&nbsp;            } else if (osName.contains(&quot;Windows&quot;)) {</b>
+<b class="nc"><i class="no-highlight">236</i>&nbsp;                type = WINDOWS;</b>
+<b class="nc"><i class="no-highlight">237</i>&nbsp;                loadLib(&quot;/io/questdb/bin/windows/libquestdb.dll&quot;);</b>
+<b class="nc"><i class="no-highlight">238</i>&nbsp;            } else if (osName.contains(&quot;FreeBSD&quot;)) {</b>
+<b class="nc"><i class="no-highlight">239</i>&nbsp;                type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD</b>
+<b class="nc"><i class="no-highlight">240</i>&nbsp;                loadLib(&quot;/io/questdb/bin/freebsd/libquestdb.so&quot;);</b>
+<i class="no-highlight">241</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">242</i>&nbsp;                throw new Error(&quot;Unsupported OS: &quot; + osName);</b>
+<i class="no-highlight">243</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        } else {</b>
+<b class="nc"><i class="no-highlight">245</i>&nbsp;            type = _32Bit;</b>
+<i class="no-highlight">246</i>&nbsp;        }
+<i class="no-highlight">247</i>&nbsp;    }
+<i class="no-highlight">248</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

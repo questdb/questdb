@@ -1,0 +1,454 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > InputFormatConfiguration</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.text.types</a>
+</div>
+
+<h1>Coverage Summary for Class: InputFormatConfiguration (io.questdb.cutlass.text.types)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">InputFormatConfiguration</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (16/16)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98%
+  </span>
+  <span class="absValue">
+    (148/151)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.text.types;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cutlass.json.JsonException;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cutlass.json.JsonLexer;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cutlass.json.JsonParser;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.datetime.DateFormat;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.datetime.DateLocale;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.datetime.DateLocaleFactory;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.datetime.millitime.DateFormatFactory;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import java.io.File;
+<i class="no-highlight">40</i>&nbsp;import java.io.FileInputStream;
+<i class="no-highlight">41</i>&nbsp;import java.io.IOException;
+<i class="no-highlight">42</i>&nbsp;import java.io.InputStream;
+<i class="no-highlight">43</i>&nbsp;
+<b class="fc"><i class="no-highlight">44</i>&nbsp;public class InputFormatConfiguration {</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    private final static Log LOG = LogFactory.getLog(InputFormatConfiguration.class);</b>
+<i class="no-highlight">46</i>&nbsp;    private static final int STATE_EXPECT_DATE_FORMAT_ARRAY = 2;
+<i class="no-highlight">47</i>&nbsp;    private static final int STATE_EXPECT_DATE_FORMAT_ENTRY = 8;
+<i class="no-highlight">48</i>&nbsp;    private static final int STATE_EXPECT_DATE_FORMAT_VALUE = 4;
+<i class="no-highlight">49</i>&nbsp;    private static final int STATE_EXPECT_DATE_LOCALE_VALUE = 5;
+<i class="no-highlight">50</i>&nbsp;    private static final int STATE_EXPECT_DATE_UTF8_VALUE = 10;
+<i class="no-highlight">51</i>&nbsp;    private static final int STATE_EXPECT_FIRST_LEVEL_NAME = 1;
+<i class="no-highlight">52</i>&nbsp;    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY = 3;
+<i class="no-highlight">53</i>&nbsp;    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
+<i class="no-highlight">54</i>&nbsp;    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_VALUE = 6;
+<i class="no-highlight">55</i>&nbsp;    private static final int STATE_EXPECT_TIMESTAMP_LOCALE_VALUE = 7;
+<i class="no-highlight">56</i>&nbsp;    private static final int STATE_EXPECT_TIMESTAMP_UTF8_VALUE = 11;
+<i class="no-highlight">57</i>&nbsp;    private static final int STATE_EXPECT_TOP = 0;
+<i class="no-highlight">58</i>&nbsp;    private final DateFormatFactory dateFormatFactory;
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private final ObjList&lt;DateFormat&gt; dateFormats = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">60</i>&nbsp;    private final DateLocale dateLocale;
+<i class="no-highlight">61</i>&nbsp;    private final DateLocaleFactory dateLocaleFactory;
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    private final ObjList&lt;DateLocale&gt; dateLocales = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    private final IntList dateUtf8Flags = new IntList();</b>
+<i class="no-highlight">64</i>&nbsp;    private final TimestampFormatFactory timestampFormatFactory;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    private final ObjList&lt;DateFormat&gt; timestampFormats = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    private final ObjList&lt;DateLocale&gt; timestampLocales = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    private final IntList timestampUtf8Flags = new IntList();</b>
+<i class="no-highlight">68</i>&nbsp;    private DateFormat jsonDateFormat;
+<i class="no-highlight">69</i>&nbsp;    private DateLocale jsonDateLocale;
+<i class="no-highlight">70</i>&nbsp;    private boolean jsonDateUtf8;
+<b class="fc"><i class="no-highlight">71</i>&nbsp;    private int jsonState = STATE_EXPECT_TOP; // expect start of object</b>
+<i class="no-highlight">72</i>&nbsp;    private DateFormat jsonTimestampFormat;
+<i class="no-highlight">73</i>&nbsp;    private DateLocale jsonTimestampLocale;
+<i class="no-highlight">74</i>&nbsp;    private boolean jsonTimestampUtf8;
+<i class="no-highlight">75</i>&nbsp;
+<i class="no-highlight">76</i>&nbsp;    public InputFormatConfiguration(
+<i class="no-highlight">77</i>&nbsp;            DateFormatFactory dateFormatFactory,
+<i class="no-highlight">78</i>&nbsp;            DateLocaleFactory dateLocaleFactory,
+<i class="no-highlight">79</i>&nbsp;            TimestampFormatFactory timestampFormatFactory,
+<i class="no-highlight">80</i>&nbsp;            DateLocale dateLocale
+<b class="fc"><i class="no-highlight">81</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        this.dateFormatFactory = dateFormatFactory;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.dateLocaleFactory = dateLocaleFactory;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        this.timestampFormatFactory = timestampFormatFactory;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        this.dateLocale = dateLocale;</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        dateFormats.clear();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        dateLocales.clear();</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        dateUtf8Flags.clear();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        timestampFormats.clear();</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        timestampLocales.clear();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        timestampUtf8Flags.clear();</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        jsonState = STATE_EXPECT_TOP;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        jsonDateFormat = null;</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        jsonDateLocale = null;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        jsonDateUtf8 = false;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        jsonTimestampFormat = null;</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        jsonTimestampLocale = null;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        jsonTimestampUtf8 = false;</b>
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    public DateFormatFactory getDateFormatFactory() {
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        return dateFormatFactory;</b>
+<i class="no-highlight">106</i>&nbsp;    }
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;    public ObjList&lt;DateFormat&gt; getDateFormats() {
+<b class="fc"><i class="no-highlight">109</i>&nbsp;        return dateFormats;</b>
+<i class="no-highlight">110</i>&nbsp;    }
+<i class="no-highlight">111</i>&nbsp;
+<i class="no-highlight">112</i>&nbsp;    public DateLocaleFactory getDateLocaleFactory() {
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        return dateLocaleFactory;</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;    public ObjList&lt;DateLocale&gt; getDateLocales() {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        return dateLocales;</b>
+<i class="no-highlight">118</i>&nbsp;    }
+<i class="no-highlight">119</i>&nbsp;
+<i class="no-highlight">120</i>&nbsp;    public IntList getDateUtf8Flags() {
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        return dateUtf8Flags;</b>
+<i class="no-highlight">122</i>&nbsp;    }
+<i class="no-highlight">123</i>&nbsp;
+<i class="no-highlight">124</i>&nbsp;    public TimestampFormatFactory getTimestampFormatFactory() {
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        return timestampFormatFactory;</b>
+<i class="no-highlight">126</i>&nbsp;    }
+<i class="no-highlight">127</i>&nbsp;
+<i class="no-highlight">128</i>&nbsp;    public ObjList&lt;DateFormat&gt; getTimestampFormats() {
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        return timestampFormats;</b>
+<i class="no-highlight">130</i>&nbsp;    }
+<i class="no-highlight">131</i>&nbsp;
+<i class="no-highlight">132</i>&nbsp;    public ObjList&lt;DateLocale&gt; getTimestampLocales() {
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        return timestampLocales;</b>
+<i class="no-highlight">134</i>&nbsp;    }
+<i class="no-highlight">135</i>&nbsp;
+<i class="no-highlight">136</i>&nbsp;    public IntList getTimestampUtf8Flags() {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        return timestampUtf8Flags;</b>
+<i class="no-highlight">138</i>&nbsp;    }
+<i class="no-highlight">139</i>&nbsp;
+<i class="no-highlight">140</i>&nbsp;    public void parseConfiguration(JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        clear();</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        jsonLexer.clear();</b>
+<i class="no-highlight">143</i>&nbsp;
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        final JsonParser parser = this::onJsonEvent;</b>
+<i class="no-highlight">145</i>&nbsp;
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        try (InputStream stream = openStream(confRoot, configFileName)) {</b>
+<i class="no-highlight">147</i>&nbsp;            // here is where using direct memory is very disadvantageous
+<i class="no-highlight">148</i>&nbsp;            // we will copy buffer twice to parse json, but luckily contents should be small,
+<i class="no-highlight">149</i>&nbsp;            // and we should be parsing this only once on startup
+<b class="fc"><i class="no-highlight">150</i>&nbsp;            byte[] heapBuffer = new byte[4096];</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;            long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<i class="no-highlight">152</i>&nbsp;            try {
+<i class="no-highlight">153</i>&nbsp;                int len;
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                while ((len = stream.read(heapBuffer)) &gt; 0) {</b>
+<i class="no-highlight">155</i>&nbsp;                    // copy to mem buffer
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                    for (int i = 0; i &lt; len; i++) {</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                        Unsafe.getUnsafe().putByte(memBuffer + i, heapBuffer[i]);</b>
+<i class="no-highlight">158</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                    jsonLexer.parse(memBuffer, memBuffer + len, parser);</b>
+<i class="no-highlight">160</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">161</i>&nbsp;                jsonLexer.clear();</b>
+<i class="no-highlight">162</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">163</i>&nbsp;                Unsafe.free(memBuffer, heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        } catch (IOException e) {</b>
+<b class="nc"><i class="no-highlight">166</i>&nbsp;            throw JsonException.$(0, &quot;could not read input format config [confRoot=&quot;).put(confRoot)</b>
+<b class="nc"><i class="no-highlight">167</i>&nbsp;                    .put(&quot;, configFileName=&quot;).put(configFileName)</b>
+<b class="nc"><i class="no-highlight">168</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        }</b>
+<i class="no-highlight">170</i>&nbsp;    }
+<i class="no-highlight">171</i>&nbsp;
+<i class="no-highlight">172</i>&nbsp;    private void onJsonEvent(int code, CharSequence tag, int position) throws JsonException {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        switch (code) {</b>
+<i class="no-highlight">174</i>&nbsp;            case JsonLexer.EVT_OBJ_START:
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                switch (jsonState) {</b>
+<i class="no-highlight">176</i>&nbsp;                    case STATE_EXPECT_TOP:
+<i class="no-highlight">177</i>&nbsp;                        // this is top level object
+<i class="no-highlight">178</i>&nbsp;                        // lets dive in
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                        jsonState = STATE_EXPECT_FIRST_LEVEL_NAME;</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                        break;</b>
+<i class="no-highlight">181</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+<i class="no-highlight">182</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE:
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                        throw JsonException.$(position, &quot;format value expected (obj)&quot;);</b>
+<i class="no-highlight">184</i>&nbsp;                    case STATE_EXPECT_DATE_LOCALE_VALUE:
+<i class="no-highlight">185</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                        throw JsonException.$(position, &quot;locale value expected (obj)&quot;);</b>
+<i class="no-highlight">187</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_ENTRY:
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                        jsonDateFormat = null;</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                        jsonDateLocale = null;</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                        break;</b>
+<i class="no-highlight">191</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                        jsonTimestampFormat = null;</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                        jsonTimestampLocale = null;</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;                        break;</b>
+<i class="no-highlight">195</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                        throw JsonException.$(position, &quot;array expected (obj)&quot;);</b>
+<i class="no-highlight">197</i>&nbsp;                }
+<i class="no-highlight">198</i>&nbsp;                break;
+<i class="no-highlight">199</i>&nbsp;            case JsonLexer.EVT_OBJ_END:
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                switch (jsonState) {</b>
+<i class="no-highlight">201</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_ENTRY: // we just closed a date object
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                        if (jsonDateFormat == null) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                            throw JsonException.$(position, &quot;date format is missing&quot;);</b>
+<i class="no-highlight">204</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                        dateFormats.add(jsonDateFormat);</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                        dateLocales.add(jsonDateLocale == null ? dateLocale : jsonDateLocale);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                        dateUtf8Flags.add(jsonDateUtf8 ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                        break;</b>
+<i class="no-highlight">209</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                        if (jsonTimestampFormat == null) {</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                            throw JsonException.$(position, &quot;timestamp format is missing&quot;);</b>
+<i class="no-highlight">212</i>&nbsp;                        }
+<i class="no-highlight">213</i>&nbsp;
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                        timestampFormats.add(jsonTimestampFormat);</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                        timestampLocales.add(jsonTimestampLocale == null ? dateLocale : jsonTimestampLocale);</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;                        timestampUtf8Flags.add(jsonTimestampUtf8 ? 1 : 0);</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                        break;</b>
+<i class="no-highlight">218</i>&nbsp;                    default:
+<i class="no-highlight">219</i>&nbsp;                        // the only time we get here would be when
+<i class="no-highlight">220</i>&nbsp;                        // main object is closed.
+<i class="no-highlight">221</i>&nbsp;                        // other end_of_object cannot get there unless we
+<i class="no-highlight">222</i>&nbsp;                        // allow to enter these objects in the first place
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                        break;</b>
+<i class="no-highlight">224</i>&nbsp;                }
+<i class="no-highlight">225</i>&nbsp;                break;
+<i class="no-highlight">226</i>&nbsp;            case JsonLexer.EVT_ARRAY_END:
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                jsonState = STATE_EXPECT_FIRST_LEVEL_NAME;</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                break;</b>
+<i class="no-highlight">229</i>&nbsp;            case JsonLexer.EVT_NAME:
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                switch (jsonState) {</b>
+<i class="no-highlight">231</i>&nbsp;                    case STATE_EXPECT_FIRST_LEVEL_NAME:
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                        if (Chars.equals(tag, &quot;date&quot;)) {</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                            jsonState = STATE_EXPECT_DATE_FORMAT_ARRAY; // expect array with date formats</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                        } else if (Chars.equals(tag, &quot;timestamp&quot;)) {</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;                            jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY; // expect array with timestamp formats</b>
+<i class="no-highlight">236</i>&nbsp;                        } else {
+<i class="no-highlight">237</i>&nbsp;                            // unknown tag name?
+<b class="fc"><i class="no-highlight">238</i>&nbsp;                            throw JsonException.$(position, &quot;&#39;date&#39; and/or &#39;timestamp&#39; expected&quot;);</b>
+<i class="no-highlight">239</i>&nbsp;                        }
+<i class="no-highlight">240</i>&nbsp;                        break;
+<i class="no-highlight">241</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_ENTRY:
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                        processEntry(tag, position, STATE_EXPECT_DATE_FORMAT_VALUE, STATE_EXPECT_DATE_LOCALE_VALUE, STATE_EXPECT_DATE_UTF8_VALUE);</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                        break;</b>
+<i class="no-highlight">244</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                        processEntry(tag, position, STATE_EXPECT_TIMESTAMP_FORMAT_VALUE, STATE_EXPECT_TIMESTAMP_LOCALE_VALUE, STATE_EXPECT_TIMESTAMP_UTF8_VALUE);</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                        break;</b>
+<i class="no-highlight">247</i>&nbsp;                }
+<i class="no-highlight">248</i>&nbsp;                break;
+<i class="no-highlight">249</i>&nbsp;            case JsonLexer.EVT_VALUE:
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                switch (jsonState) {</b>
+<i class="no-highlight">251</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+<i class="no-highlight">252</i>&nbsp;                        // date format
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                        assert jsonDateFormat == null;</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;                        if (Chars.equals(&quot;null&quot;, tag)) {</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                            throw JsonException.$(position, &quot;null format&quot;);</b>
+<i class="no-highlight">256</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                        jsonDateFormat = dateFormatFactory.get(tag);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                        break;</b>
+<i class="no-highlight">260</i>&nbsp;                    case STATE_EXPECT_DATE_LOCALE_VALUE: // date locale
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                        assert jsonDateLocale == null;</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                        jsonDateLocale = dateLocaleFactory.getLocale(tag);</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                        if (jsonDateLocale == null) {</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;                            throw JsonException.$(position, &quot;invalid [locale=&quot;).put(tag).put(&#39;]&#39;);</b>
+<i class="no-highlight">265</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">266</i>&nbsp;                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                        break;</b>
+<i class="no-highlight">268</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE: // timestamp format
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                        assert jsonTimestampFormat == null;</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                        if (Chars.equals(&quot;null&quot;, tag)) {</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                            throw JsonException.$(position, &quot;null format&quot;);</b>
+<i class="no-highlight">272</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                        jsonTimestampFormat = timestampFormatFactory.get(tag);</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                        break;</b>
+<i class="no-highlight">276</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
+<b class="fc"><i class="no-highlight">277</i>&nbsp;                        assert jsonTimestampLocale == null;</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;                        jsonTimestampLocale = dateLocaleFactory.getLocale(tag);</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                        if (jsonTimestampLocale == null) {</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                            throw JsonException.$(position, &quot;invalid [locale=&quot;).put(tag).put(&#39;]&#39;);</b>
+<i class="no-highlight">281</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;                        break;</b>
+<i class="no-highlight">284</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_UTF8_VALUE:
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                        jsonTimestampUtf8 = Chars.equalsLowerCaseAscii(tag, &quot;true&quot;);</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;                        break;</b>
+<i class="no-highlight">288</i>&nbsp;                    case STATE_EXPECT_DATE_UTF8_VALUE:
+<b class="fc"><i class="no-highlight">289</i>&nbsp;                        jsonDateUtf8 = Chars.equalsLowerCaseAscii(tag, &quot;true&quot;);</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;                        break;</b>
+<i class="no-highlight">292</i>&nbsp;                    default:
+<i class="no-highlight">293</i>&nbsp;                        // we are picking up values from attributes we don&#39;t expect
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                        throw JsonException.$(position, &quot;array expected (value)&quot;);</b>
+<i class="no-highlight">295</i>&nbsp;                }
+<i class="no-highlight">296</i>&nbsp;                break;
+<i class="no-highlight">297</i>&nbsp;            case JsonLexer.EVT_ARRAY_START:
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                switch (jsonState) {</b>
+<i class="no-highlight">299</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_ARRAY: // we are working on dates
+<b class="fc"><i class="no-highlight">300</i>&nbsp;                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;                        break;</b>
+<i class="no-highlight">302</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY: // we are working on timestamps
+<b class="fc"><i class="no-highlight">303</i>&nbsp;                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                        break;</b>
+<i class="no-highlight">305</i>&nbsp;                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+<i class="no-highlight">306</i>&nbsp;                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE:
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                        throw JsonException.$(position, &quot;format value expected (array)&quot;);</b>
+<i class="no-highlight">308</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                        throw JsonException.$(position, &quot;locale value expected (array)&quot;);</b>
+<i class="no-highlight">310</i>&nbsp;                }
+<i class="no-highlight">311</i>&nbsp;                break;
+<i class="no-highlight">312</i>&nbsp;            default:
+<i class="no-highlight">313</i>&nbsp;                break;
+<i class="no-highlight">314</i>&nbsp;        }
+<i class="no-highlight">315</i>&nbsp;    }
+<i class="no-highlight">316</i>&nbsp;
+<i class="no-highlight">317</i>&nbsp;    private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
+<i class="no-highlight">318</i>&nbsp;        // First, check the user-provided file.
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        if (confRoot != null) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;            final File configFile = new File(confRoot, configFileName);</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;            if (configFile.exists()) {</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                LOG.info().$(&quot;loading input format config [file=&quot;).$(configFile.getAbsolutePath()).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                return new FileInputStream(configFile);</b>
+<i class="no-highlight">324</i>&nbsp;            }
+<i class="no-highlight">325</i>&nbsp;        }
+<i class="no-highlight">326</i>&nbsp;        // Second, fall back to the default config.
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        final InputStream stream = this.getClass().getResourceAsStream(configFileName);</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        if (stream != null) {</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;            LOG.info().$(&quot;loading input format config [resource=&quot;).$(configFileName).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;            return stream;</b>
+<i class="no-highlight">331</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        throw JsonException.$(0, &quot;could not find input format config [confRoot=&quot;).put(confRoot)</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                .put(&quot;, configFileName=&quot;).put(configFileName)</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                .put(&#39;]&#39;);</b>
+<i class="no-highlight">335</i>&nbsp;    }
+<i class="no-highlight">336</i>&nbsp;
+<i class="no-highlight">337</i>&nbsp;    private void processEntry(CharSequence tag, int position, int stateExpectFormatValue, int stateExpectLocaleValue, int stateExpectUtf8Value) throws JsonException {
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        if (Chars.equals(tag, &quot;format&quot;)) {</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;            jsonState = stateExpectFormatValue; // expect date format</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;        } else if (Chars.equals(tag, &quot;locale&quot;)) {</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;            jsonState = stateExpectLocaleValue;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        } else if (Chars.equals(tag, &quot;utf8&quot;)) {</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;            jsonState = stateExpectUtf8Value;</b>
+<i class="no-highlight">344</i>&nbsp;        } else {
+<i class="no-highlight">345</i>&nbsp;            // unknown tag name?
+<b class="fc"><i class="no-highlight">346</i>&nbsp;            throw JsonException.$(position, &quot;unknown [tag=&quot;).put(tag).put(&#39;]&#39;);</b>
+<i class="no-highlight">347</i>&nbsp;        }
+<i class="no-highlight">348</i>&nbsp;    }
+<i class="no-highlight">349</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

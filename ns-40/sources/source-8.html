@@ -1,0 +1,210 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > GCMetrics</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.metrics</a>
+</div>
+
+<h1>Coverage Summary for Class: GCMetrics (io.questdb.metrics)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">GCMetrics</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.7%
+  </span>
+  <span class="absValue">
+    (45/47)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.metrics;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.CharSequenceHashSet;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">29</i>&nbsp;
+<i class="no-highlight">30</i>&nbsp;import java.lang.management.GarbageCollectorMXBean;
+<i class="no-highlight">31</i>&nbsp;import java.lang.management.ManagementFactory;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;/**
+<i class="no-highlight">34</i>&nbsp; * GC metrics don&#39;t rely on MetricsRegistry to be able to obtain and write all metrics
+<i class="no-highlight">35</i>&nbsp; * to the sink in one go.
+<i class="no-highlight">36</i>&nbsp; */
+<b class="fc"><i class="no-highlight">37</i>&nbsp;public class GCMetrics implements Scrapable {</b>
+<i class="no-highlight">38</i>&nbsp;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;    private static final CharSequenceHashSet majorGCNames = new CharSequenceHashSet();</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    private static final CharSequenceHashSet minorGCNames = new CharSequenceHashSet();</b>
+<i class="no-highlight">41</i>&nbsp;
+<i class="no-highlight">42</i>&nbsp;    @Override
+<i class="no-highlight">43</i>&nbsp;    public void scrapeIntoPrometheus(CharSink sink) {
+<b class="fc"><i class="no-highlight">44</i>&nbsp;        long majorCount = 0;</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;        long majorTime = 0;</b>
+<b class="fc"><i class="no-highlight">46</i>&nbsp;        long minorCount = 0;</b>
+<b class="fc"><i class="no-highlight">47</i>&nbsp;        long minorTime = 0;</b>
+<b class="fc"><i class="no-highlight">48</i>&nbsp;        long unknownCount = 0;</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;        long unknownTime = 0;</b>
+<i class="no-highlight">50</i>&nbsp;
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;            long count = gc.getCollectionCount();</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;            if (count &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;                if (majorGCNames.contains(gc.getName())) {</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;                    majorCount += count;</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;                    majorTime += gc.getCollectionTime();</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;                } else if (minorGCNames.contains(gc.getName())) {</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;                    minorCount += count;</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;                    minorTime += gc.getCollectionTime();</b>
+<i class="no-highlight">60</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">61</i>&nbsp;                    unknownCount += count;</b>
+<b class="nc"><i class="no-highlight">62</i>&nbsp;                    unknownTime += gc.getCollectionTime();</b>
+<i class="no-highlight">63</i>&nbsp;                }
+<i class="no-highlight">64</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        }</b>
+<i class="no-highlight">66</i>&nbsp;
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        appendCounter(sink, majorCount, &quot;jvm_major_gc_count&quot;);</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        appendCounter(sink, majorTime, &quot;jvm_major_gc_time&quot;);</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        appendCounter(sink, minorCount, &quot;jvm_minor_gc_count&quot;);</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        appendCounter(sink, minorTime, &quot;jvm_minor_gc_time&quot;);</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        appendCounter(sink, unknownCount, &quot;jvm_unknown_gc_count&quot;);</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        appendCounter(sink, unknownTime, &quot;jvm_unknown_gc_time&quot;);</b>
+<i class="no-highlight">73</i>&nbsp;    }
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    private void appendCounter(CharSink sink, long value, String name) {
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        PrometheusFormatUtils.appendCounterType(name, sink);</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        PrometheusFormatUtils.appendSampleLineSuffix(sink, value);</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        PrometheusFormatUtils.appendNewLine(sink);</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    static {
+<i class="no-highlight">83</i>&nbsp;        // Hotspot
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        majorGCNames.add(&quot;PS MarkSweep&quot;);</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        majorGCNames.add(&quot;ConcurrentMarkSweep&quot;);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        majorGCNames.add(&quot;G1 Old Generation&quot;);</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        majorGCNames.add(&quot;G1 Mixed Generation&quot;);</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        majorGCNames.add(&quot;MarkSweepCompact&quot;);</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        majorGCNames.add(&quot;Shenandoah Pauses&quot;);</b>
+<i class="no-highlight">90</i>&nbsp;        // OpenJ9
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        majorGCNames.add(&quot;global&quot;);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        majorGCNames.add(&quot;global garbage collect&quot;);</b>
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;        // Hotspot
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        minorGCNames.add(&quot;PS Scavenge&quot;);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        minorGCNames.add(&quot;ParNew&quot;);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        minorGCNames.add(&quot;G1 Young Generation&quot;);</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        minorGCNames.add(&quot;Copy&quot;);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        minorGCNames.add(&quot;ZGC&quot;);</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        minorGCNames.add(&quot;Shenandoah Cycles&quot;);</b>
+<i class="no-highlight">101</i>&nbsp;        // OpenJ9
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        minorGCNames.add(&quot;partial gc&quot;);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        minorGCNames.add(&quot;scavenge&quot;);</b>
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

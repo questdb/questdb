@@ -1,0 +1,308 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > FilterOnExcludedValuesRecordCursorFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.table</a>
+</div>
+
+<h1>Coverage Summary for Class: FilterOnExcludedValuesRecordCursorFactory (io.questdb.griffin.engine.table)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">FilterOnExcludedValuesRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (8/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (65/65)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.table;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.SymbolMapReaderImpl;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.TableReader;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.OrderByMnemonic;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">35</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">36</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+<i class="no-highlight">39</i>&nbsp;    private final int columnIndex;
+<i class="no-highlight">40</i>&nbsp;    private final IntList columnIndexes;
+<i class="no-highlight">41</i>&nbsp;    private final DataFrameRecordCursorImpl cursor;
+<i class="no-highlight">42</i>&nbsp;    private final ObjList&lt;SymbolFunctionRowCursorFactory&gt; cursorFactories;
+<i class="no-highlight">43</i>&nbsp;    // Points at the next factory to be reused.
+<i class="no-highlight">44</i>&nbsp;    private final int[] cursorFactoriesIdx;//used to disable unneeded factories if there are duplicate excluded keys 
+<i class="no-highlight">45</i>&nbsp;    private final boolean dynamicExcludedKeys;
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    private final IntHashSet excludedKeys = new IntHashSet();</b>
+<i class="no-highlight">47</i>&nbsp;    private final Function filter;
+<i class="no-highlight">48</i>&nbsp;    private final boolean followedOrderByAdvice;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    private final IntHashSet includedKeys = new IntHashSet();</b>
+<i class="no-highlight">50</i>&nbsp;    private final int indexDirection;
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    private final ObjList&lt;Function&gt; keyExcludedValueFunctions = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">52</i>&nbsp;    private final int maxSymbolNotEqualsCount;
+<i class="no-highlight">53</i>&nbsp;
+<i class="no-highlight">54</i>&nbsp;    public FilterOnExcludedValuesRecordCursorFactory(
+<i class="no-highlight">55</i>&nbsp;            @NotNull RecordMetadata metadata,
+<i class="no-highlight">56</i>&nbsp;            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+<i class="no-highlight">57</i>&nbsp;            @NotNull @Transient ObjList&lt;Function&gt; keyValues,
+<i class="no-highlight">58</i>&nbsp;            int columnIndex,
+<i class="no-highlight">59</i>&nbsp;            @Nullable Function filter,
+<i class="no-highlight">60</i>&nbsp;            int orderByMnemonic,
+<i class="no-highlight">61</i>&nbsp;            boolean followedOrderByAdvice,
+<i class="no-highlight">62</i>&nbsp;            int indexDirection,
+<i class="no-highlight">63</i>&nbsp;            @NotNull IntList columnIndexes,
+<i class="no-highlight">64</i>&nbsp;            int maxSymbolNotEqualsCount
+<i class="no-highlight">65</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        super(metadata, dataFrameCursorFactory);</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        this.indexDirection = indexDirection;</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;        this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        final int nKeyValues = keyValues.size();</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        boolean dynamicValues = false;</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        for (int i = 0; i &lt; nKeyValues; i++) {</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;            if (!keyValues.getQuick(i).isConstant()) {</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;                dynamicValues = true;</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;                break;</b>
+<i class="no-highlight">75</i>&nbsp;            }
+<i class="no-highlight">76</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        dynamicExcludedKeys = dynamicValues;</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        keyExcludedValueFunctions.addAll(keyValues);</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        this.columnIndex = columnIndex;</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        this.filter = filter;</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        cursorFactoriesIdx = new int[]{0};</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        cursorFactories = new ObjList&lt;&gt;(nKeyValues);</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;            cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);</b>
+<i class="no-highlight">85</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">86</i>&nbsp;            cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);</b>
+<i class="no-highlight">87</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        this.followedOrderByAdvice = followedOrderByAdvice;</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        this.columnIndexes = columnIndexes;</b>
+<i class="no-highlight">90</i>&nbsp;    }
+<i class="no-highlight">91</i>&nbsp;
+<i class="no-highlight">92</i>&nbsp;    @Override
+<i class="no-highlight">93</i>&nbsp;    public boolean followedOrderByAdvice() {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        return followedOrderByAdvice;</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    public void recalculateIncludedValues(TableReader tableReader) {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        cursorFactoriesIdx[0] = cursorFactories.size();</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        excludedKeys.clear();</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        if (dynamicExcludedKeys) {</b>
+<i class="no-highlight">101</i>&nbsp;            // In case of bind variable excluded values that may change between
+<i class="no-highlight">102</i>&nbsp;            // query executions the sets have to be subtracted from scratch.
+<b class="fc"><i class="no-highlight">103</i>&nbsp;            includedKeys.clear();</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;            cursorFactoriesIdx[0] = 0;</b>
+<i class="no-highlight">105</i>&nbsp;        }
+<i class="no-highlight">106</i>&nbsp;
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);</b>
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;        // Generate excluded key set.
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        for (int i = 0, n = keyExcludedValueFunctions.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;            final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStr(null);</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;            excludedKeys.add(symbolMapReader.keyOf(value));</b>
+<i class="no-highlight">113</i>&nbsp;        }
+<i class="no-highlight">114</i>&nbsp;
+<i class="no-highlight">115</i>&nbsp;        // Append new keys to the included set filtering out the excluded ones.
+<i class="no-highlight">116</i>&nbsp;        // Note: both includedKeys and cursorFactories are guaranteed to be monotonically
+<i class="no-highlight">117</i>&nbsp;        // growing in terms of the collection size.
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        for (int k = 0, n = symbolMapReader.getSymbolCount(); k &lt; n; k++) {</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;            if (!excludedKeys.contains(k) &amp;&amp; includedKeys.add(k)) {</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                upsertRowCursorFactory(k);</b>
+<i class="no-highlight">121</i>&nbsp;            }
+<i class="no-highlight">122</i>&nbsp;        }
+<i class="no-highlight">123</i>&nbsp;
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        if (symbolMapReader.containsNullValue()</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                &amp;&amp; !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) &amp;&amp; includedKeys.add(SymbolTable.VALUE_IS_NULL)) {</b>
+<i class="no-highlight">126</i>&nbsp;            // If the table contains null values and they&#39;re not excluded, we need to include
+<i class="no-highlight">127</i>&nbsp;            // them to the result set to match the behavior of the NOT IN() SQL function.
+<b class="fc"><i class="no-highlight">128</i>&nbsp;            upsertRowCursorFactory(SymbolTable.VALUE_IS_NULL);</b>
+<i class="no-highlight">129</i>&nbsp;        }
+<i class="no-highlight">130</i>&nbsp;    }
+<i class="no-highlight">131</i>&nbsp;
+<i class="no-highlight">132</i>&nbsp;    @Override
+<i class="no-highlight">133</i>&nbsp;    public boolean recordCursorSupportsRandomAccess() {
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        return true;</b>
+<i class="no-highlight">135</i>&nbsp;    }
+<i class="no-highlight">136</i>&nbsp;
+<i class="no-highlight">137</i>&nbsp;    @Override
+<i class="no-highlight">138</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        sink.type(&quot;FilterOnExcludedValues&quot;);</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        sink.attr(&quot;symbolFilter&quot;).putColumnName(columnIndex).val(&quot; not in &quot;).val(keyExcludedValueFunctions);</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        sink.optAttr(&quot;filter&quot;, filter);</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        sink.child(cursor.getRowCursorFactory());</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        sink.child(dataFrameCursorFactory);</b>
+<i class="no-highlight">144</i>&nbsp;    }
+<i class="no-highlight">145</i>&nbsp;
+<i class="no-highlight">146</i>&nbsp;    private void upsertRowCursorFactory(int symbolKey) {
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        if (cursorFactoriesIdx[0] &lt; cursorFactories.size()) {</b>
+<i class="no-highlight">148</i>&nbsp;            // Reuse the existing factory.
+<b class="fc"><i class="no-highlight">149</i>&nbsp;            cursorFactories.get(cursorFactoriesIdx[0]).of(symbolKey);</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;            cursorFactoriesIdx[0]++;</b>
+<i class="no-highlight">151</i>&nbsp;            return;
+<i class="no-highlight">152</i>&nbsp;        }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;        // Create a new factory.
+<i class="no-highlight">155</i>&nbsp;        final SymbolFunctionRowCursorFactory rowCursorFactory;
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        if (filter == null) {</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;            rowCursorFactory = new SymbolIndexRowCursorFactory(</b>
+<i class="no-highlight">158</i>&nbsp;                    columnIndex,
+<i class="no-highlight">159</i>&nbsp;                    symbolKey,
+<i class="no-highlight">160</i>&nbsp;                    false,
+<i class="no-highlight">161</i>&nbsp;                    indexDirection,
+<i class="no-highlight">162</i>&nbsp;                    null
+<i class="no-highlight">163</i>&nbsp;            );
+<i class="no-highlight">164</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(</b>
+<i class="no-highlight">166</i>&nbsp;                    columnIndex,
+<i class="no-highlight">167</i>&nbsp;                    symbolKey,
+<i class="no-highlight">168</i>&nbsp;                    filter,
+<i class="no-highlight">169</i>&nbsp;                    false,
+<i class="no-highlight">170</i>&nbsp;                    indexDirection,
+<i class="no-highlight">171</i>&nbsp;                    columnIndexes,
+<i class="no-highlight">172</i>&nbsp;                    null
+<i class="no-highlight">173</i>&nbsp;            );
+<i class="no-highlight">174</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        cursorFactories.add(rowCursorFactory);</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        cursorFactoriesIdx[0]++;</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    @Override
+<i class="no-highlight">180</i>&nbsp;    protected void _close() {
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        super._close();</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        Misc.free(filter);</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        Misc.freeObjList(keyExcludedValueFunctions);</b>
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    @Override
+<i class="no-highlight">187</i>&nbsp;    protected RecordCursor getCursorInstance(
+<i class="no-highlight">188</i>&nbsp;            DataFrameCursor dataFrameCursor,
+<i class="no-highlight">189</i>&nbsp;            SqlExecutionContext executionContext
+<i class="no-highlight">190</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        TableReader reader = dataFrameCursor.getTableReader();</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        if (reader.getSymbolMapReader(columnIndex).getSymbolCount() &gt; maxSymbolNotEqualsCount) {</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            throw TableReferenceOutOfDateException.of(reader.getTableToken().getTableName());</b>
+<i class="no-highlight">194</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">195</i>&nbsp;        Function.init(keyExcludedValueFunctions, reader, executionContext);</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        recalculateIncludedValues(reader);</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        cursor.of(dataFrameCursor, executionContext);</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        if (filter != null) {</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;            filter.init(cursor, executionContext);</b>
+<i class="no-highlight">200</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        return cursor;</b>
+<i class="no-highlight">202</i>&nbsp;    }
+<i class="no-highlight">203</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

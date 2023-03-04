@@ -1,0 +1,1149 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > Timestamps</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.datetime.microtime</a>
+</div>
+
+<h1>Coverage Summary for Class: Timestamps (io.questdb.std.datetime.microtime)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">Timestamps</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (89/89)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.5%
+  </span>
+  <span class="absValue">
+    (393/403)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.datetime.microtime;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.datetime.DateLocale;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.datetime.TimeZoneRules;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">31</i>&nbsp;
+<i class="no-highlight">32</i>&nbsp;import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;public final class Timestamps {
+<i class="no-highlight">35</i>&nbsp;
+<i class="no-highlight">36</i>&nbsp;    public static final long DAY_MICROS = 86400000000L;
+<i class="no-highlight">37</i>&nbsp;    public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
+<i class="no-highlight">38</i>&nbsp;    public static final long HOUR_MICROS = 3600000000L;
+<i class="no-highlight">39</i>&nbsp;    public static final long MILLI_MICROS = 1000;
+<i class="no-highlight">40</i>&nbsp;    public static final long MINUTE_MICROS = 60000000;
+<i class="no-highlight">41</i>&nbsp;    public static final long O3_MIN_TS = 0L;
+<i class="no-highlight">42</i>&nbsp;    public static final long SECOND_MICROS = 1000000;
+<i class="no-highlight">43</i>&nbsp;    public static final int SECOND_MILLIS = 1000;
+<i class="no-highlight">44</i>&nbsp;    public static final long STARTUP_TIMESTAMP;
+<i class="no-highlight">45</i>&nbsp;    public static final int STATE_DELIM = 4;
+<i class="no-highlight">46</i>&nbsp;    public static final int STATE_END = 6;
+<i class="no-highlight">47</i>&nbsp;    public static final int STATE_GMT = 2;
+<i class="no-highlight">48</i>&nbsp;    public static final int STATE_HOUR = 3;
+<i class="no-highlight">49</i>&nbsp;    public static final int STATE_INIT = 0;
+<i class="no-highlight">50</i>&nbsp;    public static final int STATE_MINUTE = 5;
+<i class="no-highlight">51</i>&nbsp;    public static final int STATE_SIGN = 7;
+<i class="no-highlight">52</i>&nbsp;    public static final int STATE_UTC = 1;
+<i class="no-highlight">53</i>&nbsp;    public static final long WEEK_MICROS = 604800000000L;
+<i class="no-highlight">54</i>&nbsp;    private static final char AFTER_NINE = &#39;9&#39; + 1;
+<i class="no-highlight">55</i>&nbsp;    private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
+<i class="no-highlight">56</i>&nbsp;    private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
+<i class="no-highlight">57</i>&nbsp;    private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
+<i class="no-highlight">58</i>&nbsp;    private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
+<i class="no-highlight">59</i>&nbsp;    private static final char BEFORE_ZERO = &#39;0&#39; - 1;
+<i class="no-highlight">60</i>&nbsp;    private static final int DAYS_0000_TO_1970 = 719527;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    private static final int[] DAYS_PER_MONTH = {</b>
+<i class="no-highlight">62</i>&nbsp;            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+<i class="no-highlight">63</i>&nbsp;    };
+<i class="no-highlight">64</i>&nbsp;    private static final int DAY_HOURS = 24;
+<i class="no-highlight">65</i>&nbsp;    private static final int HOUR_MINUTES = 60;
+<i class="no-highlight">66</i>&nbsp;    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];</b>
+<i class="no-highlight">68</i>&nbsp;    private static final int MINUTE_SECONDS = 60;
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];</b>
+<i class="no-highlight">70</i>&nbsp;    private static final long YEAR_MICROS = 365 * DAY_MICROS;
+<i class="no-highlight">71</i>&nbsp;
+<i class="no-highlight">72</i>&nbsp;    private Timestamps() {
+<i class="no-highlight">73</i>&nbsp;    }
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    public static long addDays(long micros, int days) {
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        return micros + days * DAY_MICROS;</b>
+<i class="no-highlight">77</i>&nbsp;    }
+<i class="no-highlight">78</i>&nbsp;
+<i class="no-highlight">79</i>&nbsp;    public static long addHours(long micros, int hours) {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        return micros + hours * HOUR_MICROS;</b>
+<i class="no-highlight">81</i>&nbsp;    }
+<i class="no-highlight">82</i>&nbsp;
+<i class="no-highlight">83</i>&nbsp;    public static long addMinutes(long micros, int minutes) {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        return micros + minutes * MINUTE_MICROS;</b>
+<i class="no-highlight">85</i>&nbsp;    }
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;    public static long addMonths(final long micros, int months) {
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        if (months == 0) {</b>
+<b class="nc"><i class="no-highlight">89</i>&nbsp;            return micros;</b>
+<i class="no-highlight">90</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        int y = Timestamps.getYear(micros);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        boolean l = Timestamps.isLeapYear(y);</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        int m = getMonthOfYear(micros, y, l);</b>
+<i class="no-highlight">94</i>&nbsp;        int _y;
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        int _m = m - 1 + months;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        if (_m &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            _y = y + _m / 12;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;            _m = (_m % 12) + 1;</b>
+<i class="no-highlight">99</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;            _y = y + _m / 12 - 1;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            _m = -_m % 12;</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            if (_m == 0) {</b>
+<b class="nc"><i class="no-highlight">103</i>&nbsp;                _m = 12;</b>
+<i class="no-highlight">104</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">105</i>&nbsp;            _m = 12 - _m + 1;</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            if (_m == 1) {</b>
+<b class="nc"><i class="no-highlight">107</i>&nbsp;                _y += 1;</b>
+<i class="no-highlight">108</i>&nbsp;            }
+<i class="no-highlight">109</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        int _d = getDayOfMonth(micros, y, m, l);</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        int maxDay = getDaysPerMonth(_m, isLeapYear(_y));</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        if (_d &gt; maxDay) {</b>
+<b class="nc"><i class="no-highlight">113</i>&nbsp;            _d = maxDay;</b>
+<i class="no-highlight">114</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros &lt; 0 ? 1 : 0);</b>
+<i class="no-highlight">116</i>&nbsp;    }
+<i class="no-highlight">117</i>&nbsp;
+<i class="no-highlight">118</i>&nbsp;    public static long addPeriod(long lo, char type, int period) {
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        switch (type) {</b>
+<i class="no-highlight">120</i>&nbsp;            case &#39;s&#39;:
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                return Timestamps.addSeconds(lo, period);</b>
+<i class="no-highlight">122</i>&nbsp;            case &#39;m&#39;:
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                return Timestamps.addMinutes(lo, period);</b>
+<i class="no-highlight">124</i>&nbsp;            case &#39;h&#39;:
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                return Timestamps.addHours(lo, period);</b>
+<i class="no-highlight">126</i>&nbsp;            case &#39;d&#39;:
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                return Timestamps.addDays(lo, period);</b>
+<i class="no-highlight">128</i>&nbsp;            case &#39;w&#39;:
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                return Timestamps.addWeeks(lo, period);</b>
+<i class="no-highlight">130</i>&nbsp;            case &#39;M&#39;:
+<b class="fc"><i class="no-highlight">131</i>&nbsp;                return Timestamps.addMonths(lo, period);</b>
+<i class="no-highlight">132</i>&nbsp;            case &#39;y&#39;:
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                return Timestamps.addYear(lo, period);</b>
+<i class="no-highlight">134</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                return Numbers.LONG_NaN;</b>
+<i class="no-highlight">136</i>&nbsp;        }
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    public static long addSeconds(long micros, int seconds) {
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        return micros + seconds * SECOND_MICROS;</b>
+<i class="no-highlight">141</i>&nbsp;    }
+<i class="no-highlight">142</i>&nbsp;
+<i class="no-highlight">143</i>&nbsp;    public static long addWeeks(long micros, int weeks) {
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        return micros + weeks * WEEK_MICROS;</b>
+<i class="no-highlight">145</i>&nbsp;    }
+<i class="no-highlight">146</i>&nbsp;
+<i class="no-highlight">147</i>&nbsp;    public static long addYear(long micros, int years) {
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        if (years == 0) {</b>
+<b class="nc"><i class="no-highlight">149</i>&nbsp;            return micros;</b>
+<i class="no-highlight">150</i>&nbsp;        }
+<i class="no-highlight">151</i>&nbsp;
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        int y = getYear(micros);</b>
+<i class="no-highlight">153</i>&nbsp;        int m;
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        boolean leap1 = isLeapYear(y);</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        boolean leap2 = isLeapYear(y + years);</b>
+<i class="no-highlight">156</i>&nbsp;
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        return yearMicros(y + years, leap2)</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;                + monthOfYearMicros(m = getMonthOfYear(micros, y, leap1), leap2)</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                + (getDayOfMonth(micros, y, m, leap1) - 1) * DAY_MICROS</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                + getTimeMicros(micros)</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;                + (micros &lt; 0 ? 1 : 0);</b>
+<i class="no-highlight">162</i>&nbsp;
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    public static long ceilDD(long micros) {
+<i class="no-highlight">166</i>&nbsp;        int y, m;
+<i class="no-highlight">167</i>&nbsp;        boolean l;
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        return yearMicros(y = getYear(micros), l = isLeapYear(y))</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;</b>
+<i class="no-highlight">171</i>&nbsp;    }
+<i class="no-highlight">172</i>&nbsp;
+<i class="no-highlight">173</i>&nbsp;    public static long ceilHH(long micros) {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        return floorHH(micros) + HOUR_MICROS;</b>
+<i class="no-highlight">175</i>&nbsp;    }
+<i class="no-highlight">176</i>&nbsp;
+<i class="no-highlight">177</i>&nbsp;    public static long ceilMI(long micros) {
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        return floorMI(micros) + MINUTE_MICROS;</b>
+<i class="no-highlight">179</i>&nbsp;    }
+<i class="no-highlight">180</i>&nbsp;
+<i class="no-highlight">181</i>&nbsp;    public static long ceilMM(long micros) {
+<i class="no-highlight">182</i>&nbsp;        int y, m;
+<i class="no-highlight">183</i>&nbsp;        boolean l;
+<b class="fc"><i class="no-highlight">184</i>&nbsp;        return yearMicros(y = getYear(micros), l = isLeapYear(y))</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                + (getDaysPerMonth(m, l)) * DAY_MICROS;</b>
+<i class="no-highlight">187</i>&nbsp;    }
+<i class="no-highlight">188</i>&nbsp;
+<i class="no-highlight">189</i>&nbsp;    public static long ceilMS(long micros) {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        return floorMS(micros) + MILLI_MICROS;</b>
+<i class="no-highlight">191</i>&nbsp;    }
+<i class="no-highlight">192</i>&nbsp;
+<i class="no-highlight">193</i>&nbsp;    public static long ceilSS(long micros) {
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        return floorSS(micros) + SECOND_MICROS;</b>
+<i class="no-highlight">195</i>&nbsp;    }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;    public static long ceilWW(long micros) {
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        return floorWW(micros) + WEEK_MICROS;</b>
+<i class="no-highlight">199</i>&nbsp;    }
+<i class="no-highlight">200</i>&nbsp;
+<i class="no-highlight">201</i>&nbsp;    public static long ceilYYYY(long micros) {
+<i class="no-highlight">202</i>&nbsp;        int y;
+<i class="no-highlight">203</i>&nbsp;        boolean l;
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        return yearMicros(y = getYear(micros), l = isLeapYear(y))</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;                + monthOfYearMicros(12, l)</b>
+<i class="no-highlight">206</i>&nbsp;                + (DAYS_PER_MONTH[11]) * DAY_MICROS;
+<i class="no-highlight">207</i>&nbsp;    }
+<i class="no-highlight">208</i>&nbsp;
+<i class="no-highlight">209</i>&nbsp;    public static long endOfYear(int year) {
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        return toMicros(year, 12, 31, 23, 59) + 59 * SECOND_MILLIS + 999999L;</b>
+<i class="no-highlight">211</i>&nbsp;    }
+<i class="no-highlight">212</i>&nbsp;
+<i class="no-highlight">213</i>&nbsp;    /**
+<i class="no-highlight">214</i>&nbsp;     * Floor timestamp to the first day of the century and set to time to 00:00:00.000Z
+<i class="no-highlight">215</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">216</i>&nbsp;     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
+<i class="no-highlight">217</i>&nbsp;     * 2001-01-01T00:00:00.000Z
+<i class="no-highlight">218</i>&nbsp;     *
+<i class="no-highlight">219</i>&nbsp;     * @param micros timestamp to floor in microseconds since epoch
+<i class="no-highlight">220</i>&nbsp;     * @return given timestamp floored to the first day of the century with time set to 00:00:00.000
+<i class="no-highlight">221</i>&nbsp;     */
+<i class="no-highlight">222</i>&nbsp;    public static long floorCentury(long micros) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        int centuryFirstYear = (((year + 99) / 100) * 100) - 99;</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        boolean leapYear = isLeapYear(centuryFirstYear);</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        return yearMicros(centuryFirstYear, leapYear);</b>
+<i class="no-highlight">227</i>&nbsp;    }
+<i class="no-highlight">228</i>&nbsp;
+<i class="no-highlight">229</i>&nbsp;    public static long floorDD(long micros) {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        long result = micros - getTimeMicros(micros);</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        return Math.min(result, micros);</b>
+<i class="no-highlight">232</i>&nbsp;    }
+<i class="no-highlight">233</i>&nbsp;
+<i class="no-highlight">234</i>&nbsp;    /**
+<i class="no-highlight">235</i>&nbsp;     * Floor timestamp to Monday of the same week and set time to 00:00:00.000Z
+<i class="no-highlight">236</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">237</i>&nbsp;     * Example: Timestamp representing 2008-01-01T04:15:11.123Z (=Tuesday) will be floored to
+<i class="no-highlight">238</i>&nbsp;     * 2007-12-31T00:00:00.000Z (=Monday of the same week)
+<i class="no-highlight">239</i>&nbsp;     *
+<i class="no-highlight">240</i>&nbsp;     * @param micros timestamp to floor in microseconds since epoch
+<i class="no-highlight">241</i>&nbsp;     * @return given timestamp floored to Monday of the same week and time set to 00:00:00.000Z
+<i class="no-highlight">242</i>&nbsp;     */
+<i class="no-highlight">243</i>&nbsp;    public static long floorDOW(long micros) {
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        long l = previousOrSameDayOfWeek(micros, 1);</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        return floorDD(l);</b>
+<i class="no-highlight">246</i>&nbsp;    }
+<i class="no-highlight">247</i>&nbsp;
+<i class="no-highlight">248</i>&nbsp;    /**
+<i class="no-highlight">249</i>&nbsp;     * Floor timestamp to the first day of the decade and set to time to 00:00:00.000Z
+<i class="no-highlight">250</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">251</i>&nbsp;     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
+<i class="no-highlight">252</i>&nbsp;     * 2000-01-01T00:00:00.000Z
+<i class="no-highlight">253</i>&nbsp;     *
+<i class="no-highlight">254</i>&nbsp;     * @param micros timestamp to floor in microseconds since epoch
+<i class="no-highlight">255</i>&nbsp;     * @return given timestamp floored to the first day of the decade with time set to 00:00:00.000
+<i class="no-highlight">256</i>&nbsp;     */
+<i class="no-highlight">257</i>&nbsp;    public static long floorDecade(long micros) {
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        int decadeFirstYear = (year / 10) * 10;</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        boolean leapYear = isLeapYear(decadeFirstYear);</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        return yearMicros(decadeFirstYear, leapYear);</b>
+<i class="no-highlight">262</i>&nbsp;    }
+<i class="no-highlight">263</i>&nbsp;
+<i class="no-highlight">264</i>&nbsp;    public static long floorHH(long micros) {
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        return micros - micros % HOUR_MICROS;</b>
+<i class="no-highlight">266</i>&nbsp;    }
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;    public static long floorWW(long micros) {
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        return (micros - micros % WEEK_MICROS) + getIsoWeekMicrosOffset(micros);</b>
+<i class="no-highlight">270</i>&nbsp;    }
+<i class="no-highlight">271</i>&nbsp;
+<i class="no-highlight">272</i>&nbsp;    public static long floorMI(long micros) {
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        return micros - micros % MINUTE_MICROS;</b>
+<i class="no-highlight">274</i>&nbsp;    }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;    public static long floorMM(long micros) {
+<i class="no-highlight">277</i>&nbsp;        int y;
+<i class="no-highlight">278</i>&nbsp;        boolean l;
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);</b>
+<i class="no-highlight">280</i>&nbsp;    }
+<i class="no-highlight">281</i>&nbsp;
+<i class="no-highlight">282</i>&nbsp;    public static long floorMS(long micros) {
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        return micros - micros % MILLI_MICROS;</b>
+<i class="no-highlight">284</i>&nbsp;    }
+<i class="no-highlight">285</i>&nbsp;
+<i class="no-highlight">286</i>&nbsp;    /**
+<i class="no-highlight">287</i>&nbsp;     * Floor timestamp to the first day of the millennia and set to time to 00:00:00.000Z
+<i class="no-highlight">288</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">289</i>&nbsp;     * Example: Timestamp representing 2108-01-01T04:15:11.123Z will be floored to
+<i class="no-highlight">290</i>&nbsp;     * 2001-01-01T00:00:00.000Z
+<i class="no-highlight">291</i>&nbsp;     *
+<i class="no-highlight">292</i>&nbsp;     * @param micros timestamp to floor in microseconds since epoch
+<i class="no-highlight">293</i>&nbsp;     * @return given timestamp floored to the first day of the millennia with time set to 00:00:00.000
+<i class="no-highlight">294</i>&nbsp;     */
+<i class="no-highlight">295</i>&nbsp;    public static long floorMillennium(long micros) {
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;        boolean leapYear = isLeapYear(millenniumFirstYear);</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        return yearMicros(millenniumFirstYear, leapYear);</b>
+<i class="no-highlight">300</i>&nbsp;    }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;    /**
+<i class="no-highlight">303</i>&nbsp;     * Floor timestamp to the first day of the quarter and set time to 00:00:00.000Z
+<i class="no-highlight">304</i>&nbsp;     * &lt;br&gt;
+<i class="no-highlight">305</i>&nbsp;     * Example: Timestamp representing 2008-05-21T04:15:11.123Z will be floored to
+<i class="no-highlight">306</i>&nbsp;     * 2008-04-01T00:00:00.000Z as that&#39;s the 1st day of the same quarter as the original date.
+<i class="no-highlight">307</i>&nbsp;     *
+<i class="no-highlight">308</i>&nbsp;     * @param micros timestamp to floor in microseconds since epoch
+<i class="no-highlight">309</i>&nbsp;     * @return given timestamp floored to the first day of the quarter with time set to 00:00:00.000Z
+<i class="no-highlight">310</i>&nbsp;     */
+<i class="no-highlight">311</i>&nbsp;    public static long floorQuarter(long micros) {
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;        boolean leapYear = isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        int monthOfYear = getMonthOfYear(micros, year, leapYear);</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;        int q = (monthOfYear - 1) / 3;</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        int month = (3 * q) + 1;</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        return yearMicros(year, leapYear) + monthOfYearMicros(month, leapYear);</b>
+<i class="no-highlight">318</i>&nbsp;    }
+<i class="no-highlight">319</i>&nbsp;
+<i class="no-highlight">320</i>&nbsp;    public static long floorSS(long micros) {
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        return micros - micros % SECOND_MICROS;</b>
+<i class="no-highlight">322</i>&nbsp;    }
+<i class="no-highlight">323</i>&nbsp;
+<i class="no-highlight">324</i>&nbsp;    public static long floorYYYY(long micros) {
+<i class="no-highlight">325</i>&nbsp;        int y;
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        return yearMicros(y = getYear(micros), isLeapYear(y));</b>
+<i class="no-highlight">327</i>&nbsp;    }
+<i class="no-highlight">328</i>&nbsp;
+<i class="no-highlight">329</i>&nbsp;    public static int getCentury(long micros) {
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        final int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        int century = year / 100;</b>
+<i class="no-highlight">332</i>&nbsp;
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        if (year &gt; century * 100) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            century++;</b>
+<i class="no-highlight">335</i>&nbsp;        }
+<i class="no-highlight">336</i>&nbsp;
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        if (micros &gt;= Timestamps.FIRST_CENTURY_MICROS) {</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            return century;</b>
+<i class="no-highlight">339</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">340</i>&nbsp;        return century - 1;</b>
+<i class="no-highlight">341</i>&nbsp;    }
+<i class="no-highlight">342</i>&nbsp;
+<i class="no-highlight">343</i>&nbsp;    public static int getDayOfMonth(long micros, int year, int month, boolean leap) {
+<b class="fc"><i class="no-highlight">344</i>&nbsp;        long yearMicros = yearMicros(year, leap);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        yearMicros += monthOfYearMicros(month, leap);</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;        return (int) ((micros - yearMicros) / DAY_MICROS) + 1;</b>
+<i class="no-highlight">347</i>&nbsp;    }
+<i class="no-highlight">348</i>&nbsp;
+<i class="no-highlight">349</i>&nbsp;    public static int getDayOfTheWeekOfEndOfYear(int year) {
+<b class="fc"><i class="no-highlight">350</i>&nbsp;        return (year + Math.abs(year / 4) - Math.abs(year / 100) + Math.abs(year / 400)) % 7;</b>
+<i class="no-highlight">351</i>&nbsp;    }
+<i class="no-highlight">352</i>&nbsp;
+<i class="no-highlight">353</i>&nbsp;    public static int getDayOfWeek(long micros) {
+<i class="no-highlight">354</i>&nbsp;        // 1970-01-01 is Thursday.
+<i class="no-highlight">355</i>&nbsp;        long d;
+<b class="fc"><i class="no-highlight">356</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;            d = micros / DAY_MICROS;</b>
+<i class="no-highlight">358</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">359</i>&nbsp;            d = (micros - (DAY_MICROS - 1)) / DAY_MICROS;</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;            if (d &lt; -3) {</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                return 7 + (int) ((d + 4) % 7);</b>
+<i class="no-highlight">362</i>&nbsp;            }
+<i class="no-highlight">363</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        return 1 + (int) ((d + 3) % 7);</b>
+<i class="no-highlight">365</i>&nbsp;    }
+<i class="no-highlight">366</i>&nbsp;
+<i class="no-highlight">367</i>&nbsp;    public static int getDayOfWeekSundayFirst(long micros) {
+<i class="no-highlight">368</i>&nbsp;        // 1970-01-01 is Thursday.
+<i class="no-highlight">369</i>&nbsp;        long d;
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;            d = micros / DAY_MICROS;</b>
+<i class="no-highlight">372</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">373</i>&nbsp;            d = (micros - (DAY_MICROS - 1)) / DAY_MICROS;</b>
+<b class="fc"><i class="no-highlight">374</i>&nbsp;            if (d &lt; -4) {</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                return 7 + (int) ((d + 5) % 7);</b>
+<i class="no-highlight">376</i>&nbsp;            }
+<i class="no-highlight">377</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">378</i>&nbsp;        return 1 + (int) ((d + 4) % 7);</b>
+<i class="no-highlight">379</i>&nbsp;    }
+<i class="no-highlight">380</i>&nbsp;
+<i class="no-highlight">381</i>&nbsp;    public static int getDayOfYear(long micros) {
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        boolean leap = isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;        long yearStart = yearMicros(year, leap);</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        return (int) ((micros - yearStart) / DAY_MICROS) + 1;</b>
+<i class="no-highlight">386</i>&nbsp;    }
+<i class="no-highlight">387</i>&nbsp;
+<i class="no-highlight">388</i>&nbsp;    public static long getDaysBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">389</i>&nbsp;        return Math.abs(a - b) / DAY_MICROS;</b>
+<i class="no-highlight">390</i>&nbsp;    }
+<i class="no-highlight">391</i>&nbsp;
+<i class="no-highlight">392</i>&nbsp;    /**
+<i class="no-highlight">393</i>&nbsp;     * Days in a given month. This method expects you to know if month is in leap year.
+<i class="no-highlight">394</i>&nbsp;     *
+<i class="no-highlight">395</i>&nbsp;     * @param m    month from 1 to 12
+<i class="no-highlight">396</i>&nbsp;     * @param leap true if this is for leap year
+<i class="no-highlight">397</i>&nbsp;     * @return number of days in month.
+<i class="no-highlight">398</i>&nbsp;     */
+<i class="no-highlight">399</i>&nbsp;    public static int getDaysPerMonth(int m, boolean leap) {
+<b class="fc"><i class="no-highlight">400</i>&nbsp;        return leap &amp; m == 2 ? 29 : DAYS_PER_MONTH[m - 1];</b>
+<i class="no-highlight">401</i>&nbsp;    }
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;    public static int getDecade(long micros) {
+<b class="fc"><i class="no-highlight">404</i>&nbsp;        return getYear(micros) / 10;</b>
+<i class="no-highlight">405</i>&nbsp;    }
+<i class="no-highlight">406</i>&nbsp;
+<i class="no-highlight">407</i>&nbsp;    public static int getDow(long micros) {
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        return getDayOfWeekSundayFirst(micros) - 1;</b>
+<i class="no-highlight">409</i>&nbsp;    }
+<i class="no-highlight">410</i>&nbsp;
+<i class="no-highlight">411</i>&nbsp;    public static int getDoy(long micros) {
+<b class="fc"><i class="no-highlight">412</i>&nbsp;        final int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;        final boolean leap = isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;        final long yearStart = yearMicros(year, leap);</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;        return (int) ((micros - yearStart) / DAY_MICROS) + 1;</b>
+<i class="no-highlight">416</i>&nbsp;    }
+<i class="no-highlight">417</i>&nbsp;
+<i class="no-highlight">418</i>&nbsp;    public static int getHourOfDay(long micros) {
+<b class="fc"><i class="no-highlight">419</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;            return (int) ((micros / HOUR_MICROS) % DAY_HOURS);</b>
+<i class="no-highlight">421</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">422</i>&nbsp;            return DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % DAY_HOURS);</b>
+<i class="no-highlight">423</i>&nbsp;        }
+<i class="no-highlight">424</i>&nbsp;    }
+<i class="no-highlight">425</i>&nbsp;
+<i class="no-highlight">426</i>&nbsp;    public static long getHoursBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">427</i>&nbsp;        return Math.abs(a - b) / HOUR_MICROS;</b>
+<i class="no-highlight">428</i>&nbsp;    }
+<i class="no-highlight">429</i>&nbsp;
+<i class="no-highlight">430</i>&nbsp;    /**
+<i class="no-highlight">431</i>&nbsp;     * Due to epoch starting on Thursday while ISO week starts on Monday, there is an offset between epoch and ISO week micros when flooring.
+<i class="no-highlight">432</i>&nbsp;     *
+<i class="no-highlight">433</i>&nbsp;     * @param micros epoch microseconds
+<i class="no-highlight">434</i>&nbsp;     * @return 4 days micros offset for Monday through Wednesday and -3 days micros offset for Thursday through Sunday
+<i class="no-highlight">435</i>&nbsp;     */
+<i class="no-highlight">436</i>&nbsp;    public static long getIsoWeekMicrosOffset(long micros) {
+<b class="fc"><i class="no-highlight">437</i>&nbsp;        return ((getDayOfWeek(micros) &lt;= 3) ? 4 : -3) * DAY_MICROS;</b>
+<i class="no-highlight">438</i>&nbsp;    }
+<i class="no-highlight">439</i>&nbsp;
+<i class="no-highlight">440</i>&nbsp;    // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
+<i class="no-highlight">441</i>&nbsp;    // so in early January or late December the ISO year may be different from the Gregorian year.
+<i class="no-highlight">442</i>&nbsp;    // See the getWeek() method for more information.
+<i class="no-highlight">443</i>&nbsp;    public static int getIsoYear(long micros) {
+<b class="fc"><i class="no-highlight">444</i>&nbsp;        int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;        int y = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">446</i>&nbsp;        if (w &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;            return y - 1;</b>
+<i class="no-highlight">448</i>&nbsp;        }
+<i class="no-highlight">449</i>&nbsp;
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        if (w &gt; getWeeks(y)) {</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            return y + 1;</b>
+<i class="no-highlight">452</i>&nbsp;        }
+<i class="no-highlight">453</i>&nbsp;
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        return y;</b>
+<i class="no-highlight">455</i>&nbsp;    }
+<i class="no-highlight">456</i>&nbsp;
+<i class="no-highlight">457</i>&nbsp;    /**
+<i class="no-highlight">458</i>&nbsp;     * Since ISO weeks don&#39;t always start on the first day of the year, there is an offset of days from the 1st day of the year.
+<i class="no-highlight">459</i>&nbsp;     *
+<i class="no-highlight">460</i>&nbsp;     * @param year of timestamp
+<i class="no-highlight">461</i>&nbsp;     * @return difference in the days from the start of the year (January 1st) and the first ISO week
+<i class="no-highlight">462</i>&nbsp;     */
+<i class="no-highlight">463</i>&nbsp;    public static int getIsoYearDayOffset(int year) {
+<b class="fc"><i class="no-highlight">464</i>&nbsp;        int dayOfTheWeekOfEndOfPreviousYear = getDayOfTheWeekOfEndOfYear(year - 1);</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        return ((dayOfTheWeekOfEndOfPreviousYear &lt;= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;</b>
+<i class="no-highlight">466</i>&nbsp;    }
+<i class="no-highlight">467</i>&nbsp;
+<i class="no-highlight">468</i>&nbsp;    public static int getMicrosOfMilli(long micros) {
+<b class="fc"><i class="no-highlight">469</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;            return (int) (micros % MILLI_MICROS);</b>
+<i class="no-highlight">471</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">472</i>&nbsp;            return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));</b>
+<i class="no-highlight">473</i>&nbsp;        }
+<i class="no-highlight">474</i>&nbsp;    }
+<i class="no-highlight">475</i>&nbsp;
+<i class="no-highlight">476</i>&nbsp;    public static long getMicrosOfMinute(long micros) {
+<b class="fc"><i class="no-highlight">477</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">478</i>&nbsp;            return micros % MINUTE_MICROS;</b>
+<i class="no-highlight">479</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">480</i>&nbsp;            return MINUTE_MICROS - 1 + (micros + 1) % MINUTE_MICROS;</b>
+<i class="no-highlight">481</i>&nbsp;        }
+<i class="no-highlight">482</i>&nbsp;    }
+<i class="no-highlight">483</i>&nbsp;
+<i class="no-highlight">484</i>&nbsp;    public static int getMicrosOfSecond(long micros) {
+<b class="fc"><i class="no-highlight">485</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">486</i>&nbsp;            return (int) (micros % SECOND_MICROS);</b>
+<i class="no-highlight">487</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">488</i>&nbsp;            return (int) (SECOND_MICROS - 1 + ((micros + 1) % SECOND_MICROS));</b>
+<i class="no-highlight">489</i>&nbsp;        }
+<i class="no-highlight">490</i>&nbsp;    }
+<i class="no-highlight">491</i>&nbsp;
+<i class="no-highlight">492</i>&nbsp;    // Years in the 1900s are in the second millennium. The third millennium started January 1, 2001.
+<i class="no-highlight">493</i>&nbsp;    public static int getMillennium(long micros) {
+<b class="fc"><i class="no-highlight">494</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;        return millenniumFirstYear / 1000 + 1;</b>
+<i class="no-highlight">497</i>&nbsp;    }
+<i class="no-highlight">498</i>&nbsp;
+<i class="no-highlight">499</i>&nbsp;    public static long getMillisOfMinute(long micros) {
+<b class="fc"><i class="no-highlight">500</i>&nbsp;        return getMicrosOfMinute(micros) / 1000;</b>
+<i class="no-highlight">501</i>&nbsp;    }
+<i class="no-highlight">502</i>&nbsp;
+<i class="no-highlight">503</i>&nbsp;    public static int getMillisOfSecond(long micros) {
+<b class="fc"><i class="no-highlight">504</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;            return (int) ((micros / MILLI_MICROS) % SECOND_MILLIS);</b>
+<i class="no-highlight">506</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">507</i>&nbsp;            return SECOND_MILLIS - 1 + (int) (((micros + 1) / MILLI_MICROS) % SECOND_MILLIS);</b>
+<i class="no-highlight">508</i>&nbsp;        }
+<i class="no-highlight">509</i>&nbsp;    }
+<i class="no-highlight">510</i>&nbsp;
+<i class="no-highlight">511</i>&nbsp;    public static int getMinuteOfHour(long micros) {
+<b class="fc"><i class="no-highlight">512</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;            return (int) ((micros / MINUTE_MICROS) % HOUR_MINUTES);</b>
+<i class="no-highlight">514</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">515</i>&nbsp;            return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);</b>
+<i class="no-highlight">516</i>&nbsp;        }
+<i class="no-highlight">517</i>&nbsp;    }
+<i class="no-highlight">518</i>&nbsp;
+<i class="no-highlight">519</i>&nbsp;    public static long getMinutesBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">520</i>&nbsp;        return Math.abs(a - b) / MINUTE_MICROS;</b>
+<i class="no-highlight">521</i>&nbsp;    }
+<i class="no-highlight">522</i>&nbsp;
+<i class="no-highlight">523</i>&nbsp;    public static int getMonthOfYear(long micros) {
+<b class="fc"><i class="no-highlight">524</i>&nbsp;        final int y = Timestamps.getYear(micros);</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;        final boolean leap = Timestamps.isLeapYear(y);</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        return getMonthOfYear(micros, y, leap);</b>
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;    /**
+<i class="no-highlight">530</i>&nbsp;     * Calculates month of year from absolute micros.
+<i class="no-highlight">531</i>&nbsp;     *
+<i class="no-highlight">532</i>&nbsp;     * @param micros micros since 1970
+<i class="no-highlight">533</i>&nbsp;     * @param year   year of month
+<i class="no-highlight">534</i>&nbsp;     * @param leap   true if year was leap
+<i class="no-highlight">535</i>&nbsp;     * @return month of year
+<i class="no-highlight">536</i>&nbsp;     */
+<i class="no-highlight">537</i>&nbsp;    public static int getMonthOfYear(long micros, int year, boolean leap) {
+<b class="fc"><i class="no-highlight">538</i>&nbsp;        int i = (int) (((micros - yearMicros(year, leap)) / 1000) &gt;&gt; 10);</b>
+<b class="fc"><i class="no-highlight">539</i>&nbsp;        return leap</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;                ? ((i &lt; 182 * 84375)</b>
+<b class="fc"><i class="no-highlight">541</i>&nbsp;                ? ((i &lt; 91 * 84375)</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;                ? ((i &lt; 31 * 84375) ? 1 : (i &lt; 60 * 84375) ? 2 : 3)</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;                : ((i &lt; 121 * 84375) ? 4 : (i &lt; 152 * 84375) ? 5 : 6))</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;                : ((i &lt; 274 * 84375)</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;                ? ((i &lt; 213 * 84375) ? 7 : (i &lt; 244 * 84375) ? 8 : 9)</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;                : ((i &lt; 305 * 84375) ? 10 : (i &lt; 335 * 84375) ? 11 : 12)))</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                : ((i &lt; 181 * 84375)</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                ? ((i &lt; 90 * 84375)</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                ? ((i &lt; 31 * 84375) ? 1 : (i &lt; 59 * 84375) ? 2 : 3)</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;                : ((i &lt; 120 * 84375) ? 4 : (i &lt; 151 * 84375) ? 5 : 6))</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;                : ((i &lt; 273 * 84375)</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;                ? ((i &lt; 212 * 84375) ? 7 : (i &lt; 243 * 84375) ? 8 : 9)</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                : ((i &lt; 304 * 84375) ? 10 : (i &lt; 334 * 84375) ? 11 : 12)));</b>
+<i class="no-highlight">554</i>&nbsp;    }
+<i class="no-highlight">555</i>&nbsp;
+<i class="no-highlight">556</i>&nbsp;    public static long getMonthsBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">557</i>&nbsp;        if (b &lt; a) {</b>
+<b class="fc"><i class="no-highlight">558</i>&nbsp;            return getMonthsBetween(b, a);</b>
+<i class="no-highlight">559</i>&nbsp;        }
+<i class="no-highlight">560</i>&nbsp;
+<b class="fc"><i class="no-highlight">561</i>&nbsp;        int aYear = getYear(a);</b>
+<b class="fc"><i class="no-highlight">562</i>&nbsp;        int bYear = getYear(b);</b>
+<b class="fc"><i class="no-highlight">563</i>&nbsp;        boolean aLeap = isLeapYear(aYear);</b>
+<b class="fc"><i class="no-highlight">564</i>&nbsp;        boolean bLeap = isLeapYear(bYear);</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;        int aMonth = getMonthOfYear(a, aYear, aLeap);</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;        int bMonth = getMonthOfYear(b, bYear, bLeap);</b>
+<i class="no-highlight">567</i>&nbsp;
+<b class="fc"><i class="no-highlight">568</i>&nbsp;        long aResidual = a - yearMicros(aYear, aLeap) - monthOfYearMicros(aMonth, aLeap);</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;        long bResidual = b - yearMicros(bYear, bLeap) - monthOfYearMicros(bMonth, bLeap);</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;        long months = 12L * (bYear - aYear) + (bMonth - aMonth);</b>
+<i class="no-highlight">571</i>&nbsp;
+<b class="fc"><i class="no-highlight">572</i>&nbsp;        if (aResidual &gt; bResidual) {</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;            return months - 1;</b>
+<i class="no-highlight">574</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">575</i>&nbsp;            return months;</b>
+<i class="no-highlight">576</i>&nbsp;        }
+<i class="no-highlight">577</i>&nbsp;    }
+<i class="no-highlight">578</i>&nbsp;
+<i class="no-highlight">579</i>&nbsp;    public static long getPeriodBetween(char type, long start, long end) {
+<b class="fc"><i class="no-highlight">580</i>&nbsp;        switch (type) {</b>
+<i class="no-highlight">581</i>&nbsp;            case &#39;s&#39;:
+<b class="fc"><i class="no-highlight">582</i>&nbsp;                return Timestamps.getSecondsBetween(start, end);</b>
+<i class="no-highlight">583</i>&nbsp;            case &#39;m&#39;:
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                return Timestamps.getMinutesBetween(start, end);</b>
+<i class="no-highlight">585</i>&nbsp;            case &#39;h&#39;:
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                return Timestamps.getHoursBetween(start, end);</b>
+<i class="no-highlight">587</i>&nbsp;            case &#39;d&#39;:
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                return Timestamps.getDaysBetween(start, end);</b>
+<i class="no-highlight">589</i>&nbsp;            case &#39;w&#39;:
+<b class="fc"><i class="no-highlight">590</i>&nbsp;                return Timestamps.getWeeksBetween(start, end);</b>
+<i class="no-highlight">591</i>&nbsp;            case &#39;M&#39;:
+<b class="fc"><i class="no-highlight">592</i>&nbsp;                return Timestamps.getMonthsBetween(start, end);</b>
+<i class="no-highlight">593</i>&nbsp;            case &#39;y&#39;:
+<b class="fc"><i class="no-highlight">594</i>&nbsp;                return Timestamps.getYearsBetween(start, end);</b>
+<i class="no-highlight">595</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">596</i>&nbsp;                return Numbers.LONG_NaN;</b>
+<i class="no-highlight">597</i>&nbsp;        }
+<i class="no-highlight">598</i>&nbsp;    }
+<i class="no-highlight">599</i>&nbsp;
+<i class="no-highlight">600</i>&nbsp;    // The quarter of the year (1–4) that the date is in
+<i class="no-highlight">601</i>&nbsp;    public static int getQuarter(long micros) {
+<b class="fc"><i class="no-highlight">602</i>&nbsp;        final int month = getMonthOfYear(micros);</b>
+<b class="fc"><i class="no-highlight">603</i>&nbsp;        return ((month - 1) / 3) + 1;</b>
+<i class="no-highlight">604</i>&nbsp;    }
+<i class="no-highlight">605</i>&nbsp;
+<i class="no-highlight">606</i>&nbsp;    public static int getSecondOfMinute(long micros) {
+<b class="fc"><i class="no-highlight">607</i>&nbsp;        if (micros &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">608</i>&nbsp;            return (int) ((micros / SECOND_MICROS) % MINUTE_SECONDS);</b>
+<i class="no-highlight">609</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">610</i>&nbsp;            return MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS);</b>
+<i class="no-highlight">611</i>&nbsp;        }
+<i class="no-highlight">612</i>&nbsp;    }
+<i class="no-highlight">613</i>&nbsp;
+<i class="no-highlight">614</i>&nbsp;    public static long getSecondsBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">615</i>&nbsp;        return Math.abs(a - b) / SECOND_MICROS;</b>
+<i class="no-highlight">616</i>&nbsp;    }
+<i class="no-highlight">617</i>&nbsp;
+<i class="no-highlight">618</i>&nbsp;    // https://en.wikipedia.org/wiki/ISO_week_date
+<i class="no-highlight">619</i>&nbsp;    public static int getWeek(long micros) {
+<b class="fc"><i class="no-highlight">620</i>&nbsp;        int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;</b>
+<b class="fc"><i class="no-highlight">621</i>&nbsp;        int y = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">622</i>&nbsp;        if (w &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">623</i>&nbsp;            return getWeeks(y - 1);</b>
+<i class="no-highlight">624</i>&nbsp;        }
+<i class="no-highlight">625</i>&nbsp;
+<b class="fc"><i class="no-highlight">626</i>&nbsp;        if (w &gt; getWeeks(y)) {</b>
+<b class="fc"><i class="no-highlight">627</i>&nbsp;            return 1;</b>
+<i class="no-highlight">628</i>&nbsp;        }
+<i class="no-highlight">629</i>&nbsp;
+<b class="fc"><i class="no-highlight">630</i>&nbsp;        return w;</b>
+<i class="no-highlight">631</i>&nbsp;    }
+<i class="no-highlight">632</i>&nbsp;
+<i class="no-highlight">633</i>&nbsp;    public static int getWeekOfMonth(long micros) {
+<b class="fc"><i class="no-highlight">634</i>&nbsp;        int year = getYear(micros);</b>
+<b class="fc"><i class="no-highlight">635</i>&nbsp;        boolean leap = isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">636</i>&nbsp;        return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;</b>
+<i class="no-highlight">637</i>&nbsp;    }
+<i class="no-highlight">638</i>&nbsp;
+<i class="no-highlight">639</i>&nbsp;    public static int getWeekOfYear(long micros) {
+<b class="fc"><i class="no-highlight">640</i>&nbsp;        return getDayOfYear(micros) / 7 + 1;</b>
+<i class="no-highlight">641</i>&nbsp;    }
+<i class="no-highlight">642</i>&nbsp;
+<i class="no-highlight">643</i>&nbsp;    public static int getWeeks(int y) {
+<b class="fc"><i class="no-highlight">644</i>&nbsp;        if (getDayOfTheWeekOfEndOfYear(y) == 4 || getDayOfTheWeekOfEndOfYear(y - 1) == 3) {</b>
+<b class="fc"><i class="no-highlight">645</i>&nbsp;            return 53;</b>
+<i class="no-highlight">646</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">647</i>&nbsp;        return 52;</b>
+<i class="no-highlight">648</i>&nbsp;    }
+<i class="no-highlight">649</i>&nbsp;
+<i class="no-highlight">650</i>&nbsp;    public static long getWeeksBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">651</i>&nbsp;        return Math.abs(a - b) / WEEK_MICROS;</b>
+<i class="no-highlight">652</i>&nbsp;    }
+<i class="no-highlight">653</i>&nbsp;
+<i class="no-highlight">654</i>&nbsp;    /**
+<i class="no-highlight">655</i>&nbsp;     * Calculates year number from micros.
+<i class="no-highlight">656</i>&nbsp;     *
+<i class="no-highlight">657</i>&nbsp;     * @param micros time micros.
+<i class="no-highlight">658</i>&nbsp;     * @return year
+<i class="no-highlight">659</i>&nbsp;     */
+<i class="no-highlight">660</i>&nbsp;    public static int getYear(long micros) {
+<b class="fc"><i class="no-highlight">661</i>&nbsp;        long mid = (micros &gt;&gt; 1) + HALF_EPOCH_MICROS;</b>
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        if (mid &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">663</i>&nbsp;            mid = mid - HALF_YEAR_MICROS + 1;</b>
+<i class="no-highlight">664</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">665</i>&nbsp;        int year = (int) (mid / HALF_YEAR_MICROS);</b>
+<i class="no-highlight">666</i>&nbsp;
+<b class="fc"><i class="no-highlight">667</i>&nbsp;        boolean leap = isLeapYear(year);</b>
+<b class="fc"><i class="no-highlight">668</i>&nbsp;        long yearStart = yearMicros(year, leap);</b>
+<b class="fc"><i class="no-highlight">669</i>&nbsp;        long diff = micros - yearStart;</b>
+<i class="no-highlight">670</i>&nbsp;
+<b class="fc"><i class="no-highlight">671</i>&nbsp;        if (diff &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">672</i>&nbsp;            year--;</b>
+<b class="fc"><i class="no-highlight">673</i>&nbsp;        } else if (diff &gt;= YEAR_MICROS) {</b>
+<b class="fc"><i class="no-highlight">674</i>&nbsp;            yearStart += leap ? LEAP_YEAR_MICROS : YEAR_MICROS;</b>
+<b class="fc"><i class="no-highlight">675</i>&nbsp;            if (yearStart &lt;= micros) {</b>
+<b class="fc"><i class="no-highlight">676</i>&nbsp;                year++;</b>
+<i class="no-highlight">677</i>&nbsp;            }
+<i class="no-highlight">678</i>&nbsp;        }
+<i class="no-highlight">679</i>&nbsp;
+<b class="fc"><i class="no-highlight">680</i>&nbsp;        return year;</b>
+<i class="no-highlight">681</i>&nbsp;    }
+<i class="no-highlight">682</i>&nbsp;
+<i class="no-highlight">683</i>&nbsp;    public static long getYearsBetween(long a, long b) {
+<b class="fc"><i class="no-highlight">684</i>&nbsp;        return getMonthsBetween(a, b) / 12;</b>
+<i class="no-highlight">685</i>&nbsp;    }
+<i class="no-highlight">686</i>&nbsp;
+<i class="no-highlight">687</i>&nbsp;    /**
+<i class="no-highlight">688</i>&nbsp;     * Calculates if year is leap year using following algorithm:
+<i class="no-highlight">689</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">690</i>&nbsp;     * http://en.wikipedia.org/wiki/Leap_year
+<i class="no-highlight">691</i>&nbsp;     *
+<i class="no-highlight">692</i>&nbsp;     * @param year the year
+<i class="no-highlight">693</i>&nbsp;     * @return true if year is leap
+<i class="no-highlight">694</i>&nbsp;     */
+<i class="no-highlight">695</i>&nbsp;    public static boolean isLeapYear(int year) {
+<b class="fc"><i class="no-highlight">696</i>&nbsp;        return ((year &amp; 3) == 0) &amp;&amp; ((year % 100) != 0 || (year % 400) == 0);</b>
+<i class="no-highlight">697</i>&nbsp;    }
+<i class="no-highlight">698</i>&nbsp;
+<i class="no-highlight">699</i>&nbsp;    public static long monthOfYearMicros(int month, boolean leap) {
+<b class="fc"><i class="no-highlight">700</i>&nbsp;        return leap ? MAX_MONTH_OF_YEAR_MICROS[month - 1] : MIN_MONTH_OF_YEAR_MICROS[month - 1];</b>
+<i class="no-highlight">701</i>&nbsp;    }
+<i class="no-highlight">702</i>&nbsp;
+<i class="no-highlight">703</i>&nbsp;    public static long nextOrSameDayOfWeek(long millis, int dow) {
+<b class="fc"><i class="no-highlight">704</i>&nbsp;        int thisDow = getDayOfWeek(millis);</b>
+<b class="fc"><i class="no-highlight">705</i>&nbsp;        if (thisDow == dow) {</b>
+<b class="fc"><i class="no-highlight">706</i>&nbsp;            return millis;</b>
+<i class="no-highlight">707</i>&nbsp;        }
+<i class="no-highlight">708</i>&nbsp;
+<b class="fc"><i class="no-highlight">709</i>&nbsp;        if (thisDow &lt; dow) {</b>
+<b class="fc"><i class="no-highlight">710</i>&nbsp;            return millis + (dow - thisDow) * DAY_MICROS;</b>
+<i class="no-highlight">711</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">712</i>&nbsp;            return millis + (7 - (thisDow - dow)) * DAY_MICROS;</b>
+<i class="no-highlight">713</i>&nbsp;        }
+<i class="no-highlight">714</i>&nbsp;    }
+<i class="no-highlight">715</i>&nbsp;
+<i class="no-highlight">716</i>&nbsp;    public static long parseNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+<b class="fc"><i class="no-highlight">717</i>&nbsp;        if (lim == p) {</b>
+<b class="nc"><i class="no-highlight">718</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">719</i>&nbsp;        }
+<i class="no-highlight">720</i>&nbsp;
+<b class="fc"><i class="no-highlight">721</i>&nbsp;        boolean negative = sequence.charAt(p) == &#39;-&#39;;</b>
+<b class="fc"><i class="no-highlight">722</i>&nbsp;        int i = p;</b>
+<b class="fc"><i class="no-highlight">723</i>&nbsp;        if (negative) {</b>
+<b class="nc"><i class="no-highlight">724</i>&nbsp;            i++;</b>
+<i class="no-highlight">725</i>&nbsp;        }
+<i class="no-highlight">726</i>&nbsp;
+<b class="fc"><i class="no-highlight">727</i>&nbsp;        if (i &gt;= lim || Numbers.notDigit(sequence.charAt(i))) {</b>
+<b class="nc"><i class="no-highlight">728</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">729</i>&nbsp;        }
+<i class="no-highlight">730</i>&nbsp;
+<b class="fc"><i class="no-highlight">731</i>&nbsp;        int val = 0;</b>
+<b class="fc"><i class="no-highlight">732</i>&nbsp;        for (; i &lt; lim; i++) {</b>
+<b class="fc"><i class="no-highlight">733</i>&nbsp;            char c = sequence.charAt(i);</b>
+<i class="no-highlight">734</i>&nbsp;
+<b class="fc"><i class="no-highlight">735</i>&nbsp;            if (Numbers.notDigit(c)) {</b>
+<b class="fc"><i class="no-highlight">736</i>&nbsp;                break;</b>
+<i class="no-highlight">737</i>&nbsp;            }
+<i class="no-highlight">738</i>&nbsp;
+<i class="no-highlight">739</i>&nbsp;            // val * 10 + (c - &#39;0&#39;)
+<b class="fc"><i class="no-highlight">740</i>&nbsp;            int r = (val &lt;&lt; 3) + (val &lt;&lt; 1) - (c - &#39;0&#39;);</b>
+<b class="fc"><i class="no-highlight">741</i>&nbsp;            if (r &gt; val) {</b>
+<b class="nc"><i class="no-highlight">742</i>&nbsp;                throw NumericException.INSTANCE;</b>
+<i class="no-highlight">743</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">744</i>&nbsp;            val = r;</b>
+<i class="no-highlight">745</i>&nbsp;        }
+<i class="no-highlight">746</i>&nbsp;
+<b class="fc"><i class="no-highlight">747</i>&nbsp;        final int len = i - p;</b>
+<i class="no-highlight">748</i>&nbsp;
+<b class="fc"><i class="no-highlight">749</i>&nbsp;        if (len &gt; 9 || val == Integer.MIN_VALUE &amp;&amp; !negative) {</b>
+<b class="fc"><i class="no-highlight">750</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">751</i>&nbsp;        }
+<i class="no-highlight">752</i>&nbsp;
+<b class="fc"><i class="no-highlight">753</i>&nbsp;        while (i - p &lt; 9) {</b>
+<b class="fc"><i class="no-highlight">754</i>&nbsp;            val *= 10;</b>
+<b class="fc"><i class="no-highlight">755</i>&nbsp;            i++;</b>
+<i class="no-highlight">756</i>&nbsp;        }
+<i class="no-highlight">757</i>&nbsp;
+<b class="fc"><i class="no-highlight">758</i>&nbsp;        val /= 1000;</b>
+<i class="no-highlight">759</i>&nbsp;
+<b class="fc"><i class="no-highlight">760</i>&nbsp;        return Numbers.encodeLowHighInts(negative ? val : -val, len);</b>
+<i class="no-highlight">761</i>&nbsp;    }
+<i class="no-highlight">762</i>&nbsp;
+<i class="no-highlight">763</i>&nbsp;    public static long parseOffset(CharSequence in) {
+<b class="fc"><i class="no-highlight">764</i>&nbsp;        return parseOffset(in, 0, in.length());</b>
+<i class="no-highlight">765</i>&nbsp;    }
+<i class="no-highlight">766</i>&nbsp;
+<i class="no-highlight">767</i>&nbsp;    public static long parseOffset(CharSequence in, int lo, int hi) {
+<b class="fc"><i class="no-highlight">768</i>&nbsp;        int p = lo;</b>
+<b class="fc"><i class="no-highlight">769</i>&nbsp;        int state = STATE_INIT;</b>
+<b class="fc"><i class="no-highlight">770</i>&nbsp;        boolean negative = false;</b>
+<b class="fc"><i class="no-highlight">771</i>&nbsp;        int hour = 0;</b>
+<b class="fc"><i class="no-highlight">772</i>&nbsp;        int minute = 0;</b>
+<i class="no-highlight">773</i>&nbsp;
+<i class="no-highlight">774</i>&nbsp;        try {
+<i class="no-highlight">775</i>&nbsp;            OUT:
+<b class="fc"><i class="no-highlight">776</i>&nbsp;            while (p &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">777</i>&nbsp;                char c = in.charAt(p);</b>
+<i class="no-highlight">778</i>&nbsp;
+<b class="fc"><i class="no-highlight">779</i>&nbsp;                switch (state) {</b>
+<i class="no-highlight">780</i>&nbsp;                    case STATE_INIT:
+<b class="fc"><i class="no-highlight">781</i>&nbsp;                        switch (c) {</b>
+<i class="no-highlight">782</i>&nbsp;                            case &#39;U&#39;:
+<i class="no-highlight">783</i>&nbsp;                            case &#39;u&#39;:
+<b class="fc"><i class="no-highlight">784</i>&nbsp;                                state = STATE_UTC;</b>
+<b class="fc"><i class="no-highlight">785</i>&nbsp;                                break;</b>
+<i class="no-highlight">786</i>&nbsp;                            case &#39;G&#39;:
+<i class="no-highlight">787</i>&nbsp;                            case &#39;g&#39;:
+<b class="fc"><i class="no-highlight">788</i>&nbsp;                                state = STATE_GMT;</b>
+<b class="fc"><i class="no-highlight">789</i>&nbsp;                                break;</b>
+<i class="no-highlight">790</i>&nbsp;                            case &#39;Z&#39;:
+<i class="no-highlight">791</i>&nbsp;                            case &#39;z&#39;:
+<b class="fc"><i class="no-highlight">792</i>&nbsp;                                state = STATE_END;</b>
+<b class="fc"><i class="no-highlight">793</i>&nbsp;                                break;</b>
+<i class="no-highlight">794</i>&nbsp;                            case &#39;+&#39;:
+<b class="fc"><i class="no-highlight">795</i>&nbsp;                                state = STATE_HOUR;</b>
+<b class="fc"><i class="no-highlight">796</i>&nbsp;                                break;</b>
+<i class="no-highlight">797</i>&nbsp;                            case &#39;-&#39;:
+<b class="fc"><i class="no-highlight">798</i>&nbsp;                                negative = true;</b>
+<b class="fc"><i class="no-highlight">799</i>&nbsp;                                state = STATE_HOUR;</b>
+<b class="fc"><i class="no-highlight">800</i>&nbsp;                                break;</b>
+<i class="no-highlight">801</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">802</i>&nbsp;                                if (isDigit(c)) {</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;                                    state = STATE_HOUR;</b>
+<b class="fc"><i class="no-highlight">804</i>&nbsp;                                    p--;</b>
+<i class="no-highlight">805</i>&nbsp;                                } else {
+<b class="fc"><i class="no-highlight">806</i>&nbsp;                                    return Long.MIN_VALUE;</b>
+<i class="no-highlight">807</i>&nbsp;                                }
+<i class="no-highlight">808</i>&nbsp;                                break;
+<i class="no-highlight">809</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">810</i>&nbsp;                        p++;</b>
+<b class="fc"><i class="no-highlight">811</i>&nbsp;                        break;</b>
+<i class="no-highlight">812</i>&nbsp;                    case STATE_UTC:
+<b class="fc"><i class="no-highlight">813</i>&nbsp;                        if (p &gt; hi - 2 || Chars.noMatch(in, p, p + 2, &quot;tc&quot;, 0, 2)) {</b>
+<b class="fc"><i class="no-highlight">814</i>&nbsp;                            return Long.MIN_VALUE;</b>
+<i class="no-highlight">815</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">816</i>&nbsp;                        state = STATE_SIGN;</b>
+<b class="fc"><i class="no-highlight">817</i>&nbsp;                        p += 2;</b>
+<b class="fc"><i class="no-highlight">818</i>&nbsp;                        break;</b>
+<i class="no-highlight">819</i>&nbsp;                    case STATE_GMT:
+<b class="fc"><i class="no-highlight">820</i>&nbsp;                        if (p &gt; hi - 2 || Chars.noMatch(in, p, p + 2, &quot;mt&quot;, 0, 2)) {</b>
+<b class="fc"><i class="no-highlight">821</i>&nbsp;                            return Long.MIN_VALUE;</b>
+<i class="no-highlight">822</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">823</i>&nbsp;                        state = STATE_SIGN;</b>
+<b class="fc"><i class="no-highlight">824</i>&nbsp;                        p += 2;</b>
+<b class="fc"><i class="no-highlight">825</i>&nbsp;                        break;</b>
+<i class="no-highlight">826</i>&nbsp;                    case STATE_SIGN:
+<b class="fc"><i class="no-highlight">827</i>&nbsp;                        switch (c) {</b>
+<i class="no-highlight">828</i>&nbsp;                            case &#39;+&#39;:
+<b class="fc"><i class="no-highlight">829</i>&nbsp;                                break;</b>
+<i class="no-highlight">830</i>&nbsp;                            case &#39;-&#39;:
+<b class="fc"><i class="no-highlight">831</i>&nbsp;                                negative = true;</b>
+<b class="fc"><i class="no-highlight">832</i>&nbsp;                                break;</b>
+<i class="no-highlight">833</i>&nbsp;                            default:
+<b class="fc"><i class="no-highlight">834</i>&nbsp;                                return Long.MIN_VALUE;</b>
+<i class="no-highlight">835</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">836</i>&nbsp;                        p++;</b>
+<b class="fc"><i class="no-highlight">837</i>&nbsp;                        state = STATE_HOUR;</b>
+<b class="fc"><i class="no-highlight">838</i>&nbsp;                        break;</b>
+<i class="no-highlight">839</i>&nbsp;                    case STATE_HOUR:
+<b class="fc"><i class="no-highlight">840</i>&nbsp;                        if (isDigit(c) &amp;&amp; p &lt; hi - 1) {</b>
+<b class="fc"><i class="no-highlight">841</i>&nbsp;                            hour = Numbers.parseInt(in, p, p + 2);</b>
+<i class="no-highlight">842</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">843</i>&nbsp;                            return Long.MIN_VALUE;</b>
+<i class="no-highlight">844</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">845</i>&nbsp;                        state = STATE_DELIM;</b>
+<b class="fc"><i class="no-highlight">846</i>&nbsp;                        p += 2;</b>
+<b class="fc"><i class="no-highlight">847</i>&nbsp;                        break;</b>
+<i class="no-highlight">848</i>&nbsp;                    case STATE_DELIM:
+<b class="fc"><i class="no-highlight">849</i>&nbsp;                        if (c == &#39;:&#39;) {</b>
+<b class="fc"><i class="no-highlight">850</i>&nbsp;                            state = STATE_MINUTE;</b>
+<b class="fc"><i class="no-highlight">851</i>&nbsp;                            p++;</b>
+<b class="fc"><i class="no-highlight">852</i>&nbsp;                        } else if (isDigit(c)) {</b>
+<b class="fc"><i class="no-highlight">853</i>&nbsp;                            state = STATE_MINUTE;</b>
+<i class="no-highlight">854</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">855</i>&nbsp;                            return Long.MIN_VALUE;</b>
+<i class="no-highlight">856</i>&nbsp;                        }
+<i class="no-highlight">857</i>&nbsp;                        break;
+<i class="no-highlight">858</i>&nbsp;                    case STATE_MINUTE:
+<b class="fc"><i class="no-highlight">859</i>&nbsp;                        if (isDigit(c) &amp;&amp; p &lt; hi - 1) {</b>
+<b class="fc"><i class="no-highlight">860</i>&nbsp;                            minute = Numbers.parseInt(in, p, p + 2);</b>
+<i class="no-highlight">861</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">862</i>&nbsp;                            return Long.MIN_VALUE;</b>
+<i class="no-highlight">863</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">864</i>&nbsp;                        p += 2;</b>
+<b class="fc"><i class="no-highlight">865</i>&nbsp;                        state = STATE_END;</b>
+<b class="fc"><i class="no-highlight">866</i>&nbsp;                        break OUT;</b>
+<i class="no-highlight">867</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">868</i>&nbsp;                        return Long.MIN_VALUE;</b>
+<i class="no-highlight">869</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">870</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">871</i>&nbsp;        } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">872</i>&nbsp;            return Long.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">873</i>&nbsp;        }</b>
+<i class="no-highlight">874</i>&nbsp;
+<b class="fc"><i class="no-highlight">875</i>&nbsp;        switch (state) {</b>
+<i class="no-highlight">876</i>&nbsp;            case STATE_DELIM:
+<i class="no-highlight">877</i>&nbsp;            case STATE_END:
+<b class="fc"><i class="no-highlight">878</i>&nbsp;                if (hour &gt; 23 || minute &gt; 59) {</b>
+<b class="fc"><i class="no-highlight">879</i>&nbsp;                    return Long.MIN_VALUE;</b>
+<i class="no-highlight">880</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">881</i>&nbsp;                final int min = hour * 60 + minute;</b>
+<b class="fc"><i class="no-highlight">882</i>&nbsp;                return Numbers.encodeLowHighInts(negative ? -min : min, p - lo);</b>
+<i class="no-highlight">883</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">884</i>&nbsp;                return Long.MIN_VALUE;</b>
+<i class="no-highlight">885</i>&nbsp;        }
+<i class="no-highlight">886</i>&nbsp;    }
+<i class="no-highlight">887</i>&nbsp;
+<i class="no-highlight">888</i>&nbsp;    public static long previousOrSameDayOfWeek(long micros, int dow) {
+<b class="fc"><i class="no-highlight">889</i>&nbsp;        int thisDow = getDayOfWeek(micros);</b>
+<b class="fc"><i class="no-highlight">890</i>&nbsp;        if (thisDow == dow) {</b>
+<b class="fc"><i class="no-highlight">891</i>&nbsp;            return micros;</b>
+<i class="no-highlight">892</i>&nbsp;        }
+<i class="no-highlight">893</i>&nbsp;
+<b class="fc"><i class="no-highlight">894</i>&nbsp;        if (thisDow &lt; dow) {</b>
+<b class="fc"><i class="no-highlight">895</i>&nbsp;            return micros - (7 + (thisDow - dow)) * DAY_MICROS;</b>
+<i class="no-highlight">896</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">897</i>&nbsp;            return micros - (thisDow - dow) * DAY_MICROS;</b>
+<i class="no-highlight">898</i>&nbsp;        }
+<i class="no-highlight">899</i>&nbsp;    }
+<i class="no-highlight">900</i>&nbsp;
+<i class="no-highlight">901</i>&nbsp;    public static long toMicros(int y, int m, int d, int h, int mi) {
+<b class="fc"><i class="no-highlight">902</i>&nbsp;        return toMicros(y, isLeapYear(y), m, d, h, mi);</b>
+<i class="no-highlight">903</i>&nbsp;    }
+<i class="no-highlight">904</i>&nbsp;
+<i class="no-highlight">905</i>&nbsp;    public static long toMicros(int y, boolean leap, int m, int d, int h, int mi) {
+<b class="fc"><i class="no-highlight">906</i>&nbsp;        return yearMicros(y, leap) + monthOfYearMicros(m, leap) + (d - 1) * DAY_MICROS + h * HOUR_MICROS + mi * MINUTE_MICROS;</b>
+<i class="no-highlight">907</i>&nbsp;    }
+<i class="no-highlight">908</i>&nbsp;
+<i class="no-highlight">909</i>&nbsp;    public static long toMicros(
+<i class="no-highlight">910</i>&nbsp;            int y,
+<i class="no-highlight">911</i>&nbsp;            boolean leap,
+<i class="no-highlight">912</i>&nbsp;            int day,
+<i class="no-highlight">913</i>&nbsp;            int month,
+<i class="no-highlight">914</i>&nbsp;            int hour,
+<i class="no-highlight">915</i>&nbsp;            int min,
+<i class="no-highlight">916</i>&nbsp;            int sec,
+<i class="no-highlight">917</i>&nbsp;            int millis,
+<i class="no-highlight">918</i>&nbsp;            int micros
+<i class="no-highlight">919</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">920</i>&nbsp;        int maxDay = Math.min(day, getDaysPerMonth(month, leap)) - 1;</b>
+<b class="fc"><i class="no-highlight">921</i>&nbsp;        return yearMicros(y, leap)</b>
+<b class="fc"><i class="no-highlight">922</i>&nbsp;                + monthOfYearMicros(month, leap)</b>
+<i class="no-highlight">923</i>&nbsp;                + maxDay * DAY_MICROS
+<i class="no-highlight">924</i>&nbsp;                + hour * HOUR_MICROS
+<i class="no-highlight">925</i>&nbsp;                + min * MINUTE_MICROS
+<i class="no-highlight">926</i>&nbsp;                + sec * SECOND_MICROS
+<i class="no-highlight">927</i>&nbsp;                + millis * MILLI_MICROS
+<i class="no-highlight">928</i>&nbsp;                + micros;
+<i class="no-highlight">929</i>&nbsp;    }
+<i class="no-highlight">930</i>&nbsp;
+<i class="no-highlight">931</i>&nbsp;    public static long toMicros(int y, int m, int d) {
+<b class="fc"><i class="no-highlight">932</i>&nbsp;        boolean l = isLeapYear(y);</b>
+<b class="fc"><i class="no-highlight">933</i>&nbsp;        return yearMicros(y, l) + monthOfYearMicros(m, l) + (d - 1) * DAY_MICROS;</b>
+<i class="no-highlight">934</i>&nbsp;    }
+<i class="no-highlight">935</i>&nbsp;
+<i class="no-highlight">936</i>&nbsp;    public static String toString(long micros) {
+<b class="fc"><i class="no-highlight">937</i>&nbsp;        CharSink sink = Misc.getThreadLocalBuilder();</b>
+<b class="fc"><i class="no-highlight">938</i>&nbsp;        TimestampFormatUtils.appendDateTime(sink, micros);</b>
+<b class="fc"><i class="no-highlight">939</i>&nbsp;        return sink.toString();</b>
+<i class="no-highlight">940</i>&nbsp;    }
+<i class="no-highlight">941</i>&nbsp;
+<i class="no-highlight">942</i>&nbsp;    public static long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+<b class="fc"><i class="no-highlight">943</i>&nbsp;        return toTimezone(utcTimestamp, locale, timezone, 0, timezone.length());</b>
+<i class="no-highlight">944</i>&nbsp;    }
+<i class="no-highlight">945</i>&nbsp;
+<i class="no-highlight">946</i>&nbsp;    public static long toTimezone(
+<i class="no-highlight">947</i>&nbsp;            long utc,
+<i class="no-highlight">948</i>&nbsp;            DateLocale locale,
+<i class="no-highlight">949</i>&nbsp;            CharSequence timezone,
+<i class="no-highlight">950</i>&nbsp;            int lo,
+<i class="no-highlight">951</i>&nbsp;            int hi
+<i class="no-highlight">952</i>&nbsp;    ) throws NumericException {
+<i class="no-highlight">953</i>&nbsp;        final long offset;
+<b class="fc"><i class="no-highlight">954</i>&nbsp;        long l = parseOffset(timezone, lo, hi);</b>
+<b class="fc"><i class="no-highlight">955</i>&nbsp;        if (l == Long.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">956</i>&nbsp;            return utc + locale.getZoneRules(</b>
+<b class="fc"><i class="no-highlight">957</i>&nbsp;                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS</b>
+<b class="fc"><i class="no-highlight">958</i>&nbsp;            ).getOffset(utc);</b>
+<i class="no-highlight">959</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">960</i>&nbsp;        offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;</b>
+<b class="fc"><i class="no-highlight">961</i>&nbsp;        return utc + offset;</b>
+<i class="no-highlight">962</i>&nbsp;    }
+<i class="no-highlight">963</i>&nbsp;
+<i class="no-highlight">964</i>&nbsp;    public static String toUSecString(long micros) {
+<b class="fc"><i class="no-highlight">965</i>&nbsp;        CharSink sink = Misc.getThreadLocalBuilder();</b>
+<b class="fc"><i class="no-highlight">966</i>&nbsp;        TimestampFormatUtils.appendDateTimeUSec(sink, micros);</b>
+<b class="fc"><i class="no-highlight">967</i>&nbsp;        return sink.toString();</b>
+<i class="no-highlight">968</i>&nbsp;    }
+<i class="no-highlight">969</i>&nbsp;
+<i class="no-highlight">970</i>&nbsp;    public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
+<b class="fc"><i class="no-highlight">971</i>&nbsp;        return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());</b>
+<i class="no-highlight">972</i>&nbsp;    }
+<i class="no-highlight">973</i>&nbsp;
+<i class="no-highlight">974</i>&nbsp;    public static long toUTC(
+<i class="no-highlight">975</i>&nbsp;            long timestampWithTimezone,
+<i class="no-highlight">976</i>&nbsp;            DateLocale locale,
+<i class="no-highlight">977</i>&nbsp;            CharSequence timezone,
+<i class="no-highlight">978</i>&nbsp;            int lo,
+<i class="no-highlight">979</i>&nbsp;            int hi
+<i class="no-highlight">980</i>&nbsp;    ) throws NumericException {
+<i class="no-highlight">981</i>&nbsp;        long offset;
+<b class="fc"><i class="no-highlight">982</i>&nbsp;        long l = parseOffset(timezone, lo, hi);</b>
+<b class="fc"><i class="no-highlight">983</i>&nbsp;        if (l == Long.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">984</i>&nbsp;            TimeZoneRules zoneRules = locale.getZoneRules(</b>
+<b class="fc"><i class="no-highlight">985</i>&nbsp;                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),</b>
+<i class="no-highlight">986</i>&nbsp;                    RESOLUTION_MICROS
+<i class="no-highlight">987</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">988</i>&nbsp;            offset = zoneRules.getOffset(timestampWithTimezone);</b>
+<i class="no-highlight">989</i>&nbsp;            // getOffset really needs UTC date, not local
+<b class="fc"><i class="no-highlight">990</i>&nbsp;            offset = zoneRules.getOffset(timestampWithTimezone - offset);</b>
+<b class="fc"><i class="no-highlight">991</i>&nbsp;            return timestampWithTimezone - offset;</b>
+<i class="no-highlight">992</i>&nbsp;
+<i class="no-highlight">993</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">994</i>&nbsp;        offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;</b>
+<b class="fc"><i class="no-highlight">995</i>&nbsp;        return timestampWithTimezone - offset;</b>
+<i class="no-highlight">996</i>&nbsp;    }
+<i class="no-highlight">997</i>&nbsp;
+<i class="no-highlight">998</i>&nbsp;    /**
+<i class="no-highlight">999</i>&nbsp;     * Calculated start of year in millis. For example of year 2008 this is
+<i class="no-highlight">1000</i>&nbsp;     * equivalent to parsing &quot;2008-01-01T00:00:00.000Z&quot;, except this method is faster.
+<i class="no-highlight">1001</i>&nbsp;     *
+<i class="no-highlight">1002</i>&nbsp;     * @param year the year
+<i class="no-highlight">1003</i>&nbsp;     * @param leap true if give year is leap year
+<i class="no-highlight">1004</i>&nbsp;     * @return millis for start of year.
+<i class="no-highlight">1005</i>&nbsp;     */
+<i class="no-highlight">1006</i>&nbsp;    public static long yearMicros(int year, boolean leap) {
+<b class="fc"><i class="no-highlight">1007</i>&nbsp;        int leapYears = year / 100;</b>
+<b class="fc"><i class="no-highlight">1008</i>&nbsp;        if (year &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">1009</i>&nbsp;            leapYears = ((year + 3) &gt;&gt; 2) - leapYears + ((leapYears + 3) &gt;&gt; 2) - 1;</b>
+<i class="no-highlight">1010</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1011</i>&nbsp;            leapYears = (year &gt;&gt; 2) - leapYears + (leapYears &gt;&gt; 2);</b>
+<b class="fc"><i class="no-highlight">1012</i>&nbsp;            if (leap) {</b>
+<b class="fc"><i class="no-highlight">1013</i>&nbsp;                leapYears--;</b>
+<i class="no-highlight">1014</i>&nbsp;            }
+<i class="no-highlight">1015</i>&nbsp;        }
+<i class="no-highlight">1016</i>&nbsp;
+<b class="fc"><i class="no-highlight">1017</i>&nbsp;        long days = year * 365L + (leapYears - DAYS_0000_TO_1970);</b>
+<b class="fc"><i class="no-highlight">1018</i>&nbsp;        long micros = days * DAY_MICROS;</b>
+<b class="fc"><i class="no-highlight">1019</i>&nbsp;        if (days &lt; 0 &amp; micros &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1020</i>&nbsp;            return Long.MIN_VALUE;</b>
+<i class="no-highlight">1021</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1022</i>&nbsp;        return micros;</b>
+<i class="no-highlight">1023</i>&nbsp;    }
+<i class="no-highlight">1024</i>&nbsp;
+<i class="no-highlight">1025</i>&nbsp;    private static long getTimeMicros(long micros) {
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;        return micros &lt; 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;</b>
+<i class="no-highlight">1027</i>&nbsp;    }
+<i class="no-highlight">1028</i>&nbsp;
+<i class="no-highlight">1029</i>&nbsp;    private static boolean isDigit(char c) {
+<b class="fc"><i class="no-highlight">1030</i>&nbsp;        return c &gt; BEFORE_ZERO &amp;&amp; c &lt; AFTER_NINE;</b>
+<i class="no-highlight">1031</i>&nbsp;    }
+<i class="no-highlight">1032</i>&nbsp;
+<i class="no-highlight">1033</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">1034</i>&nbsp;        STARTUP_TIMESTAMP = Os.currentTimeMicros();</b>
+<b class="fc"><i class="no-highlight">1035</i>&nbsp;        long minSum = 0;</b>
+<b class="fc"><i class="no-highlight">1036</i>&nbsp;        long maxSum = 0;</b>
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;        for (int i = 0; i &lt; 11; i++) {</b>
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;            minSum += DAYS_PER_MONTH[i] * DAY_MICROS;</b>
+<b class="fc"><i class="no-highlight">1039</i>&nbsp;            MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;</b>
+<b class="fc"><i class="no-highlight">1040</i>&nbsp;            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;</b>
+<b class="fc"><i class="no-highlight">1041</i>&nbsp;            MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;</b>
+<i class="no-highlight">1042</i>&nbsp;        }
+<i class="no-highlight">1043</i>&nbsp;    }
+<i class="no-highlight">1044</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,807 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > ApplyWal2TableJob</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.wal</a>
+</div>
+
+<h1>Coverage Summary for Class: ApplyWal2TableJob (io.questdb.cairo.wal)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">ApplyWal2TableJob</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (18/18)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    93.7%
+  </span>
+  <span class="absValue">
+    (313/334)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">ApplyWal2TableJob$TelemetryFacade</td>
+  </tr>
+  <tr>
+    <td class="name">ApplyWal2TableJob$WalTelemetryFacade</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (18/18)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    93.7%
+  </span>
+  <span class="absValue">
+    (313/334)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.wal;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.Telemetry;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.TelemetryOrigin;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.wal.seq.TableSequencerAPI;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.wal.seq.TransactionLogCursor;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.FunctionFactoryCache;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.engine.ops.AlterOperation;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.engine.ops.UpdateOperation;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.mp.AbstractQueueConsumerJob;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.mp.Job;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">42</i>&nbsp;import io.questdb.std.datetime.microtime.MicrosecondClock;
+<i class="no-highlight">43</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">44</i>&nbsp;import io.questdb.tasks.TelemetryTask;
+<i class="no-highlight">45</i>&nbsp;import io.questdb.tasks.TelemetryWalTask;
+<i class="no-highlight">46</i>&nbsp;import io.questdb.tasks.WalTxnNotificationTask;
+<i class="no-highlight">47</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">50</i>&nbsp;
+<i class="no-highlight">51</i>&nbsp;import static io.questdb.TelemetrySystemEvent.*;
+<i class="no-highlight">52</i>&nbsp;import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+<i class="no-highlight">53</i>&nbsp;import static io.questdb.cairo.wal.WalTxnType.*;
+<i class="no-highlight">54</i>&nbsp;import static io.questdb.cairo.wal.WalUtils.*;
+<i class="no-highlight">55</i>&nbsp;import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
+<i class="no-highlight">56</i>&nbsp;import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
+<i class="no-highlight">57</i>&nbsp;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;public class ApplyWal2TableJob extends AbstractQueueConsumerJob&lt;WalTxnNotificationTask&gt; implements Closeable {</b>
+<i class="no-highlight">59</i>&nbsp;    public static final String WAL_2_TABLE_RESUME_REASON = &quot;Resume WAL Data Application&quot;;
+<i class="no-highlight">60</i>&nbsp;    private static final int FORCE_FULL_COMMIT = -2;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);</b>
+<i class="no-highlight">62</i>&nbsp;    private static final int TXN_METADATA_LONGS_SIZE = 3;
+<i class="no-highlight">63</i>&nbsp;    private static final String WAL_2_TABLE_WRITE_REASON = &quot;WAL Data Application&quot;;
+<i class="no-highlight">64</i>&nbsp;    private static final int WAL_APPLY_FAILED = -2;
+<i class="no-highlight">65</i>&nbsp;    private final long commitSquashRowLimit;
+<i class="no-highlight">66</i>&nbsp;    private final CairoEngine engine;
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();</b>
+<i class="no-highlight">68</i>&nbsp;    private final WalMetrics metrics;
+<i class="no-highlight">69</i>&nbsp;    private final MicrosecondClock microClock;
+<i class="no-highlight">70</i>&nbsp;    private final OperationCompiler operationCompiler;
+<i class="no-highlight">71</i>&nbsp;    private final TableSequencerAPI tableSequencerAPI;
+<i class="no-highlight">72</i>&nbsp;    private final Telemetry&lt;TelemetryTask&gt; telemetry;
+<i class="no-highlight">73</i>&nbsp;    private final TelemetryFacade telemetryFacade;
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    private final LongList transactionMeta = new LongList();</b>
+<i class="no-highlight">75</i>&nbsp;    private final WalEventReader walEventReader;
+<i class="no-highlight">76</i>&nbsp;    private final Telemetry&lt;TelemetryWalTask&gt; walTelemetry;
+<i class="no-highlight">77</i>&nbsp;    private final WalTelemetryFacade walTelemetryFacade;
+<i class="no-highlight">78</i>&nbsp;    private final int lookAheadTransactionCount;
+<i class="no-highlight">79</i>&nbsp;    private long rowsSinceLastCommit;
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.engine = engine;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        tableSequencerAPI = engine.getTableSequencerAPI();</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        walTelemetry = engine.getTelemetryWal();</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        telemetry = engine.getTelemetry();</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        CairoConfiguration configuration = engine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        microClock = configuration.getMicrosecondClock();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        walEventReader = new WalEventReader(configuration.getFilesFacade());</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        commitSquashRowLimit = configuration.getWalCommitSquashRowLimit();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        metrics = engine.getMetrics().getWalMetrics();</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();</b>
+<i class="no-highlight">96</i>&nbsp;    }
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    public long applyWAL(
+<i class="no-highlight">99</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">100</i>&nbsp;            CairoEngine engine,
+<i class="no-highlight">101</i>&nbsp;            OperationCompiler operationCompiler,
+<i class="no-highlight">102</i>&nbsp;            Job.RunStatus runStatus
+<i class="no-highlight">103</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        long lastSequencerTxn = -1;</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        long lastWriterTxn = -1;</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        Path tempPath = Path.PATH.get();</b>
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;        try {
+<i class="no-highlight">109</i>&nbsp;            do {
+<i class="no-highlight">110</i>&nbsp;                // security context is checked on writing to the WAL and can be ignored here
+<b class="fc"><i class="no-highlight">111</i>&nbsp;                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                if (updatedToken == null) {</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                    if (engine.isTableDropped(tableToken)) {</b>
+<b class="nc"><i class="no-highlight">114</i>&nbsp;                        return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;</b>
+<i class="no-highlight">115</i>&nbsp;                    }
+<i class="no-highlight">116</i>&nbsp;                    // else: table is dropped and fully cleaned, this is late notification.
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                    return Long.MAX_VALUE;</b>
+<i class="no-highlight">118</i>&nbsp;                }
+<i class="no-highlight">119</i>&nbsp;
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                if (!engine.isWalTable(tableToken)) {</b>
+<b class="nc"><i class="no-highlight">121</i>&nbsp;                    LOG.info().$(&quot;table &#39;&quot;).utf8(tableToken.getDirName()).$(&quot;&#39; does not exist, skipping WAL application&quot;).$();</b>
+<b class="nc"><i class="no-highlight">122</i>&nbsp;                    return 0;</b>
+<i class="no-highlight">123</i>&nbsp;                }
+<i class="no-highlight">124</i>&nbsp;
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                rowsSinceLastCommit = 0;</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON, false)) {</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                    assert writer.getMetadata().getTableId() == tableToken.getTableId();</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                    lastWriterTxn = writer.getSeqTxn();</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                } catch (EntryUnavailableException tableBusy) {</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;                    if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) &amp;&amp; !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                        LOG.critical().$(&quot;unsolicited table lock [table=&quot;).utf8(tableToken.getDirName()).$(&quot;, lock_reason=&quot;).$(tableBusy.getReason()).I$();</b>
+<i class="no-highlight">133</i>&nbsp;                        // Don&#39;t suspend table. Perhaps writer will be unlocked with no transaction applied.
+<i class="no-highlight">134</i>&nbsp;                    }
+<i class="no-highlight">135</i>&nbsp;                    // This is good, someone else will apply the data
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                    break;</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                }</b>
+<i class="no-highlight">138</i>&nbsp;
+<b class="fc"><i class="no-highlight">139</i>&nbsp;                lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;            } while (lastWriterTxn &lt; lastSequencerTxn &amp;&amp; !runStatus.isTerminating());</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        } catch (CairoException ex) {</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;            if (engine.isTableDropped(tableToken)) {</b>
+<i class="no-highlight">143</i>&nbsp;                // Table is dropped, and we received cairo exception in the middle of apply
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;</b>
+<i class="no-highlight">145</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">146</i>&nbsp;            telemetryFacade.store(TelemetryOrigin.WAL_APPLY, WAL_APPLY_SUSPEND);</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;            LOG.critical().$(&quot;WAL apply job failed, table suspended [table=&quot;).utf8(tableToken.getDirName())</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                    .$(&quot;, error=&quot;).$(ex.getFlyweightMessage())</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                    .$(&quot;, errno=&quot;).$(ex.getErrno())</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                    .I$();</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;            return WAL_APPLY_FAILED;</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();</b>
+<i class="no-highlight">154</i>&nbsp;
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        return lastWriterTxn;</b>
+<i class="no-highlight">156</i>&nbsp;    }
+<i class="no-highlight">157</i>&nbsp;
+<i class="no-highlight">158</i>&nbsp;    @Override
+<i class="no-highlight">159</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        Misc.free(operationCompiler);</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        Misc.free(walEventReader);</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
+<i class="no-highlight">165</i>&nbsp;        // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        boolean allClean = true;</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        FilesFacade ff = engine.getConfiguration().getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        int rootLen = tempPath.length();</b>
+<i class="no-highlight">170</i>&nbsp;
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        long p = ff.findFirst(tempPath.$());</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        if (p &gt; 0) {</b>
+<i class="no-highlight">173</i>&nbsp;            try {
+<i class="no-highlight">174</i>&nbsp;                do {
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                    long pUtf8NameZ = ff.findName(p);</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                    int type = ff.findType(p);</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                    if (ff.isDirOrSoftLinkDirNoDots(tempPath, rootLen, pUtf8NameZ, type)) {</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                        if (!Chars.endsWith(tempPath, SEQ_DIR) &amp;&amp; !Chars.equals(tempPath, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                            if (ff.unlinkOrRemove(tempPath, LOG) != 0) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                                allClean = false;</b>
+<i class="no-highlight">181</i>&nbsp;                            }
+<i class="no-highlight">182</i>&nbsp;                        }
+<i class="no-highlight">183</i>&nbsp;
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                    } else if (type == Files.DT_FILE) {</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                        tempPath.trimTo(rootLen);</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                        tempPath.concat(pUtf8NameZ);</b>
+<i class="no-highlight">187</i>&nbsp;
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                        if (Chars.endsWith(tempPath, TableUtils.TXN_FILE_NAME) || Chars.endsWith(tempPath, TableUtils.META_FILE_NAME) || matchesWalLock(tempPath)) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                            continue;</b>
+<i class="no-highlight">190</i>&nbsp;                        }
+<i class="no-highlight">191</i>&nbsp;
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                        if (!ff.remove(tempPath.$())) {</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                            allClean = false;</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;                            LOG.info().$(&quot;could not remove [tempPath=&quot;).utf8(tempPath).$(&quot;, errno=&quot;).$(ff.errno()).I$();</b>
+<i class="no-highlight">195</i>&nbsp;                        }
+<i class="no-highlight">196</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                } while (ff.findNext(p) &gt; 0);</b>
+<i class="no-highlight">198</i>&nbsp;
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                if (allClean) {</b>
+<i class="no-highlight">200</i>&nbsp;                    // Remove _txn and _meta files when all other files are removed
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    return true;</b>
+<i class="no-highlight">204</i>&nbsp;                }
+<i class="no-highlight">205</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                ff.findClose(p);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            }</b>
+<i class="no-highlight">208</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        return false;</b>
+<i class="no-highlight">210</i>&nbsp;    }
+<i class="no-highlight">211</i>&nbsp;
+<i class="no-highlight">212</i>&nbsp;    private static AlterOperation compileAlter(TableWriter tableWriter, OperationCompiler compiler, CharSequence sql, long seqTxn) throws SqlException {
+<i class="no-highlight">213</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            return compiler.compileAlterSql(sql, tableWriter.getTableToken());</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        } catch (SqlException ex) {</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;            tableWriter.markSeqTxnCommitted(seqTxn);</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;            throw ex;</b>
+<i class="no-highlight">218</i>&nbsp;        }
+<i class="no-highlight">219</i>&nbsp;    }
+<i class="no-highlight">220</i>&nbsp;
+<i class="no-highlight">221</i>&nbsp;    private static UpdateOperation compileUpdate(TableWriter tableWriter, OperationCompiler compiler, CharSequence sql, long seqTxn) throws SqlException {
+<i class="no-highlight">222</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;            return compiler.compileUpdateSql(sql, tableWriter.getTableToken());</b>
+<b class="nc"><i class="no-highlight">224</i>&nbsp;        } catch (SqlException ex) {</b>
+<b class="nc"><i class="no-highlight">225</i>&nbsp;            tableWriter.markSeqTxnCommitted(seqTxn);</b>
+<b class="nc"><i class="no-highlight">226</i>&nbsp;            throw ex;</b>
+<i class="no-highlight">227</i>&nbsp;        }
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    private static boolean matchesWalLock(CharSequence name) {
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        if (Chars.endsWith(name, &quot;.lock&quot;)) {</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;            for (int i = name.length() - &quot;.lock&quot;.length() - 1; i &gt; 0; i--) {</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                char c = name.charAt(i);</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                if (c &lt; &#39;0&#39; || c &gt; &#39;9&#39;) {</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;                    return Chars.equals(name, i - WAL_NAME_BASE.length() + 1, i + 1, WAL_NAME_BASE, 0, WAL_NAME_BASE.length());</b>
+<i class="no-highlight">236</i>&nbsp;                }
+<i class="no-highlight">237</i>&nbsp;            }
+<i class="no-highlight">238</i>&nbsp;        }
+<i class="no-highlight">239</i>&nbsp;
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        for (int i = 0, n = name.length(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;            char c = name.charAt(i);</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;            if (c &lt; &#39;0&#39; || c &gt; &#39;9&#39;) {</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                return false;</b>
+<i class="no-highlight">244</i>&nbsp;            }
+<i class="no-highlight">245</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">246</i>&nbsp;        return true;</b>
+<i class="no-highlight">247</i>&nbsp;    }
+<i class="no-highlight">248</i>&nbsp;
+<i class="no-highlight">249</i>&nbsp;    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        if (engine.lockReadersByTableToken(tableToken)) {</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            TableWriter writerToClose = null;</b>
+<i class="no-highlight">252</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                final CairoConfiguration configuration = engine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;                if (writer == null &amp;&amp; TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {</b>
+<i class="no-highlight">255</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON, false);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                    } catch (CairoException ex) {</b>
+<i class="no-highlight">258</i>&nbsp;                        // Ignore it, table can be half deleted.
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                    }</b>
+<i class="no-highlight">260</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                if (writer != null) {</b>
+<i class="no-highlight">262</i>&nbsp;                    // Force writer to close all the files.
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                    writer.destroy();</b>
+<i class="no-highlight">264</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                return cleanDroppedTableDirectory(engine, tempPath, tableToken);</b>
+<i class="no-highlight">266</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                if (writerToClose != null) {</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;                    writerToClose.close();</b>
+<i class="no-highlight">269</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                engine.releaseReadersByTableToken(tableToken);</b>
+<b class="nc"><i class="no-highlight">271</i>&nbsp;            }</b>
+<i class="no-highlight">272</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            LOG.info().$(&quot;table &#39;&quot;).utf8(tableToken.getDirName())</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                    .$(&quot;&#39; is dropped, waiting to acquire Table Readers lock to delete the table files&quot;).$();</b>
+<i class="no-highlight">275</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">276</i>&nbsp;        return false;</b>
+<i class="no-highlight">277</i>&nbsp;    }
+<i class="no-highlight">278</i>&nbsp;
+<i class="no-highlight">279</i>&nbsp;    private void applyOutstandingWalTransactions(
+<i class="no-highlight">280</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">281</i>&nbsp;            TableWriter writer,
+<i class="no-highlight">282</i>&nbsp;            CairoEngine engine,
+<i class="no-highlight">283</i>&nbsp;            OperationCompiler operationCompiler,
+<i class="no-highlight">284</i>&nbsp;            Path tempPath,
+<i class="no-highlight">285</i>&nbsp;            Job.RunStatus runStatus
+<i class="no-highlight">286</i>&nbsp;    ) {
+<i class="no-highlight">287</i>&nbsp;        boolean isTerminating;
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getSeqTxn())) {</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            TableMetadataChangeLog structuralChangeCursor = null;</b>
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;            try {
+<i class="no-highlight">292</i>&nbsp;
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                int iTransaction = 0;</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                int totalTransactionCount = 0;</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                long rowsAdded = 0;</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;                long physicalRowsAdded = 0;</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                long insertTimespan = 0;</b>
+<i class="no-highlight">298</i>&nbsp;
+<b class="fc"><i class="no-highlight">299</i>&nbsp;                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;                int rootLen = tempPath.length();</b>
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;                // Populate transactionMeta with timestamps of future transactions
+<i class="no-highlight">303</i>&nbsp;                // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                LongList transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen, writer.getMaxTimestamp());</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                transactionLogCursor.toTop();</b>
+<i class="no-highlight">306</i>&nbsp;
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                isTerminating = runStatus.isTerminating();</b>
+<i class="no-highlight">308</i>&nbsp;                WHILE_TRANSACTION_CURSOR:
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                while (transactionLogCursor.hasNext() &amp;&amp; !isTerminating) {</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;                    final int walId = transactionLogCursor.getWalId();</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;                    final int segmentId = transactionLogCursor.getSegmentId();</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                    final long segmentTxn = transactionLogCursor.getSegmentTxn();</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;                    final long commitTimestamp = transactionLogCursor.getCommitTimestamp();</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;                    final long seqTxn = transactionLogCursor.getTxn();</b>
+<i class="no-highlight">315</i>&nbsp;
+<b class="fc"><i class="no-highlight">316</i>&nbsp;                    if (seqTxn != writer.getSeqTxn() + 1) {</b>
+<b class="nc"><i class="no-highlight">317</i>&nbsp;                        throw CairoException.critical(0)</b>
+<b class="nc"><i class="no-highlight">318</i>&nbsp;                                .put(&quot;unexpected sequencer transaction, expected &quot;).put(writer.getSeqTxn() + 1)</b>
+<b class="nc"><i class="no-highlight">319</i>&nbsp;                                .put(&quot; but was &quot;).put(seqTxn);</b>
+<i class="no-highlight">320</i>&nbsp;                    }
+<i class="no-highlight">321</i>&nbsp;
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                    switch (walId) {</b>
+<i class="no-highlight">323</i>&nbsp;                        case METADATA_WALID:
+<i class="no-highlight">324</i>&nbsp;                            // This is metadata change
+<i class="no-highlight">325</i>&nbsp;                            // to be taken from Sequencer directly
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                            final long newStructureVersion = transactionLogCursor.getStructureVersion();</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                            if (writer.getStructureVersion() != newStructureVersion - 1) {</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;                                throw CairoException.critical(0)</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                                        .put(&quot;unexpected new WAL structure version [walStructure=&quot;).put(newStructureVersion)</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                                        .put(&quot;, tableStructureVersion=&quot;).put(writer.getStructureVersion())</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;                                        .put(&#39;]&#39;);</b>
+<i class="no-highlight">332</i>&nbsp;                            }
+<i class="no-highlight">333</i>&nbsp;
+<i class="no-highlight">334</i>&nbsp;                            boolean hasNext;
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                            if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                                Misc.free(structuralChangeCursor);</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLog(tableToken, newStructureVersion - 1);</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;                                hasNext = structuralChangeCursor.hasNext();</b>
+<i class="no-highlight">339</i>&nbsp;                            }
+<i class="no-highlight">340</i>&nbsp;
+<b class="fc"><i class="no-highlight">341</i>&nbsp;                            if (hasNext) {</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                                final long start = microClock.getTicks();</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                                walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                                structuralChangeCursor.next().apply(writer, true);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                                writer.setSeqTxn(seqTxn);</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                                walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start);</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                            } else {</b>
+<i class="no-highlight">348</i>&nbsp;                                // Something messed up in sequencer.
+<i class="no-highlight">349</i>&nbsp;                                // There is a transaction in WAL but no structure change record.
+<b class="nc"><i class="no-highlight">350</i>&nbsp;                                throw CairoException.critical(0)</b>
+<b class="nc"><i class="no-highlight">351</i>&nbsp;                                        .put(&quot;could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=&quot;)</b>
+<b class="nc"><i class="no-highlight">352</i>&nbsp;                                        .put(newStructureVersion)</b>
+<b class="nc"><i class="no-highlight">353</i>&nbsp;                                        .put(&#39;]&#39;);</b>
+<i class="no-highlight">354</i>&nbsp;                            }
+<i class="no-highlight">355</i>&nbsp;                            break;
+<i class="no-highlight">356</i>&nbsp;
+<i class="no-highlight">357</i>&nbsp;                        case DROP_TABLE_WALID:
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                            tryDestroyDroppedTable(tableToken, writer, engine, tempPath);</b>
+<i class="no-highlight">359</i>&nbsp;                            return;
+<i class="no-highlight">360</i>&nbsp;
+<i class="no-highlight">361</i>&nbsp;                        case 0:
+<b class="nc"><i class="no-highlight">362</i>&nbsp;                            throw CairoException.critical(0)</b>
+<b class="nc"><i class="no-highlight">363</i>&nbsp;                                    .put(&quot;broken table transaction record in sequencer log, walId cannot be 0 [table=&quot;)</b>
+<b class="nc"><i class="no-highlight">364</i>&nbsp;                                    .put(tableToken.getTableName()).put(&quot;, seqTxn=&quot;).put(seqTxn).put(&#39;]&#39;);</b>
+<i class="no-highlight">365</i>&nbsp;
+<i class="no-highlight">366</i>&nbsp;                        default:
+<i class="no-highlight">367</i>&nbsp;                            // Always set full path when using thread static path
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                            operationCompiler.setNowAndFixClock(commitTimestamp);</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                            tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                            final long start = microClock.getTicks();</b>
+<i class="no-highlight">371</i>&nbsp;
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                            if (iTransaction &gt; 0 &amp;&amp; transactionMeta.size() &lt; (iTransaction + lookAheadTransactionCount) * TXN_METADATA_LONGS_SIZE) {</b>
+<i class="no-highlight">373</i>&nbsp;                                // Last few transactions left to process from the list
+<i class="no-highlight">374</i>&nbsp;                                // of observed transactions built upfront in the beginning of the loop.
+<i class="no-highlight">375</i>&nbsp;                                // Check if more transaction exist, exit restart the loop to have better picture
+<i class="no-highlight">376</i>&nbsp;                                // of the future transactions and optimise the application.
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                                if (transactionLogCursor.reset()) {</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                                    transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen, writer.getMaxTimestamp());</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                                    transactionLogCursor.toTop();</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                                    totalTransactionCount += iTransaction;</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                                    iTransaction = 0;</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                                    continue;</b>
+<i class="no-highlight">383</i>&nbsp;                                }
+<i class="no-highlight">384</i>&nbsp;                            }
+<i class="no-highlight">385</i>&nbsp;
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                            isTerminating = runStatus.isTerminating();</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                            final long added = processWalCommit(</b>
+<i class="no-highlight">388</i>&nbsp;                                    writer,
+<i class="no-highlight">389</i>&nbsp;                                    walId,
+<i class="no-highlight">390</i>&nbsp;                                    tempPath,
+<i class="no-highlight">391</i>&nbsp;                                    segmentTxn,
+<i class="no-highlight">392</i>&nbsp;                                    operationCompiler,
+<i class="no-highlight">393</i>&nbsp;                                    seqTxn,
+<i class="no-highlight">394</i>&nbsp;                                    commitTimestamp,
+<i class="no-highlight">395</i>&nbsp;                                    isTerminating,
+<i class="no-highlight">396</i>&nbsp;                                    transactionMeta,
+<i class="no-highlight">397</i>&nbsp;                                    iTransaction * TXN_METADATA_LONGS_SIZE
+<i class="no-highlight">398</i>&nbsp;                            );
+<i class="no-highlight">399</i>&nbsp;
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                            if (added &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                                insertTimespan += microClock.getTicks() - start;</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                                rowsAdded += added;</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;                                iTransaction++;</b>
+<b class="fc"><i class="no-highlight">404</i>&nbsp;                                physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();</b>
+<i class="no-highlight">405</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                            if (added == -2L || isTerminating) {</b>
+<i class="no-highlight">407</i>&nbsp;                                // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                                break WHILE_TRANSACTION_CURSOR;</b>
+<i class="no-highlight">409</i>&nbsp;                            }
+<i class="no-highlight">410</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                totalTransactionCount += iTransaction;</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;                if (totalTransactionCount &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                    LOG.info().$(&quot;WAL apply job finished [table=&quot;).$(writer.getTableToken())</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                            .$(&quot;, transactions=&quot;).$(totalTransactionCount)</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                            .$(&quot;, rows=&quot;).$(rowsAdded)</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                            .$(&quot;, time=&quot;).$(insertTimespan / 1000)</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                            .$(&quot;ms, rate=&quot;).$(rowsAdded * 1000000L / Math.max(1, insertTimespan))</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                            .$(&quot;rows/s, physicalWrittenRowsMultiplier=&quot;).$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;                            .I$();</b>
+<i class="no-highlight">421</i>&nbsp;                }
+<i class="no-highlight">422</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                Misc.free(structuralChangeCursor);</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;        }</b>
+<i class="no-highlight">426</i>&nbsp;    }
+<i class="no-highlight">427</i>&nbsp;
+<i class="no-highlight">428</i>&nbsp;    private void doStoreTelemetry(short event, short origin) {
+<b class="fc"><i class="no-highlight">429</i>&nbsp;        TelemetryTask.store(telemetry, origin, event);</b>
+<i class="no-highlight">430</i>&nbsp;    }
+<i class="no-highlight">431</i>&nbsp;
+<i class="no-highlight">432</i>&nbsp;    private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+<b class="fc"><i class="no-highlight">433</i>&nbsp;        TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);</b>
+<i class="no-highlight">434</i>&nbsp;    }
+<i class="no-highlight">435</i>&nbsp;
+<i class="no-highlight">436</i>&nbsp;    private long processWalCommit(
+<i class="no-highlight">437</i>&nbsp;            TableWriter writer,
+<i class="no-highlight">438</i>&nbsp;            int walId,
+<i class="no-highlight">439</i>&nbsp;            @Transient Path walPath,
+<i class="no-highlight">440</i>&nbsp;            long segmentTxn,
+<i class="no-highlight">441</i>&nbsp;            OperationCompiler operationCompiler,
+<i class="no-highlight">442</i>&nbsp;            long seqTxn,
+<i class="no-highlight">443</i>&nbsp;            long commitTimestamp,
+<i class="no-highlight">444</i>&nbsp;            boolean isTerminating,
+<i class="no-highlight">445</i>&nbsp;            LongList minTimestamps,
+<i class="no-highlight">446</i>&nbsp;            int minTimestampsIndex
+<i class="no-highlight">447</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">448</i>&nbsp;        try (WalEventReader eventReader = walEventReader) {</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            final byte walTxnType = walEventCursor.getType();</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            switch (walTxnType) {</b>
+<i class="no-highlight">452</i>&nbsp;                case DATA:
+<b class="fc"><i class="no-highlight">453</i>&nbsp;                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                    if (minTimestampsIndex &lt; minTimestamps.size()) {</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                        long commitToTimestamp = minTimestamps.getQuick(minTimestampsIndex);</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;                        long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                        if (commitToTimestamp &lt; 0 || isTerminating) {</b>
+<i class="no-highlight">458</i>&nbsp;                            // commit everything, do not store data in memory LAG buffer
+<b class="fc"><i class="no-highlight">459</i>&nbsp;                            commitToTimestamp = Long.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                            rowsSinceLastCommit = 0;</b>
+<i class="no-highlight">461</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">462</i>&nbsp;                            rowsSinceLastCommit += rowCount;</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                            if (rowsSinceLastCommit &lt; commitSquashRowLimit) {</b>
+<i class="no-highlight">464</i>&nbsp;                                // This is an optimisation to apply small commits.
+<i class="no-highlight">465</i>&nbsp;                                // We want to store data in memory LAG buffer and commit it later when the buffer size is reasonably big
+<i class="no-highlight">466</i>&nbsp;                                // or when there is no more data available in WAL.
+<i class="no-highlight">467</i>&nbsp;                                // Do not commit yet, copy to LAG memory buffer and wait for more rows
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                                commitToTimestamp = -1;</b>
+<i class="no-highlight">469</i>&nbsp;                            }
+<i class="no-highlight">470</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                        final long start = microClock.getTicks();</b>
+<b class="fc"><i class="no-highlight">472</i>&nbsp;                        walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);</b>
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                        final long rowsAdded = writer.processWalData(</b>
+<i class="no-highlight">474</i>&nbsp;                                walPath,
+<b class="fc"><i class="no-highlight">475</i>&nbsp;                                !dataInfo.isOutOfOrder(),</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;                                dataInfo.getStartRowID(),</b>
+<b class="fc"><i class="no-highlight">477</i>&nbsp;                                dataInfo.getEndRowID(),</b>
+<b class="fc"><i class="no-highlight">478</i>&nbsp;                                dataInfo.getMinTimestamp(),</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                                dataInfo.getMaxTimestamp(),</b>
+<i class="no-highlight">480</i>&nbsp;                                dataInfo,
+<i class="no-highlight">481</i>&nbsp;                                seqTxn,
+<i class="no-highlight">482</i>&nbsp;                                commitToTimestamp
+<i class="no-highlight">483</i>&nbsp;                        );
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                        rowsSinceLastCommit -= rowsAdded;</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;                        final long latency = microClock.getTicks() - start;</b>
+<b class="fc"><i class="no-highlight">486</i>&nbsp;                        long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                        metrics.addApplyRowsWritten(rowCount, physicalRowCount, latency);</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                        walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, physicalRowCount, latency);</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;                        return rowCount;</b>
+<i class="no-highlight">490</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                        return -2L;</b>
+<i class="no-highlight">492</i>&nbsp;                    }
+<i class="no-highlight">493</i>&nbsp;
+<i class="no-highlight">494</i>&nbsp;                case SQL:
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                    final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;                    final long start = microClock.getTicks();</b>
+<b class="fc"><i class="no-highlight">497</i>&nbsp;                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);</b>
+<b class="fc"><i class="no-highlight">498</i>&nbsp;                    processWalSql(writer, sqlInfo, operationCompiler, seqTxn);</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start);</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                    return -1L;</b>
+<i class="no-highlight">501</i>&nbsp;                case TRUNCATE:
+<b class="fc"><i class="no-highlight">502</i>&nbsp;                    long txn = writer.getTxn();</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                    writer.setSeqTxn(seqTxn);</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                    writer.removeAllPartitions();</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                    if (writer.getTxn() == txn) {</b>
+<i class="no-highlight">506</i>&nbsp;                        // force mark the transaction as applied
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                        writer.markSeqTxnCommitted(seqTxn);</b>
+<i class="no-highlight">508</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                    return -1L;</b>
+<i class="no-highlight">510</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">511</i>&nbsp;                    throw new UnsupportedOperationException(&quot;Unsupported WAL txn type: &quot; + walTxnType);</b>
+<i class="no-highlight">512</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">513</i>&nbsp;        }</b>
+<i class="no-highlight">514</i>&nbsp;    }
+<i class="no-highlight">515</i>&nbsp;
+<i class="no-highlight">516</i>&nbsp;    private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationCompiler operationCompiler, long seqTxn) {
+<b class="fc"><i class="no-highlight">517</i>&nbsp;        final int cmdType = sqlInfo.getCmdType();</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;        final CharSequence sql = sqlInfo.getSql();</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;        operationCompiler.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;        sqlInfo.populateBindVariableService(operationCompiler.getBindVariableService());</b>
+<i class="no-highlight">521</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">522</i>&nbsp;            switch (cmdType) {</b>
+<i class="no-highlight">523</i>&nbsp;                case CMD_ALTER_TABLE:
+<b class="fc"><i class="no-highlight">524</i>&nbsp;                    AlterOperation alterOperation = compileAlter(tableWriter, operationCompiler, sql, seqTxn);</b>
+<i class="no-highlight">525</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                        tableWriter.apply(alterOperation, seqTxn);</b>
+<i class="no-highlight">527</i>&nbsp;                    } finally {
+<b class="fc"><i class="no-highlight">528</i>&nbsp;                        Misc.free(alterOperation);</b>
+<b class="fc"><i class="no-highlight">529</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">530</i>&nbsp;                    break;</b>
+<i class="no-highlight">531</i>&nbsp;                case CMD_UPDATE_TABLE:
+<b class="fc"><i class="no-highlight">532</i>&nbsp;                    UpdateOperation updateOperation = compileUpdate(tableWriter, operationCompiler, sql, seqTxn);</b>
+<i class="no-highlight">533</i>&nbsp;                    try {
+<b class="fc"><i class="no-highlight">534</i>&nbsp;                        tableWriter.apply(updateOperation, seqTxn);</b>
+<i class="no-highlight">535</i>&nbsp;                    } finally {
+<b class="fc"><i class="no-highlight">536</i>&nbsp;                        Misc.free(updateOperation);</b>
+<b class="fc"><i class="no-highlight">537</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;                    break;</b>
+<i class="no-highlight">539</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">540</i>&nbsp;                    throw new UnsupportedOperationException(&quot;Unsupported command type: &quot; + cmdType);</b>
+<i class="no-highlight">541</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">542</i>&nbsp;        } catch (SqlException ex) {</b>
+<i class="no-highlight">543</i>&nbsp;            // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
+<b class="fc"><i class="no-highlight">544</i>&nbsp;            LOG.error().$(&quot;error applying SQL to wal table [table=&quot;)</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;                    .utf8(tableWriter.getTableToken().getTableName()).$(&quot;, sql=&quot;).$(sql).$(&quot;, error=&quot;).$(ex.getFlyweightMessage()).I$();</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;        } catch (CairoException e) {</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;            if (e.isWALTolerable()) {</b>
+<i class="no-highlight">548</i>&nbsp;                // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                LOG.error().$(&quot;error applying SQL to wal table [table=&quot;)</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;                        .utf8(tableWriter.getTableToken().getTableName()).$(&quot;, sql=&quot;).$(sql).$(&quot;, error=&quot;).$(e.getFlyweightMessage()).I$();</b>
+<i class="no-highlight">551</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">552</i>&nbsp;                throw e;</b>
+<i class="no-highlight">553</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">554</i>&nbsp;        }</b>
+<i class="no-highlight">555</i>&nbsp;    }
+<i class="no-highlight">556</i>&nbsp;
+<i class="no-highlight">557</i>&nbsp;    private LongList readObservableTxnMeta(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
+<b class="fc"><i class="no-highlight">558</i>&nbsp;        try (WalEventReader eventReader = walEventReader) {</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;            transactionMeta.clear();</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;            int prevWalId = Integer.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;            int prevSegmentId = Integer.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">562</i>&nbsp;            int prevSegmentTxn = Integer.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">563</i>&nbsp;            WalEventCursor walEventCursor = null;</b>
+<i class="no-highlight">564</i>&nbsp;
+<b class="fc"><i class="no-highlight">565</i>&nbsp;            while (transactionLogCursor.hasNext()) {</b>
+<i class="no-highlight">566</i>&nbsp;
+<b class="fc"><i class="no-highlight">567</i>&nbsp;                final int walId = transactionLogCursor.getWalId();</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;                final int segmentId = transactionLogCursor.getSegmentId();</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                final int segmentTxn = transactionLogCursor.getSegmentTxn();</b>
+<i class="no-highlight">570</i>&nbsp;
+<b class="fc"><i class="no-highlight">571</i>&nbsp;                boolean recordAdded = false;</b>
+<b class="fc"><i class="no-highlight">572</i>&nbsp;                if (walId &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;                    tempPath.trimTo(rootLen).put(WAL_NAME_BASE).put(walId).slash().put(segmentId);</b>
+<i class="no-highlight">574</i>&nbsp;
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                    if (prevWalId != walId || prevSegmentId != segmentId || prevSegmentTxn + 1 != segmentTxn) {</b>
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                        walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);</b>
+<i class="no-highlight">577</i>&nbsp;                    } else {
+<i class="no-highlight">578</i>&nbsp;                        // This is same WALE file, just read next txn transaction.
+<b class="fc"><i class="no-highlight">579</i>&nbsp;                        if (!walEventCursor.hasNext()) {</b>
+<b class="nc"><i class="no-highlight">580</i>&nbsp;                            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);</b>
+<i class="no-highlight">581</i>&nbsp;                        }
+<i class="no-highlight">582</i>&nbsp;                    }
+<i class="no-highlight">583</i>&nbsp;
+<b class="fc"><i class="no-highlight">584</i>&nbsp;                    final byte walTxnType = walEventCursor.getType();</b>
+<b class="fc"><i class="no-highlight">585</i>&nbsp;                    if (walTxnType == DATA) {</b>
+<b class="fc"><i class="no-highlight">586</i>&nbsp;                        recordAdded = true;</b>
+<b class="fc"><i class="no-highlight">587</i>&nbsp;                        WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();</b>
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                        transactionMeta.add(-1); // commit to timestamp</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;                        transactionMeta.add(commitInfo.getMaxTimestamp());</b>
+<b class="fc"><i class="no-highlight">590</i>&nbsp;                        transactionMeta.add(commitInfo.getMinTimestamp());</b>
+<i class="no-highlight">591</i>&nbsp;                    }
+<i class="no-highlight">592</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">593</i>&nbsp;                prevWalId = walId;</b>
+<b class="fc"><i class="no-highlight">594</i>&nbsp;                prevSegmentId = segmentId;</b>
+<b class="fc"><i class="no-highlight">595</i>&nbsp;                prevSegmentTxn = segmentTxn;</b>
+<i class="no-highlight">596</i>&nbsp;
+<i class="no-highlight">597</i>&nbsp;                // This is a structural change, UPDATE or non-structural ALTER
+<i class="no-highlight">598</i>&nbsp;                // when it happens in between the transactions, we want to commit everything before it.
+<b class="fc"><i class="no-highlight">599</i>&nbsp;                if (!recordAdded &amp;&amp; transactionMeta.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">600</i>&nbsp;                    transactionMeta.setQuick(transactionMeta.size() - 3, FORCE_FULL_COMMIT); // commit to timestamp of prev record</b>
+<i class="no-highlight">601</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">602</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">603</i>&nbsp;        }</b>
+<i class="no-highlight">604</i>&nbsp;
+<i class="no-highlight">605</i>&nbsp;        // find min timestamp after every transaction
+<b class="fc"><i class="no-highlight">606</i>&nbsp;        long runningMinTimestamp = Long.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">607</i>&nbsp;        long maxLag = 0;</b>
+<b class="fc"><i class="no-highlight">608</i>&nbsp;        for (int n = transactionMeta.size(), i = n - 1; i &gt; -1; i -= TXN_METADATA_LONGS_SIZE) {</b>
+<i class="no-highlight">609</i>&nbsp;
+<b class="fc"><i class="no-highlight">610</i>&nbsp;            long currentMinTimestamp = transactionMeta.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">611</i>&nbsp;            long currentMaxTimestamp = transactionMeta.getQuick(i - 1);</b>
+<i class="no-highlight">612</i>&nbsp;
+<b class="fc"><i class="no-highlight">613</i>&nbsp;            long nextMinTimestamp = Math.min(currentMaxTimestamp, runningMinTimestamp);</b>
+<b class="fc"><i class="no-highlight">614</i>&nbsp;            long lag = currentMaxTimestamp - nextMinTimestamp;</b>
+<b class="fc"><i class="no-highlight">615</i>&nbsp;            if (lag &gt; maxLag) {</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;                maxLag = lag;</b>
+<i class="no-highlight">617</i>&nbsp;            }
+<i class="no-highlight">618</i>&nbsp;
+<b class="fc"><i class="no-highlight">619</i>&nbsp;            runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);</b>
+<i class="no-highlight">620</i>&nbsp;            // No point to hold data in lag buffer if it&#39;s already intersects with committed data
+<b class="fc"><i class="no-highlight">621</i>&nbsp;            transactionMeta.setQuick(i, Math.max(maxCommittedTimestamp, runningMinTimestamp));</b>
+<i class="no-highlight">622</i>&nbsp;
+<i class="no-highlight">623</i>&nbsp;            // Leave last commitToTimestamp as -1 so everything is committed at the end
+<b class="fc"><i class="no-highlight">624</i>&nbsp;            if (i &lt; n - 1) {</b>
+<b class="fc"><i class="no-highlight">625</i>&nbsp;                long commitToTimestamp = transactionMeta.getQuick(i - 2);</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;                if (commitToTimestamp != FORCE_FULL_COMMIT) {</b>
+<i class="no-highlight">627</i>&nbsp;                    // set commitToTimestamp to be nextMinTimestamp
+<i class="no-highlight">628</i>&nbsp;                    // so that O3 does not happen
+<b class="fc"><i class="no-highlight">629</i>&nbsp;                    transactionMeta.setQuick(i - 2, nextMinTimestamp);</b>
+<i class="no-highlight">630</i>&nbsp;                } else {
+<i class="no-highlight">631</i>&nbsp;                    // This is a flag that the commit has to be done in full
+<i class="no-highlight">632</i>&nbsp;                    // because of following UPDATE or ALTER.
+<i class="no-highlight">633</i>&nbsp;                    // Everything will be committed at this point, so it&#39;s safe to reset runningMinTimestamp
+<b class="fc"><i class="no-highlight">634</i>&nbsp;                    runningMinTimestamp = Long.MAX_VALUE;</b>
+<i class="no-highlight">635</i>&nbsp;                }
+<i class="no-highlight">636</i>&nbsp;            }
+<i class="no-highlight">637</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">638</i>&nbsp;        return transactionMeta;</b>
+<i class="no-highlight">639</i>&nbsp;    }
+<i class="no-highlight">640</i>&nbsp;
+<i class="no-highlight">641</i>&nbsp;    private void storeTelemetryNoop(short event, short origin) {
+<b class="fc"><i class="no-highlight">642</i>&nbsp;    }</b>
+<i class="no-highlight">643</i>&nbsp;
+<i class="no-highlight">644</i>&nbsp;    private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+<b class="fc"><i class="no-highlight">645</i>&nbsp;    }</b>
+<i class="no-highlight">646</i>&nbsp;
+<i class="no-highlight">647</i>&nbsp;    @Override
+<i class="no-highlight">648</i>&nbsp;    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+<i class="no-highlight">649</i>&nbsp;        final TableToken tableToken;
+<i class="no-highlight">650</i>&nbsp;        final long seqTxn;
+<i class="no-highlight">651</i>&nbsp;
+<i class="no-highlight">652</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">653</i>&nbsp;            WalTxnNotificationTask task = queue.get(cursor);</b>
+<b class="fc"><i class="no-highlight">654</i>&nbsp;            tableToken = task.getTableToken();</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;            seqTxn = task.getTxn();</b>
+<i class="no-highlight">656</i>&nbsp;        } finally {
+<i class="no-highlight">657</i>&nbsp;            // Don&#39;t hold the queue until the all the transactions applied to the table
+<b class="fc"><i class="no-highlight">658</i>&nbsp;            subSeq.done(cursor);</b>
+<b class="fc"><i class="no-highlight">659</i>&nbsp;        }</b>
+<i class="no-highlight">660</i>&nbsp;
+<b class="fc"><i class="no-highlight">661</i>&nbsp;        final int tableId = tableToken.getTableId();</b>
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        if (lastAppliedSeqTxns.get(tableId) &lt; seqTxn) {</b>
+<i class="no-highlight">663</i>&nbsp;            // Check, maybe we already processed this table to higher txn.
+<b class="fc"><i class="no-highlight">664</i>&nbsp;            final long lastAppliedSeqTxn = applyWAL(tableToken, engine, operationCompiler, runStatus);</b>
+<b class="fc"><i class="no-highlight">665</i>&nbsp;            if (lastAppliedSeqTxn &gt; -1L) {</b>
+<b class="fc"><i class="no-highlight">666</i>&nbsp;                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);</b>
+<b class="fc"><i class="no-highlight">667</i>&nbsp;            } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {</b>
+<i class="no-highlight">668</i>&nbsp;                // Set processed transaction marker as Long.MAX_VALUE - 1
+<i class="no-highlight">669</i>&nbsp;                // so that when the table is unsuspended it&#39;s notified with transaction Long.MAX_VALUE
+<i class="no-highlight">670</i>&nbsp;                // and got picked up for processing in this apply job.
+<b class="fc"><i class="no-highlight">671</i>&nbsp;                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);</b>
+<b class="fc"><i class="no-highlight">672</i>&nbsp;                engine.getTableSequencerAPI().suspendTable(tableToken);</b>
+<i class="no-highlight">673</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">674</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">675</i>&nbsp;            LOG.debug().$(&quot;Skipping WAL processing for table, already processed [table=&quot;).$(tableToken).$(&quot;, txn=&quot;).$(seqTxn).I$();</b>
+<i class="no-highlight">676</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">677</i>&nbsp;        return true;</b>
+<i class="no-highlight">678</i>&nbsp;    }
+<i class="no-highlight">679</i>&nbsp;
+<i class="no-highlight">680</i>&nbsp;    @FunctionalInterface
+<i class="no-highlight">681</i>&nbsp;    private interface TelemetryFacade {
+<i class="no-highlight">682</i>&nbsp;        void store(short event, short origin);
+<i class="no-highlight">683</i>&nbsp;    }
+<i class="no-highlight">684</i>&nbsp;
+<i class="no-highlight">685</i>&nbsp;    @FunctionalInterface
+<i class="no-highlight">686</i>&nbsp;    private interface WalTelemetryFacade {
+<i class="no-highlight">687</i>&nbsp;        void store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs);
+<i class="no-highlight">688</i>&nbsp;    }
+<i class="no-highlight">689</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

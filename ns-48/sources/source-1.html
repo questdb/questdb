@@ -1,0 +1,674 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > FastDouble</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.fastdouble</a>
+</div>
+
+<h1>Coverage Summary for Class: FastDouble (io.questdb.std.fastdouble)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">FastDouble</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.7%
+  </span>
+  <span class="absValue">
+    (11/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.4%
+  </span>
+  <span class="absValue">
+    (177/178)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.fastdouble;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.NumericException;
+<i class="no-highlight">28</i>&nbsp;
+<i class="no-highlight">29</i>&nbsp;/**
+<i class="no-highlight">30</i>&nbsp; * Parses a {@code FloatingPointLiteral} from a {@link CharSequence}.
+<i class="no-highlight">31</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">32</i>&nbsp; * See {@link io.questdb.std.fastdouble} for the grammar of
+<i class="no-highlight">33</i>&nbsp; * {@code FloatingPointLiteral}.
+<i class="no-highlight">34</i>&nbsp; */
+<b class="nc"><i class="no-highlight">35</i>&nbsp;class FastDouble {</b>
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;    private static double fallbackToJavaParser(CharSequence str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+<i class="no-highlight">38</i>&nbsp;        double d;
+<i class="no-highlight">39</i>&nbsp;        // we could not handle the truth!
+<i class="no-highlight">40</i>&nbsp;        // number falls between anything that can be represented by double
+<i class="no-highlight">41</i>&nbsp;        // including overflow cases
+<b class="fc"><i class="no-highlight">42</i>&nbsp;        d = Double.parseDouble(str.subSequence(startIndex, endIndex).toString());</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;        if (rejectOverflow &amp;&amp;</b>
+<i class="no-highlight">44</i>&nbsp;                (
+<i class="no-highlight">45</i>&nbsp;                        d == Double.POSITIVE_INFINITY
+<i class="no-highlight">46</i>&nbsp;                                || d == Double.NEGATIVE_INFINITY
+<i class="no-highlight">47</i>&nbsp;                                || d == 0.0d
+<i class="no-highlight">48</i>&nbsp;                )
+<i class="no-highlight">49</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">51</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        return d;</b>
+<i class="no-highlight">53</i>&nbsp;    }
+<i class="no-highlight">54</i>&nbsp;
+<i class="no-highlight">55</i>&nbsp;    private static boolean isDigit(char c) {
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        return &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;;</b>
+<i class="no-highlight">57</i>&nbsp;    }
+<i class="no-highlight">58</i>&nbsp;
+<i class="no-highlight">59</i>&nbsp;    /**
+<i class="no-highlight">60</i>&nbsp;     * Parses a {@code DecimalFloatingPointLiteral} production with optional
+<i class="no-highlight">61</i>&nbsp;     * trailing white space until the end of the text.
+<i class="no-highlight">62</i>&nbsp;     * Given that we have already consumed the optional leading zero of
+<i class="no-highlight">63</i>&nbsp;     * the {@code DecSignificand}.
+<i class="no-highlight">64</i>&nbsp;     * &lt;blockquote&gt;
+<i class="no-highlight">65</i>&nbsp;     * &lt;dl&gt;
+<i class="no-highlight">66</i>&nbsp;     * &lt;dt&gt;&lt;i&gt;DecimalFloatingPointLiteralWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+<i class="no-highlight">67</i>&nbsp;     * &lt;dd&gt;&lt;i&gt;DecimalFloatingPointLiteral [WhiteSpace] EOT&lt;/i&gt;&lt;/dd&gt;
+<i class="no-highlight">68</i>&nbsp;     * &lt;/dl&gt;
+<i class="no-highlight">69</i>&nbsp;     * &lt;/blockquote&gt;
+<i class="no-highlight">70</i>&nbsp;     * See {@link io.questdb.std.fastdouble} for the grammar of
+<i class="no-highlight">71</i>&nbsp;     * {@code DecimalFloatingPointLiteral} and {@code DecSignificand}.
+<i class="no-highlight">72</i>&nbsp;     *
+<i class="no-highlight">73</i>&nbsp;     * @param str            a string
+<i class="no-highlight">74</i>&nbsp;     * @param index          start index inclusive of the {@code DecimalFloatingPointLiteralWithWhiteSpace}
+<i class="no-highlight">75</i>&nbsp;     * @param endIndex       end index (exclusive)
+<i class="no-highlight">76</i>&nbsp;     * @param isNegative     true if the float value is negative
+<i class="no-highlight">77</i>&nbsp;     * @param hasLeadingZero true if we have consumed the optional leading zero
+<i class="no-highlight">78</i>&nbsp;     * @return the parsed value, if the input is legal;
+<i class="no-highlight">79</i>&nbsp;     * @throws NumericException is the input is illegal.
+<i class="no-highlight">80</i>&nbsp;     */
+<i class="no-highlight">81</i>&nbsp;    private static double parseDecFloatLiteral(
+<i class="no-highlight">82</i>&nbsp;            final CharSequence str,
+<i class="no-highlight">83</i>&nbsp;            int index,
+<i class="no-highlight">84</i>&nbsp;            int startIndex,
+<i class="no-highlight">85</i>&nbsp;            int endIndex,
+<i class="no-highlight">86</i>&nbsp;            boolean isNegative,
+<i class="no-highlight">87</i>&nbsp;            boolean hasLeadingZero,
+<i class="no-highlight">88</i>&nbsp;            boolean rejectOverflow
+<i class="no-highlight">89</i>&nbsp;    ) throws NumericException {
+<i class="no-highlight">90</i>&nbsp;        // Parse significand
+<i class="no-highlight">91</i>&nbsp;        // -----------------
+<i class="no-highlight">92</i>&nbsp;        // Note: a multiplication by a constant is cheaper than an
+<i class="no-highlight">93</i>&nbsp;        //       arbitrary integer multiplication.
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        long significand = 0;// significand is treated as an unsigned long</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        final int significandStartIndex = index;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        int virtualIndexOfPoint = -1;</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        boolean illegal = false;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        char ch = 0;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        for (; index &lt; endIndex; index++) {</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;            ch = str.charAt(index);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            if (isDigit(ch)) {</b>
+<i class="no-highlight">102</i>&nbsp;                // This might overflow, we deal with it later.
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                significand = 10 * significand + ch - &#39;0&#39;;</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;            } else if (ch == &#39;.&#39;) {</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                illegal |= virtualIndexOfPoint &gt;= 0;</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;                virtualIndexOfPoint = index;</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;                for (; index &lt; endIndex - 8; index += 8) {</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                    int eightDigits = tryToParseEightDigits(str, index + 1);</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                    if (eightDigits &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                        break;</b>
+<i class="no-highlight">111</i>&nbsp;                    }
+<i class="no-highlight">112</i>&nbsp;                    // This might overflow, we deal with it later.
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                    significand = 100_000_000L * significand + eightDigits;</b>
+<i class="no-highlight">114</i>&nbsp;                }
+<i class="no-highlight">115</i>&nbsp;            } else {
+<i class="no-highlight">116</i>&nbsp;                break;
+<i class="no-highlight">117</i>&nbsp;            }
+<i class="no-highlight">118</i>&nbsp;        }
+<i class="no-highlight">119</i>&nbsp;        final int digitCount;
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        final int significandEndIndex = index;</b>
+<i class="no-highlight">121</i>&nbsp;        int exponent;
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        if (virtualIndexOfPoint &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;            digitCount = significandEndIndex - significandStartIndex;</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;            virtualIndexOfPoint = significandEndIndex;</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            exponent = 0;</b>
+<i class="no-highlight">126</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">127</i>&nbsp;            digitCount = significandEndIndex - significandStartIndex - 1;</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;            exponent = virtualIndexOfPoint - significandEndIndex + 1;</b>
+<i class="no-highlight">129</i>&nbsp;        }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;        // Parse exponent number
+<i class="no-highlight">132</i>&nbsp;        // ---------------------
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        int expNumber = 0;</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        if (ch == &#39;e&#39; || ch == &#39;E&#39;) {</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;            ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;            boolean neg_exp = ch == &#39;-&#39;;</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;            if (neg_exp || ch == &#39;+&#39;) {</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<i class="no-highlight">139</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">140</i>&nbsp;            illegal |= !isDigit(ch);</b>
+<i class="no-highlight">141</i>&nbsp;            do {
+<i class="no-highlight">142</i>&nbsp;                // Guard against overflow
+<b class="fc"><i class="no-highlight">143</i>&nbsp;                if (expNumber &lt; FastDoubleUtils.MAX_EXPONENT_NUMBER) {</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                    expNumber = 10 * expNumber + ch - &#39;0&#39;;</b>
+<i class="no-highlight">145</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">146</i>&nbsp;                ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;            } while (isDigit(ch));</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;            if (neg_exp) {</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                expNumber = -expNumber;</b>
+<i class="no-highlight">150</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">151</i>&nbsp;            exponent += expNumber;</b>
+<i class="no-highlight">152</i>&nbsp;        }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;        // Skip optional FloatTypeSuffix
+<i class="no-highlight">155</i>&nbsp;        // ------------------------
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        if (index &lt; endIndex &amp;&amp; (ch == &#39;d&#39; || ch == &#39;D&#39;)) {</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;            index++;</b>
+<i class="no-highlight">158</i>&nbsp;        }
+<i class="no-highlight">159</i>&nbsp;
+<i class="no-highlight">160</i>&nbsp;        // Skip trailing whitespace and check if FloatingPointLiteral is complete
+<i class="no-highlight">161</i>&nbsp;        // ------------------------
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        index = skipWhitespace(str, index, endIndex);</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        if (illegal || index &lt; endIndex</b>
+<i class="no-highlight">164</i>&nbsp;                || !hasLeadingZero &amp;&amp; digitCount == 0) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">166</i>&nbsp;        }
+<i class="no-highlight">167</i>&nbsp;
+<i class="no-highlight">168</i>&nbsp;        // Re-parse significand in case of a potential overflow
+<i class="no-highlight">169</i>&nbsp;        // -----------------------------------------------
+<i class="no-highlight">170</i>&nbsp;        final boolean isSignificandTruncated;
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        int skipCountInTruncatedDigits = 0;//counts +1 if we skipped over the decimal point</b>
+<i class="no-highlight">172</i>&nbsp;        int exponentOfTruncatedSignificand;
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        if (digitCount &gt; 19) {</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            significand = 0;</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;            for (index = significandStartIndex; index &lt; significandEndIndex; index++) {</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                ch = str.charAt(index);</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                if (ch == &#39;.&#39;) {</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                    skipCountInTruncatedDigits++;</b>
+<i class="no-highlight">179</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                    if (Long.compareUnsigned(significand, FastDoubleUtils.MINIMAL_NINETEEN_DIGIT_INTEGER) &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                        significand = 10 * significand + ch - &#39;0&#39;;</b>
+<i class="no-highlight">182</i>&nbsp;                    } else {
+<i class="no-highlight">183</i>&nbsp;                        break;
+<i class="no-highlight">184</i>&nbsp;                    }
+<i class="no-highlight">185</i>&nbsp;                }
+<i class="no-highlight">186</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">187</i>&nbsp;            isSignificandTruncated = (index &lt; significandEndIndex);</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;            exponentOfTruncatedSignificand = virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber;</b>
+<i class="no-highlight">189</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;            isSignificandTruncated = false;</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;            exponentOfTruncatedSignificand = 0;</b>
+<i class="no-highlight">192</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        return valueOfFloatLiteral(</b>
+<i class="no-highlight">194</i>&nbsp;                str,
+<i class="no-highlight">195</i>&nbsp;                startIndex,
+<i class="no-highlight">196</i>&nbsp;                endIndex,
+<i class="no-highlight">197</i>&nbsp;                isNegative,
+<i class="no-highlight">198</i>&nbsp;                significand,
+<i class="no-highlight">199</i>&nbsp;                exponent,
+<i class="no-highlight">200</i>&nbsp;                isSignificandTruncated,
+<i class="no-highlight">201</i>&nbsp;                exponentOfTruncatedSignificand,
+<i class="no-highlight">202</i>&nbsp;                rejectOverflow
+<i class="no-highlight">203</i>&nbsp;        );
+<i class="no-highlight">204</i>&nbsp;    }
+<i class="no-highlight">205</i>&nbsp;
+<i class="no-highlight">206</i>&nbsp;    /**
+<i class="no-highlight">207</i>&nbsp;     * Parses the following rules
+<i class="no-highlight">208</i>&nbsp;     * (more rules are defined in {@link FastDoubleUtils}):
+<i class="no-highlight">209</i>&nbsp;     * &lt;dl&gt;
+<i class="no-highlight">210</i>&nbsp;     * &lt;dt&gt;&lt;i&gt;RestOfHexFloatingPointLiteral&lt;/i&gt;:
+<i class="no-highlight">211</i>&nbsp;     * &lt;dd&gt;&lt;i&gt;RestOfHexSignificand BinaryExponent&lt;/i&gt;
+<i class="no-highlight">212</i>&nbsp;     * &lt;/dl&gt;
+<i class="no-highlight">213</i>&nbsp;     *
+<i class="no-highlight">214</i>&nbsp;     * &lt;dl&gt;
+<i class="no-highlight">215</i>&nbsp;     * &lt;dt&gt;&lt;i&gt;RestOfHexSignificand:&lt;/i&gt;
+<i class="no-highlight">216</i>&nbsp;     * &lt;dd&gt;&lt;i&gt;HexDigits&lt;/i&gt;
+<i class="no-highlight">217</i>&nbsp;     * &lt;dd&gt;&lt;i&gt;HexDigits&lt;/i&gt; {@code .}
+<i class="no-highlight">218</i>&nbsp;     * &lt;dd&gt;&lt;i&gt;[HexDigits]&lt;/i&gt; {@code .} &lt;i&gt;HexDigits&lt;/i&gt;
+<i class="no-highlight">219</i>&nbsp;     * &lt;/dl&gt;
+<i class="no-highlight">220</i>&nbsp;     *
+<i class="no-highlight">221</i>&nbsp;     * @param str            the input string
+<i class="no-highlight">222</i>&nbsp;     * @param index          index to the first character of RestOfHexFloatingPointLiteral
+<i class="no-highlight">223</i>&nbsp;     * @param startIndex     the start index of the string
+<i class="no-highlight">224</i>&nbsp;     * @param endIndex       the end index of the string
+<i class="no-highlight">225</i>&nbsp;     * @param isNegative     if the resulting number is negative
+<i class="no-highlight">226</i>&nbsp;     * @param rejectOverflow reject parsed values that overflow double type
+<i class="no-highlight">227</i>&nbsp;     * @return the parsed value, if the input is legal;
+<i class="no-highlight">228</i>&nbsp;     * @throws NumericException if the input is illegal.
+<i class="no-highlight">229</i>&nbsp;     */
+<i class="no-highlight">230</i>&nbsp;    private static double parseHexFloatLiteral(
+<i class="no-highlight">231</i>&nbsp;            CharSequence str,
+<i class="no-highlight">232</i>&nbsp;            int index,
+<i class="no-highlight">233</i>&nbsp;            int startIndex,
+<i class="no-highlight">234</i>&nbsp;            int endIndex,
+<i class="no-highlight">235</i>&nbsp;            boolean isNegative,
+<i class="no-highlight">236</i>&nbsp;            boolean rejectOverflow
+<i class="no-highlight">237</i>&nbsp;    ) throws NumericException {
+<i class="no-highlight">238</i>&nbsp;
+<i class="no-highlight">239</i>&nbsp;        // Parse HexSignificand
+<i class="no-highlight">240</i>&nbsp;        // ------------
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        long significand = 0;// significand is treated as an unsigned long</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        int exponent = 0;</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        final int significandStartIndex = index;</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        int virtualIndexOfPoint = -1;</b>
+<i class="no-highlight">245</i>&nbsp;        final int digitCount;
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        boolean illegal = false;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        char ch = 0;</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        for (; index &lt; endIndex; index++) {</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;            ch = str.charAt(index);</b>
+<i class="no-highlight">250</i>&nbsp;            // Table look up is faster than a sequence of if-else-branches.
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            int hexValue = ch &gt; 127 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;            if (hexValue &gt;= 0) {</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                significand = (significand &lt;&lt; 4) | hexValue;// This might overflow, we deal with it later.</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;            } else if (hexValue == FastDoubleUtils.DECIMAL_POINT_CLASS) {</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                illegal |= virtualIndexOfPoint &gt;= 0;</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                virtualIndexOfPoint = index;</b>
+<i class="no-highlight">257</i>&nbsp;                /*
+<i class="no-highlight">258</i>&nbsp;                for (;index &lt; endIndex - 8; index += 8) {
+<i class="no-highlight">259</i>&nbsp;                    long parsed = tryToParseEightHexDigits(str, index + 1);
+<i class="no-highlight">260</i>&nbsp;                    if (parsed &gt;= 0) {
+<i class="no-highlight">261</i>&nbsp;                        // This might overflow, we deal with it later.
+<i class="no-highlight">262</i>&nbsp;                        digits = (digits &lt;&lt; 32) + parsed;
+<i class="no-highlight">263</i>&nbsp;                    } else {
+<i class="no-highlight">264</i>&nbsp;                        break;
+<i class="no-highlight">265</i>&nbsp;                    }
+<i class="no-highlight">266</i>&nbsp;                }
+<i class="no-highlight">267</i>&nbsp;                */
+<i class="no-highlight">268</i>&nbsp;            } else {
+<i class="no-highlight">269</i>&nbsp;                break;
+<i class="no-highlight">270</i>&nbsp;            }
+<i class="no-highlight">271</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        final int significandEndIndex = index;</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        if (virtualIndexOfPoint &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;            digitCount = significandEndIndex - significandStartIndex;</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            virtualIndexOfPoint = significandEndIndex;</b>
+<i class="no-highlight">276</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            digitCount = significandEndIndex - significandStartIndex - 1;</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            exponent = Math.min(virtualIndexOfPoint - index + 1, FastDoubleUtils.MAX_EXPONENT_NUMBER) * 4;</b>
+<i class="no-highlight">279</i>&nbsp;        }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;        // Parse exponent
+<i class="no-highlight">282</i>&nbsp;        // --------------
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        int expNumber = 0;</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        final boolean hasExponent = (ch == &#39;p&#39;) || (ch == &#39;P&#39;);</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        if (hasExponent) {</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;            ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            boolean neg_exp = ch == &#39;-&#39;;</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            if (neg_exp || ch == &#39;+&#39;) {</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;                ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<i class="no-highlight">290</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">291</i>&nbsp;            illegal |= !isDigit(ch);</b>
+<i class="no-highlight">292</i>&nbsp;            do {
+<i class="no-highlight">293</i>&nbsp;                // exponent boundaries will be validated later
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                expNumber = 10 * expNumber + ch - &#39;0&#39;;</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            } while (isDigit(ch));</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;            if (neg_exp) {</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                expNumber = -expNumber;</b>
+<i class="no-highlight">299</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            exponent += expNumber;</b>
+<i class="no-highlight">301</i>&nbsp;        }
+<i class="no-highlight">302</i>&nbsp;
+<i class="no-highlight">303</i>&nbsp;        // Skip optional FloatTypeSuffix
+<i class="no-highlight">304</i>&nbsp;        // ------------------------
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        if (index &lt; endIndex &amp;&amp; (ch == &#39;d&#39; || ch == &#39;D&#39; || ch == &#39;f&#39; || ch == &#39;F&#39;)) {</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            index++;</b>
+<i class="no-highlight">307</i>&nbsp;        }
+<i class="no-highlight">308</i>&nbsp;
+<i class="no-highlight">309</i>&nbsp;        // Skip trailing whitespace and check if FloatingPointLiteral is complete
+<i class="no-highlight">310</i>&nbsp;        // ------------------------
+<b class="fc"><i class="no-highlight">311</i>&nbsp;        index = skipWhitespace(str, index, endIndex);</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        if (illegal || index &lt; endIndex</b>
+<i class="no-highlight">313</i>&nbsp;                || digitCount == 0
+<i class="no-highlight">314</i>&nbsp;                || !hasExponent) {
+<b class="fc"><i class="no-highlight">315</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">316</i>&nbsp;        }
+<i class="no-highlight">317</i>&nbsp;
+<i class="no-highlight">318</i>&nbsp;        // Re-parse significand in case of a potential overflow
+<i class="no-highlight">319</i>&nbsp;        // -----------------------------------------------
+<i class="no-highlight">320</i>&nbsp;        final boolean isSignificandTruncated;
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        int skipCountInTruncatedDigits = 0;//counts +1 if we skipped over the decimal point</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        if (digitCount &gt; 16) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            significand = 0;</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;            for (index = significandStartIndex; index &lt; significandEndIndex; index++) {</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                ch = str.charAt(index);</b>
+<i class="no-highlight">326</i>&nbsp;                // Table look up is faster than a sequence of if-else-branches.
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                int hexValue = ch &gt; 127 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;                if (hexValue &gt;= 0) {</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                    if (Long.compareUnsigned(significand, FastDoubleUtils.MINIMAL_NINETEEN_DIGIT_INTEGER) &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                        significand = (significand &lt;&lt; 4) | hexValue;</b>
+<i class="no-highlight">331</i>&nbsp;                    } else {
+<i class="no-highlight">332</i>&nbsp;                        break;
+<i class="no-highlight">333</i>&nbsp;                    }
+<i class="no-highlight">334</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                    skipCountInTruncatedDigits++;</b>
+<i class="no-highlight">336</i>&nbsp;                }
+<i class="no-highlight">337</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">338</i>&nbsp;            isSignificandTruncated = (index &lt; significandEndIndex);</b>
+<i class="no-highlight">339</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">340</i>&nbsp;            isSignificandTruncated = false;</b>
+<i class="no-highlight">341</i>&nbsp;        }
+<i class="no-highlight">342</i>&nbsp;
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        return valueOfHexLiteral(</b>
+<i class="no-highlight">344</i>&nbsp;                str,
+<i class="no-highlight">345</i>&nbsp;                startIndex,
+<i class="no-highlight">346</i>&nbsp;                endIndex,
+<i class="no-highlight">347</i>&nbsp;                isNegative,
+<i class="no-highlight">348</i>&nbsp;                significand,
+<i class="no-highlight">349</i>&nbsp;                exponent,
+<i class="no-highlight">350</i>&nbsp;                isSignificandTruncated,
+<i class="no-highlight">351</i>&nbsp;                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+<i class="no-highlight">352</i>&nbsp;                rejectOverflow
+<i class="no-highlight">353</i>&nbsp;        );
+<i class="no-highlight">354</i>&nbsp;    }
+<i class="no-highlight">355</i>&nbsp;
+<i class="no-highlight">356</i>&nbsp;    /**
+<i class="no-highlight">357</i>&nbsp;     * Parses a {@code Nan} production with optional trailing white space
+<i class="no-highlight">358</i>&nbsp;     * until the end of the text.
+<i class="no-highlight">359</i>&nbsp;     * Given that the String contains a &#39;N&#39; character at the current
+<i class="no-highlight">360</i>&nbsp;     * {@code index}.
+<i class="no-highlight">361</i>&nbsp;     * &lt;blockquote&gt;
+<i class="no-highlight">362</i>&nbsp;     * &lt;dl&gt;
+<i class="no-highlight">363</i>&nbsp;     * &lt;dt&gt;&lt;i&gt;NanWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+<i class="no-highlight">364</i>&nbsp;     * &lt;dd&gt;{@code NaN} &lt;i&gt;[WhiteSpace] EOT&lt;/i&gt;&lt;/dd&gt;
+<i class="no-highlight">365</i>&nbsp;     * &lt;/dl&gt;
+<i class="no-highlight">366</i>&nbsp;     * &lt;/blockquote&gt;
+<i class="no-highlight">367</i>&nbsp;     *
+<i class="no-highlight">368</i>&nbsp;     * @param str      a string that contains a &quot;N&quot; character at {@code index}
+<i class="no-highlight">369</i>&nbsp;     * @param index    index of the &quot;N&quot; character
+<i class="no-highlight">370</i>&nbsp;     * @param endIndex end index (exclusive)
+<i class="no-highlight">371</i>&nbsp;     * @return a NaN value
+<i class="no-highlight">372</i>&nbsp;     * @throws NumberFormatException on parsing failure
+<i class="no-highlight">373</i>&nbsp;     */
+<i class="no-highlight">374</i>&nbsp;    private static double parseNaN(CharSequence str, int index, int endIndex) throws NumericException {
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        if (index + 2 &lt; endIndex</b>
+<i class="no-highlight">376</i>&nbsp;                // &amp;&amp; str.charAt(index) == &#39;N&#39;
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                &amp;&amp; str.charAt(index + 1) == &#39;a&#39;</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                &amp;&amp; str.charAt(index + 2) == &#39;N&#39;) {</b>
+<i class="no-highlight">379</i>&nbsp;
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            index = skipWhitespace(str, index + 3, endIndex);</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;            if (index == endIndex) {</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                return Double.NaN;</b>
+<i class="no-highlight">383</i>&nbsp;            }
+<i class="no-highlight">384</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        throw NumericException.INSTANCE;</b>
+<i class="no-highlight">386</i>&nbsp;    }
+<i class="no-highlight">387</i>&nbsp;
+<i class="no-highlight">388</i>&nbsp;    private static int tryToParseEightDigits(CharSequence str, int offset) {
+<i class="no-highlight">389</i>&nbsp;        // Performance: We extract the chars in two steps so that we
+<i class="no-highlight">390</i>&nbsp;        //              can benefit from out of order execution in the CPU.
+<b class="fc"><i class="no-highlight">391</i>&nbsp;        long first = str.charAt(offset)</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                | (long) str.charAt(offset + 1) &lt;&lt; 16</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;                | (long) str.charAt(offset + 2) &lt;&lt; 32</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;                | (long) str.charAt(offset + 3) &lt;&lt; 48;</b>
+<i class="no-highlight">395</i>&nbsp;
+<b class="fc"><i class="no-highlight">396</i>&nbsp;        long second = str.charAt(offset + 4)</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;                | (long) str.charAt(offset + 5) &lt;&lt; 16</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;                | (long) str.charAt(offset + 6) &lt;&lt; 32</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                | (long) str.charAt(offset + 7) &lt;&lt; 48;</b>
+<i class="no-highlight">400</i>&nbsp;
+<b class="fc"><i class="no-highlight">401</i>&nbsp;        return FastDoubleSwar.tryToParseEightDigitsUtf16(first, second);</b>
+<i class="no-highlight">402</i>&nbsp;    }
+<i class="no-highlight">403</i>&nbsp;
+<i class="no-highlight">404</i>&nbsp;    /**
+<i class="no-highlight">405</i>&nbsp;     * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
+<i class="no-highlight">406</i>&nbsp;     * white space.
+<i class="no-highlight">407</i>&nbsp;     * &lt;blockquote&gt;
+<i class="no-highlight">408</i>&nbsp;     * &lt;dl&gt;
+<i class="no-highlight">409</i>&nbsp;     * &lt;dt&gt;&lt;i&gt;FloatingPointLiteralWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+<i class="no-highlight">410</i>&nbsp;     * &lt;dd&gt;&lt;i&gt;[WhiteSpace] FloatingPointLiteral [WhiteSpace]&lt;/i&gt;&lt;/dd&gt;
+<i class="no-highlight">411</i>&nbsp;     * &lt;/dl&gt;
+<i class="no-highlight">412</i>&nbsp;     * &lt;/blockquote&gt;
+<i class="no-highlight">413</i>&nbsp;     * See {@link io.questdb.std.fastdouble} for the grammar of
+<i class="no-highlight">414</i>&nbsp;     * {@code FloatingPointLiteral}.
+<i class="no-highlight">415</i>&nbsp;     *
+<i class="no-highlight">416</i>&nbsp;     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+<i class="no-highlight">417</i>&nbsp;     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+<i class="no-highlight">418</i>&nbsp;     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+<i class="no-highlight">419</i>&nbsp;     * @param rejectOverflow reject parsed values that overflow double type
+<i class="no-highlight">420</i>&nbsp;     * @return the parsed value, if the input is legal;
+<i class="no-highlight">421</i>&nbsp;     * @throws NumericException when input is illegal
+<i class="no-highlight">422</i>&nbsp;     */
+<i class="no-highlight">423</i>&nbsp;    static double parseFloatingPointLiteral(CharSequence str, int offset, int length, boolean rejectOverflow) throws NumericException {
+<b class="fc"><i class="no-highlight">424</i>&nbsp;        final int endIndex = offset + length;</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;        if (offset &lt; 0 || endIndex &gt; str.length()) {</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">427</i>&nbsp;        }
+<i class="no-highlight">428</i>&nbsp;
+<i class="no-highlight">429</i>&nbsp;        // Skip leading whitespace
+<i class="no-highlight">430</i>&nbsp;        // -------------------
+<b class="fc"><i class="no-highlight">431</i>&nbsp;        int index = skipWhitespace(str, offset, endIndex);</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;        if (index == endIndex) {</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;            throw NumericException.INSTANCE;</b>
+<i class="no-highlight">434</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        char ch = str.charAt(index);</b>
+<i class="no-highlight">436</i>&nbsp;
+<i class="no-highlight">437</i>&nbsp;        // Parse optional sign
+<i class="no-highlight">438</i>&nbsp;        // -------------------
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        final boolean isNegative = ch == &#39;-&#39;;</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;        if (isNegative || ch == &#39;+&#39;) {</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            if (ch == 0) {</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                throw NumericException.INSTANCE;</b>
+<i class="no-highlight">444</i>&nbsp;            }
+<i class="no-highlight">445</i>&nbsp;        }
+<i class="no-highlight">446</i>&nbsp;
+<i class="no-highlight">447</i>&nbsp;        // Parse NaN or Infinity
+<i class="no-highlight">448</i>&nbsp;        // ---------------------
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        if (ch &gt;= &#39;I&#39;) {</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            return ch == &#39;N&#39;</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;                    ? parseNaN(str, index, endIndex)</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;                    : parseInfinity(str, index, endIndex, isNegative);</b>
+<i class="no-highlight">453</i>&nbsp;        }
+<i class="no-highlight">454</i>&nbsp;
+<i class="no-highlight">455</i>&nbsp;        // Parse optional leading zero
+<i class="no-highlight">456</i>&nbsp;        // ---------------------------
+<b class="fc"><i class="no-highlight">457</i>&nbsp;        final boolean hasLeadingZero = ch == &#39;0&#39;;</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        if (hasLeadingZero) {</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;            ch = ++index &lt; endIndex ? str.charAt(index) : 0;</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            if (ch == &#39;x&#39; || ch == &#39;X&#39;) {</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;                return parseHexFloatLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);</b>
+<i class="no-highlight">462</i>&nbsp;            }
+<i class="no-highlight">463</i>&nbsp;        }
+<i class="no-highlight">464</i>&nbsp;
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);</b>
+<i class="no-highlight">466</i>&nbsp;    }
+<i class="no-highlight">467</i>&nbsp;
+<i class="no-highlight">468</i>&nbsp;    /**
+<i class="no-highlight">469</i>&nbsp;     * Parses a {@code Infinity} production with optional trailing white space
+<i class="no-highlight">470</i>&nbsp;     * until the end of the text.
+<i class="no-highlight">471</i>&nbsp;     * &lt;blockquote&gt;
+<i class="no-highlight">472</i>&nbsp;     * &lt;dl&gt;
+<i class="no-highlight">473</i>&nbsp;     * &lt;dt&gt;&lt;i&gt;InfinityWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+<i class="no-highlight">474</i>&nbsp;     * &lt;dd&gt;{@code Infinity} &lt;i&gt;[WhiteSpace] EOT&lt;/i&gt;&lt;/dd&gt;
+<i class="no-highlight">475</i>&nbsp;     * &lt;/dl&gt;
+<i class="no-highlight">476</i>&nbsp;     * &lt;/blockquote&gt;
+<i class="no-highlight">477</i>&nbsp;     *
+<i class="no-highlight">478</i>&nbsp;     * @param str      a string
+<i class="no-highlight">479</i>&nbsp;     * @param index    index of the &quot;I&quot; character
+<i class="no-highlight">480</i>&nbsp;     * @param endIndex end index (exclusive)
+<i class="no-highlight">481</i>&nbsp;     * @return a positive or negative infinity value
+<i class="no-highlight">482</i>&nbsp;     * @throws NumberFormatException on parsing failure
+<i class="no-highlight">483</i>&nbsp;     */
+<i class="no-highlight">484</i>&nbsp;    static double parseInfinity(CharSequence str, int index, int endIndex, boolean negative) throws NumericException {
+<b class="fc"><i class="no-highlight">485</i>&nbsp;        if (index + 7 &lt; endIndex</b>
+<b class="fc"><i class="no-highlight">486</i>&nbsp;                &amp;&amp; str.charAt(index) == &#39;I&#39;</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                &amp;&amp; str.charAt(index + 1) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                &amp;&amp; str.charAt(index + 2) == &#39;f&#39;</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;                &amp;&amp; str.charAt(index + 3) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">490</i>&nbsp;                &amp;&amp; str.charAt(index + 4) == &#39;n&#39;</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                &amp;&amp; str.charAt(index + 5) == &#39;i&#39;</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                &amp;&amp; str.charAt(index + 6) == &#39;t&#39;</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                &amp;&amp; str.charAt(index + 7) == &#39;y&#39;</b>
+<i class="no-highlight">494</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">495</i>&nbsp;            index = skipWhitespace(str, index + 8, endIndex);</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;            if (index == endIndex) {</b>
+<b class="fc"><i class="no-highlight">497</i>&nbsp;                return negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;</b>
+<i class="no-highlight">498</i>&nbsp;            }
+<i class="no-highlight">499</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">500</i>&nbsp;        throw NumericException.INSTANCE;</b>
+<i class="no-highlight">501</i>&nbsp;    }
+<i class="no-highlight">502</i>&nbsp;
+<i class="no-highlight">503</i>&nbsp;    /**
+<i class="no-highlight">504</i>&nbsp;     * Skips optional white space in the provided string
+<i class="no-highlight">505</i>&nbsp;     *
+<i class="no-highlight">506</i>&nbsp;     * @param str      a string
+<i class="no-highlight">507</i>&nbsp;     * @param index    start index (inclusive) of the optional white space
+<i class="no-highlight">508</i>&nbsp;     * @param endIndex end index (exclusive) of the optional white space
+<i class="no-highlight">509</i>&nbsp;     * @return index after the optional white space
+<i class="no-highlight">510</i>&nbsp;     */
+<i class="no-highlight">511</i>&nbsp;    static int skipWhitespace(CharSequence str, int index, int endIndex) {
+<b class="fc"><i class="no-highlight">512</i>&nbsp;        for (; index &lt; endIndex; index++) {</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;            if (str.charAt(index) &gt; &#39; &#39;) {</b>
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                break;</b>
+<i class="no-highlight">515</i>&nbsp;            }
+<i class="no-highlight">516</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">517</i>&nbsp;        return index;</b>
+<i class="no-highlight">518</i>&nbsp;    }
+<i class="no-highlight">519</i>&nbsp;
+<i class="no-highlight">520</i>&nbsp;    static double valueOfFloatLiteral(
+<i class="no-highlight">521</i>&nbsp;            CharSequence str,
+<i class="no-highlight">522</i>&nbsp;            int startIndex,
+<i class="no-highlight">523</i>&nbsp;            int endIndex,
+<i class="no-highlight">524</i>&nbsp;            boolean isNegative,
+<i class="no-highlight">525</i>&nbsp;            long significand,
+<i class="no-highlight">526</i>&nbsp;            int exponent,
+<i class="no-highlight">527</i>&nbsp;            boolean isSignificandTruncated,
+<i class="no-highlight">528</i>&nbsp;            int exponentOfTruncatedSignificand,
+<i class="no-highlight">529</i>&nbsp;            boolean rejectOverflow
+<i class="no-highlight">530</i>&nbsp;    ) throws NumericException {
+<b class="fc"><i class="no-highlight">531</i>&nbsp;        double d = FastDoubleMath.tryDecFloatToDoubleTruncated(</b>
+<i class="no-highlight">532</i>&nbsp;                isNegative,
+<i class="no-highlight">533</i>&nbsp;                significand,
+<i class="no-highlight">534</i>&nbsp;                exponent,
+<i class="no-highlight">535</i>&nbsp;                isSignificandTruncated,
+<i class="no-highlight">536</i>&nbsp;                exponentOfTruncatedSignificand
+<i class="no-highlight">537</i>&nbsp;        );
+<i class="no-highlight">538</i>&nbsp;
+<b class="fc"><i class="no-highlight">539</i>&nbsp;        if (Double.isNaN(d)) {</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;            d = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);</b>
+<i class="no-highlight">541</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">542</i>&nbsp;        return d;</b>
+<i class="no-highlight">543</i>&nbsp;    }
+<i class="no-highlight">544</i>&nbsp;
+<i class="no-highlight">545</i>&nbsp;    static double valueOfHexLiteral(
+<i class="no-highlight">546</i>&nbsp;            CharSequence str,
+<i class="no-highlight">547</i>&nbsp;            int startIndex,
+<i class="no-highlight">548</i>&nbsp;            int endIndex,
+<i class="no-highlight">549</i>&nbsp;            boolean isNegative,
+<i class="no-highlight">550</i>&nbsp;            long significand,
+<i class="no-highlight">551</i>&nbsp;            int exponent,
+<i class="no-highlight">552</i>&nbsp;            boolean isSignificandTruncated,
+<i class="no-highlight">553</i>&nbsp;            int exponentOfTruncatedSignificand,
+<i class="no-highlight">554</i>&nbsp;            boolean rejectOverflow
+<i class="no-highlight">555</i>&nbsp;    ) throws NumericException {
+<b class="fc"><i class="no-highlight">556</i>&nbsp;        double d = FastDoubleMath.tryHexFloatToDoubleTruncated(</b>
+<i class="no-highlight">557</i>&nbsp;                isNegative,
+<i class="no-highlight">558</i>&nbsp;                significand,
+<i class="no-highlight">559</i>&nbsp;                exponent,
+<i class="no-highlight">560</i>&nbsp;                isSignificandTruncated,
+<i class="no-highlight">561</i>&nbsp;                exponentOfTruncatedSignificand
+<i class="no-highlight">562</i>&nbsp;        );
+<i class="no-highlight">563</i>&nbsp;
+<b class="fc"><i class="no-highlight">564</i>&nbsp;        if (Double.isNaN(d)) {</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;            return fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);</b>
+<i class="no-highlight">566</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">567</i>&nbsp;        return d;</b>
+<i class="no-highlight">568</i>&nbsp;    }
+<i class="no-highlight">569</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

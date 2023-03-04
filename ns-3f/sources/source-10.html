@@ -1,0 +1,442 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TemplateParser</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.log</a>
+</div>
+
+<h1>Coverage Summary for Class: TemplateParser (io.questdb.log)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TemplateParser</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (15/15)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (97/97)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TemplateParser$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TemplateParser$2</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TemplateParser$3</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TemplateParser$TemplateNode</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (23/23)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (109/109)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.log;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.datetime.DateFormat;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;import java.util.Map;
+<i class="no-highlight">35</i>&nbsp;import java.util.concurrent.atomic.AtomicLong;
+<i class="no-highlight">36</i>&nbsp;
+<b class="fc"><i class="no-highlight">37</i>&nbsp;public class TemplateParser implements Sinkable {</b>
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;    private static final String DATE_FORMAT_KEY = &quot;date:&quot;;
+<i class="no-highlight">40</i>&nbsp;    private static final int NIL = -1;
+<b class="fc"><i class="no-highlight">41</i>&nbsp;    private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    private final AtomicLong dateValue = new AtomicLong();</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    private final StringSink resolveSink = new StringSink();</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    private final ObjList&lt;TemplateNode&gt; templateNodes = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">46</i>&nbsp;    private CharSequence originalTxt;
+<i class="no-highlight">47</i>&nbsp;    private CharSequenceObjHashMap&lt;CharSequence&gt; props;
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;    public static CharSequenceObjHashMap&lt;CharSequence&gt; adaptMap(Map&lt;String, String&gt; props) {
+<b class="fc"><i class="no-highlight">50</i>&nbsp;        CharSequenceObjHashMap&lt;CharSequence&gt; properties = new CharSequenceObjHashMap&lt;&gt;(props.size());</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        for (String key : props.keySet()) {</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;            properties.put(key, props.get(key));</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        return properties;</b>
+<i class="no-highlight">55</i>&nbsp;    }
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;    public int getKeyOffset(CharSequence key) {
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        return envStartIdxs.get(key); // relative to originalTxt</b>
+<i class="no-highlight">59</i>&nbsp;    }
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;    public ObjList&lt;TemplateNode&gt; getTemplateNodes() {
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        return templateNodes;</b>
+<i class="no-highlight">63</i>&nbsp;    }
+<i class="no-highlight">64</i>&nbsp;
+<i class="no-highlight">65</i>&nbsp;    public TemplateParser parse(CharSequence txt, long dateValue, CharSequenceObjHashMap&lt;CharSequence&gt; props) {
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        return parse(txt, dateValue, props, true);</b>
+<i class="no-highlight">67</i>&nbsp;    }
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;    public TemplateParser parse(CharSequence txt, long dateValue, Map&lt;String, String&gt; props) {
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        return parse(txt, dateValue, adaptMap(props), true);</b>
+<i class="no-highlight">71</i>&nbsp;    }
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    public TemplateParser parseEnv(CharSequence txt, long dateValue) {
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        return parse(txt, dateValue, adaptMap(System.getenv()), true);</b>
+<i class="no-highlight">75</i>&nbsp;    }
+<i class="no-highlight">76</i>&nbsp;
+<i class="no-highlight">77</i>&nbsp;    public TemplateParser parseUtf8(CharSequence txt, long dateValue, CharSequenceObjHashMap&lt;CharSequence&gt; props) {
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        return parse(txt, dateValue, props, false);</b>
+<i class="no-highlight">79</i>&nbsp;    }
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    public void setDateValue(long dateValue) {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        this.dateValue.set(dateValue);</b>
+<i class="no-highlight">83</i>&nbsp;    }
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    @Override
+<i class="no-highlight">86</i>&nbsp;    public void toSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        for (int i = 0, n = templateNodes.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;            sink.put(templateNodes.getQuick(i));</b>
+<i class="no-highlight">89</i>&nbsp;        }
+<i class="no-highlight">90</i>&nbsp;    }
+<i class="no-highlight">91</i>&nbsp;
+<i class="no-highlight">92</i>&nbsp;    @Override
+<i class="no-highlight">93</i>&nbsp;    public String toString() {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        resolveSink.clear();</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        toSink(resolveSink);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        return resolveSink.toString();</b>
+<i class="no-highlight">97</i>&nbsp;    }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;    private void addDateTemplateNode(int start, int end) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        if (end - start &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            throw new LogError(&quot;Missing expression at position &quot; + start);</b>
+<i class="no-highlight">102</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        int actualStart = start;</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        int actualEnd = end;</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        while (originalTxt.charAt(actualStart) == &#39; &#39; &amp;&amp; actualStart &lt; actualEnd) {</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            actualStart++;</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        while (originalTxt.charAt(actualEnd - 1) == &#39; &#39; &amp;&amp; actualEnd &gt; actualStart) {</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;            actualEnd--;</b>
+<i class="no-highlight">110</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        if (actualEnd - actualStart &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;            throw new LogError(&quot;Missing expression at position &quot; + actualStart);</b>
+<i class="no-highlight">113</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {</b>
+<i class="no-highlight">116</i>&nbsp;            @Override
+<i class="no-highlight">117</i>&nbsp;            public void toSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                dateFormat.format(dateValue.get(), TimestampFormatUtils.enLocale, null, sink);</b>
+<i class="no-highlight">119</i>&nbsp;            }
+<i class="no-highlight">120</i>&nbsp;        });
+<i class="no-highlight">121</i>&nbsp;    }
+<i class="no-highlight">122</i>&nbsp;
+<i class="no-highlight">123</i>&nbsp;    private void addEnvTemplateNode(int dollarOffset, int envStart, int envEnd) {
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        final String envKey = originalTxt.subSequence(envStart, envEnd).toString();</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        final CharSequence envVal = props.get(envKey);</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        if (envVal == null) {</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;            throw new LogError(&quot;Undefined property: &quot; + envKey);</b>
+<i class="no-highlight">128</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        envStartIdxs.put(envKey, dollarOffset);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {</b>
+<i class="no-highlight">131</i>&nbsp;            @Override
+<i class="no-highlight">132</i>&nbsp;            public void toSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                sink.encodeUtf8(envVal);</b>
+<i class="no-highlight">134</i>&nbsp;            }
+<i class="no-highlight">135</i>&nbsp;        });
+<i class="no-highlight">136</i>&nbsp;    }
+<i class="no-highlight">137</i>&nbsp;
+<i class="no-highlight">138</i>&nbsp;    private void addStaticTemplateNode(int start, int end, boolean needsUtf8Encoding) {
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {</b>
+<i class="no-highlight">140</i>&nbsp;            @Override
+<i class="no-highlight">141</i>&nbsp;            public void toSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                if (needsUtf8Encoding) {</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;                    sink.encodeUtf8(originalTxt, start, end);</b>
+<i class="no-highlight">144</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                    sink.put(originalTxt, start, end);</b>
+<i class="no-highlight">146</i>&nbsp;                }
+<i class="no-highlight">147</i>&nbsp;            }
+<i class="no-highlight">148</i>&nbsp;        });
+<i class="no-highlight">149</i>&nbsp;    }
+<i class="no-highlight">150</i>&nbsp;
+<i class="no-highlight">151</i>&nbsp;    private TemplateParser parse(
+<i class="no-highlight">152</i>&nbsp;            CharSequence txt,
+<i class="no-highlight">153</i>&nbsp;            long dateValue,
+<i class="no-highlight">154</i>&nbsp;            CharSequenceObjHashMap&lt;CharSequence&gt; props,
+<i class="no-highlight">155</i>&nbsp;            boolean needsUtf8Encoding
+<i class="no-highlight">156</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        originalTxt = txt;</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        this.dateValue.set(dateValue);</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        this.props = props;</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        templateNodes.clear();</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        envStartIdxs.clear();</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        int dollarStart = NIL; // points at $</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        int keyStart = NIL;   // points at the first char after {</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        int lastExprEnd = 0;   // points to the char right after the expression</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        int curlyBraces = 0;</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        final int locationLen = originalTxt.length();</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        for (int i = 0; i &lt; locationLen; i++) {</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;            char c = originalTxt.charAt(i);</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;            switch (c) {</b>
+<i class="no-highlight">170</i>&nbsp;                case &#39;$&#39;:
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                    if (dollarStart != NIL) { // already found a $</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                        if (i - dollarStart &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;                            addEnvTemplateNode(dollarStart, dollarStart + 1, i);</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;                            lastExprEnd = i + 1;</b>
+<i class="no-highlight">175</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                            throw new LogError(&quot;Unexpected &#39;$&#39; at position &quot; + i);</b>
+<i class="no-highlight">177</i>&nbsp;                        }
+<i class="no-highlight">178</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                        if (i - lastExprEnd &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                            addStaticTemplateNode(lastExprEnd, i, needsUtf8Encoding);</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                            lastExprEnd = i + 1;</b>
+<i class="no-highlight">182</i>&nbsp;                        }
+<i class="no-highlight">183</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                    dollarStart = i;</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                    break;</b>
+<i class="no-highlight">186</i>&nbsp;                case &#39;{&#39;:
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                    curlyBraces++;</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                    if (dollarStart == NIL) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                        continue;</b>
+<i class="no-highlight">190</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                    keyStart = i + 1;</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                    break;</b>
+<i class="no-highlight">193</i>&nbsp;                case &#39;}&#39;:
+<b class="fc"><i class="no-highlight">194</i>&nbsp;                    curlyBraces--;</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                    if (dollarStart == NIL) {</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                        continue;</b>
+<i class="no-highlight">197</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                    if (keyStart == NIL) {</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                        addEnvTemplateNode(dollarStart, dollarStart + 1, i);</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                        lastExprEnd = i;</b>
+<i class="no-highlight">201</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                        int exprLen = i - keyStart;</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                        if (exprLen == 0) {</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                            throw new LogError(&quot;Missing expression at position &quot; + keyStart);</b>
+<i class="no-highlight">205</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                        int formatStart = keyStart + DATE_FORMAT_KEY.length();</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                        if (Chars.startsWith(originalTxt, keyStart, formatStart, DATE_FORMAT_KEY)) {</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                            addDateTemplateNode(formatStart, i);</b>
+<i class="no-highlight">209</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                            addEnvTemplateNode(dollarStart, dollarStart + 2, i);</b>
+<i class="no-highlight">211</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">212</i>&nbsp;                        lastExprEnd = i + 1;</b>
+<i class="no-highlight">213</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                    keyStart = NIL;</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                    dollarStart = NIL;</b>
+<i class="no-highlight">216</i>&nbsp;            }
+<i class="no-highlight">217</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        if (dollarStart == NIL) {</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;            if (curlyBraces != 0) {</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;                throw new LogError(&quot;Mismatched &#39;{}&#39; at position &quot; + lastExprEnd);</b>
+<i class="no-highlight">221</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">222</i>&nbsp;            if (locationLen - lastExprEnd &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                addStaticTemplateNode(lastExprEnd, locationLen, needsUtf8Encoding);</b>
+<i class="no-highlight">224</i>&nbsp;            }
+<i class="no-highlight">225</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">226</i>&nbsp;            if (keyStart != NIL) {</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                throw new LogError(&quot;Missing &#39;}&#39; at position &quot; + locationLen);</b>
+<i class="no-highlight">228</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">229</i>&nbsp;            if (locationLen - dollarStart &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                addEnvTemplateNode(dollarStart, dollarStart + 1, locationLen);</b>
+<i class="no-highlight">231</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                throw new LogError(&quot;Unexpected &#39;$&#39; at position &quot; + dollarStart);</b>
+<i class="no-highlight">233</i>&nbsp;            }
+<i class="no-highlight">234</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        return this;</b>
+<i class="no-highlight">236</i>&nbsp;    }
+<i class="no-highlight">237</i>&nbsp;
+<i class="no-highlight">238</i>&nbsp;    public static abstract class TemplateNode implements Sinkable {
+<i class="no-highlight">239</i>&nbsp;        private final static int TYPE_DATE = 2;
+<i class="no-highlight">240</i>&nbsp;        private final static int TYPE_ENV = 1;
+<i class="no-highlight">241</i>&nbsp;        private final static int TYPE_STATIC = 0;
+<i class="no-highlight">242</i>&nbsp;        private final CharSequence key;
+<i class="no-highlight">243</i>&nbsp;        private final int type;
+<i class="no-highlight">244</i>&nbsp;
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        private TemplateNode(int type, CharSequence key) {</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;            this.type = type;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;            this.key = key;</b>
+<i class="no-highlight">248</i>&nbsp;        }
+<i class="no-highlight">249</i>&nbsp;
+<i class="no-highlight">250</i>&nbsp;        public boolean isEnv(CharSequence key) {
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            return type == TYPE_ENV &amp;&amp; Chars.equals(this.key, key);</b>
+<i class="no-highlight">252</i>&nbsp;        }
+<i class="no-highlight">253</i>&nbsp;    }
+<i class="no-highlight">254</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,367 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > SampleByFillValueRecordCursor</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.groupby</a>
+</div>
+
+<h1>Coverage Summary for Class: SampleByFillValueRecordCursor (io.questdb.griffin.engine.groupby)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">SampleByFillValueRecordCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (12/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (90/90)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.groupby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.RecordSink;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.Reopenable;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.map.Map;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.map.MapKey;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.map.MapValue;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.griffin.engine.functions.GroupByFunction;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">40</i>&nbsp;
+<b class="fc"><i class="no-highlight">41</i>&nbsp;class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {</b>
+<i class="no-highlight">42</i>&nbsp;    private final RecordSink keyMapSink;
+<i class="no-highlight">43</i>&nbsp;    private final Map map;
+<i class="no-highlight">44</i>&nbsp;    private final RecordCursor mapCursor;
+<i class="no-highlight">45</i>&nbsp;    private final Record mapRecord;
+<i class="no-highlight">46</i>&nbsp;    private boolean isHasNextPending;
+<i class="no-highlight">47</i>&nbsp;    private boolean isMapBuildPending;
+<i class="no-highlight">48</i>&nbsp;    private boolean isMapInitialized;
+<i class="no-highlight">49</i>&nbsp;    private boolean isOpen;
+<i class="no-highlight">50</i>&nbsp;
+<i class="no-highlight">51</i>&nbsp;    public SampleByFillValueRecordCursor(
+<i class="no-highlight">52</i>&nbsp;            Map map,
+<i class="no-highlight">53</i>&nbsp;            RecordSink keyMapSink,
+<i class="no-highlight">54</i>&nbsp;            ObjList&lt;GroupByFunction&gt; groupByFunctions,
+<i class="no-highlight">55</i>&nbsp;            GroupByFunctionsUpdater groupByFunctionsUpdater,
+<i class="no-highlight">56</i>&nbsp;            ObjList&lt;Function&gt; recordFunctions,
+<i class="no-highlight">57</i>&nbsp;            ObjList&lt;Function&gt; placeholderFunctions,
+<i class="no-highlight">58</i>&nbsp;            int timestampIndex, // index of timestamp column in base cursor
+<i class="no-highlight">59</i>&nbsp;            TimestampSampler timestampSampler,
+<i class="no-highlight">60</i>&nbsp;            Function timezoneNameFunc,
+<i class="no-highlight">61</i>&nbsp;            int timezoneNameFuncPos,
+<i class="no-highlight">62</i>&nbsp;            Function offsetFunc,
+<i class="no-highlight">63</i>&nbsp;            int offsetFuncPos
+<i class="no-highlight">64</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        super(</b>
+<i class="no-highlight">66</i>&nbsp;                recordFunctions,
+<i class="no-highlight">67</i>&nbsp;                timestampIndex,
+<i class="no-highlight">68</i>&nbsp;                timestampSampler,
+<i class="no-highlight">69</i>&nbsp;                groupByFunctions,
+<i class="no-highlight">70</i>&nbsp;                groupByFunctionsUpdater,
+<i class="no-highlight">71</i>&nbsp;                placeholderFunctions,
+<i class="no-highlight">72</i>&nbsp;                timezoneNameFunc,
+<i class="no-highlight">73</i>&nbsp;                timezoneNameFuncPos,
+<i class="no-highlight">74</i>&nbsp;                offsetFunc,
+<i class="no-highlight">75</i>&nbsp;                offsetFuncPos
+<i class="no-highlight">76</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        this.map = map;</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        this.keyMapSink = keyMapSink;</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        record.of(map.getRecord());</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        mapCursor = map.getCursor();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        mapRecord = map.getRecord();</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        isOpen = true;</b>
+<i class="no-highlight">83</i>&nbsp;    }
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    @Override
+<i class="no-highlight">86</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        if (isOpen) {</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;            map.close();</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;            super.close();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;            isOpen = false;</b>
+<i class="no-highlight">91</i>&nbsp;        }
+<i class="no-highlight">92</i>&nbsp;    }
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;    @Override
+<i class="no-highlight">95</i>&nbsp;    public boolean hasNext() {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        initMap();</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        initTimestamps();</b>
+<i class="no-highlight">98</i>&nbsp;
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        if (mapCursor.hasNext()) {</b>
+<i class="no-highlight">100</i>&nbsp;            // scroll down the map iterator
+<i class="no-highlight">101</i>&nbsp;            // next() will return record that uses current map position
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            return refreshRecord();</b>
+<i class="no-highlight">103</i>&nbsp;        }
+<i class="no-highlight">104</i>&nbsp;
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        if (baseRecord == null) {</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            return false;</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<i class="no-highlight">108</i>&nbsp;
+<b class="fc"><i class="no-highlight">109</i>&nbsp;        buildMap();</b>
+<i class="no-highlight">110</i>&nbsp;
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        return refreshMapCursor();</b>
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;    @Override
+<i class="no-highlight">115</i>&nbsp;    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        super.of(baseCursor, executionContext);</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        isHasNextPending = false;</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        isMapBuildPending = true;</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        isMapInitialized = false;</b>
+<i class="no-highlight">120</i>&nbsp;    }
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;    @Override
+<i class="no-highlight">123</i>&nbsp;    public void reopen() {
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        if (!isOpen) {</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            map.reopen();</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;            isOpen = true;</b>
+<i class="no-highlight">127</i>&nbsp;        }
+<i class="no-highlight">128</i>&nbsp;    }
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;    @Override
+<i class="no-highlight">131</i>&nbsp;    public void toTop() {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        super.toTop();</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        map.clear();</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        isHasNextPending = false;</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        isMapBuildPending = true;</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        isMapInitialized = false;</b>
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    private void buildMap() {
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        if (isMapBuildPending) {</b>
+<i class="no-highlight">141</i>&nbsp;            // key map has been flushed
+<i class="no-highlight">142</i>&nbsp;            // before we build another one we need to check
+<i class="no-highlight">143</i>&nbsp;            // for timestamp gaps
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;            // what is the next timestamp we are expecting?
+<b class="fc"><i class="no-highlight">146</i>&nbsp;            final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);</b>
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;            // is data timestamp ahead of next expected timestamp?
+<b class="fc"><i class="no-highlight">149</i>&nbsp;            if (expectedLocalEpoch &lt; localEpoch) {</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;                sampleLocalEpoch = expectedLocalEpoch;</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                nextSampleLocalEpoch = expectedLocalEpoch;</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;                isMapBuildPending = true;</b>
+<i class="no-highlight">153</i>&nbsp;                // stream contents
+<i class="no-highlight">154</i>&nbsp;                return;
+<i class="no-highlight">155</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">156</i>&nbsp;            sampleLocalEpoch = localEpoch;</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;            nextSampleLocalEpoch = localEpoch;</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            isMapBuildPending = false;</b>
+<i class="no-highlight">159</i>&nbsp;        }
+<i class="no-highlight">160</i>&nbsp;
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        final long next = timestampSampler.nextTimestamp(localEpoch);</b>
+<i class="no-highlight">162</i>&nbsp;        while (true) {
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            long timestamp = getBaseRecordTimestamp();</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            if (timestamp &lt; next) {</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;                circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">166</i>&nbsp;
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                if (!isHasNextPending) {</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                    adjustDstInFlight(timestamp - tzOffset);</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                    final MapKey key = map.withKey();</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                    keyMapSink.copy(baseRecord, key);</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                    final MapValue value = key.findValue();</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                    assert value != null;</b>
+<i class="no-highlight">173</i>&nbsp;
+<b class="fc"><i class="no-highlight">174</i>&nbsp;                    if (value.getLong(0) != localEpoch) {</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                        value.putLong(0, localEpoch);</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                        groupByFunctionsUpdater.updateNew(value, baseRecord);</b>
+<i class="no-highlight">177</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                        groupByFunctionsUpdater.updateExisting(value, baseRecord);</b>
+<i class="no-highlight">179</i>&nbsp;                    }
+<i class="no-highlight">180</i>&nbsp;                }
+<i class="no-highlight">181</i>&nbsp;
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                isHasNextPending = true;</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                boolean baseHasNext = baseCursor.hasNext();</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                isHasNextPending = false;</b>
+<i class="no-highlight">185</i>&nbsp;                // carry on with the loop if we still have data
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                if (baseHasNext) {</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                    continue;</b>
+<i class="no-highlight">188</i>&nbsp;                }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;                // we ran out of data, make sure hasNext() returns false at the next
+<i class="no-highlight">191</i>&nbsp;                // opportunity, after we stream map that is
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                baseRecord = null;</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            } else {</b>
+<i class="no-highlight">194</i>&nbsp;                // timestamp changed, make sure we keep the value of &#39;lastTimestamp&#39;
+<i class="no-highlight">195</i>&nbsp;                // unchanged. Timestamp columns uses this variable
+<i class="no-highlight">196</i>&nbsp;                // When map is exhausted we would assign &#39;next&#39; to &#39;lastTimestamp&#39;
+<i class="no-highlight">197</i>&nbsp;                // and build another map
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                timestamp = adjustDst(timestamp, null, next);</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                if (timestamp != Long.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                    nextSamplePeriod(timestamp);</b>
+<i class="no-highlight">201</i>&nbsp;                }
+<i class="no-highlight">202</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">203</i>&nbsp;            isMapBuildPending = true;</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;            break;</b>
+<i class="no-highlight">205</i>&nbsp;        }
+<i class="no-highlight">206</i>&nbsp;    }
+<i class="no-highlight">207</i>&nbsp;
+<i class="no-highlight">208</i>&nbsp;    private void initMap() {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        if (isMapInitialized) {</b>
+<i class="no-highlight">210</i>&nbsp;            return;
+<i class="no-highlight">211</i>&nbsp;        }
+<i class="no-highlight">212</i>&nbsp;
+<i class="no-highlight">213</i>&nbsp;        // This factory fills gaps in data. To do that we
+<i class="no-highlight">214</i>&nbsp;        // have to know all possible key values. Essentially, every time
+<i class="no-highlight">215</i>&nbsp;        // we sample we return same set of key values with different
+<i class="no-highlight">216</i>&nbsp;        // aggregation results and timestamp.
+<i class="no-highlight">217</i>&nbsp;
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        final int n = groupByFunctions.size();</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        while (baseCursor.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;            circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">221</i>&nbsp;
+<b class="fc"><i class="no-highlight">222</i>&nbsp;            MapKey key = map.withKey();</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;            keyMapSink.copy(baseRecord, key);</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;            MapValue value = key.createValue();</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            if (value.isNew()) {</b>
+<i class="no-highlight">226</i>&nbsp;                // timestamp is always stored in value field 0
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                value.putLong(0, Numbers.LONG_NaN);</b>
+<i class="no-highlight">228</i>&nbsp;                // have functions reset their columns to &quot;zero&quot; state
+<i class="no-highlight">229</i>&nbsp;                // this would set values for when keys are not found right away
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                    groupByFunctions.getQuick(i).setNull(value);</b>
+<i class="no-highlight">232</i>&nbsp;                }
+<i class="no-highlight">233</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">234</i>&nbsp;        }</b>
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;        // because we iterate the base cursor twice, we have to go back to top
+<i class="no-highlight">237</i>&nbsp;        // for the second run
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        baseCursor.toTop();</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        isMapInitialized = true;</b>
+<i class="no-highlight">240</i>&nbsp;    }
+<i class="no-highlight">241</i>&nbsp;
+<i class="no-highlight">242</i>&nbsp;    private boolean refreshMapCursor() {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        map.getCursor().hasNext();</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        return refreshRecord();</b>
+<i class="no-highlight">245</i>&nbsp;    }
+<i class="no-highlight">246</i>&nbsp;
+<i class="no-highlight">247</i>&nbsp;    private boolean refreshRecord() {
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        if (mapRecord.getTimestamp(0) == sampleLocalEpoch) {</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;            record.setActiveA();</b>
+<i class="no-highlight">250</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            record.setActiveB();</b>
+<i class="no-highlight">252</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        return true;</b>
+<i class="no-highlight">254</i>&nbsp;    }
+<i class="no-highlight">255</i>&nbsp;
+<i class="no-highlight">256</i>&nbsp;    @Override
+<i class="no-highlight">257</i>&nbsp;    protected void updateValueWhenClockMovesBack(MapValue value) {
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        final MapKey key = map.withKey();</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        keyMapSink.copy(baseRecord, key);</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        super.updateValueWhenClockMovesBack(key.createValue());</b>
+<i class="no-highlight">261</i>&nbsp;    }
+<i class="no-highlight">262</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,1117 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > SampleByFirstLastRecordCursorFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.groupby</a>
+</div>
+
+<h1>Coverage Summary for Class: SampleByFirstLastRecordCursorFactory (io.questdb.griffin.engine.groupby)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">SampleByFirstLastRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    87.5%
+  </span>
+  <span class="absValue">
+    (7/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.6%
+  </span>
+  <span class="absValue">
+    (83/85)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">SampleByFirstLastRecordCursorFactory$SampleByFirstLastRecordCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (21/21)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.9%
+  </span>
+  <span class="absValue">
+    (173/175)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">SampleByFirstLastRecordCursorFactory$SampleByFirstLastRecordCursor$SampleByFirstLastRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (16/16)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (20/20)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">SampleByFirstLastRecordCursorFactory$SampleByFirstLastRecordCursor$SampleByFirstLastRecord$SampleByCrossRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (14/14)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (15/15)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">SampleByFirstLastRecordCursorFactory$SampleByFirstLastRecordCursor$SampleByFirstLastRecord$SampleByDataRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (17/17)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (59/59)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    98.7%
+  </span>
+  <span class="absValue">
+    (75/76)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.9%
+  </span>
+  <span class="absValue">
+    (350/354)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.groupby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.SqlKeywords;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.engine.EmptyTableRecordCursor;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.model.ExpressionNode;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.model.QueryColumn;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
+<i class="no-highlight">42</i>&nbsp;    private static final int FILTER_KEY_IS_NULL = 0;
+<i class="no-highlight">43</i>&nbsp;    private static final int FIRST_OUT_INDEX = 0;
+<i class="no-highlight">44</i>&nbsp;    private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
+<i class="no-highlight">45</i>&nbsp;    private static final int LAST_OUT_INDEX = 1;
+<i class="no-highlight">46</i>&nbsp;    private static final int TIMESTAMP_OUT_INDEX = 2;
+<i class="no-highlight">47</i>&nbsp;    private final RecordCursorFactory base;
+<i class="no-highlight">48</i>&nbsp;    private final LongList crossFrameRow;
+<i class="no-highlight">49</i>&nbsp;    private final int[] firstLastIndexByCol;
+<i class="no-highlight">50</i>&nbsp;    private final int groupBySymbolColIndex;
+<i class="no-highlight">51</i>&nbsp;    private final boolean[] isKeyColumn;
+<i class="no-highlight">52</i>&nbsp;    private final int maxSamplePeriodSize;
+<i class="no-highlight">53</i>&nbsp;    private final int pageSize;
+<i class="no-highlight">54</i>&nbsp;    private final int[] queryToFrameColumnMapping;
+<i class="no-highlight">55</i>&nbsp;    private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
+<i class="no-highlight">56</i>&nbsp;    private final SingleSymbolFilter symbolFilter;
+<i class="no-highlight">57</i>&nbsp;    private final int timestampIndex;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private int groupByTimestampIndex = -1;</b>
+<i class="no-highlight">59</i>&nbsp;    private DirectLongList rowIdOutAddress;
+<i class="no-highlight">60</i>&nbsp;    private DirectLongList samplePeriodAddress;
+<i class="no-highlight">61</i>&nbsp;
+<i class="no-highlight">62</i>&nbsp;    public SampleByFirstLastRecordCursorFactory(
+<i class="no-highlight">63</i>&nbsp;            RecordCursorFactory base,
+<i class="no-highlight">64</i>&nbsp;            TimestampSampler timestampSampler,
+<i class="no-highlight">65</i>&nbsp;            GenericRecordMetadata groupByMetadata,
+<i class="no-highlight">66</i>&nbsp;            ObjList&lt;QueryColumn&gt; columns,
+<i class="no-highlight">67</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">68</i>&nbsp;            Function timezoneNameFunc,
+<i class="no-highlight">69</i>&nbsp;            int timezoneNameFuncPos,
+<i class="no-highlight">70</i>&nbsp;            Function offsetFunc,
+<i class="no-highlight">71</i>&nbsp;            int offsetFuncPos,
+<i class="no-highlight">72</i>&nbsp;            int timestampIndex,
+<i class="no-highlight">73</i>&nbsp;            SingleSymbolFilter symbolFilter,
+<i class="no-highlight">74</i>&nbsp;            int configPageSize
+<i class="no-highlight">75</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        super(groupByMetadata);</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        this.base = base;</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        groupBySymbolColIndex = symbolFilter.getColumnIndex();</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        queryToFrameColumnMapping = new int[columns.size()];</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        firstLastIndexByCol = new int[columns.size()];</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        isKeyColumn = new boolean[columns.size()];</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        crossFrameRow = new LongList(columns.size());</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        crossFrameRow.setPos(columns.size());</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        this.timestampIndex = timestampIndex;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        pageSize = configPageSize &lt; 16 ? Math.max(blockSize, 16) : configPageSize;</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        maxSamplePeriodSize = pageSize * 4;</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        int outSize = pageSize &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT;</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        rowIdOutAddress.setPos(outSize);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        this.symbolFilter = symbolFilter;</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(</b>
+<i class="no-highlight">95</i>&nbsp;                timestampSampler,
+<i class="no-highlight">96</i>&nbsp;                timezoneNameFunc,
+<i class="no-highlight">97</i>&nbsp;                timezoneNameFuncPos,
+<i class="no-highlight">98</i>&nbsp;                offsetFunc,
+<i class="no-highlight">99</i>&nbsp;                offsetFuncPos
+<i class="no-highlight">100</i>&nbsp;        );
+<i class="no-highlight">101</i>&nbsp;    }
+<i class="no-highlight">102</i>&nbsp;
+<i class="no-highlight">103</i>&nbsp;    @Override
+<i class="no-highlight">104</i>&nbsp;    public RecordCursorFactory getBaseFactory() {
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        return base;</b>
+<i class="no-highlight">106</i>&nbsp;    }
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;    @Override
+<i class="no-highlight">109</i>&nbsp;    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        int groupByIndexKey = symbolFilter.getSymbolFilterKey();</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;            Misc.free(pageFrameCursor);</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;            return EmptyTableRecordCursor.INSTANCE;</b>
+<i class="no-highlight">115</i>&nbsp;        }
+<i class="no-highlight">116</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;            sampleByFirstLastRecordCursor.of(</b>
+<i class="no-highlight">118</i>&nbsp;                    pageFrameCursor,
+<i class="no-highlight">119</i>&nbsp;                    groupByIndexKey,
+<i class="no-highlight">120</i>&nbsp;                    executionContext
+<i class="no-highlight">121</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">122</i>&nbsp;            return sampleByFirstLastRecordCursor;</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;            Misc.free(pageFrameCursor);</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            throw e;</b>
+<i class="no-highlight">126</i>&nbsp;        }
+<i class="no-highlight">127</i>&nbsp;    }
+<i class="no-highlight">128</i>&nbsp;
+<i class="no-highlight">129</i>&nbsp;    @Override
+<i class="no-highlight">130</i>&nbsp;    public boolean recordCursorSupportsRandomAccess() {
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        return false;</b>
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    @Override
+<i class="no-highlight">135</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        sink.type(&quot;SampleByFirstLast&quot;);</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        sink.attr(&quot;keys&quot;);</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        boolean first = true;</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        sink.val(&#39;[&#39;);</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        for (int i = 0; i &lt; isKeyColumn.length; i++) {</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;            if (isKeyColumn[i]) {</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                if (first) {</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;                    first = false;</b>
+<i class="no-highlight">144</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">145</i>&nbsp;                    sink.val(&quot;, &quot;);</b>
+<i class="no-highlight">146</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                sink.putBaseColumnName(i);</b>
+<i class="no-highlight">148</i>&nbsp;            }
+<i class="no-highlight">149</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        sink.val(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        sink.attr(&quot;values&quot;);</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        first = true;</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        sink.val(&#39;[&#39;);</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        for (int i = 0; i &lt; isKeyColumn.length; i++) {</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;            if (!isKeyColumn[i]) {</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                if (first) {</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                    first = false;</b>
+<i class="no-highlight">158</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                    sink.val(&quot;, &quot;);</b>
+<i class="no-highlight">160</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">161</i>&nbsp;                sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? &quot;last&quot; : &quot;first&quot;).val(&#39;(&#39;);</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;                sink.putBaseColumnName(i);</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;                sink.val(&#39;)&#39;);</b>
+<i class="no-highlight">164</i>&nbsp;            }
+<i class="no-highlight">165</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        sink.val(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        sink.child(base);</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    @Override
+<i class="no-highlight">171</i>&nbsp;    public boolean usesCompiledFilter() {
+<b class="nc"><i class="no-highlight">172</i>&nbsp;        return base.usesCompiledFilter();</b>
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    private void buildFirstLastIndex(
+<i class="no-highlight">176</i>&nbsp;            int[] firstLastIndex,
+<i class="no-highlight">177</i>&nbsp;            int[] queryToFrameColumnMapping,
+<i class="no-highlight">178</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">179</i>&nbsp;            ObjList&lt;QueryColumn&gt; columns,
+<i class="no-highlight">180</i>&nbsp;            int timestampIndex,
+<i class="no-highlight">181</i>&nbsp;            boolean[] isKeyColumn
+<i class="no-highlight">182</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        for (int i = 0, n = firstLastIndex.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            QueryColumn column = columns.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;            ExpressionNode ast = column.getAst();</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            int resultSetColumnType = getMetadata().getColumnType(i);</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;            if (ast.rhs != null) {</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                if (SqlKeywords.isLastKeyword(ast.token)) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                    firstLastIndex[i] = LAST_OUT_INDEX;</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                } else if (SqlKeywords.isFirstKeyword(ast.token)) {</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                    firstLastIndex[i] = FIRST_OUT_INDEX;</b>
+<i class="no-highlight">192</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                    throw SqlException.$(ast.position, &quot;expected first() or last() functions but got &quot;).put(ast.token);</b>
+<i class="no-highlight">194</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                int underlyingColIndex = metadata.getColumnIndex(ast.rhs.token);</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                queryToFrameColumnMapping[i] = underlyingColIndex;</b>
+<i class="no-highlight">197</i>&nbsp;
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                int underlyingType = metadata.getColumnType(underlyingColIndex);</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                if (underlyingType != resultSetColumnType || ColumnType.pow2SizeOf(resultSetColumnType) &gt; 3) {</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                    throw SqlException.$(ast.position, &quot;column \&quot;&quot;)</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                            .put(metadata.getColumnName(underlyingColIndex))</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                            .put(&quot;\&quot;: first(), last() is not supported on data type &quot;)</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                            .put(ColumnType.nameOf(underlyingType))</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                            .put(&quot; &quot;);</b>
+<i class="no-highlight">205</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;                int underlyingColIndex = metadata.getColumnIndex(ast.token);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;                isKeyColumn[i] = true;</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                queryToFrameColumnMapping[i] = underlyingColIndex;</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                if (underlyingColIndex == timestampIndex) {</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                    groupByTimestampIndex = i;</b>
+<i class="no-highlight">212</i>&nbsp;                }
+<i class="no-highlight">213</i>&nbsp;            }
+<i class="no-highlight">214</i>&nbsp;        }
+<i class="no-highlight">215</i>&nbsp;    }
+<i class="no-highlight">216</i>&nbsp;
+<i class="no-highlight">217</i>&nbsp;    @Override
+<i class="no-highlight">218</i>&nbsp;    protected void _close() {
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        base.close();</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        rowIdOutAddress = Misc.free(rowIdOutAddress);</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        samplePeriodAddress = Misc.free(samplePeriodAddress);</b>
+<i class="no-highlight">222</i>&nbsp;    }
+<i class="no-highlight">223</i>&nbsp;
+<b class="fc"><i class="no-highlight">224</i>&nbsp;    private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {</b>
+<i class="no-highlight">225</i>&nbsp;        private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
+<i class="no-highlight">226</i>&nbsp;        private final static int CROSS_ROW_STATE_SAVED = 1;
+<i class="no-highlight">227</i>&nbsp;        private final static int NONE = 0;
+<i class="no-highlight">228</i>&nbsp;        private final static int STATE_DONE = 7;
+<i class="no-highlight">229</i>&nbsp;        private final static int STATE_FETCH_NEXT_DATA_FRAME = 1;
+<i class="no-highlight">230</i>&nbsp;        private final static int STATE_FETCH_NEXT_INDEX_FRAME = 3;
+<i class="no-highlight">231</i>&nbsp;        private final static int STATE_OUT_BUFFER_FULL = 4;
+<i class="no-highlight">232</i>&nbsp;        private final static int STATE_RETURN_LAST_ROW = 6;
+<i class="no-highlight">233</i>&nbsp;        private final static int STATE_SEARCH = 5;
+<i class="no-highlight">234</i>&nbsp;        private final static int STATE_START = 0;
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();</b>
+<i class="no-highlight">236</i>&nbsp;        private int crossRowState;
+<i class="no-highlight">237</i>&nbsp;        private PageFrame currentFrame;
+<i class="no-highlight">238</i>&nbsp;        private long currentRow;
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        private long dataFrameHi = -1;</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        private long dataFrameLo = -1;</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        private long frameNextRowId = -1;</b>
+<i class="no-highlight">242</i>&nbsp;        private int groupBySymbolKey;
+<i class="no-highlight">243</i>&nbsp;        private IndexFrameCursor indexCursor;
+<i class="no-highlight">244</i>&nbsp;        private IndexFrame indexFrame;
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        private int indexFramePosition = -1;</b>
+<i class="no-highlight">246</i>&nbsp;        private boolean initialized;
+<i class="no-highlight">247</i>&nbsp;        private PageFrameCursor pageFrameCursor;
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        private long prevSamplePeriodOffset = 0;</b>
+<i class="no-highlight">249</i>&nbsp;        private int rowsFound;
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        private long samplePeriodIndexOffset = 0;</b>
+<i class="no-highlight">251</i>&nbsp;        private long samplePeriodStart;
+<i class="no-highlight">252</i>&nbsp;        private int state;
+<i class="no-highlight">253</i>&nbsp;
+<i class="no-highlight">254</i>&nbsp;        public SampleByFirstLastRecordCursor(
+<i class="no-highlight">255</i>&nbsp;                TimestampSampler timestampSampler,
+<i class="no-highlight">256</i>&nbsp;                Function timezoneNameFunc,
+<i class="no-highlight">257</i>&nbsp;                int timezoneNameFuncPos,
+<i class="no-highlight">258</i>&nbsp;                Function offsetFunc,
+<i class="no-highlight">259</i>&nbsp;                int offsetFuncPos
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        ) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);</b>
+<i class="no-highlight">262</i>&nbsp;        }
+<i class="no-highlight">263</i>&nbsp;
+<i class="no-highlight">264</i>&nbsp;        @Override
+<i class="no-highlight">265</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">266</i>&nbsp;            pageFrameCursor = Misc.free(pageFrameCursor);</b>
+<i class="no-highlight">267</i>&nbsp;        }
+<i class="no-highlight">268</i>&nbsp;
+<i class="no-highlight">269</i>&nbsp;        public long getNextTimestamp() {
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            long lastTimestampLocUtc = localEpoch - tzOffset;</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;            long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;            if (nextLastTimestampLoc - tzOffset &gt;= nextDstUtc) {</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                nextDstUtc = rules.getNextDST(nextLastTimestampLoc - tzOffset);</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                while (nextLastTimestampLoc - tzOffset &lt;= lastTimestampLocUtc) {</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;                    nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);</b>
+<i class="no-highlight">277</i>&nbsp;                }
+<i class="no-highlight">278</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">279</i>&nbsp;            localEpoch = nextLastTimestampLoc;</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            return localEpoch - tzOffset;</b>
+<i class="no-highlight">281</i>&nbsp;        }
+<i class="no-highlight">282</i>&nbsp;
+<i class="no-highlight">283</i>&nbsp;        @Override
+<i class="no-highlight">284</i>&nbsp;        public Record getRecord() {
+<b class="fc"><i class="no-highlight">285</i>&nbsp;            return record;</b>
+<i class="no-highlight">286</i>&nbsp;        }
+<i class="no-highlight">287</i>&nbsp;
+<i class="no-highlight">288</i>&nbsp;        @Override
+<i class="no-highlight">289</i>&nbsp;        public SymbolTable getSymbolTable(int columnIndex) {
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<i class="no-highlight">292</i>&nbsp;
+<i class="no-highlight">293</i>&nbsp;        @Override
+<i class="no-highlight">294</i>&nbsp;        public boolean hasNext() {
+<i class="no-highlight">295</i>&nbsp;            // This loop never returns last found sample by row.
+<i class="no-highlight">296</i>&nbsp;            // The reason is that last row() value can be changed on next data frame pass.
+<i class="no-highlight">297</i>&nbsp;            // That&#39;s why the last row values are buffered
+<i class="no-highlight">298</i>&nbsp;            // (not only row id stored but all the values needed) in crossFrameRow.
+<i class="no-highlight">299</i>&nbsp;            // Buffering values are unavoidable since row ids of last() and first() are from different data frames
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            if (++currentRow &lt; rowsFound - 1) {</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;                record.of(currentRow);</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;                return true;</b>
+<i class="no-highlight">303</i>&nbsp;            }
+<i class="no-highlight">304</i>&nbsp;
+<b class="fc"><i class="no-highlight">305</i>&nbsp;            return hasNext0();</b>
+<i class="no-highlight">306</i>&nbsp;        }
+<i class="no-highlight">307</i>&nbsp;
+<i class="no-highlight">308</i>&nbsp;        @Override
+<i class="no-highlight">309</i>&nbsp;        public SymbolTable newSymbolTable(int columnIndex) {
+<b class="fc"><i class="no-highlight">310</i>&nbsp;            return pageFrameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);</b>
+<i class="no-highlight">311</i>&nbsp;        }
+<i class="no-highlight">312</i>&nbsp;
+<i class="no-highlight">313</i>&nbsp;        @Override
+<i class="no-highlight">314</i>&nbsp;        public long size() {
+<b class="fc"><i class="no-highlight">315</i>&nbsp;            return -1;</b>
+<i class="no-highlight">316</i>&nbsp;        }
+<i class="no-highlight">317</i>&nbsp;
+<i class="no-highlight">318</i>&nbsp;        public long startFrom(long timestamp) {
+<i class="no-highlight">319</i>&nbsp;            // Skip initialization if timestamp is the same as last returned
+<b class="fc"><i class="no-highlight">320</i>&nbsp;            if (!initialized || timestamp != localEpoch - tzOffset) {</b>
+<i class="no-highlight">321</i>&nbsp;                // null rules means the timezone does not have daylight time changes
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                if (rules != null) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                    tzOffset = rules.getOffset(timestamp);</b>
+<i class="no-highlight">324</i>&nbsp;                    // we really need UTC timestamp to get offset correctly
+<i class="no-highlight">325</i>&nbsp;                    // this will converge to UTC timestamp
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                    tzOffset = rules.getOffset(timestamp + tzOffset);</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                    nextDstUtc = rules.getNextDST(timestamp + tzOffset);</b>
+<i class="no-highlight">328</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                if (fixedOffset != Long.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                    localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;</b>
+<i class="no-highlight">331</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                    localEpoch = timestamp + tzOffset;</b>
+<i class="no-highlight">333</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                initialized = true;</b>
+<i class="no-highlight">335</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            return localEpoch - tzOffset;</b>
+<i class="no-highlight">337</i>&nbsp;        }
+<i class="no-highlight">338</i>&nbsp;
+<i class="no-highlight">339</i>&nbsp;        @Override
+<i class="no-highlight">340</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">341</i>&nbsp;            currentRow = rowsFound = 0;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;            frameNextRowId = dataFrameLo = dataFrameHi = -1;</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;            state = STATE_START;</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            crossRowState = NONE;</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;            pageFrameCursor.toTop();</b>
+<i class="no-highlight">346</i>&nbsp;        }
+<i class="no-highlight">347</i>&nbsp;
+<i class="no-highlight">348</i>&nbsp;        private void checkCrossRowAfterFoundBufferIterated() {
+<b class="fc"><i class="no-highlight">349</i>&nbsp;            if (crossRowState != NONE &amp;&amp; rowsFound &gt; 1) {</b>
+<i class="no-highlight">350</i>&nbsp;                // Copy last set of first(), last() RowIds from bottom of the previous output to the top
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                long lastFoundIndex = (long) (rowsFound - 1) &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT;</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                rowIdOutAddress.set(FIRST_OUT_INDEX, rowIdOutAddress.get(lastFoundIndex + FIRST_OUT_INDEX));</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;                rowIdOutAddress.set(LAST_OUT_INDEX, rowIdOutAddress.get(lastFoundIndex + LAST_OUT_INDEX));</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                rowIdOutAddress.set(TIMESTAMP_OUT_INDEX, rowIdOutAddress.get(lastFoundIndex + TIMESTAMP_OUT_INDEX));</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                crossRowState = CROSS_ROW_STATE_REFS_UPDATED;</b>
+<i class="no-highlight">356</i>&nbsp;            }
+<i class="no-highlight">357</i>&nbsp;
+<b class="fc"><i class="no-highlight">358</i>&nbsp;            if (crossRowState == CROSS_ROW_STATE_REFS_UPDATED) {</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                saveFirstLastValuesToCrossFrameRowBuffer();</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                crossRowState = CROSS_ROW_STATE_SAVED;</b>
+<i class="no-highlight">361</i>&nbsp;            }
+<i class="no-highlight">362</i>&nbsp;        }
+<i class="no-highlight">363</i>&nbsp;
+<i class="no-highlight">364</i>&nbsp;        private void checkSaveLastValues(boolean zeroRowLastIdUpdated) {
+<b class="fc"><i class="no-highlight">365</i>&nbsp;            if (crossRowState != NONE) {</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                if (zeroRowLastIdUpdated) {</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                    saveLastValuesToBuffer();</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                    crossRowState = CROSS_ROW_STATE_SAVED;</b>
+<i class="no-highlight">369</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            } else if (rowsFound &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                saveFirstLastValuesToCrossFrameRowBuffer();</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                crossRowState = CROSS_ROW_STATE_SAVED;</b>
+<i class="no-highlight">373</i>&nbsp;            }
+<i class="no-highlight">374</i>&nbsp;        }
+<i class="no-highlight">375</i>&nbsp;
+<i class="no-highlight">376</i>&nbsp;        private int fillSamplePeriodsUntil(long lastInDataTimestamp) {
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            long nextTs = samplePeriodStart;</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;            long currentTs = Long.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;            nextTs = startFrom(nextTs);</b>
+<i class="no-highlight">380</i>&nbsp;
+<b class="fc"><i class="no-highlight">381</i>&nbsp;            samplePeriodAddress.clear();</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;            for (int i = 0; i &lt; maxSamplePeriodSize &amp;&amp; currentTs &lt;= lastInDataTimestamp; i++) {</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                currentTs = nextTs;</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                nextTs = getNextTimestamp();</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                assert nextTs != currentTs : &quot;uh-oh, we may have got into an infinite loop with ts &quot; + nextTs;</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                samplePeriodAddress.add(currentTs);</b>
+<i class="no-highlight">387</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">388</i>&nbsp;            return (int) samplePeriodAddress.size();</b>
+<i class="no-highlight">389</i>&nbsp;        }
+<i class="no-highlight">390</i>&nbsp;
+<i class="no-highlight">391</i>&nbsp;        // This method evaluates RecordCursor state
+<i class="no-highlight">392</i>&nbsp;        // by using state machine.
+<i class="no-highlight">393</i>&nbsp;        // Possible important states are:
+<i class="no-highlight">394</i>&nbsp;        // - START
+<i class="no-highlight">395</i>&nbsp;        // - FETCH_NEXT_DATA_FRAME
+<i class="no-highlight">396</i>&nbsp;        // - FETCH_NEXT_INDEX_FRAME
+<i class="no-highlight">397</i>&nbsp;        // - SEARCH
+<i class="no-highlight">398</i>&nbsp;        // - RETURN_LAST_ROW
+<i class="no-highlight">399</i>&nbsp;        // - DONE
+<i class="no-highlight">400</i>&nbsp;        // State machine can switch states non-linear until DONE reached.
+<i class="no-highlight">401</i>&nbsp;        private int getNextState(int state) {
+<i class="no-highlight">402</i>&nbsp;            // This method should not change this.state field
+<i class="no-highlight">403</i>&nbsp;            // but instead produce next state given incoming state parameter.
+<i class="no-highlight">404</i>&nbsp;            // This way the method is enforced to change state and less the caller to loop forever.
+<b class="fc"><i class="no-highlight">405</i>&nbsp;            switch (state) {</b>
+<i class="no-highlight">406</i>&nbsp;                case STATE_START:
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                    prevSamplePeriodOffset = samplePeriodIndexOffset = 0;</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                    crossRowState = NONE;</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                    samplePeriodStart = Numbers.LONG_NaN;</b>
+<i class="no-highlight">410</i>&nbsp;                    // Fall through to STATE_FETCH_NEXT_DATA_FRAME;
+<i class="no-highlight">411</i>&nbsp;
+<i class="no-highlight">412</i>&nbsp;                case STATE_FETCH_NEXT_DATA_FRAME:
+<b class="fc"><i class="no-highlight">413</i>&nbsp;                    currentFrame = pageFrameCursor.next();</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                    if (currentFrame != null) {</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                        record.switchFrame();</b>
+<i class="no-highlight">416</i>&nbsp;
+<i class="no-highlight">417</i>&nbsp;                        // Switch to new data frame
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                        frameNextRowId = dataFrameLo = currentFrame.getPartitionLo();</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                        dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;</b>
+<i class="no-highlight">420</i>&nbsp;
+<i class="no-highlight">421</i>&nbsp;                        // Re-fetch index cursor to correctly position it to frameNextRowId
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                        BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);</b>
+<i class="no-highlight">424</i>&nbsp;
+<i class="no-highlight">425</i>&nbsp;                        // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                    } else {</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                        return STATE_RETURN_LAST_ROW;</b>
+<i class="no-highlight">428</i>&nbsp;                    }
+<i class="no-highlight">429</i>&nbsp;
+<i class="no-highlight">430</i>&nbsp;                case STATE_FETCH_NEXT_INDEX_FRAME:
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                    indexFrame = indexCursor.getNext();</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                    indexFramePosition = 0;</b>
+<i class="no-highlight">433</i>&nbsp;
+<b class="fc"><i class="no-highlight">434</i>&nbsp;                    long indexFrameAddress = indexFrame.getAddress();</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                    if (indexFrame.getSize() == 0) {</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;                        if (indexFrameAddress != 0 || groupBySymbolKey != FILTER_KEY_IS_NULL) {</b>
+<i class="no-highlight">437</i>&nbsp;                            // No rows in index for this dataframe left, go to next data frame
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                            frameNextRowId = dataFrameHi;</b>
+<i class="no-highlight">439</i>&nbsp;                            // Jump back to fetch next data frame
+<b class="fc"><i class="no-highlight">440</i>&nbsp;                            return STATE_FETCH_NEXT_DATA_FRAME;</b>
+<i class="no-highlight">441</i>&nbsp;                        }
+<i class="no-highlight">442</i>&nbsp;                        // Special case - searching with `where symbol = null` on the partition where this column has not been added
+<i class="no-highlight">443</i>&nbsp;                        // Effectively all rows in data frame are the match to the symbol filter
+<i class="no-highlight">444</i>&nbsp;                        // Fall through, search code will figure that this is special case
+<i class="no-highlight">445</i>&nbsp;                    }
+<i class="no-highlight">446</i>&nbsp;
+<b class="fc"><i class="no-highlight">447</i>&nbsp;                    if (samplePeriodStart == Numbers.LONG_NaN) {</b>
+<b class="fc"><i class="no-highlight">448</i>&nbsp;                        long rowId = indexFrameAddress &gt; 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;                        long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;                        samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;                        startFrom(samplePeriodStart);</b>
+<i class="no-highlight">452</i>&nbsp;                    }
+<i class="no-highlight">453</i>&nbsp;                    // Fall to STATE_SEARCH;
+<i class="no-highlight">454</i>&nbsp;
+<i class="no-highlight">455</i>&nbsp;                case STATE_OUT_BUFFER_FULL:
+<i class="no-highlight">456</i>&nbsp;                case STATE_SEARCH:
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                    int outPosition = crossRowState == NONE ? 0 : 1;</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;                    long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;                    long iFrameAddress = indexFrame.getAddress();</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                    long iFrameSize = indexFrame.getSize();</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;                    long lastIndexRowId = iFrameAddress &gt; 0</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;                            ? Unsafe.getUnsafe().getLong(iFrameAddress + (iFrameSize - 1) * Long.BYTES)</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                            : Long.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">464</i>&nbsp;                    long lastInDataRowId = Math.min(lastIndexRowId, dataFrameHi - 1);</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;                    long lastInDataTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + lastInDataRowId * Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                    int samplePeriodCount = fillSamplePeriodsUntil(lastInDataTimestamp);</b>
+<i class="no-highlight">467</i>&nbsp;
+<b class="fc"><i class="no-highlight">468</i>&nbsp;                    rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(</b>
+<i class="no-highlight">469</i>&nbsp;                            outPosition,
+<i class="no-highlight">470</i>&nbsp;                            frameNextRowId,
+<i class="no-highlight">471</i>&nbsp;                            dataFrameHi,
+<i class="no-highlight">472</i>&nbsp;                            offsetTimestampColumnAddress,
+<i class="no-highlight">473</i>&nbsp;                            dataFrameLo,
+<i class="no-highlight">474</i>&nbsp;                            iFrameAddress,
+<i class="no-highlight">475</i>&nbsp;                            iFrameSize,
+<i class="no-highlight">476</i>&nbsp;                            indexFramePosition,
+<b class="fc"><i class="no-highlight">477</i>&nbsp;                            samplePeriodAddress.getAddress(),</b>
+<i class="no-highlight">478</i>&nbsp;                            samplePeriodCount,
+<i class="no-highlight">479</i>&nbsp;                            samplePeriodIndexOffset,
+<b class="fc"><i class="no-highlight">480</i>&nbsp;                            rowIdOutAddress.getAddress(),</b>
+<i class="no-highlight">481</i>&nbsp;                            pageSize);
+<i class="no-highlight">482</i>&nbsp;
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                    boolean firstRowLastRowIdUpdated = rowsFound &lt; 0;</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;                    rowsFound = Math.abs(rowsFound);</b>
+<i class="no-highlight">485</i>&nbsp;
+<i class="no-highlight">486</i>&nbsp;                    // If first row last() RowId is updated
+<i class="no-highlight">487</i>&nbsp;                    // re-copy last values to crossFrameRow
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                    checkSaveLastValues(firstRowLastRowIdUpdated);</b>
+<i class="no-highlight">489</i>&nbsp;
+<b class="fc"><i class="no-highlight">490</i>&nbsp;                    int lastOutIndex = rowsFound &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT;</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                    prevSamplePeriodOffset = samplePeriodIndexOffset;</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                    indexFramePosition = (int) rowIdOutAddress.get(lastOutIndex + FIRST_OUT_INDEX);</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                    frameNextRowId = rowIdOutAddress.get(lastOutIndex + LAST_OUT_INDEX);</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;                    samplePeriodIndexOffset = rowIdOutAddress.get(lastOutIndex + TIMESTAMP_OUT_INDEX);</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                    samplePeriodStart = samplePeriodAddress.get(samplePeriodIndexOffset - prevSamplePeriodOffset);</b>
+<i class="no-highlight">496</i>&nbsp;
+<i class="no-highlight">497</i>&nbsp;                    // decide what to do next
+<i class="no-highlight">498</i>&nbsp;                    int newState;
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                    if (frameNextRowId &gt;= dataFrameHi) {</b>
+<i class="no-highlight">500</i>&nbsp;                        // Data frame exhausted. Next time start from fetching new data frame
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                        newState = STATE_FETCH_NEXT_DATA_FRAME;</b>
+<b class="fc"><i class="no-highlight">502</i>&nbsp;                    } else if (indexFramePosition &gt;= iFrameSize) {</b>
+<i class="no-highlight">503</i>&nbsp;                        // Index frame exhausted. Next time start from fetching new index frame
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                        newState = iFrameAddress &gt; 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                    } else if (rowsFound == pageSize - 1) {</b>
+<i class="no-highlight">506</i>&nbsp;                        // output rows filled the output buffers or
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                        newState = STATE_OUT_BUFFER_FULL;</b>
+<b class="fc"><i class="no-highlight">508</i>&nbsp;                    } else if (samplePeriodIndexOffset - prevSamplePeriodOffset == maxSamplePeriodSize - 1) {</b>
+<i class="no-highlight">509</i>&nbsp;                        //  search came to the end of sample by periods
+<i class="no-highlight">510</i>&nbsp;                        // re-fill periods and search again
+<b class="fc"><i class="no-highlight">511</i>&nbsp;                        newState = STATE_SEARCH;</b>
+<i class="no-highlight">512</i>&nbsp;                    } else {
+<i class="no-highlight">513</i>&nbsp;                        // Data frame exhausted. Next time start from fetching new data frame
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                        newState = STATE_FETCH_NEXT_DATA_FRAME;</b>
+<i class="no-highlight">515</i>&nbsp;                    }
+<i class="no-highlight">516</i>&nbsp;
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                    if (rowsFound &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;                        record.of(currentRow = 0);</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;                        newState = -newState;</b>
+<i class="no-highlight">520</i>&nbsp;                    }
+<i class="no-highlight">521</i>&nbsp;
+<i class="no-highlight">522</i>&nbsp;                    // No rows to iterate, return where to continue from (fetching next data or index frame)
+<b class="fc"><i class="no-highlight">523</i>&nbsp;                    return newState;</b>
+<i class="no-highlight">524</i>&nbsp;
+<i class="no-highlight">525</i>&nbsp;                case STATE_RETURN_LAST_ROW:
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                    if (crossRowState != NONE) {</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;                        record.of(currentRow = 0);</b>
+<i class="no-highlight">528</i>&nbsp;                        // Signal there is a row by returning negative value
+<b class="fc"><i class="no-highlight">529</i>&nbsp;                        return -STATE_DONE;</b>
+<i class="no-highlight">530</i>&nbsp;                    }
+<i class="no-highlight">531</i>&nbsp;                    // Fall through to STATE_DONE;
+<i class="no-highlight">532</i>&nbsp;
+<i class="no-highlight">533</i>&nbsp;                case STATE_DONE:
+<b class="fc"><i class="no-highlight">534</i>&nbsp;                    return STATE_DONE;</b>
+<i class="no-highlight">535</i>&nbsp;
+<i class="no-highlight">536</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">537</i>&nbsp;                    throw new UnsupportedOperationException(&quot;Invalid state &quot; + state);</b>
+<i class="no-highlight">538</i>&nbsp;            }
+<i class="no-highlight">539</i>&nbsp;        }
+<i class="no-highlight">540</i>&nbsp;
+<i class="no-highlight">541</i>&nbsp;        private boolean hasNext0() {
+<i class="no-highlight">542</i>&nbsp;            // Check if values from the last found sample by row have to be saved in crossFrameRow
+<b class="fc"><i class="no-highlight">543</i>&nbsp;            checkCrossRowAfterFoundBufferIterated();</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;            rowsFound = 0;</b>
+<i class="no-highlight">545</i>&nbsp;
+<b class="fc"><i class="no-highlight">546</i>&nbsp;            while (state != STATE_DONE) {</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                state = getNextState(state);</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                if (state &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                    state = -state;</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;                    return true;</b>
+<i class="no-highlight">551</i>&nbsp;                }
+<i class="no-highlight">552</i>&nbsp;            }
+<i class="no-highlight">553</i>&nbsp;
+<b class="fc"><i class="no-highlight">554</i>&nbsp;            return false;</b>
+<i class="no-highlight">555</i>&nbsp;        }
+<i class="no-highlight">556</i>&nbsp;
+<i class="no-highlight">557</i>&nbsp;        private void saveFirstLastValuesToCrossFrameRowBuffer() {
+<i class="no-highlight">558</i>&nbsp;            // Copies column values of all columns to cross frame row buffer for found row with index 0
+<b class="fc"><i class="no-highlight">559</i>&nbsp;            for (int i = 0, length = firstLastIndexByCol.length; i &lt; length; i++) {</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;                if (i == groupByTimestampIndex) {</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;                    long tsIndex = rowIdOutAddress.get(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset;</b>
+<b class="fc"><i class="no-highlight">562</i>&nbsp;                    crossFrameRow.set(i, samplePeriodAddress.get(tsIndex));</b>
+<b class="fc"><i class="no-highlight">563</i>&nbsp;                } else {</b>
+<b class="fc"><i class="no-highlight">564</i>&nbsp;                    long rowId = rowIdOutAddress.get(firstLastIndexByCol[i]);</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;                    saveRowIdValueToCrossRow(rowId, i);</b>
+<i class="no-highlight">566</i>&nbsp;                }
+<i class="no-highlight">567</i>&nbsp;            }
+<i class="no-highlight">568</i>&nbsp;        }
+<i class="no-highlight">569</i>&nbsp;
+<i class="no-highlight">570</i>&nbsp;        private void saveFixedColToBufferWithLongAlignment(int index, LongList crossFrameRow, int columnType, long pageAddress, long rowId) {
+<b class="fc"><i class="no-highlight">571</i>&nbsp;            switch (ColumnType.pow2SizeOf(columnType)) {</b>
+<i class="no-highlight">572</i>&nbsp;                case 3:
+<b class="fc"><i class="no-highlight">573</i>&nbsp;                    crossFrameRow.set(index, Unsafe.getUnsafe().getLong(pageAddress + (rowId &lt;&lt; 3)));</b>
+<b class="fc"><i class="no-highlight">574</i>&nbsp;                    break;</b>
+<i class="no-highlight">575</i>&nbsp;                case 2:
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                    crossFrameRow.set(index, Unsafe.getUnsafe().getInt(pageAddress + (rowId &lt;&lt; 2)));</b>
+<b class="fc"><i class="no-highlight">577</i>&nbsp;                    break;</b>
+<i class="no-highlight">578</i>&nbsp;                case 1:
+<b class="fc"><i class="no-highlight">579</i>&nbsp;                    crossFrameRow.set(index, Unsafe.getUnsafe().getShort(pageAddress + (rowId &lt;&lt; 1)));</b>
+<b class="fc"><i class="no-highlight">580</i>&nbsp;                    break;</b>
+<i class="no-highlight">581</i>&nbsp;                case 0:
+<b class="fc"><i class="no-highlight">582</i>&nbsp;                    crossFrameRow.set(index, Unsafe.getUnsafe().getByte(pageAddress + rowId));</b>
+<b class="fc"><i class="no-highlight">583</i>&nbsp;                    break;</b>
+<i class="no-highlight">584</i>&nbsp;                default:
+<b class="nc"><i class="no-highlight">585</i>&nbsp;                    throw new CairoException().put(&quot;first(), last() cannot be used with column type &quot;).put(ColumnType.nameOf(columnType));</b>
+<i class="no-highlight">586</i>&nbsp;            }
+<i class="no-highlight">587</i>&nbsp;        }
+<i class="no-highlight">588</i>&nbsp;
+<i class="no-highlight">589</i>&nbsp;        private void saveLastValuesToBuffer() {
+<i class="no-highlight">590</i>&nbsp;            // Copies only last() column values of all columns to cross frame row buffer for found row with index 0
+<b class="fc"><i class="no-highlight">591</i>&nbsp;            for (int columnIndex = 0, length = firstLastIndexByCol.length; columnIndex &lt; length; columnIndex++) {</b>
+<b class="fc"><i class="no-highlight">592</i>&nbsp;                if (firstLastIndexByCol[columnIndex] == LAST_OUT_INDEX) {</b>
+<i class="no-highlight">593</i>&nbsp;                    // last() values only
+<b class="fc"><i class="no-highlight">594</i>&nbsp;                    int frameColIndex = queryToFrameColumnMapping[columnIndex];</b>
+<b class="fc"><i class="no-highlight">595</i>&nbsp;                    assert currentFrame.getPageSize(frameColIndex) &gt; rowIdOutAddress.get(LAST_OUT_INDEX);</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;                    saveRowIdValueToCrossRow(rowIdOutAddress.get(LAST_OUT_INDEX), columnIndex);</b>
+<i class="no-highlight">597</i>&nbsp;                }
+<i class="no-highlight">598</i>&nbsp;            }
+<i class="no-highlight">599</i>&nbsp;        }
+<i class="no-highlight">600</i>&nbsp;
+<i class="no-highlight">601</i>&nbsp;        private void saveRowIdValueToCrossRow(long rowId, int columnIndex) {
+<b class="fc"><i class="no-highlight">602</i>&nbsp;            int columnType = getMetadata().getColumnType(columnIndex);</b>
+<b class="fc"><i class="no-highlight">603</i>&nbsp;            int frameColIndex = queryToFrameColumnMapping[columnIndex];</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;            long pageAddress = currentFrame.getPageAddress(frameColIndex);</b>
+<b class="fc"><i class="no-highlight">605</i>&nbsp;            if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">606</i>&nbsp;                saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);</b>
+<i class="no-highlight">607</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">608</i>&nbsp;                crossFrameRow.set(columnIndex, LongNullUtils.getLongNull(columnType));</b>
+<i class="no-highlight">609</i>&nbsp;            }
+<i class="no-highlight">610</i>&nbsp;        }
+<i class="no-highlight">611</i>&nbsp;
+<i class="no-highlight">612</i>&nbsp;        void of(
+<i class="no-highlight">613</i>&nbsp;                PageFrameCursor pageFrameCursor,
+<i class="no-highlight">614</i>&nbsp;                int groupBySymbolKey,
+<i class="no-highlight">615</i>&nbsp;                SqlExecutionContext sqlExecutionContext
+<i class="no-highlight">616</i>&nbsp;        ) throws SqlException {
+<b class="fc"><i class="no-highlight">617</i>&nbsp;            this.pageFrameCursor = pageFrameCursor;</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;            this.groupBySymbolKey = groupBySymbolKey;</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;            toTop();</b>
+<b class="fc"><i class="no-highlight">620</i>&nbsp;            parseParams(this, sqlExecutionContext);</b>
+<b class="fc"><i class="no-highlight">621</i>&nbsp;            initialized = false;</b>
+<i class="no-highlight">622</i>&nbsp;        }
+<i class="no-highlight">623</i>&nbsp;
+<b class="fc"><i class="no-highlight">624</i>&nbsp;        private class SampleByFirstLastRecord implements Record {</b>
+<b class="fc"><i class="no-highlight">625</i>&nbsp;            private final SampleByCrossRecord crossRecord = new SampleByCrossRecord();</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;            private final SampleByDataRecord dataRecord = new SampleByDataRecord();</b>
+<i class="no-highlight">627</i>&nbsp;
+<i class="no-highlight">628</i>&nbsp;            private Record currentRecord;
+<i class="no-highlight">629</i>&nbsp;
+<i class="no-highlight">630</i>&nbsp;            @Override
+<i class="no-highlight">631</i>&nbsp;            public byte getByte(int col) {
+<b class="fc"><i class="no-highlight">632</i>&nbsp;                return currentRecord.getByte(col);</b>
+<i class="no-highlight">633</i>&nbsp;            }
+<i class="no-highlight">634</i>&nbsp;
+<i class="no-highlight">635</i>&nbsp;            @Override
+<i class="no-highlight">636</i>&nbsp;            public char getChar(int col) {
+<b class="fc"><i class="no-highlight">637</i>&nbsp;                return currentRecord.getChar(col);</b>
+<i class="no-highlight">638</i>&nbsp;            }
+<i class="no-highlight">639</i>&nbsp;
+<i class="no-highlight">640</i>&nbsp;            @Override
+<i class="no-highlight">641</i>&nbsp;            public double getDouble(int col) {
+<b class="fc"><i class="no-highlight">642</i>&nbsp;                return currentRecord.getDouble(col);</b>
+<i class="no-highlight">643</i>&nbsp;            }
+<i class="no-highlight">644</i>&nbsp;
+<i class="no-highlight">645</i>&nbsp;            @Override
+<i class="no-highlight">646</i>&nbsp;            public float getFloat(int col) {
+<b class="fc"><i class="no-highlight">647</i>&nbsp;                return currentRecord.getFloat(col);</b>
+<i class="no-highlight">648</i>&nbsp;            }
+<i class="no-highlight">649</i>&nbsp;
+<i class="no-highlight">650</i>&nbsp;            @Override
+<i class="no-highlight">651</i>&nbsp;            public byte getGeoByte(int col) {
+<b class="fc"><i class="no-highlight">652</i>&nbsp;                return currentRecord.getGeoByte(col);</b>
+<i class="no-highlight">653</i>&nbsp;            }
+<i class="no-highlight">654</i>&nbsp;
+<i class="no-highlight">655</i>&nbsp;            @Override
+<i class="no-highlight">656</i>&nbsp;            public int getGeoInt(int col) {
+<b class="fc"><i class="no-highlight">657</i>&nbsp;                return currentRecord.getGeoInt(col);</b>
+<i class="no-highlight">658</i>&nbsp;            }
+<i class="no-highlight">659</i>&nbsp;
+<i class="no-highlight">660</i>&nbsp;            @Override
+<i class="no-highlight">661</i>&nbsp;            public long getGeoLong(int col) {
+<b class="fc"><i class="no-highlight">662</i>&nbsp;                return currentRecord.getGeoLong(col);</b>
+<i class="no-highlight">663</i>&nbsp;            }
+<i class="no-highlight">664</i>&nbsp;
+<i class="no-highlight">665</i>&nbsp;            @Override
+<i class="no-highlight">666</i>&nbsp;            public short getGeoShort(int col) {
+<b class="fc"><i class="no-highlight">667</i>&nbsp;                return currentRecord.getGeoShort(col);</b>
+<i class="no-highlight">668</i>&nbsp;            }
+<i class="no-highlight">669</i>&nbsp;
+<i class="no-highlight">670</i>&nbsp;            @Override
+<i class="no-highlight">671</i>&nbsp;            public int getInt(int col) {
+<b class="fc"><i class="no-highlight">672</i>&nbsp;                return currentRecord.getInt(col);</b>
+<i class="no-highlight">673</i>&nbsp;            }
+<i class="no-highlight">674</i>&nbsp;
+<i class="no-highlight">675</i>&nbsp;            @Override
+<i class="no-highlight">676</i>&nbsp;            public long getLong(int col) {
+<b class="fc"><i class="no-highlight">677</i>&nbsp;                return currentRecord.getLong(col);</b>
+<i class="no-highlight">678</i>&nbsp;            }
+<i class="no-highlight">679</i>&nbsp;
+<i class="no-highlight">680</i>&nbsp;            @Override
+<i class="no-highlight">681</i>&nbsp;            public short getShort(int col) {
+<b class="fc"><i class="no-highlight">682</i>&nbsp;                return currentRecord.getShort(col);</b>
+<i class="no-highlight">683</i>&nbsp;            }
+<i class="no-highlight">684</i>&nbsp;
+<i class="no-highlight">685</i>&nbsp;            @Override
+<i class="no-highlight">686</i>&nbsp;            public CharSequence getSym(int col) {
+<b class="fc"><i class="no-highlight">687</i>&nbsp;                return currentRecord.getSym(col);</b>
+<i class="no-highlight">688</i>&nbsp;            }
+<i class="no-highlight">689</i>&nbsp;
+<i class="no-highlight">690</i>&nbsp;            @Override
+<i class="no-highlight">691</i>&nbsp;            public long getTimestamp(int col) {
+<b class="fc"><i class="no-highlight">692</i>&nbsp;                return currentRecord.getTimestamp(col);</b>
+<i class="no-highlight">693</i>&nbsp;            }
+<i class="no-highlight">694</i>&nbsp;
+<i class="no-highlight">695</i>&nbsp;            public void of(long index) {
+<b class="fc"><i class="no-highlight">696</i>&nbsp;                if (index == 0) {</b>
+<b class="fc"><i class="no-highlight">697</i>&nbsp;                    currentRecord = crossRecord;</b>
+<i class="no-highlight">698</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">699</i>&nbsp;                    currentRecord = dataRecord.of(currentRow);</b>
+<i class="no-highlight">700</i>&nbsp;                }
+<i class="no-highlight">701</i>&nbsp;            }
+<i class="no-highlight">702</i>&nbsp;
+<i class="no-highlight">703</i>&nbsp;            public void switchFrame() {
+<b class="fc"><i class="no-highlight">704</i>&nbsp;                dataRecord.switchFrame();</b>
+<i class="no-highlight">705</i>&nbsp;            }
+<i class="no-highlight">706</i>&nbsp;
+<b class="fc"><i class="no-highlight">707</i>&nbsp;            private class SampleByCrossRecord implements Record {</b>
+<i class="no-highlight">708</i>&nbsp;                @Override
+<i class="no-highlight">709</i>&nbsp;                public byte getByte(int col) {
+<b class="fc"><i class="no-highlight">710</i>&nbsp;                    return (byte) crossFrameRow.getQuick(col);</b>
+<i class="no-highlight">711</i>&nbsp;                }
+<i class="no-highlight">712</i>&nbsp;
+<i class="no-highlight">713</i>&nbsp;                @Override
+<i class="no-highlight">714</i>&nbsp;                public char getChar(int col) {
+<b class="fc"><i class="no-highlight">715</i>&nbsp;                    return (char) crossFrameRow.getQuick(col);</b>
+<i class="no-highlight">716</i>&nbsp;                }
+<i class="no-highlight">717</i>&nbsp;
+<i class="no-highlight">718</i>&nbsp;                @Override
+<i class="no-highlight">719</i>&nbsp;                public double getDouble(int col) {
+<b class="fc"><i class="no-highlight">720</i>&nbsp;                    return Double.longBitsToDouble(crossFrameRow.getQuick(col));</b>
+<i class="no-highlight">721</i>&nbsp;                }
+<i class="no-highlight">722</i>&nbsp;
+<i class="no-highlight">723</i>&nbsp;                @Override
+<i class="no-highlight">724</i>&nbsp;                public float getFloat(int col) {
+<b class="fc"><i class="no-highlight">725</i>&nbsp;                    return Float.intBitsToFloat((int) crossFrameRow.getQuick(col));</b>
+<i class="no-highlight">726</i>&nbsp;                }
+<i class="no-highlight">727</i>&nbsp;
+<i class="no-highlight">728</i>&nbsp;                @Override
+<i class="no-highlight">729</i>&nbsp;                public byte getGeoByte(int col) {
+<b class="fc"><i class="no-highlight">730</i>&nbsp;                    return getByte(col);</b>
+<i class="no-highlight">731</i>&nbsp;                }
+<i class="no-highlight">732</i>&nbsp;
+<i class="no-highlight">733</i>&nbsp;                @Override
+<i class="no-highlight">734</i>&nbsp;                public int getGeoInt(int col) {
+<b class="fc"><i class="no-highlight">735</i>&nbsp;                    return getInt(col);</b>
+<i class="no-highlight">736</i>&nbsp;                }
+<i class="no-highlight">737</i>&nbsp;
+<i class="no-highlight">738</i>&nbsp;                @Override
+<i class="no-highlight">739</i>&nbsp;                public long getGeoLong(int col) {
+<b class="fc"><i class="no-highlight">740</i>&nbsp;                    return getLong(col);</b>
+<i class="no-highlight">741</i>&nbsp;                }
+<i class="no-highlight">742</i>&nbsp;
+<i class="no-highlight">743</i>&nbsp;                @Override
+<i class="no-highlight">744</i>&nbsp;                public short getGeoShort(int col) {
+<b class="fc"><i class="no-highlight">745</i>&nbsp;                    return getShort(col);</b>
+<i class="no-highlight">746</i>&nbsp;                }
+<i class="no-highlight">747</i>&nbsp;
+<i class="no-highlight">748</i>&nbsp;                @Override
+<i class="no-highlight">749</i>&nbsp;                public int getInt(int col) {
+<b class="fc"><i class="no-highlight">750</i>&nbsp;                    return (int) crossFrameRow.getQuick(col);</b>
+<i class="no-highlight">751</i>&nbsp;                }
+<i class="no-highlight">752</i>&nbsp;
+<i class="no-highlight">753</i>&nbsp;                @Override
+<i class="no-highlight">754</i>&nbsp;                public long getLong(int col) {
+<b class="fc"><i class="no-highlight">755</i>&nbsp;                    return crossFrameRow.getQuick(col);</b>
+<i class="no-highlight">756</i>&nbsp;                }
+<i class="no-highlight">757</i>&nbsp;
+<i class="no-highlight">758</i>&nbsp;                @Override
+<i class="no-highlight">759</i>&nbsp;                public short getShort(int col) {
+<b class="fc"><i class="no-highlight">760</i>&nbsp;                    return (short) crossFrameRow.getQuick(col);</b>
+<i class="no-highlight">761</i>&nbsp;                }
+<i class="no-highlight">762</i>&nbsp;
+<i class="no-highlight">763</i>&nbsp;                @Override
+<i class="no-highlight">764</i>&nbsp;                public CharSequence getSym(int col) {
+<b class="fc"><i class="no-highlight">765</i>&nbsp;                    int symbolId = (int) crossFrameRow.getQuick(col);</b>
+<b class="fc"><i class="no-highlight">766</i>&nbsp;                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);</b>
+<i class="no-highlight">767</i>&nbsp;                }
+<i class="no-highlight">768</i>&nbsp;
+<i class="no-highlight">769</i>&nbsp;                @Override
+<i class="no-highlight">770</i>&nbsp;                public long getTimestamp(int col) {
+<b class="fc"><i class="no-highlight">771</i>&nbsp;                    return getLong(col);</b>
+<i class="no-highlight">772</i>&nbsp;                }
+<i class="no-highlight">773</i>&nbsp;            }
+<i class="no-highlight">774</i>&nbsp;
+<b class="fc"><i class="no-highlight">775</i>&nbsp;            private class SampleByDataRecord implements Record {</b>
+<b class="fc"><i class="no-highlight">776</i>&nbsp;                private final long[] pageAddresses = new long[queryToFrameColumnMapping.length];</b>
+<i class="no-highlight">777</i>&nbsp;                private long currentRow;
+<i class="no-highlight">778</i>&nbsp;
+<i class="no-highlight">779</i>&nbsp;                @Override
+<i class="no-highlight">780</i>&nbsp;                public byte getByte(int col) {
+<b class="fc"><i class="no-highlight">781</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">782</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">783</i>&nbsp;                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));</b>
+<i class="no-highlight">784</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">785</i>&nbsp;                        return 0;</b>
+<i class="no-highlight">786</i>&nbsp;                    }
+<i class="no-highlight">787</i>&nbsp;                }
+<i class="no-highlight">788</i>&nbsp;
+<i class="no-highlight">789</i>&nbsp;                @Override
+<i class="no-highlight">790</i>&nbsp;                public char getChar(int col) {
+<b class="fc"><i class="no-highlight">791</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">792</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">793</i>&nbsp;                        return Unsafe.getUnsafe().getChar(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 1));</b>
+<i class="no-highlight">794</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">795</i>&nbsp;                        return 0;</b>
+<i class="no-highlight">796</i>&nbsp;                    }
+<i class="no-highlight">797</i>&nbsp;                }
+<i class="no-highlight">798</i>&nbsp;
+<i class="no-highlight">799</i>&nbsp;                @Override
+<i class="no-highlight">800</i>&nbsp;                public double getDouble(int col) {
+<b class="fc"><i class="no-highlight">801</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">802</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;                        return Unsafe.getUnsafe().getDouble(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 3));</b>
+<i class="no-highlight">804</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">805</i>&nbsp;                        return Double.NaN;</b>
+<i class="no-highlight">806</i>&nbsp;                    }
+<i class="no-highlight">807</i>&nbsp;                }
+<i class="no-highlight">808</i>&nbsp;
+<i class="no-highlight">809</i>&nbsp;                @Override
+<i class="no-highlight">810</i>&nbsp;                public float getFloat(int col) {
+<b class="fc"><i class="no-highlight">811</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">812</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;                        return Unsafe.getUnsafe().getFloat(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</b>
+<i class="no-highlight">814</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">815</i>&nbsp;                        return Float.NaN;</b>
+<i class="no-highlight">816</i>&nbsp;                    }
+<i class="no-highlight">817</i>&nbsp;                }
+<i class="no-highlight">818</i>&nbsp;
+<i class="no-highlight">819</i>&nbsp;                @Override
+<i class="no-highlight">820</i>&nbsp;                public byte getGeoByte(int col) {
+<b class="fc"><i class="no-highlight">821</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">822</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">823</i>&nbsp;                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));</b>
+<i class="no-highlight">824</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">825</i>&nbsp;                        return GeoHashes.BYTE_NULL;</b>
+<i class="no-highlight">826</i>&nbsp;                    }
+<i class="no-highlight">827</i>&nbsp;                }
+<i class="no-highlight">828</i>&nbsp;
+<i class="no-highlight">829</i>&nbsp;                @Override
+<i class="no-highlight">830</i>&nbsp;                public int getGeoInt(int col) {
+<b class="fc"><i class="no-highlight">831</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">832</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">833</i>&nbsp;                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</b>
+<i class="no-highlight">834</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">835</i>&nbsp;                        return GeoHashes.INT_NULL;</b>
+<i class="no-highlight">836</i>&nbsp;                    }
+<i class="no-highlight">837</i>&nbsp;                }
+<i class="no-highlight">838</i>&nbsp;
+<i class="no-highlight">839</i>&nbsp;                @Override
+<i class="no-highlight">840</i>&nbsp;                public long getGeoLong(int col) {
+<b class="fc"><i class="no-highlight">841</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">842</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">843</i>&nbsp;                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 3));</b>
+<i class="no-highlight">844</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">845</i>&nbsp;                        return GeoHashes.NULL;</b>
+<i class="no-highlight">846</i>&nbsp;                    }
+<i class="no-highlight">847</i>&nbsp;                }
+<i class="no-highlight">848</i>&nbsp;
+<i class="no-highlight">849</i>&nbsp;                @Override
+<i class="no-highlight">850</i>&nbsp;                public short getGeoShort(int col) {
+<b class="fc"><i class="no-highlight">851</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">852</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">853</i>&nbsp;                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 1));</b>
+<i class="no-highlight">854</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">855</i>&nbsp;                        return GeoHashes.SHORT_NULL;</b>
+<i class="no-highlight">856</i>&nbsp;                    }
+<i class="no-highlight">857</i>&nbsp;                }
+<i class="no-highlight">858</i>&nbsp;
+<i class="no-highlight">859</i>&nbsp;                @Override
+<i class="no-highlight">860</i>&nbsp;                public int getInt(int col) {
+<b class="fc"><i class="no-highlight">861</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">862</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">863</i>&nbsp;                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</b>
+<i class="no-highlight">864</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">865</i>&nbsp;                        return Numbers.INT_NaN;</b>
+<i class="no-highlight">866</i>&nbsp;                    }
+<i class="no-highlight">867</i>&nbsp;                }
+<i class="no-highlight">868</i>&nbsp;
+<i class="no-highlight">869</i>&nbsp;                @Override
+<i class="no-highlight">870</i>&nbsp;                public long getLong(int col) {
+<b class="fc"><i class="no-highlight">871</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">872</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">873</i>&nbsp;                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 3));</b>
+<i class="no-highlight">874</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">875</i>&nbsp;                        return Numbers.LONG_NaN;</b>
+<i class="no-highlight">876</i>&nbsp;                    }
+<i class="no-highlight">877</i>&nbsp;                }
+<i class="no-highlight">878</i>&nbsp;
+<i class="no-highlight">879</i>&nbsp;                @Override
+<i class="no-highlight">880</i>&nbsp;                public short getShort(int col) {
+<b class="fc"><i class="no-highlight">881</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">882</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">883</i>&nbsp;                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 1));</b>
+<i class="no-highlight">884</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">885</i>&nbsp;                        return 0;</b>
+<i class="no-highlight">886</i>&nbsp;                    }
+<i class="no-highlight">887</i>&nbsp;                }
+<i class="no-highlight">888</i>&nbsp;
+<i class="no-highlight">889</i>&nbsp;                @Override
+<i class="no-highlight">890</i>&nbsp;                public CharSequence getSym(int col) {
+<i class="no-highlight">891</i>&nbsp;                    int symbolId;
+<b class="fc"><i class="no-highlight">892</i>&nbsp;                    long pageAddress = pageAddresses[col];</b>
+<b class="fc"><i class="no-highlight">893</i>&nbsp;                    if (pageAddress &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">894</i>&nbsp;                        symbolId = Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</b>
+<i class="no-highlight">895</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">896</i>&nbsp;                        symbolId = SymbolTable.VALUE_IS_NULL;</b>
+<i class="no-highlight">897</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">898</i>&nbsp;                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);</b>
+<i class="no-highlight">899</i>&nbsp;                }
+<i class="no-highlight">900</i>&nbsp;
+<i class="no-highlight">901</i>&nbsp;                @Override
+<i class="no-highlight">902</i>&nbsp;                public long getTimestamp(int col) {
+<b class="fc"><i class="no-highlight">903</i>&nbsp;                    if (col == timestampIndex) {</b>
+<i class="no-highlight">904</i>&nbsp;                        // Special case - timestamp the sample by runs on
+<i class="no-highlight">905</i>&nbsp;                        // Take it from timestampOutBuff instead of column
+<i class="no-highlight">906</i>&nbsp;                        // It&#39;s the value of the beginning of the group, not where the first row found
+<b class="fc"><i class="no-highlight">907</i>&nbsp;                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);</b>
+<i class="no-highlight">908</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">909</i>&nbsp;                    return getLong(col);</b>
+<i class="no-highlight">910</i>&nbsp;                }
+<i class="no-highlight">911</i>&nbsp;
+<i class="no-highlight">912</i>&nbsp;                public SampleByDataRecord of(long currentRow) {
+<b class="fc"><i class="no-highlight">913</i>&nbsp;                    this.currentRow = currentRow;</b>
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                    return this;</b>
+<i class="no-highlight">915</i>&nbsp;                }
+<i class="no-highlight">916</i>&nbsp;
+<i class="no-highlight">917</i>&nbsp;                public void switchFrame() {
+<b class="fc"><i class="no-highlight">918</i>&nbsp;                    for (int i = 0, length = pageAddresses.length; i &lt; length; i++) {</b>
+<b class="fc"><i class="no-highlight">919</i>&nbsp;                        pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);</b>
+<i class="no-highlight">920</i>&nbsp;                    }
+<i class="no-highlight">921</i>&nbsp;                }
+<i class="no-highlight">922</i>&nbsp;
+<i class="no-highlight">923</i>&nbsp;                private long getRowId(int col) {
+<b class="fc"><i class="no-highlight">924</i>&nbsp;                    return rowIdOutAddress.get((currentRow &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT) + col);</b>
+<i class="no-highlight">925</i>&nbsp;                }
+<i class="no-highlight">926</i>&nbsp;            }
+<i class="no-highlight">927</i>&nbsp;        }
+<i class="no-highlight">928</i>&nbsp;    }
+<i class="no-highlight">929</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

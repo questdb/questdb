@@ -1,0 +1,251 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > IOUringAccessor</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: IOUringAccessor (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">IOUringAccessor</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/26)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<b class="nc"><i class="no-highlight">27</i>&nbsp;public class IOUringAccessor {</b>
+<i class="no-highlight">28</i>&nbsp;
+<i class="no-highlight">29</i>&nbsp;    static final short CQE_RES_OFFSET;
+<i class="no-highlight">30</i>&nbsp;    static final short CQE_USER_DATA_OFFSET;
+<i class="no-highlight">31</i>&nbsp;    static final short CQ_CQES_OFFSET;
+<i class="no-highlight">32</i>&nbsp;    static final short CQ_KHEAD_OFFSET;
+<i class="no-highlight">33</i>&nbsp;    static final short CQ_KRING_ENTRIES_OFFSET;
+<i class="no-highlight">34</i>&nbsp;    static final short CQ_KRING_MASK_OFFSET;
+<i class="no-highlight">35</i>&nbsp;    static final short CQ_KTAIL_OFFSET;
+<i class="no-highlight">36</i>&nbsp;    static final byte IORING_OP_NOP = 0;
+<i class="no-highlight">37</i>&nbsp;    static final byte IORING_OP_READ = 22;
+<i class="no-highlight">38</i>&nbsp;    static final short RING_FD_OFFSET;
+<i class="no-highlight">39</i>&nbsp;    static final short SIZEOF_CQE;
+<i class="no-highlight">40</i>&nbsp;    static final short SIZEOF_SQE;
+<i class="no-highlight">41</i>&nbsp;    static final short SQE_ADDR_OFFSET;
+<i class="no-highlight">42</i>&nbsp;    static final short SQE_FD_OFFSET;
+<i class="no-highlight">43</i>&nbsp;    static final short SQE_LEN_OFFSET;
+<i class="no-highlight">44</i>&nbsp;    static final short SQE_OFF_OFFSET;
+<i class="no-highlight">45</i>&nbsp;    static final short SQE_OPCODE_OFFSET;
+<i class="no-highlight">46</i>&nbsp;    static final short SQE_USER_DATA_OFFSET;
+<i class="no-highlight">47</i>&nbsp;    static final short SQ_KHEAD_OFFSET;
+<i class="no-highlight">48</i>&nbsp;    static final short SQ_KRING_ENTRIES_OFFSET;
+<i class="no-highlight">49</i>&nbsp;    static final short SQ_KRING_MASK_OFFSET;
+<i class="no-highlight">50</i>&nbsp;    static final short SQ_KTAIL_OFFSET;
+<i class="no-highlight">51</i>&nbsp;    static final short SQ_SQES_OFFSET;
+<i class="no-highlight">52</i>&nbsp;    static final short SQ_SQE_HEAD_OFFSET;
+<i class="no-highlight">53</i>&nbsp;    static final short SQ_SQE_TAIL_OFFSET;
+<i class="no-highlight">54</i>&nbsp;
+<i class="no-highlight">55</i>&nbsp;    static native void close(long ptr);
+<i class="no-highlight">56</i>&nbsp;
+<i class="no-highlight">57</i>&nbsp;    static native long create(int capacity);
+<i class="no-highlight">58</i>&nbsp;
+<i class="no-highlight">59</i>&nbsp;    static native short getCqCqesOffset();
+<i class="no-highlight">60</i>&nbsp;
+<i class="no-highlight">61</i>&nbsp;    static native short getCqKheadOffset();
+<i class="no-highlight">62</i>&nbsp;
+<i class="no-highlight">63</i>&nbsp;    static native short getCqKringEntriesOffset();
+<i class="no-highlight">64</i>&nbsp;
+<i class="no-highlight">65</i>&nbsp;    static native short getCqKringMaskOffset();
+<i class="no-highlight">66</i>&nbsp;
+<i class="no-highlight">67</i>&nbsp;    static native short getCqKtailOffset();
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;    static native short getCqOffset();
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;    static native short getCqeResOffset();
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    static native short getCqeSize();
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;    static native short getCqeUserDataOffset();
+<i class="no-highlight">76</i>&nbsp;
+<i class="no-highlight">77</i>&nbsp;    static native short getRingFdOffset();
+<i class="no-highlight">78</i>&nbsp;
+<i class="no-highlight">79</i>&nbsp;    static native short getSqKheadOffset();
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    static native short getSqKringEntriesOffset();
+<i class="no-highlight">82</i>&nbsp;
+<i class="no-highlight">83</i>&nbsp;    static native short getSqKringMaskOffset();
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    static native short getSqKtailOffset();
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;    static native short getSqOffset();
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;    static native short getSqSqeHeadOffset();
+<i class="no-highlight">90</i>&nbsp;
+<i class="no-highlight">91</i>&nbsp;    static native short getSqSqeTailOffset();
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    static native short getSqSqesOffset();
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    static native short getSqeAddrOffset();
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    static native short getSqeFDOffset();
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;    static native short getSqeLenOffset();
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;    static native short getSqeOffOffset();
+<i class="no-highlight">102</i>&nbsp;
+<i class="no-highlight">103</i>&nbsp;    static native short getSqeOpcodeOffset();
+<i class="no-highlight">104</i>&nbsp;
+<i class="no-highlight">105</i>&nbsp;    static native short getSqeSize();
+<i class="no-highlight">106</i>&nbsp;
+<i class="no-highlight">107</i>&nbsp;    static native short getSqeUserDataOffset();
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;    static native String kernelVersion();
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    static native int submit(long ptr);
+<i class="no-highlight">112</i>&nbsp;
+<i class="no-highlight">113</i>&nbsp;    static native int submitAndWait(long ptr, int waitNr);
+<i class="no-highlight">114</i>&nbsp;
+<i class="no-highlight">115</i>&nbsp;    static {
+<b class="nc"><i class="no-highlight">116</i>&nbsp;        RING_FD_OFFSET = getRingFdOffset();</b>
+<i class="no-highlight">117</i>&nbsp;
+<b class="nc"><i class="no-highlight">118</i>&nbsp;        final short sqOffset = getSqOffset();</b>
+<b class="nc"><i class="no-highlight">119</i>&nbsp;        SQ_KHEAD_OFFSET = (short) (sqOffset + getSqKheadOffset());</b>
+<b class="nc"><i class="no-highlight">120</i>&nbsp;        SQ_KTAIL_OFFSET = (short) (sqOffset + getSqKtailOffset());</b>
+<b class="nc"><i class="no-highlight">121</i>&nbsp;        SQ_KRING_MASK_OFFSET = (short) (sqOffset + getSqKringMaskOffset());</b>
+<b class="nc"><i class="no-highlight">122</i>&nbsp;        SQ_KRING_ENTRIES_OFFSET = (short) (sqOffset + getSqKringEntriesOffset());</b>
+<b class="nc"><i class="no-highlight">123</i>&nbsp;        SQ_SQES_OFFSET = (short) (sqOffset + getSqSqesOffset());</b>
+<b class="nc"><i class="no-highlight">124</i>&nbsp;        SQ_SQE_HEAD_OFFSET = (short) (sqOffset + getSqSqeHeadOffset());</b>
+<b class="nc"><i class="no-highlight">125</i>&nbsp;        SQ_SQE_TAIL_OFFSET = (short) (sqOffset + getSqSqeTailOffset());</b>
+<i class="no-highlight">126</i>&nbsp;
+<b class="nc"><i class="no-highlight">127</i>&nbsp;        SIZEOF_SQE = getSqeSize();</b>
+<b class="nc"><i class="no-highlight">128</i>&nbsp;        SQE_OPCODE_OFFSET = getSqeOpcodeOffset();</b>
+<b class="nc"><i class="no-highlight">129</i>&nbsp;        SQE_FD_OFFSET = getSqeFDOffset();</b>
+<b class="nc"><i class="no-highlight">130</i>&nbsp;        SQE_OFF_OFFSET = getSqeOffOffset();</b>
+<b class="nc"><i class="no-highlight">131</i>&nbsp;        SQE_ADDR_OFFSET = getSqeAddrOffset();</b>
+<b class="nc"><i class="no-highlight">132</i>&nbsp;        SQE_LEN_OFFSET = getSqeLenOffset();</b>
+<b class="nc"><i class="no-highlight">133</i>&nbsp;        SQE_USER_DATA_OFFSET = getSqeUserDataOffset();</b>
+<i class="no-highlight">134</i>&nbsp;
+<b class="nc"><i class="no-highlight">135</i>&nbsp;        final short cqOffset = getCqOffset();</b>
+<b class="nc"><i class="no-highlight">136</i>&nbsp;        CQ_KHEAD_OFFSET = (short) (cqOffset + getCqKheadOffset());</b>
+<b class="nc"><i class="no-highlight">137</i>&nbsp;        CQ_KTAIL_OFFSET = (short) (cqOffset + getCqKtailOffset());</b>
+<b class="nc"><i class="no-highlight">138</i>&nbsp;        CQ_KRING_MASK_OFFSET = (short) (cqOffset + getCqKringMaskOffset());</b>
+<b class="nc"><i class="no-highlight">139</i>&nbsp;        CQ_KRING_ENTRIES_OFFSET = (short) (sqOffset + getCqKringEntriesOffset());</b>
+<b class="nc"><i class="no-highlight">140</i>&nbsp;        CQ_CQES_OFFSET = (short) (cqOffset + getCqCqesOffset());</b>
+<i class="no-highlight">141</i>&nbsp;
+<b class="nc"><i class="no-highlight">142</i>&nbsp;        SIZEOF_CQE = getCqeSize();</b>
+<b class="nc"><i class="no-highlight">143</i>&nbsp;        CQE_USER_DATA_OFFSET = getCqeUserDataOffset();</b>
+<b class="nc"><i class="no-highlight">144</i>&nbsp;        CQE_RES_OFFSET = getCqeResOffset();</b>
+<i class="no-highlight">145</i>&nbsp;    }
+<i class="no-highlight">146</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

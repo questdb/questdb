@@ -1,0 +1,367 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > RuntimeIntervalModel</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.model</a>
+</div>
+
+<h1>Coverage Summary for Class: RuntimeIntervalModel (io.questdb.griffin.model)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">RuntimeIntervalModel</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (12/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.3%
+  </span>
+  <span class="absValue">
+    (102/107)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.model;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.PartitionBy;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">34</i>&nbsp;
+<i class="no-highlight">35</i>&nbsp;import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
+<i class="no-highlight">38</i>&nbsp;    private final ObjList&lt;Function&gt; dynamicRangeList;
+<i class="no-highlight">39</i>&nbsp;    // These 2 are incoming model
+<i class="no-highlight">40</i>&nbsp;    private final LongList intervals;
+<i class="no-highlight">41</i>&nbsp;    // This used to assemble result
+<i class="no-highlight">42</i>&nbsp;    private LongList outIntervals;
+<i class="no-highlight">43</i>&nbsp;
+<i class="no-highlight">44</i>&nbsp;    public RuntimeIntervalModel(LongList intervals) {
+<b class="fc"><i class="no-highlight">45</i>&nbsp;        this(intervals, null);</b>
+<i class="no-highlight">46</i>&nbsp;    }
+<i class="no-highlight">47</i>&nbsp;
+<b class="fc"><i class="no-highlight">48</i>&nbsp;    public RuntimeIntervalModel(LongList staticIntervals, ObjList&lt;Function&gt; dynamicRangeList) {</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;        this.intervals = staticIntervals;</b>
+<i class="no-highlight">50</i>&nbsp;
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        this.dynamicRangeList = dynamicRangeList;</b>
+<i class="no-highlight">52</i>&nbsp;    }
+<i class="no-highlight">53</i>&nbsp;
+<i class="no-highlight">54</i>&nbsp;    @Override
+<i class="no-highlight">55</i>&nbsp;    public boolean allIntervalsHitOnePartition(int partitionBy) {
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));</b>
+<i class="no-highlight">57</i>&nbsp;    }
+<i class="no-highlight">58</i>&nbsp;
+<i class="no-highlight">59</i>&nbsp;    @Override
+<i class="no-highlight">60</i>&nbsp;    public LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        if (isStatic()) {</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;            return intervals;</b>
+<i class="no-highlight">63</i>&nbsp;        }
+<i class="no-highlight">64</i>&nbsp;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        if (outIntervals == null) {</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;            outIntervals = new LongList();</b>
+<i class="no-highlight">67</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">68</i>&nbsp;            outIntervals.clear();</b>
+<i class="no-highlight">69</i>&nbsp;        }
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;        // Copy static part
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        int dynamicStart = intervals.size() - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        outIntervals.add(intervals, 0, dynamicStart);</b>
+<i class="no-highlight">74</i>&nbsp;
+<i class="no-highlight">75</i>&nbsp;        // Evaluate intervals involving functions
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        addEvaluateDynamicIntervals(outIntervals, sqlContext);</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        return outIntervals;</b>
+<i class="no-highlight">78</i>&nbsp;    }
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;    @Override
+<i class="no-highlight">81</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        Misc.freeObjList(dynamicRangeList);</b>
+<i class="no-highlight">83</i>&nbsp;    }
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    @Override
+<i class="no-highlight">86</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        if (intervals != null &amp;&amp; intervals.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;            sink.val(&quot;[static=&quot;).val(intervals);</b>
+<i class="no-highlight">89</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        if (dynamicRangeList != null &amp;&amp; dynamicRangeList.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            sink.val(&quot; dynamic=&quot;).val(dynamicRangeList).val(&quot;]&quot;);</b>
+<i class="no-highlight">92</i>&nbsp;        }
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlContext) throws SqlException {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        int size = intervals.size();</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        int dynamicIndex = 0;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        boolean firstFuncApplied = false;</b>
+<i class="no-highlight">100</i>&nbsp;
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        for (int i = dynamicStart; i &lt; size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;            short operation = IntervalUtils.getEncodedOperation(intervals, i);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;            boolean negated = operation &gt; IntervalOperation.NEGATED_BORDERLINE;</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;            int divider = outIntervals.size();</b>
+<i class="no-highlight">106</i>&nbsp;
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            if (dynamicFunction == null) {</b>
+<i class="no-highlight">108</i>&nbsp;                // copy 4 longs to output and apply the operation
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);</b>
+<i class="no-highlight">111</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);</b>
+<i class="no-highlight">116</i>&nbsp;
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                dynamicFunction.init(null, sqlContext);</b>
+<i class="no-highlight">118</i>&nbsp;
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                if (operation != IntervalOperation.INTERSECT_INTERVALS &amp;&amp; operation != IntervalOperation.SUBTRACT_INTERVALS) {</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                    long dynamicValue = getTimestamp(dynamicFunction);</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                    long dynamicValue2 = 0;</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                    if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {</b>
+<i class="no-highlight">123</i>&nbsp;                        // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                        i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;                        dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                        dynamicFunction.init(null, sqlContext);</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                        dynamicValue2 = hi = getTimestamp(dynamicFunction);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                        lo = dynamicValue;</b>
+<i class="no-highlight">129</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                        if ((dynamicHiLo &amp; IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;                            hi = dynamicValue + adjustment;</b>
+<i class="no-highlight">132</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                        if ((dynamicHiLo &amp; IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                            lo = dynamicValue + adjustment;</b>
+<i class="no-highlight">135</i>&nbsp;                        }
+<i class="no-highlight">136</i>&nbsp;                    }
+<i class="no-highlight">137</i>&nbsp;
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                    if (dynamicValue == Numbers.LONG_NaN || dynamicValue2 == Numbers.LONG_NaN) {</b>
+<i class="no-highlight">139</i>&nbsp;                        // functions evaluated to null.
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                        if (!negated) {</b>
+<i class="no-highlight">141</i>&nbsp;                            // return empty set if it&#39;s not negated
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                            outIntervals.clear();</b>
+<i class="no-highlight">143</i>&nbsp;                            return;
+<i class="no-highlight">144</i>&nbsp;                        } else {
+<i class="no-highlight">145</i>&nbsp;                            // or full set
+<b class="fc"><i class="no-highlight">146</i>&nbsp;                            negatedNothing(outIntervals, divider);</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;                            continue;</b>
+<i class="no-highlight">148</i>&nbsp;                        }
+<i class="no-highlight">149</i>&nbsp;                    }
+<i class="no-highlight">150</i>&nbsp;
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                    if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;                        long tempHi = Math.max(hi, lo);</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;                        lo = Math.min(hi, lo);</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                        hi = tempHi;</b>
+<i class="no-highlight">155</i>&nbsp;                    }
+<i class="no-highlight">156</i>&nbsp;
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                    outIntervals.extendAndSet(divider + 1, hi);</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;                    outIntervals.setQuick(divider, lo);</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                    if (divider == 0 &amp;&amp; negated) {</b>
+<i class="no-highlight">160</i>&nbsp;                        // Divider == 0 means it&#39;s the first interval applied
+<i class="no-highlight">161</i>&nbsp;                        // Invert the interval, since it will not be applied negated to anything
+<b class="fc"><i class="no-highlight">162</i>&nbsp;                        IntervalUtils.invert(outIntervals, divider);</b>
+<i class="no-highlight">163</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">164</i>&nbsp;                } else {</b>
+<i class="no-highlight">165</i>&nbsp;                    // This is subtract or intersect with a string interval (not a single timestamp)
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                    CharSequence strValue = dynamicFunction.getStr(null);</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                    if (operation == IntervalOperation.INTERSECT_INTERVALS) {</b>
+<i class="no-highlight">168</i>&nbsp;                        // This is intersect
+<b class="fc"><i class="no-highlight">169</i>&nbsp;                        if (parseIntervalFails(outIntervals, strValue)) {</b>
+<i class="no-highlight">170</i>&nbsp;                            // return empty set
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                            outIntervals.clear();</b>
+<i class="no-highlight">172</i>&nbsp;                            return;
+<i class="no-highlight">173</i>&nbsp;                        }
+<i class="no-highlight">174</i>&nbsp;                    } else {
+<i class="no-highlight">175</i>&nbsp;                        // This is subtract
+<b class="fc"><i class="no-highlight">176</i>&nbsp;                        if (parseIntervalFails(outIntervals, strValue)) {</b>
+<i class="no-highlight">177</i>&nbsp;                            // full set
+<b class="fc"><i class="no-highlight">178</i>&nbsp;                            negatedNothing(outIntervals, divider);</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                            continue;</b>
+<i class="no-highlight">180</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                        IntervalUtils.invert(outIntervals, divider);</b>
+<i class="no-highlight">182</i>&nbsp;                    }
+<i class="no-highlight">183</i>&nbsp;                }
+<i class="no-highlight">184</i>&nbsp;            }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;            // Do not apply operation (intersect, subtract)
+<i class="no-highlight">187</i>&nbsp;            // if this is first element and no pre-calculated static intervals exist
+<b class="fc"><i class="no-highlight">188</i>&nbsp;            if (firstFuncApplied || divider &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                switch (operation) {</b>
+<i class="no-highlight">190</i>&nbsp;                    case IntervalOperation.INTERSECT:
+<i class="no-highlight">191</i>&nbsp;                    case IntervalOperation.INTERSECT_BETWEEN:
+<i class="no-highlight">192</i>&nbsp;                    case IntervalOperation.INTERSECT_INTERVALS:
+<i class="no-highlight">193</i>&nbsp;                    case IntervalOperation.SUBTRACT_INTERVALS:
+<b class="fc"><i class="no-highlight">194</i>&nbsp;                        IntervalUtils.intersectInplace(outIntervals, divider);</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                        break;</b>
+<i class="no-highlight">196</i>&nbsp;                    case IntervalOperation.SUBTRACT:
+<i class="no-highlight">197</i>&nbsp;                    case IntervalOperation.SUBTRACT_BETWEEN:
+<b class="fc"><i class="no-highlight">198</i>&nbsp;                        IntervalUtils.subtract(outIntervals, divider);</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;                        break;</b>
+<i class="no-highlight">200</i>&nbsp;                    // UNION cannot be the first thing at the moment.
+<i class="no-highlight">201</i>&nbsp;                    default:
+<b class="nc"><i class="no-highlight">202</i>&nbsp;                        throw new UnsupportedOperationException(&quot;Interval operation &quot; + operation + &quot; is not supported&quot;);</b>
+<i class="no-highlight">203</i>&nbsp;                }
+<i class="no-highlight">204</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">205</i>&nbsp;            firstFuncApplied = true;</b>
+<i class="no-highlight">206</i>&nbsp;        }
+<i class="no-highlight">207</i>&nbsp;    }
+<i class="no-highlight">208</i>&nbsp;
+<i class="no-highlight">209</i>&nbsp;    private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        if (!isStatic()) {</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;            return false;</b>
+<i class="no-highlight">212</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">213</i>&nbsp;        if (intervals.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            return true;</b>
+<i class="no-highlight">215</i>&nbsp;        }
+<i class="no-highlight">216</i>&nbsp;
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        long floor = floorMethod.floor(intervals.getQuick(0));</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        for (int i = 1, n = intervals.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;            if (floor != floorMethod.floor(intervals.getQuick(i))) {</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;                return false;</b>
+<i class="no-highlight">221</i>&nbsp;            }
+<i class="no-highlight">222</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        return true;</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    private long getTimestamp(Function dynamicFunction) {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        if (ColumnType.isString(dynamicFunction.getType())) {</b>
+<b class="nc"><i class="no-highlight">228</i>&nbsp;            CharSequence value = dynamicFunction.getStr(null);</b>
+<i class="no-highlight">229</i>&nbsp;            try {
+<b class="nc"><i class="no-highlight">230</i>&nbsp;                return IntervalUtils.parseFloorPartialTimestamp(value);</b>
+<b class="nc"><i class="no-highlight">231</i>&nbsp;            } catch (NumericException e) {</b>
+<b class="nc"><i class="no-highlight">232</i>&nbsp;                return Numbers.LONG_NaN;</b>
+<i class="no-highlight">233</i>&nbsp;            }
+<i class="no-highlight">234</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        return dynamicFunction.getTimestamp(null);</b>
+<i class="no-highlight">236</i>&nbsp;    }
+<i class="no-highlight">237</i>&nbsp;
+<i class="no-highlight">238</i>&nbsp;    private boolean isStatic() {
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        return dynamicRangeList == null || dynamicRangeList.size() == 0;</b>
+<i class="no-highlight">240</i>&nbsp;    }
+<i class="no-highlight">241</i>&nbsp;
+<i class="no-highlight">242</i>&nbsp;    private void negatedNothing(LongList outIntervals, int divider) {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        outIntervals.setPos(divider);</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        if (divider == 0) {</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;            outIntervals.extendAndSet(1, Long.MAX_VALUE);</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;            outIntervals.extendAndSet(0, Long.MIN_VALUE);</b>
+<i class="no-highlight">247</i>&nbsp;        }
+<i class="no-highlight">248</i>&nbsp;    }
+<i class="no-highlight">249</i>&nbsp;
+<i class="no-highlight">250</i>&nbsp;    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        if (strValue != null) {</b>
+<i class="no-highlight">252</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">253</i>&nbsp;                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            } catch (SqlException e) {</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                return true;</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            return false;</b>
+<i class="no-highlight">259</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        return true;</b>
+<i class="no-highlight">261</i>&nbsp;    }
+<i class="no-highlight">262</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

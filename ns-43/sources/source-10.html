@@ -1,0 +1,979 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > BytecodeAssembler</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: BytecodeAssembler (io.questdb.std)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">BytecodeAssembler</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (96/112)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    77.9%
+  </span>
+  <span class="absValue">
+    (239/307)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">BytecodeAssembler$Utf8Appender</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.3%
+  </span>
+  <span class="absValue">
+    (5/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    77.8%
+  </span>
+  <span class="absValue">
+    (14/18)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    85.6%
+  </span>
+  <span class="absValue">
+    (101/118)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    77.8%
+  </span>
+  <span class="absValue">
+    (253/325)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.ex.BytecodeException;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.str.AbstractCharSink;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">32</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;import java.io.FileOutputStream;
+<i class="no-highlight">35</i>&nbsp;import java.nio.ByteBuffer;
+<i class="no-highlight">36</i>&nbsp;import java.nio.ByteOrder;
+<i class="no-highlight">37</i>&nbsp;
+<b class="fc"><i class="no-highlight">38</i>&nbsp;public class BytecodeAssembler {</b>
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;    private static final int ACC_PRIVATE = 0x02;
+<i class="no-highlight">41</i>&nbsp;    private static final int ACC_PUBLIC = 0x01;
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    private static final Log LOG = LogFactory.getLog(BytecodeAssembler.class);</b>
+<i class="no-highlight">43</i>&nbsp;    private static final int O_POOL_COUNT = 8;
+<i class="no-highlight">44</i>&nbsp;    private static final int aload = 0x19;
+<i class="no-highlight">45</i>&nbsp;    private static final int aload_0 = 0x2a;
+<i class="no-highlight">46</i>&nbsp;    private static final int aload_1 = 0x2b;
+<i class="no-highlight">47</i>&nbsp;    private static final int aload_2 = 0x2c;
+<i class="no-highlight">48</i>&nbsp;    private static final int aload_3 = 0x2d;
+<i class="no-highlight">49</i>&nbsp;    private static final int bipush = 0x10;
+<i class="no-highlight">50</i>&nbsp;    private static final int iconst_0 = 3;
+<i class="no-highlight">51</i>&nbsp;    private static final int iconst_m1 = 2;
+<i class="no-highlight">52</i>&nbsp;    private static final int iinc = 0x84;
+<i class="no-highlight">53</i>&nbsp;    private static final int iload = 0x15;
+<i class="no-highlight">54</i>&nbsp;    private static final int iload_0 = 0x1a;
+<i class="no-highlight">55</i>&nbsp;    private static final int iload_1 = 0x1b;
+<i class="no-highlight">56</i>&nbsp;    private static final int iload_2 = 0x1c;
+<i class="no-highlight">57</i>&nbsp;    private static final int iload_3 = 0x1d;
+<i class="no-highlight">58</i>&nbsp;    private static final int invokespecial = 183;
+<i class="no-highlight">59</i>&nbsp;    private static final int istore = 0x36;
+<i class="no-highlight">60</i>&nbsp;    private static final int istore_0 = 0x3b;
+<i class="no-highlight">61</i>&nbsp;    private static final int istore_1 = 0x3c;
+<i class="no-highlight">62</i>&nbsp;    private static final int istore_2 = 0x3d;
+<i class="no-highlight">63</i>&nbsp;    private static final int istore_3 = 0x3e;
+<i class="no-highlight">64</i>&nbsp;    private static final int lload = 0x16;
+<i class="no-highlight">65</i>&nbsp;    private static final int lload_0 = 0x1e;
+<i class="no-highlight">66</i>&nbsp;    private static final int lload_1 = 0x1f;
+<i class="no-highlight">67</i>&nbsp;    private static final int lload_2 = 0x20;
+<i class="no-highlight">68</i>&nbsp;    private static final int lload_3 = 0x21;
+<i class="no-highlight">69</i>&nbsp;    private static final int lstore = 0x37;
+<i class="no-highlight">70</i>&nbsp;    private static final int lstore_0 = 0x3f;
+<i class="no-highlight">71</i>&nbsp;    private static final int lstore_1 = 0x40;
+<i class="no-highlight">72</i>&nbsp;    private static final int lstore_2 = 0x41;
+<i class="no-highlight">73</i>&nbsp;    private static final int lstore_3 = 0x42;
+<i class="no-highlight">74</i>&nbsp;    private static final int sipush = 0x11;
+<b class="fc"><i class="no-highlight">75</i>&nbsp;    private final ObjIntHashMap&lt;Class&lt;?&gt;&gt; classCache = new ObjIntHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;    private final Utf8Appender utf8Appender = new Utf8Appender();</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;    private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();</b>
+<i class="no-highlight">78</i>&nbsp;    private ByteBuffer buf;
+<i class="no-highlight">79</i>&nbsp;    private int codeAttributeIndex;
+<i class="no-highlight">80</i>&nbsp;    private int codeAttributeStart;
+<i class="no-highlight">81</i>&nbsp;    private int codeStart;
+<i class="no-highlight">82</i>&nbsp;    private int defaultConstructorDescIndex;
+<i class="no-highlight">83</i>&nbsp;    private int defaultConstructorMethodIndex;
+<i class="no-highlight">84</i>&nbsp;    private int defaultConstructorNameIndex;
+<i class="no-highlight">85</i>&nbsp;    private Class&lt;?&gt; host;
+<i class="no-highlight">86</i>&nbsp;    private int objectClassIndex;
+<i class="no-highlight">87</i>&nbsp;    private int poolCount;
+<i class="no-highlight">88</i>&nbsp;    private int stackMapTableCut;
+<i class="no-highlight">89</i>&nbsp;
+<b class="fc"><i class="no-highlight">90</i>&nbsp;    public BytecodeAssembler() {</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        this.buf = ByteBuffer.allocate(1024 * 1024).order(ByteOrder.BIG_ENDIAN);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        this.poolCount = 1;</b>
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    public void aload(int value) {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        optimisedIO(aload_0, aload_1, aload_2, aload_3, aload, value);</b>
+<i class="no-highlight">97</i>&nbsp;    }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;    public void append_frame(int itemCount, int offset) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        putByte(0xfc + itemCount - 1);</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        putShort(offset);</b>
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">105</i>&nbsp;    public void athrow() {
+<b class="nc"><i class="no-highlight">106</i>&nbsp;        putByte(0xbf);</b>
+<i class="no-highlight">107</i>&nbsp;    }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">110</i>&nbsp;    public void d2f() {
+<b class="nc"><i class="no-highlight">111</i>&nbsp;        putShort(0x90);</b>
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">115</i>&nbsp;    public void d2i() {
+<b class="nc"><i class="no-highlight">116</i>&nbsp;        putShort(0x8E);</b>
+<i class="no-highlight">117</i>&nbsp;    }
+<i class="no-highlight">118</i>&nbsp;
+<i class="no-highlight">119</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">120</i>&nbsp;    public void d2l() {
+<b class="nc"><i class="no-highlight">121</i>&nbsp;        putShort(0x8F);</b>
+<i class="no-highlight">122</i>&nbsp;    }
+<i class="no-highlight">123</i>&nbsp;
+<i class="no-highlight">124</i>&nbsp;    public void dcmpg() {
+<b class="nc"><i class="no-highlight">125</i>&nbsp;        putByte(0x98);</b>
+<i class="no-highlight">126</i>&nbsp;    }
+<i class="no-highlight">127</i>&nbsp;
+<i class="no-highlight">128</i>&nbsp;    public void defineClass(int thisClassIndex) {
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        defineClass(thisClassIndex, objectClassIndex);</b>
+<i class="no-highlight">130</i>&nbsp;    }
+<i class="no-highlight">131</i>&nbsp;
+<i class="no-highlight">132</i>&nbsp;    public void defineClass(int thisClassIndex, int superclassIndex) {
+<i class="no-highlight">133</i>&nbsp;        // access flags
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        putShort(ACC_PUBLIC);</b>
+<i class="no-highlight">135</i>&nbsp;        // this class index
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        putShort(thisClassIndex);</b>
+<i class="no-highlight">137</i>&nbsp;        // super class
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        putShort(superclassIndex);</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    public void defineDefaultConstructor() {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        defineDefaultConstructor(defaultConstructorMethodIndex);</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    public void defineDefaultConstructor(int superIndex) {
+<i class="no-highlight">146</i>&nbsp;        // constructor method entry
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        startMethod(defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);</b>
+<i class="no-highlight">148</i>&nbsp;        // code
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        aload(0);</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        putByte(invokespecial);</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        putShort(superIndex);</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        return_();</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        endMethodCode();</b>
+<i class="no-highlight">154</i>&nbsp;        // exceptions
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        putShort(0);</b>
+<i class="no-highlight">156</i>&nbsp;        // attribute count
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        putShort(0);</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        endMethod();</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    public void defineField(int nameIndex, int typeIndex) {
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        putShort(ACC_PRIVATE);</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        putShort(nameIndex);</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        putShort(typeIndex);</b>
+<i class="no-highlight">165</i>&nbsp;        // attribute count
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        putShort(0);</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    public void dump(String path) {
+<b class="nc"><i class="no-highlight">170</i>&nbsp;        try (FileOutputStream fos = new FileOutputStream(path)) {</b>
+<b class="nc"><i class="no-highlight">171</i>&nbsp;            int p = buf.position();</b>
+<b class="nc"><i class="no-highlight">172</i>&nbsp;            int l = buf.limit();</b>
+<b class="nc"><i class="no-highlight">173</i>&nbsp;            buf.flip();</b>
+<b class="nc"><i class="no-highlight">174</i>&nbsp;            fos.getChannel().write(buf);</b>
+<b class="nc"><i class="no-highlight">175</i>&nbsp;            buf.limit(l);</b>
+<b class="nc"><i class="no-highlight">176</i>&nbsp;            buf.position(p);</b>
+<b class="nc"><i class="no-highlight">177</i>&nbsp;        } catch (Exception e) {</b>
+<b class="nc"><i class="no-highlight">178</i>&nbsp;            e.printStackTrace();</b>
+<b class="nc"><i class="no-highlight">179</i>&nbsp;        }</b>
+<i class="no-highlight">180</i>&nbsp;    }
+<i class="no-highlight">181</i>&nbsp;
+<i class="no-highlight">182</i>&nbsp;    public void dup() {
+<b class="nc"><i class="no-highlight">183</i>&nbsp;        putByte(0x59);</b>
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">187</i>&nbsp;    public void dup2() {
+<b class="nc"><i class="no-highlight">188</i>&nbsp;        putByte(0x5c);</b>
+<i class="no-highlight">189</i>&nbsp;    }
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;    public void endMethod() {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        putInt(codeAttributeStart - 4, position() - codeAttributeStart);</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    public void endMethodCode() {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        int len = position() - codeStart;</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        if (len &gt; 64 * 1024) {</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;            LOG.error().$(&quot;Too much input to generate &quot;).$(host.getName()).$(&quot;. Bytecode is too long&quot;).$();</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;            throw BytecodeException.INSTANCE;</b>
+<i class="no-highlight">200</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        putInt(codeStart - 4, position() - codeStart);</b>
+<i class="no-highlight">202</i>&nbsp;    }
+<i class="no-highlight">203</i>&nbsp;
+<i class="no-highlight">204</i>&nbsp;    public void endStackMapTables() {
+<b class="fc"><i class="no-highlight">205</i>&nbsp;        putInt(stackMapTableCut, position() - stackMapTableCut - 4);</b>
+<i class="no-highlight">206</i>&nbsp;    }
+<i class="no-highlight">207</i>&nbsp;
+<i class="no-highlight">208</i>&nbsp;    public void f2d() {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        putShort(0x8D);</b>
+<i class="no-highlight">210</i>&nbsp;    }
+<i class="no-highlight">211</i>&nbsp;
+<i class="no-highlight">212</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">213</i>&nbsp;    public void f2i() {
+<b class="nc"><i class="no-highlight">214</i>&nbsp;        putShort(0x8B);</b>
+<i class="no-highlight">215</i>&nbsp;    }
+<i class="no-highlight">216</i>&nbsp;
+<i class="no-highlight">217</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">218</i>&nbsp;    public void f2l() {
+<b class="nc"><i class="no-highlight">219</i>&nbsp;        putShort(0x8C);</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    public void fieldCount(int count) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        putShort(count);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    public void finishPool() {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        putShort(O_POOL_COUNT, poolCount);</b>
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    public void full_frame(int offset) {
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        putByte(0xff);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        putShort(offset);</b>
+<i class="no-highlight">233</i>&nbsp;    }
+<i class="no-highlight">234</i>&nbsp;
+<i class="no-highlight">235</i>&nbsp;    public int getCodeStart() {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        return codeStart;</b>
+<i class="no-highlight">237</i>&nbsp;    }
+<i class="no-highlight">238</i>&nbsp;
+<i class="no-highlight">239</i>&nbsp;    public int getPoolCount() {
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        return poolCount;</b>
+<i class="no-highlight">241</i>&nbsp;    }
+<i class="no-highlight">242</i>&nbsp;
+<i class="no-highlight">243</i>&nbsp;    public void getfield(int index) {
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        putByte(0xb4);</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        putShort(index);</b>
+<i class="no-highlight">246</i>&nbsp;    }
+<i class="no-highlight">247</i>&nbsp;
+<i class="no-highlight">248</i>&nbsp;    public int goto_() {
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        return genericGoto(0xa7);</b>
+<i class="no-highlight">250</i>&nbsp;    }
+<i class="no-highlight">251</i>&nbsp;
+<i class="no-highlight">252</i>&nbsp;    public void i2b() {
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        putShort(0x91);</b>
+<i class="no-highlight">254</i>&nbsp;    }
+<i class="no-highlight">255</i>&nbsp;
+<i class="no-highlight">256</i>&nbsp;    public void i2d() {
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        putShort(0x87);</b>
+<i class="no-highlight">258</i>&nbsp;    }
+<i class="no-highlight">259</i>&nbsp;
+<i class="no-highlight">260</i>&nbsp;    public void i2f() {
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        putShort(0x86);</b>
+<i class="no-highlight">262</i>&nbsp;    }
+<i class="no-highlight">263</i>&nbsp;
+<i class="no-highlight">264</i>&nbsp;    public void i2l() {
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        putShort(0x85);</b>
+<i class="no-highlight">266</i>&nbsp;    }
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;    public void i2s() {
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        putShort(0x93);</b>
+<i class="no-highlight">270</i>&nbsp;    }
+<i class="no-highlight">271</i>&nbsp;
+<i class="no-highlight">272</i>&nbsp;    public void iadd() {
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        putByte(0x60);</b>
+<i class="no-highlight">274</i>&nbsp;    }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;    public void iconst(int v) {
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        if (v == -1) {</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            putByte(iconst_m1);</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        } else if (v &gt; -1 &amp;&amp; v &lt; 6) {</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;            putByte(iconst_0 + v);</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        } else if (v &lt; 0 &amp;&amp; v &gt;= Short.MIN_VALUE) {</b>
+<b class="nc"><i class="no-highlight">282</i>&nbsp;            putByte(sipush);</b>
+<b class="nc"><i class="no-highlight">283</i>&nbsp;            putShort(v);</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        } else if (v &lt; 128 &amp;&amp; v &gt;= Short.MIN_VALUE) {</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;            putByte(bipush);</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;            putByte(v);</b>
+<i class="no-highlight">287</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            putByte(sipush);</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            assert v &gt;= Short.MIN_VALUE &amp;&amp; v &lt;= Short.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            putShort(v);</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<i class="no-highlight">292</i>&nbsp;    }
+<i class="no-highlight">293</i>&nbsp;
+<i class="no-highlight">294</i>&nbsp;    public int if_icmpge() {
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        return genericGoto(0xa2);</b>
+<i class="no-highlight">296</i>&nbsp;    }
+<i class="no-highlight">297</i>&nbsp;
+<i class="no-highlight">298</i>&nbsp;    public int if_icmpne() {
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        return genericGoto(0xa0);</b>
+<i class="no-highlight">300</i>&nbsp;    }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;    @SuppressWarnings(&quot;unused&quot;)
+<i class="no-highlight">303</i>&nbsp;    public int ifle() {
+<b class="nc"><i class="no-highlight">304</i>&nbsp;        return genericGoto(0x9e);</b>
+<i class="no-highlight">305</i>&nbsp;    }
+<i class="no-highlight">306</i>&nbsp;
+<i class="no-highlight">307</i>&nbsp;    public int iflt() {
+<b class="nc"><i class="no-highlight">308</i>&nbsp;        return genericGoto(0x9b);</b>
+<i class="no-highlight">309</i>&nbsp;    }
+<i class="no-highlight">310</i>&nbsp;
+<i class="no-highlight">311</i>&nbsp;    public int ifne() {
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        return genericGoto(0x9a);</b>
+<i class="no-highlight">313</i>&nbsp;    }
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;    public void iinc(int index, int inc) {
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        putByte(iinc);</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        putByte(index);</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;        putByte(inc);</b>
+<i class="no-highlight">319</i>&nbsp;    }
+<i class="no-highlight">320</i>&nbsp;
+<i class="no-highlight">321</i>&nbsp;    public void iload(int value) {
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        optimisedIO(iload_0, iload_1, iload_2, iload_3, iload, value);</b>
+<i class="no-highlight">323</i>&nbsp;    }
+<i class="no-highlight">324</i>&nbsp;
+<i class="no-highlight">325</i>&nbsp;    public void ineg() {
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        putByte(0x74);</b>
+<i class="no-highlight">327</i>&nbsp;    }
+<i class="no-highlight">328</i>&nbsp;
+<i class="no-highlight">329</i>&nbsp;    public void init(Class&lt;?&gt; host) {
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        this.host = host;</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        this.buf.clear();</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        this.poolCount = 1;</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        this.utf8Cache.clear();</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;        this.classCache.clear();</b>
+<i class="no-highlight">335</i>&nbsp;    }
+<i class="no-highlight">336</i>&nbsp;
+<i class="no-highlight">337</i>&nbsp;    public void interfaceCount(int count) {
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        putShort(count);</b>
+<i class="no-highlight">339</i>&nbsp;    }
+<i class="no-highlight">340</i>&nbsp;
+<i class="no-highlight">341</i>&nbsp;    // The count operand of the invokeinterface instruction records a measure of the number of
+<i class="no-highlight">342</i>&nbsp;    // argument values, where an argument value of type long or type double contributes two
+<i class="no-highlight">343</i>&nbsp;    // units to the count value and an argument of any other type contributes one unit. This
+<i class="no-highlight">344</i>&nbsp;    // information can also be derived from the descriptor of the selected method. The redundancy is
+<i class="no-highlight">345</i>&nbsp;    // historical
+<i class="no-highlight">346</i>&nbsp;    public void invokeInterface(int interfaceIndex, int argCount) {
+<b class="fc"><i class="no-highlight">347</i>&nbsp;        putByte(185);</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;        putShort(interfaceIndex);</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        putByte(argCount + 1);</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;        putByte(0);</b>
+<i class="no-highlight">351</i>&nbsp;    }
+<i class="no-highlight">352</i>&nbsp;
+<i class="no-highlight">353</i>&nbsp;    public void invokeInterface(int interfaceIndex) {
+<b class="fc"><i class="no-highlight">354</i>&nbsp;        invokeInterface(interfaceIndex, 1);</b>
+<i class="no-highlight">355</i>&nbsp;    }
+<i class="no-highlight">356</i>&nbsp;
+<i class="no-highlight">357</i>&nbsp;    public void invokeStatic(int index) {
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        putByte(184);</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        putShort(index);</b>
+<i class="no-highlight">360</i>&nbsp;    }
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;    public void invokeVirtual(int index) {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        putByte(182);</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        putShort(index);</b>
+<i class="no-highlight">365</i>&nbsp;    }
+<i class="no-highlight">366</i>&nbsp;
+<i class="no-highlight">367</i>&nbsp;    public void irem() {
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        putByte(0x70);</b>
+<i class="no-highlight">369</i>&nbsp;    }
+<i class="no-highlight">370</i>&nbsp;
+<i class="no-highlight">371</i>&nbsp;    public void ireturn() {
+<b class="fc"><i class="no-highlight">372</i>&nbsp;        putByte(0xac);</b>
+<i class="no-highlight">373</i>&nbsp;    }
+<i class="no-highlight">374</i>&nbsp;
+<i class="no-highlight">375</i>&nbsp;    public void istore(int value) {
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        optimisedIO(istore_0, istore_1, istore_2, istore_3, istore, value);</b>
+<i class="no-highlight">377</i>&nbsp;    }
+<i class="no-highlight">378</i>&nbsp;
+<i class="no-highlight">379</i>&nbsp;    public void isub() {
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        putByte(0x64);</b>
+<i class="no-highlight">381</i>&nbsp;    }
+<i class="no-highlight">382</i>&nbsp;
+<i class="no-highlight">383</i>&nbsp;    public void l2d() {
+<b class="fc"><i class="no-highlight">384</i>&nbsp;        putShort(0x8A);</b>
+<i class="no-highlight">385</i>&nbsp;    }
+<i class="no-highlight">386</i>&nbsp;
+<i class="no-highlight">387</i>&nbsp;    public void l2f() {
+<b class="fc"><i class="no-highlight">388</i>&nbsp;        putShort(0x89);</b>
+<i class="no-highlight">389</i>&nbsp;    }
+<i class="no-highlight">390</i>&nbsp;
+<i class="no-highlight">391</i>&nbsp;    public void l2i() {
+<b class="fc"><i class="no-highlight">392</i>&nbsp;        putShort(0x88);</b>
+<i class="no-highlight">393</i>&nbsp;    }
+<i class="no-highlight">394</i>&nbsp;
+<i class="no-highlight">395</i>&nbsp;    public void lcmp() {
+<b class="fc"><i class="no-highlight">396</i>&nbsp;        putByte(0x94);</b>
+<i class="no-highlight">397</i>&nbsp;    }
+<i class="no-highlight">398</i>&nbsp;
+<i class="no-highlight">399</i>&nbsp;    public void lconst_0() {
+<b class="fc"><i class="no-highlight">400</i>&nbsp;        putByte(0x09);</b>
+<i class="no-highlight">401</i>&nbsp;    }
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;    public void ldc(int index) {
+<b class="fc"><i class="no-highlight">404</i>&nbsp;        if (index &lt; 256) {</b>
+<b class="fc"><i class="no-highlight">405</i>&nbsp;            putByte(0x12);</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;            putByte(index);</b>
+<i class="no-highlight">407</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">408</i>&nbsp;            ldc_w(index);</b>
+<i class="no-highlight">409</i>&nbsp;        }
+<i class="no-highlight">410</i>&nbsp;    }
+<i class="no-highlight">411</i>&nbsp;
+<i class="no-highlight">412</i>&nbsp;    public void ldc2_w(int index) {
+<b class="fc"><i class="no-highlight">413</i>&nbsp;        putByte(0x14);</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;        putShort(index);</b>
+<i class="no-highlight">415</i>&nbsp;    }
+<i class="no-highlight">416</i>&nbsp;
+<i class="no-highlight">417</i>&nbsp;    public void ldc_w(int index) {
+<b class="fc"><i class="no-highlight">418</i>&nbsp;        putByte(0x13);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;        putShort(index);</b>
+<i class="no-highlight">420</i>&nbsp;    }
+<i class="no-highlight">421</i>&nbsp;
+<i class="no-highlight">422</i>&nbsp;    public void lload(int value) {
+<b class="fc"><i class="no-highlight">423</i>&nbsp;        optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);</b>
+<i class="no-highlight">424</i>&nbsp;    }
+<i class="no-highlight">425</i>&nbsp;
+<i class="no-highlight">426</i>&nbsp;    public void lmul() {
+<b class="fc"><i class="no-highlight">427</i>&nbsp;        putByte(0x69);</b>
+<i class="no-highlight">428</i>&nbsp;    }
+<i class="no-highlight">429</i>&nbsp;
+<i class="no-highlight">430</i>&nbsp;    @SuppressWarnings(&quot;unchecked&quot;)
+<i class="no-highlight">431</i>&nbsp;    @Nullable
+<i class="no-highlight">432</i>&nbsp;    public &lt;T&gt; Class&lt;T&gt; loadClass(Class&lt;?&gt; host) {
+<b class="fc"><i class="no-highlight">433</i>&nbsp;        byte[] b = new byte[position()];</b>
+<b class="fc"><i class="no-highlight">434</i>&nbsp;        System.arraycopy(buf.array(), 0, b, 0, b.length);</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        return (Class&lt;T&gt;) Unsafe.defineAnonymousClass(host, b);</b>
+<i class="no-highlight">436</i>&nbsp;    }
+<i class="no-highlight">437</i>&nbsp;
+<i class="no-highlight">438</i>&nbsp;    public void lreturn() {
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        putByte(0xad);</b>
+<i class="no-highlight">440</i>&nbsp;    }
+<i class="no-highlight">441</i>&nbsp;
+<i class="no-highlight">442</i>&nbsp;    public void lstore(int value) {
+<b class="fc"><i class="no-highlight">443</i>&nbsp;        optimisedIO(lstore_0, lstore_1, lstore_2, lstore_3, lstore, value);</b>
+<i class="no-highlight">444</i>&nbsp;    }
+<i class="no-highlight">445</i>&nbsp;
+<i class="no-highlight">446</i>&nbsp;    public void methodCount(int count) {
+<b class="fc"><i class="no-highlight">447</i>&nbsp;        putShort(count);</b>
+<i class="no-highlight">448</i>&nbsp;    }
+<i class="no-highlight">449</i>&nbsp;
+<i class="no-highlight">450</i>&nbsp;    public &lt;T&gt; T newInstance() {
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        Class&lt;T&gt; x = loadClass(host);</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        assert x != null;</b>
+<i class="no-highlight">453</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">454</i>&nbsp;            return x.getDeclaredConstructor().newInstance();</b>
+<b class="nc"><i class="no-highlight">455</i>&nbsp;        } catch (Exception e) {</b>
+<b class="nc"><i class="no-highlight">456</i>&nbsp;            LOG.critical().$(&quot;could not create an instance of &quot;).$(host.getName()).$(&quot;, cause: &quot;).$(e).$();</b>
+<b class="nc"><i class="no-highlight">457</i>&nbsp;            throw BytecodeException.INSTANCE;</b>
+<i class="no-highlight">458</i>&nbsp;        }
+<i class="no-highlight">459</i>&nbsp;    }
+<i class="no-highlight">460</i>&nbsp;
+<i class="no-highlight">461</i>&nbsp;    public int poolClass(int classIndex) {
+<b class="fc"><i class="no-highlight">462</i>&nbsp;        putByte(0x07);</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;        putShort(classIndex);</b>
+<b class="fc"><i class="no-highlight">464</i>&nbsp;        return poolCount++;</b>
+<i class="no-highlight">465</i>&nbsp;    }
+<i class="no-highlight">466</i>&nbsp;
+<i class="no-highlight">467</i>&nbsp;    public int poolClass(Class&lt;?&gt; clazz) {
+<b class="fc"><i class="no-highlight">468</i>&nbsp;        int index = classCache.keyIndex(clazz);</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;        if (index &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;            String name = clazz.getName();</b>
+<b class="fc"><i class="no-highlight">471</i>&nbsp;            putByte(0x01);</b>
+<i class="no-highlight">472</i>&nbsp;            int n;
+<b class="fc"><i class="no-highlight">473</i>&nbsp;            putShort(n = name.length());</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;                char c = name.charAt(i);</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;                if (c == &#39;.&#39;) {</b>
+<b class="fc"><i class="no-highlight">477</i>&nbsp;                    putByte(&#39;/&#39;);</b>
+<i class="no-highlight">478</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                    putByte(c);</b>
+<i class="no-highlight">480</i>&nbsp;                }
+<i class="no-highlight">481</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">482</i>&nbsp;            int result = poolClass(this.poolCount++);</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;            classCache.putAt(index, clazz, result);</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;            return result;</b>
+<i class="no-highlight">485</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">486</i>&nbsp;        return classCache.valueAt(index);</b>
+<i class="no-highlight">487</i>&nbsp;    }
+<i class="no-highlight">488</i>&nbsp;
+<i class="no-highlight">489</i>&nbsp;    public int poolDoubleConst(double value) {
+<b class="nc"><i class="no-highlight">490</i>&nbsp;        putByte(0x06);</b>
+<b class="nc"><i class="no-highlight">491</i>&nbsp;        putDouble(value);</b>
+<b class="nc"><i class="no-highlight">492</i>&nbsp;        int index = poolCount;</b>
+<b class="nc"><i class="no-highlight">493</i>&nbsp;        poolCount += 2;</b>
+<b class="nc"><i class="no-highlight">494</i>&nbsp;        return index;</b>
+<i class="no-highlight">495</i>&nbsp;    }
+<i class="no-highlight">496</i>&nbsp;
+<i class="no-highlight">497</i>&nbsp;    public int poolField(int classIndex, int nameAndTypeIndex) {
+<b class="fc"><i class="no-highlight">498</i>&nbsp;        return poolRef(0x09, classIndex, nameAndTypeIndex);</b>
+<i class="no-highlight">499</i>&nbsp;    }
+<i class="no-highlight">500</i>&nbsp;
+<i class="no-highlight">501</i>&nbsp;    public void poolIntConst(int value) {
+<b class="fc"><i class="no-highlight">502</i>&nbsp;        putByte(0x03);</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;        putInt(value);</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;        poolCount += 1;</b>
+<i class="no-highlight">505</i>&nbsp;    }
+<i class="no-highlight">506</i>&nbsp;
+<i class="no-highlight">507</i>&nbsp;    public int poolInterfaceMethod(Class&lt;?&gt; clazz, String name, String sig) {
+<b class="fc"><i class="no-highlight">508</i>&nbsp;        return poolInterfaceMethod(poolClass(clazz), poolNameAndType(poolUtf8(name), poolUtf8(sig)));</b>
+<i class="no-highlight">509</i>&nbsp;    }
+<i class="no-highlight">510</i>&nbsp;
+<i class="no-highlight">511</i>&nbsp;    public int poolInterfaceMethod(int classIndex, String name, String sig) {
+<b class="fc"><i class="no-highlight">512</i>&nbsp;        return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));</b>
+<i class="no-highlight">513</i>&nbsp;    }
+<i class="no-highlight">514</i>&nbsp;
+<i class="no-highlight">515</i>&nbsp;    public int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
+<b class="fc"><i class="no-highlight">516</i>&nbsp;        return poolRef(0x0B, classIndex, nameAndTypeIndex);</b>
+<i class="no-highlight">517</i>&nbsp;    }
+<i class="no-highlight">518</i>&nbsp;
+<i class="no-highlight">519</i>&nbsp;    public int poolLongConst(long value) {
+<b class="fc"><i class="no-highlight">520</i>&nbsp;        putByte(0x05);</b>
+<b class="fc"><i class="no-highlight">521</i>&nbsp;        putLong(value);</b>
+<b class="fc"><i class="no-highlight">522</i>&nbsp;        int index = poolCount;</b>
+<b class="fc"><i class="no-highlight">523</i>&nbsp;        poolCount += 2;</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;        return index;</b>
+<i class="no-highlight">525</i>&nbsp;    }
+<i class="no-highlight">526</i>&nbsp;
+<i class="no-highlight">527</i>&nbsp;    public int poolMethod(int classIndex, int nameAndTypeIndex) {
+<b class="fc"><i class="no-highlight">528</i>&nbsp;        return poolRef(0x0A, classIndex, nameAndTypeIndex);</b>
+<i class="no-highlight">529</i>&nbsp;    }
+<i class="no-highlight">530</i>&nbsp;
+<i class="no-highlight">531</i>&nbsp;    public int poolMethod(int classIndex, CharSequence methodName, CharSequence signature) {
+<b class="fc"><i class="no-highlight">532</i>&nbsp;        return poolMethod(classIndex, poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));</b>
+<i class="no-highlight">533</i>&nbsp;    }
+<i class="no-highlight">534</i>&nbsp;
+<i class="no-highlight">535</i>&nbsp;    public int poolMethod(Class&lt;?&gt; clazz, CharSequence methodName, CharSequence signature) {
+<b class="fc"><i class="no-highlight">536</i>&nbsp;        return poolMethod(poolClass(clazz), poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));</b>
+<i class="no-highlight">537</i>&nbsp;    }
+<i class="no-highlight">538</i>&nbsp;
+<i class="no-highlight">539</i>&nbsp;    public int poolNameAndType(int nameIndex, int typeIndex) {
+<b class="fc"><i class="no-highlight">540</i>&nbsp;        return poolRef(0x0C, nameIndex, typeIndex);</b>
+<i class="no-highlight">541</i>&nbsp;    }
+<i class="no-highlight">542</i>&nbsp;
+<i class="no-highlight">543</i>&nbsp;    public int poolStringConst(int utf8Index) {
+<b class="fc"><i class="no-highlight">544</i>&nbsp;        putByte(0x8);</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;        putShort(utf8Index);</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;        return poolCount++;</b>
+<i class="no-highlight">547</i>&nbsp;    }
+<i class="no-highlight">548</i>&nbsp;
+<i class="no-highlight">549</i>&nbsp;    public Utf8Appender poolUtf8() {
+<b class="fc"><i class="no-highlight">550</i>&nbsp;        putByte(0x01);</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;        utf8Appender.lenpos = position();</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;        utf8Appender.utf8len = 0;</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;        putShort(0);</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;        return utf8Appender;</b>
+<i class="no-highlight">555</i>&nbsp;    }
+<i class="no-highlight">556</i>&nbsp;
+<i class="no-highlight">557</i>&nbsp;    public int poolUtf8(CharSequence cs) {
+<b class="fc"><i class="no-highlight">558</i>&nbsp;        int index = utf8Cache.keyIndex(cs);</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;        if (index &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;            putByte(0x01);</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;            int n = cs.length();</b>
+<b class="fc"><i class="no-highlight">562</i>&nbsp;            int pos = buf.position();</b>
+<b class="fc"><i class="no-highlight">563</i>&nbsp;            putShort(0);</b>
+<b class="fc"><i class="no-highlight">564</i>&nbsp;            for (int i = 0; i &lt; n; ) {</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;                final char c = cs.charAt(i++);</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;                if (c &lt; 128) {</b>
+<b class="fc"><i class="no-highlight">567</i>&nbsp;                    putByte(c);</b>
+<i class="no-highlight">568</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                    if (c &lt; 2048) {</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;                        putByte((char) (192 | c &gt;&gt; 6));</b>
+<b class="fc"><i class="no-highlight">571</i>&nbsp;                        putByte((char) (128 | c &amp; 63));</b>
+<b class="nc"><i class="no-highlight">572</i>&nbsp;                    } else if (Character.isSurrogate(c)) {</b>
+<b class="nc"><i class="no-highlight">573</i>&nbsp;                        i = encodeSurrogate(c, cs, i, n);</b>
+<i class="no-highlight">574</i>&nbsp;                    } else {
+<b class="nc"><i class="no-highlight">575</i>&nbsp;                        putByte((char) (224 | c &gt;&gt; 12));</b>
+<b class="nc"><i class="no-highlight">576</i>&nbsp;                        putByte((char) (128 | c &gt;&gt; 6 &amp; 63));</b>
+<b class="nc"><i class="no-highlight">577</i>&nbsp;                        putByte((char) (128 | c &amp; 63));</b>
+<i class="no-highlight">578</i>&nbsp;                    }
+<i class="no-highlight">579</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">580</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">581</i>&nbsp;            buf.putShort(pos, (short) (buf.position() - pos - 2));</b>
+<b class="fc"><i class="no-highlight">582</i>&nbsp;            utf8Cache.putAt(index, cs, poolCount);</b>
+<b class="fc"><i class="no-highlight">583</i>&nbsp;            return this.poolCount++;</b>
+<i class="no-highlight">584</i>&nbsp;        }
+<i class="no-highlight">585</i>&nbsp;
+<b class="fc"><i class="no-highlight">586</i>&nbsp;        return utf8Cache.valueAt(index);</b>
+<i class="no-highlight">587</i>&nbsp;    }
+<i class="no-highlight">588</i>&nbsp;
+<i class="no-highlight">589</i>&nbsp;    public void pop() {
+<b class="fc"><i class="no-highlight">590</i>&nbsp;        putByte(0x57);</b>
+<i class="no-highlight">591</i>&nbsp;    }
+<i class="no-highlight">592</i>&nbsp;
+<i class="no-highlight">593</i>&nbsp;    public int position() {
+<b class="fc"><i class="no-highlight">594</i>&nbsp;        return buf.position();</b>
+<i class="no-highlight">595</i>&nbsp;    }
+<i class="no-highlight">596</i>&nbsp;
+<i class="no-highlight">597</i>&nbsp;    public void putByte(int b) {
+<b class="fc"><i class="no-highlight">598</i>&nbsp;        if (buf.remaining() == 0) {</b>
+<b class="nc"><i class="no-highlight">599</i>&nbsp;            resize();</b>
+<i class="no-highlight">600</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">601</i>&nbsp;        buf.put((byte) b);</b>
+<i class="no-highlight">602</i>&nbsp;    }
+<i class="no-highlight">603</i>&nbsp;
+<i class="no-highlight">604</i>&nbsp;    public void putDouble(double value) {
+<b class="nc"><i class="no-highlight">605</i>&nbsp;        if (buf.remaining() &lt; 4) {</b>
+<b class="nc"><i class="no-highlight">606</i>&nbsp;            resize();</b>
+<i class="no-highlight">607</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">608</i>&nbsp;        buf.putDouble(value);</b>
+<i class="no-highlight">609</i>&nbsp;    }
+<i class="no-highlight">610</i>&nbsp;
+<i class="no-highlight">611</i>&nbsp;    public void putITEM_Integer() {
+<b class="fc"><i class="no-highlight">612</i>&nbsp;        putByte(0x01);</b>
+<i class="no-highlight">613</i>&nbsp;    }
+<i class="no-highlight">614</i>&nbsp;
+<i class="no-highlight">615</i>&nbsp;    public void putITEM_Long() {
+<b class="fc"><i class="no-highlight">616</i>&nbsp;        putByte(0x04);</b>
+<i class="no-highlight">617</i>&nbsp;    }
+<i class="no-highlight">618</i>&nbsp;
+<i class="no-highlight">619</i>&nbsp;    public void putITEM_Object(int classIndex) {
+<b class="fc"><i class="no-highlight">620</i>&nbsp;        putByte(0x07);</b>
+<b class="fc"><i class="no-highlight">621</i>&nbsp;        putShort(classIndex);</b>
+<i class="no-highlight">622</i>&nbsp;    }
+<i class="no-highlight">623</i>&nbsp;
+<i class="no-highlight">624</i>&nbsp;    public void putITEM_Top() {
+<b class="fc"><i class="no-highlight">625</i>&nbsp;        putByte(0);</b>
+<i class="no-highlight">626</i>&nbsp;    }
+<i class="no-highlight">627</i>&nbsp;
+<i class="no-highlight">628</i>&nbsp;    public void putLong(long value) {
+<b class="fc"><i class="no-highlight">629</i>&nbsp;        if (buf.remaining() &lt; 4) {</b>
+<b class="nc"><i class="no-highlight">630</i>&nbsp;            resize();</b>
+<i class="no-highlight">631</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">632</i>&nbsp;        buf.putLong(value);</b>
+<i class="no-highlight">633</i>&nbsp;    }
+<i class="no-highlight">634</i>&nbsp;
+<i class="no-highlight">635</i>&nbsp;    public void putShort(int v) {
+<b class="fc"><i class="no-highlight">636</i>&nbsp;        putShort((short) v);</b>
+<i class="no-highlight">637</i>&nbsp;    }
+<i class="no-highlight">638</i>&nbsp;
+<i class="no-highlight">639</i>&nbsp;    public void putShort(int pos, int v) {
+<b class="fc"><i class="no-highlight">640</i>&nbsp;        buf.putShort(pos, (short) v);</b>
+<i class="no-highlight">641</i>&nbsp;    }
+<i class="no-highlight">642</i>&nbsp;
+<i class="no-highlight">643</i>&nbsp;    public void putfield(int index) {
+<b class="fc"><i class="no-highlight">644</i>&nbsp;        putByte(181);</b>
+<b class="fc"><i class="no-highlight">645</i>&nbsp;        putShort(index);</b>
+<i class="no-highlight">646</i>&nbsp;    }
+<i class="no-highlight">647</i>&nbsp;
+<i class="no-highlight">648</i>&nbsp;    public void return_() {
+<b class="fc"><i class="no-highlight">649</i>&nbsp;        putByte(0xb1);</b>
+<i class="no-highlight">650</i>&nbsp;    }
+<i class="no-highlight">651</i>&nbsp;
+<i class="no-highlight">652</i>&nbsp;    public void same_frame(int offset) {
+<b class="fc"><i class="no-highlight">653</i>&nbsp;        if (offset &lt; 64) {</b>
+<b class="fc"><i class="no-highlight">654</i>&nbsp;            putByte(offset);</b>
+<i class="no-highlight">655</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">656</i>&nbsp;            putByte(251);</b>
+<b class="nc"><i class="no-highlight">657</i>&nbsp;            putShort(offset);</b>
+<i class="no-highlight">658</i>&nbsp;        }
+<i class="no-highlight">659</i>&nbsp;    }
+<i class="no-highlight">660</i>&nbsp;
+<i class="no-highlight">661</i>&nbsp;    public void setJmp(int branch, int target) {
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        putShort(branch, target - branch + 1);</b>
+<i class="no-highlight">663</i>&nbsp;    }
+<i class="no-highlight">664</i>&nbsp;
+<i class="no-highlight">665</i>&nbsp;    public void setupPool() {
+<i class="no-highlight">666</i>&nbsp;        // magic
+<b class="fc"><i class="no-highlight">667</i>&nbsp;        putInt(0xCAFEBABE);</b>
+<i class="no-highlight">668</i>&nbsp;        // version
+<b class="fc"><i class="no-highlight">669</i>&nbsp;        putInt(0x33);</b>
+<i class="no-highlight">670</i>&nbsp;        // skip pool count, write later when we know the value
+<b class="fc"><i class="no-highlight">671</i>&nbsp;        putShort(0);</b>
+<i class="no-highlight">672</i>&nbsp;
+<i class="no-highlight">673</i>&nbsp;        // add standard stuff
+<b class="fc"><i class="no-highlight">674</i>&nbsp;        objectClassIndex = poolClass(Object.class);</b>
+<b class="fc"><i class="no-highlight">675</i>&nbsp;        defaultConstructorMethodIndex = poolMethod(objectClassIndex, poolNameAndType(</b>
+<b class="fc"><i class="no-highlight">676</i>&nbsp;                defaultConstructorNameIndex = poolUtf8(&quot;&lt;init&gt;&quot;),</b>
+<b class="fc"><i class="no-highlight">677</i>&nbsp;                defaultConstructorDescIndex = poolUtf8(&quot;()V&quot;))</b>
+<i class="no-highlight">678</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">679</i>&nbsp;        codeAttributeIndex = poolUtf8(&quot;Code&quot;);</b>
+<i class="no-highlight">680</i>&nbsp;    }
+<i class="no-highlight">681</i>&nbsp;
+<i class="no-highlight">682</i>&nbsp;    public void startMethod(int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
+<i class="no-highlight">683</i>&nbsp;        // access flags
+<b class="fc"><i class="no-highlight">684</i>&nbsp;        putShort(ACC_PUBLIC);</b>
+<i class="no-highlight">685</i>&nbsp;        // name index
+<b class="fc"><i class="no-highlight">686</i>&nbsp;        putShort(nameIndex);</b>
+<i class="no-highlight">687</i>&nbsp;        // descriptor index
+<b class="fc"><i class="no-highlight">688</i>&nbsp;        putShort(descriptorIndex);</b>
+<i class="no-highlight">689</i>&nbsp;        // attribute count
+<b class="fc"><i class="no-highlight">690</i>&nbsp;        putShort(1);</b>
+<i class="no-highlight">691</i>&nbsp;
+<i class="no-highlight">692</i>&nbsp;        // code
+<b class="fc"><i class="no-highlight">693</i>&nbsp;        putShort(codeAttributeIndex);</b>
+<i class="no-highlight">694</i>&nbsp;
+<i class="no-highlight">695</i>&nbsp;        // attribute len
+<b class="fc"><i class="no-highlight">696</i>&nbsp;        putInt(0);</b>
+<i class="no-highlight">697</i>&nbsp;        // come back to this later
+<b class="fc"><i class="no-highlight">698</i>&nbsp;        this.codeAttributeStart = position();</b>
+<i class="no-highlight">699</i>&nbsp;        // max stack
+<b class="fc"><i class="no-highlight">700</i>&nbsp;        putShort(maxStack);</b>
+<i class="no-highlight">701</i>&nbsp;        // max locals
+<b class="fc"><i class="no-highlight">702</i>&nbsp;        putShort(maxLocal);</b>
+<i class="no-highlight">703</i>&nbsp;
+<i class="no-highlight">704</i>&nbsp;        // code len
+<b class="fc"><i class="no-highlight">705</i>&nbsp;        putInt(0);</b>
+<b class="fc"><i class="no-highlight">706</i>&nbsp;        this.codeStart = position();</b>
+<i class="no-highlight">707</i>&nbsp;    }
+<i class="no-highlight">708</i>&nbsp;
+<i class="no-highlight">709</i>&nbsp;    public void startStackMapTables(int attributeNameIndex, int frameCount) {
+<b class="fc"><i class="no-highlight">710</i>&nbsp;        putShort(attributeNameIndex);</b>
+<b class="fc"><i class="no-highlight">711</i>&nbsp;        this.stackMapTableCut = position();</b>
+<i class="no-highlight">712</i>&nbsp;        // length - we will come back here
+<b class="fc"><i class="no-highlight">713</i>&nbsp;        putInt(0);</b>
+<i class="no-highlight">714</i>&nbsp;        // number of entries
+<b class="fc"><i class="no-highlight">715</i>&nbsp;        putShort(frameCount);</b>
+<i class="no-highlight">716</i>&nbsp;    }
+<i class="no-highlight">717</i>&nbsp;
+<i class="no-highlight">718</i>&nbsp;    private int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+<i class="no-highlight">719</i>&nbsp;        int dword;
+<b class="nc"><i class="no-highlight">720</i>&nbsp;        if (Character.isHighSurrogate(c)) {</b>
+<b class="nc"><i class="no-highlight">721</i>&nbsp;            if (hi - pos &lt; 1) {</b>
+<b class="nc"><i class="no-highlight">722</i>&nbsp;                putByte(&#39;?&#39;);</b>
+<b class="nc"><i class="no-highlight">723</i>&nbsp;                return pos;</b>
+<i class="no-highlight">724</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">725</i>&nbsp;                char c2 = in.charAt(pos++);</b>
+<b class="nc"><i class="no-highlight">726</i>&nbsp;                if (Character.isLowSurrogate(c2)) {</b>
+<b class="nc"><i class="no-highlight">727</i>&nbsp;                    dword = Character.toCodePoint(c, c2);</b>
+<i class="no-highlight">728</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">729</i>&nbsp;                    putByte(&#39;?&#39;);</b>
+<b class="nc"><i class="no-highlight">730</i>&nbsp;                    return pos;</b>
+<i class="no-highlight">731</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">732</i>&nbsp;            }</b>
+<b class="nc"><i class="no-highlight">733</i>&nbsp;        } else if (Character.isLowSurrogate(c)) {</b>
+<b class="nc"><i class="no-highlight">734</i>&nbsp;            putByte(&#39;?&#39;);</b>
+<b class="nc"><i class="no-highlight">735</i>&nbsp;            return pos;</b>
+<i class="no-highlight">736</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">737</i>&nbsp;            dword = c;</b>
+<i class="no-highlight">738</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">739</i>&nbsp;        putByte((char) (240 | dword &gt;&gt; 18));</b>
+<b class="nc"><i class="no-highlight">740</i>&nbsp;        putByte((char) (128 | dword &gt;&gt; 12 &amp; 63));</b>
+<b class="nc"><i class="no-highlight">741</i>&nbsp;        putByte((char) (128 | dword &gt;&gt; 6 &amp; 63));</b>
+<b class="nc"><i class="no-highlight">742</i>&nbsp;        putByte((char) (128 | dword &amp; 63));</b>
+<i class="no-highlight">743</i>&nbsp;
+<b class="nc"><i class="no-highlight">744</i>&nbsp;        return pos;</b>
+<i class="no-highlight">745</i>&nbsp;    }
+<i class="no-highlight">746</i>&nbsp;
+<i class="no-highlight">747</i>&nbsp;    private int genericGoto(int cmd) {
+<b class="fc"><i class="no-highlight">748</i>&nbsp;        putByte(cmd);</b>
+<b class="fc"><i class="no-highlight">749</i>&nbsp;        int pos = position();</b>
+<b class="fc"><i class="no-highlight">750</i>&nbsp;        putShort(0);</b>
+<b class="fc"><i class="no-highlight">751</i>&nbsp;        return pos;</b>
+<i class="no-highlight">752</i>&nbsp;    }
+<i class="no-highlight">753</i>&nbsp;
+<i class="no-highlight">754</i>&nbsp;    private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {
+<b class="fc"><i class="no-highlight">755</i>&nbsp;        switch (value) {</b>
+<i class="no-highlight">756</i>&nbsp;            case 0:
+<b class="fc"><i class="no-highlight">757</i>&nbsp;                putByte(code0);</b>
+<b class="fc"><i class="no-highlight">758</i>&nbsp;                break;</b>
+<i class="no-highlight">759</i>&nbsp;            case 1:
+<b class="fc"><i class="no-highlight">760</i>&nbsp;                putByte(code1);</b>
+<b class="fc"><i class="no-highlight">761</i>&nbsp;                break;</b>
+<i class="no-highlight">762</i>&nbsp;            case 2:
+<b class="fc"><i class="no-highlight">763</i>&nbsp;                putByte(code2);</b>
+<b class="fc"><i class="no-highlight">764</i>&nbsp;                break;</b>
+<i class="no-highlight">765</i>&nbsp;            case 3:
+<b class="fc"><i class="no-highlight">766</i>&nbsp;                putByte(code3);</b>
+<b class="fc"><i class="no-highlight">767</i>&nbsp;                break;</b>
+<i class="no-highlight">768</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">769</i>&nbsp;                putByte(code);</b>
+<b class="fc"><i class="no-highlight">770</i>&nbsp;                putByte(value);</b>
+<i class="no-highlight">771</i>&nbsp;                break;
+<i class="no-highlight">772</i>&nbsp;        }
+<i class="no-highlight">773</i>&nbsp;    }
+<i class="no-highlight">774</i>&nbsp;
+<i class="no-highlight">775</i>&nbsp;    private int poolRef(int op, int name, int type) {
+<b class="fc"><i class="no-highlight">776</i>&nbsp;        putByte(op);</b>
+<b class="fc"><i class="no-highlight">777</i>&nbsp;        putShort(name);</b>
+<b class="fc"><i class="no-highlight">778</i>&nbsp;        putShort(type);</b>
+<b class="fc"><i class="no-highlight">779</i>&nbsp;        return poolCount++;</b>
+<i class="no-highlight">780</i>&nbsp;    }
+<i class="no-highlight">781</i>&nbsp;
+<i class="no-highlight">782</i>&nbsp;    private void putInt(int pos, int v) {
+<b class="fc"><i class="no-highlight">783</i>&nbsp;        buf.putInt(pos, v);</b>
+<i class="no-highlight">784</i>&nbsp;    }
+<i class="no-highlight">785</i>&nbsp;
+<i class="no-highlight">786</i>&nbsp;    private void putInt(int v) {
+<b class="fc"><i class="no-highlight">787</i>&nbsp;        if (buf.remaining() &lt; 4) {</b>
+<b class="nc"><i class="no-highlight">788</i>&nbsp;            resize();</b>
+<i class="no-highlight">789</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">790</i>&nbsp;        buf.putInt(v);</b>
+<i class="no-highlight">791</i>&nbsp;    }
+<i class="no-highlight">792</i>&nbsp;
+<i class="no-highlight">793</i>&nbsp;    private void putShort(short v) {
+<b class="fc"><i class="no-highlight">794</i>&nbsp;        if (buf.remaining() &lt; 2) {</b>
+<b class="nc"><i class="no-highlight">795</i>&nbsp;            resize();</b>
+<i class="no-highlight">796</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">797</i>&nbsp;        buf.putShort(v);</b>
+<i class="no-highlight">798</i>&nbsp;    }
+<i class="no-highlight">799</i>&nbsp;
+<i class="no-highlight">800</i>&nbsp;    private void resize() {
+<b class="nc"><i class="no-highlight">801</i>&nbsp;        ByteBuffer b = ByteBuffer.allocate(buf.capacity() * 2).order(ByteOrder.BIG_ENDIAN);</b>
+<b class="nc"><i class="no-highlight">802</i>&nbsp;        System.arraycopy(buf.array(), 0, b.array(), 0, buf.capacity());</b>
+<b class="nc"><i class="no-highlight">803</i>&nbsp;        b.position(buf.position());</b>
+<b class="nc"><i class="no-highlight">804</i>&nbsp;        buf = b;</b>
+<i class="no-highlight">805</i>&nbsp;    }
+<i class="no-highlight">806</i>&nbsp;
+<b class="fc"><i class="no-highlight">807</i>&nbsp;    public class Utf8Appender extends AbstractCharSink implements CharSink {</b>
+<i class="no-highlight">808</i>&nbsp;        private int lenpos;
+<b class="fc"><i class="no-highlight">809</i>&nbsp;        private int utf8len = 0;</b>
+<i class="no-highlight">810</i>&nbsp;
+<i class="no-highlight">811</i>&nbsp;        public int $() {
+<b class="fc"><i class="no-highlight">812</i>&nbsp;            putShort(lenpos, utf8len);</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;            return poolCount++;</b>
+<i class="no-highlight">814</i>&nbsp;        }
+<i class="no-highlight">815</i>&nbsp;
+<i class="no-highlight">816</i>&nbsp;        @Override
+<i class="no-highlight">817</i>&nbsp;        public Utf8Appender put(CharSequence cs) {
+<b class="fc"><i class="no-highlight">818</i>&nbsp;            int n = cs.length();</b>
+<b class="fc"><i class="no-highlight">819</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">820</i>&nbsp;                BytecodeAssembler.this.putByte(cs.charAt(i));</b>
+<i class="no-highlight">821</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">822</i>&nbsp;            utf8len += n;</b>
+<b class="fc"><i class="no-highlight">823</i>&nbsp;            return this;</b>
+<i class="no-highlight">824</i>&nbsp;        }
+<i class="no-highlight">825</i>&nbsp;
+<i class="no-highlight">826</i>&nbsp;        @Override
+<i class="no-highlight">827</i>&nbsp;        public Utf8Appender put(char c) {
+<b class="fc"><i class="no-highlight">828</i>&nbsp;            BytecodeAssembler.this.putByte(c);</b>
+<b class="fc"><i class="no-highlight">829</i>&nbsp;            utf8len++;</b>
+<b class="fc"><i class="no-highlight">830</i>&nbsp;            return this;</b>
+<i class="no-highlight">831</i>&nbsp;        }
+<i class="no-highlight">832</i>&nbsp;
+<i class="no-highlight">833</i>&nbsp;        @Override
+<i class="no-highlight">834</i>&nbsp;        public Utf8Appender put(int value) {
+<b class="fc"><i class="no-highlight">835</i>&nbsp;            super.put(value);</b>
+<b class="fc"><i class="no-highlight">836</i>&nbsp;            return this;</b>
+<i class="no-highlight">837</i>&nbsp;        }
+<i class="no-highlight">838</i>&nbsp;
+<i class="no-highlight">839</i>&nbsp;        @Override
+<i class="no-highlight">840</i>&nbsp;        public CharSink put(char[] chars, int start, int len) {
+<b class="nc"><i class="no-highlight">841</i>&nbsp;            for (int i = 0; i &lt; len; i++) {</b>
+<b class="nc"><i class="no-highlight">842</i>&nbsp;                BytecodeAssembler.this.putByte(chars[i + start]);</b>
+<i class="no-highlight">843</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">844</i>&nbsp;            utf8len += len;</b>
+<b class="nc"><i class="no-highlight">845</i>&nbsp;            return this;</b>
+<i class="no-highlight">846</i>&nbsp;        }
+<i class="no-highlight">847</i>&nbsp;    }
+<i class="no-highlight">848</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

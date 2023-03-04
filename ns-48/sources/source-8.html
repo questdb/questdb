@@ -1,0 +1,195 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > FastDoubleUtils</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.fastdouble</a>
+</div>
+
+<h1>Coverage Summary for Class: FastDoubleUtils (io.questdb.std.fastdouble)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">FastDoubleUtils</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    50%
+  </span>
+  <span class="absValue">
+    (1/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.7%
+  </span>
+  <span class="absValue">
+    (11/12)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.fastdouble;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;/**
+<i class="no-highlight">28</i>&nbsp; * Abstract base class for parsers that parse a {@code FloatingPointLiteral} from a
+<i class="no-highlight">29</i>&nbsp; * character sequence ({@code str}).
+<i class="no-highlight">30</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">31</i>&nbsp; * This is a C++ to Java port of Daniel Lemire&#39;s fast_double_parser.
+<i class="no-highlight">32</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">33</i>&nbsp; * References:
+<i class="no-highlight">34</i>&nbsp; * &lt;dl&gt;
+<i class="no-highlight">35</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, fast_double_parser, 4x faster than strtod.
+<i class="no-highlight">36</i>&nbsp; *     Apache License 2.0 or Boost Software License.&lt;/dt&gt;
+<i class="no-highlight">37</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://github.com/lemire/fast_double_parser&quot;&gt;github.com&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">38</i>&nbsp; *
+<i class="no-highlight">39</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, fast_float number parsing library: 4x faster than strtod.
+<i class="no-highlight">40</i>&nbsp; *     Apache License 2.0.&lt;/dt&gt;
+<i class="no-highlight">41</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://github.com/fastfloat/fast_float&quot;&gt;github.com&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">42</i>&nbsp; *
+<i class="no-highlight">43</i>&nbsp; *     &lt;dt&gt;Daniel Lemire, Number Parsing at a Gigabyte per Second,
+<i class="no-highlight">44</i>&nbsp; *     Software: Practice and Experience 51 (8), 202    1.
+<i class="no-highlight">45</i>&nbsp; *     arXiv.2101.11408v3 [cs.DS] 24 Feb 2021&lt;/dt&gt;
+<i class="no-highlight">46</i>&nbsp; *     &lt;dd&gt;&lt;a href=&quot;https://arxiv.org/pdf/2101.11408.pdf&quot;&gt;arxiv.org&lt;/a&gt;&lt;/dd&gt;
+<i class="no-highlight">47</i>&nbsp; * &lt;/dl&gt;
+<i class="no-highlight">48</i>&nbsp; */
+<b class="nc"><i class="no-highlight">49</i>&nbsp;final class FastDoubleUtils {</b>
+<i class="no-highlight">50</i>&nbsp;    /**
+<i class="no-highlight">51</i>&nbsp;     * Includes all non-negative values of a {@code byte}, so that we only have
+<i class="no-highlight">52</i>&nbsp;     * to check for byte values {@literal &lt;} 0 before accessing this array.
+<i class="no-highlight">53</i>&nbsp;     */
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    static final byte[] CHAR_TO_HEX_MAP = new byte[128];</b>
+<i class="no-highlight">55</i>&nbsp;    /**
+<i class="no-highlight">56</i>&nbsp;     * Special value in {@link #CHAR_TO_HEX_MAP} for
+<i class="no-highlight">57</i>&nbsp;     * the decimal point character.
+<i class="no-highlight">58</i>&nbsp;     */
+<i class="no-highlight">59</i>&nbsp;    static final byte DECIMAL_POINT_CLASS = -4;
+<i class="no-highlight">60</i>&nbsp;    /**
+<i class="no-highlight">61</i>&nbsp;     * The decimal exponent of a double has a range of -324 to +308.
+<i class="no-highlight">62</i>&nbsp;     * The hexadecimal exponent of a double has a range of -1022 to +1023.
+<i class="no-highlight">63</i>&nbsp;     */
+<i class="no-highlight">64</i>&nbsp;    final static int MAX_EXPONENT_NUMBER = 1024;
+<i class="no-highlight">65</i>&nbsp;    final static long MINIMAL_NINETEEN_DIGIT_INTEGER = 1000_00000_00000_00000L;
+<i class="no-highlight">66</i>&nbsp;    /**
+<i class="no-highlight">67</i>&nbsp;     * Special value in {@link #CHAR_TO_HEX_MAP} for
+<i class="no-highlight">68</i>&nbsp;     * characters that are neither a hex digit nor
+<i class="no-highlight">69</i>&nbsp;     * a decimal point character.
+<i class="no-highlight">70</i>&nbsp;     */
+<i class="no-highlight">71</i>&nbsp;    static final byte OTHER_CLASS = -1;
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        for (char ch = 0; ch &lt; FastDoubleUtils.CHAR_TO_HEX_MAP.length; ch++) {</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;            FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = FastDoubleUtils.OTHER_CLASS;</b>
+<i class="no-highlight">76</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        for (char ch = &#39;0&#39;; ch &lt;= &#39;9&#39;; ch++) {</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;            FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = (byte) (ch - &#39;0&#39;);</b>
+<i class="no-highlight">79</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        for (char ch = &#39;A&#39;; ch &lt;= &#39;F&#39;; ch++) {</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = (byte) (ch - &#39;A&#39; + 10);</b>
+<i class="no-highlight">82</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        for (char ch = &#39;a&#39;; ch &lt;= &#39;f&#39;; ch++) {</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;            FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = (byte) (ch - &#39;a&#39; + 10);</b>
+<i class="no-highlight">85</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        for (char ch = &#39;.&#39;; ch &lt;= &#39;.&#39;; ch++) {</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;            FastDoubleUtils.CHAR_TO_HEX_MAP[ch] = FastDoubleUtils.DECIMAL_POINT_CLASS;</b>
+<i class="no-highlight">88</i>&nbsp;        }
+<i class="no-highlight">89</i>&nbsp;    }
+<i class="no-highlight">90</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

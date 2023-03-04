@@ -1,0 +1,239 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > IntStack</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: IntStack (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">IntStack</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (15/15)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98%
+  </span>
+  <span class="absValue">
+    (49/50)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import java.util.Arrays;
+<i class="no-highlight">28</i>&nbsp;
+<b class="fc"><i class="no-highlight">29</i>&nbsp;public class IntStack implements Mutable {</b>
+<i class="no-highlight">30</i>&nbsp;    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+<i class="no-highlight">31</i>&nbsp;    private static final int MIN_INITIAL_CAPACITY = 8;
+<i class="no-highlight">32</i>&nbsp;    private static final int noEntryValue = -1;
+<i class="no-highlight">33</i>&nbsp;    private int[] elements;
+<i class="no-highlight">34</i>&nbsp;    private int head;
+<i class="no-highlight">35</i>&nbsp;    private int mask;
+<i class="no-highlight">36</i>&nbsp;    private int tail;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;    public IntStack() {
+<b class="fc"><i class="no-highlight">39</i>&nbsp;        this(DEFAULT_INITIAL_CAPACITY);</b>
+<i class="no-highlight">40</i>&nbsp;    }
+<i class="no-highlight">41</i>&nbsp;
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    public IntStack(int initialCapacity) {</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;        allocateElements(initialCapacity);</b>
+<i class="no-highlight">44</i>&nbsp;    }
+<i class="no-highlight">45</i>&nbsp;
+<i class="no-highlight">46</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">47</i>&nbsp;        if (head != tail) {</b>
+<b class="fc"><i class="no-highlight">48</i>&nbsp;            head = tail = 0;</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;            Arrays.fill(elements, noEntryValue);</b>
+<i class="no-highlight">50</i>&nbsp;        }
+<i class="no-highlight">51</i>&nbsp;    }
+<i class="no-highlight">52</i>&nbsp;
+<i class="no-highlight">53</i>&nbsp;    public void copyTo(IntStack there, int count) {
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        int n = Math.min(count, size());</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        while (n-- &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;            there.push(pop());</b>
+<i class="no-highlight">57</i>&nbsp;        }
+<i class="no-highlight">58</i>&nbsp;    }
+<i class="no-highlight">59</i>&nbsp;
+<i class="no-highlight">60</i>&nbsp;    public boolean notEmpty() {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        return head != tail;</b>
+<i class="no-highlight">62</i>&nbsp;    }
+<i class="no-highlight">63</i>&nbsp;
+<i class="no-highlight">64</i>&nbsp;    public int peek() {
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        return elements[head];</b>
+<i class="no-highlight">66</i>&nbsp;    }
+<i class="no-highlight">67</i>&nbsp;
+<i class="no-highlight">68</i>&nbsp;    public int pollLast() {
+<b class="fc"><i class="no-highlight">69</i>&nbsp;        final int[] es = elements;</b>
+<i class="no-highlight">70</i>&nbsp;        final int t;
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        final int e = es[t = dec(tail)];</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        tail = t;</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        es[t] = noEntryValue;</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        return e;</b>
+<i class="no-highlight">75</i>&nbsp;    }
+<i class="no-highlight">76</i>&nbsp;
+<i class="no-highlight">77</i>&nbsp;    public int pop() {
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        int h = head;</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        int result = elements[h];</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        if (result == noEntryValue) {</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            return noEntryValue;</b>
+<i class="no-highlight">82</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        elements[h] = noEntryValue;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        head = (h + 1) &amp; mask;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        return result;</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    public void push(int e) {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        elements[head = (head - 1) &amp; mask] = e;</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        if (head == tail) {</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            doubleCapacity();</b>
+<i class="no-highlight">92</i>&nbsp;        }
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    public int size() {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        return (tail - head) &amp; mask;</b>
+<i class="no-highlight">97</i>&nbsp;    }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;    public void update(int e) {
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        elements[head] = e;</b>
+<i class="no-highlight">101</i>&nbsp;    }
+<i class="no-highlight">102</i>&nbsp;
+<i class="no-highlight">103</i>&nbsp;    private void allocateElements(int capacity) {
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        capacity = capacity &lt; MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        elements = new int[capacity];</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        mask = capacity - 1;</b>
+<i class="no-highlight">107</i>&nbsp;    }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;    private int dec(int i) {
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        if (head != tail &amp;&amp; --i &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;            i = mask;</b>
+<i class="no-highlight">112</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        return i;</b>
+<i class="no-highlight">114</i>&nbsp;    }
+<i class="no-highlight">115</i>&nbsp;
+<i class="no-highlight">116</i>&nbsp;    private void doubleCapacity() {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        assert head == tail;</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;        int h = head;</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        int n = elements.length;</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        int r = n - h;</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;        int newCapacity = n &lt;&lt; 1;</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        if (newCapacity &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">123</i>&nbsp;            throw new IllegalStateException(&quot;Stack is too big&quot;);</b>
+<i class="no-highlight">124</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        int[] next = new int[newCapacity];</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        System.arraycopy(elements, h, next, 0, r);</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        System.arraycopy(elements, 0, next, r, h);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        Arrays.fill(next, r + h, newCapacity, noEntryValue);</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        elements = next;</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        head = 0;</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        tail = n;</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        mask = newCapacity - 1;</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

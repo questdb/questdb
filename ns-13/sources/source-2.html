@@ -1,0 +1,493 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > JsonLexer</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.json</a>
+</div>
+
+<h1>Coverage Summary for Class: JsonLexer (io.questdb.cutlass.json)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">JsonLexer</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (12/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (208/208)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.json;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">29</i>&nbsp;
+<i class="no-highlight">30</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">31</i>&nbsp;
+<b class="fc"><i class="no-highlight">32</i>&nbsp;public class JsonLexer implements Mutable, Closeable {</b>
+<i class="no-highlight">33</i>&nbsp;    public static final int EVT_ARRAY_END = 4;
+<i class="no-highlight">34</i>&nbsp;    public static final int EVT_ARRAY_START = 3;
+<i class="no-highlight">35</i>&nbsp;    public static final int EVT_ARRAY_VALUE = 7;
+<i class="no-highlight">36</i>&nbsp;    public static final int EVT_NAME = 5;
+<i class="no-highlight">37</i>&nbsp;    public static final int EVT_OBJ_END = 2;
+<i class="no-highlight">38</i>&nbsp;    public static final int EVT_OBJ_START = 1;
+<i class="no-highlight">39</i>&nbsp;    public static final int EVT_VALUE = 6;
+<i class="no-highlight">40</i>&nbsp;    private static final int S_EXPECT_COLON = 4;
+<i class="no-highlight">41</i>&nbsp;    private static final int S_EXPECT_COMMA = 3;
+<i class="no-highlight">42</i>&nbsp;    private static final int S_EXPECT_FIRST_NAME = 5;
+<i class="no-highlight">43</i>&nbsp;    private static final int S_EXPECT_NAME = 1;
+<i class="no-highlight">44</i>&nbsp;    private static final int S_EXPECT_VALUE = 2;
+<i class="no-highlight">45</i>&nbsp;    private static final int S_START = 0;
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    private static final IntHashSet unquotedTerminators = new IntHashSet(256);</b>
+<b class="fc"><i class="no-highlight">47</i>&nbsp;    private final IntStack arrayDepthStack = new IntStack(64);</b>
+<i class="no-highlight">48</i>&nbsp;    private final int cacheSizeLimit;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    private final IntStack objDepthStack = new IntStack(64);</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    private final StringSink sink = new StringSink();</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    private int arrayDepth = 0;</b>
+<i class="no-highlight">52</i>&nbsp;    private long cache;
+<i class="no-highlight">53</i>&nbsp;    private int cacheCapacity;
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private int cacheSize = 0;</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;    private boolean ignoreNext = false;</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;    private int objDepth = 0;</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;    private int position = 0;</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private boolean quoted = false;</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private int state = S_START;</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;    private boolean useCache = false;</b>
+<i class="no-highlight">61</i>&nbsp;
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    public JsonLexer(int cacheSize, int cacheSizeLimit) {</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        this.cacheCapacity = cacheSize;</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        this.cacheSizeLimit = cacheSizeLimit;</b>
+<i class="no-highlight">66</i>&nbsp;    }
+<i class="no-highlight">67</i>&nbsp;
+<i class="no-highlight">68</i>&nbsp;    @Override
+<i class="no-highlight">69</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        objDepthStack.clear();</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        arrayDepthStack.clear();</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        state = S_START;</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        objDepth = 0;</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        arrayDepth = 0;</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        ignoreNext = false;</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        quoted = false;</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        cacheSize = 0;</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        useCache = false;</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        position = 0;</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    @Override
+<i class="no-highlight">83</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        if (cacheCapacity &gt; 0 &amp;&amp; cache != 0) {</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;            Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<i class="no-highlight">86</i>&nbsp;        }
+<i class="no-highlight">87</i>&nbsp;    }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;    public void parse(long lo, long hi, JsonParser listener) throws JsonException {
+<i class="no-highlight">90</i>&nbsp;
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        if (lo &gt;= hi) {</b>
+<i class="no-highlight">92</i>&nbsp;            return;
+<i class="no-highlight">93</i>&nbsp;        }
+<i class="no-highlight">94</i>&nbsp;
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        long p = lo;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        long valueStart = useCache ? lo : 0;</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        int posAtStart = position;</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        int state = this.state;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        boolean quoted = this.quoted;</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        boolean ignoreNext = this.ignoreNext;</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        boolean useCache = this.useCache;</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        int objDepth = this.objDepth;</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        int arrayDepth = this.arrayDepth;</b>
+<i class="no-highlight">104</i>&nbsp;
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        while (p &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            char c = (char) Unsafe.getUnsafe().getByte(p++);</b>
+<i class="no-highlight">107</i>&nbsp;
+<b class="fc"><i class="no-highlight">108</i>&nbsp;            if (ignoreNext) {</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;                ignoreNext = false;</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                continue;</b>
+<i class="no-highlight">111</i>&nbsp;            }
+<i class="no-highlight">112</i>&nbsp;
+<b class="fc"><i class="no-highlight">113</i>&nbsp;            if (valueStart &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                if (quoted) {</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                    if (c == &#39;\\&#39;) {</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                        ignoreNext = true;</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                        continue;</b>
+<i class="no-highlight">118</i>&nbsp;                    }
+<i class="no-highlight">119</i>&nbsp;
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                    if (c != &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                        continue;</b>
+<i class="no-highlight">122</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                } else if (isNotATerminator(c)) {</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                    continue;</b>
+<i class="no-highlight">125</i>&nbsp;                }
+<i class="no-highlight">126</i>&nbsp;
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                int vp = (int) (posAtStart + valueStart - lo + 1 - cacheSize);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                if (state == S_EXPECT_NAME || state == S_EXPECT_FIRST_NAME) {</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                    listener.onEvent(EVT_NAME, getCharSequence(valueStart, p, vp), vp);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                    state = S_EXPECT_COLON;</b>
+<i class="no-highlight">131</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;                    listener.onEvent(arrayDepth &gt; 0 ? EVT_ARRAY_VALUE : EVT_VALUE, getCharSequence(valueStart, p, vp), vp);</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                    state = S_EXPECT_COMMA;</b>
+<i class="no-highlight">134</i>&nbsp;                }
+<i class="no-highlight">135</i>&nbsp;
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                valueStart = 0;</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;                cacheSize = 0;</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                useCache = false;</b>
+<i class="no-highlight">139</i>&nbsp;
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                if (quoted) {</b>
+<i class="no-highlight">141</i>&nbsp;                    // skip the quote mark
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                    continue;</b>
+<i class="no-highlight">143</i>&nbsp;                }
+<i class="no-highlight">144</i>&nbsp;            }
+<i class="no-highlight">145</i>&nbsp;
+<b class="fc"><i class="no-highlight">146</i>&nbsp;            switch (c) {</b>
+<i class="no-highlight">147</i>&nbsp;                case &#39;{&#39;:
+<b class="fc"><i class="no-highlight">148</i>&nbsp;                    if (state != S_START &amp;&amp; state != S_EXPECT_VALUE) {</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;{ is not expected here&quot;);</b>
+<i class="no-highlight">150</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">151</i>&nbsp;                    arrayDepthStack.push(arrayDepth);</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;                    arrayDepth = 0;</b>
+<i class="no-highlight">153</i>&nbsp;
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                    listener.onEvent(EVT_OBJ_START, null, (int) (posAtStart + p - lo));</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;                    objDepth++;</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                    state = S_EXPECT_FIRST_NAME;</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;                    break;</b>
+<i class="no-highlight">158</i>&nbsp;                case &#39;}&#39;:
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                    if (arrayDepth &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;} is not expected here. You have non-terminated array&quot;);</b>
+<i class="no-highlight">161</i>&nbsp;                    }
+<i class="no-highlight">162</i>&nbsp;
+<b class="fc"><i class="no-highlight">163</i>&nbsp;                    if (objDepth &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;                        switch (state) {</b>
+<i class="no-highlight">165</i>&nbsp;                            case S_EXPECT_VALUE:
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                                throw JsonException.$((int) (posAtStart + p - lo - 1), &quot;Attribute value expected&quot;);</b>
+<i class="no-highlight">167</i>&nbsp;                            case S_EXPECT_NAME:
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                                throw JsonException.$((int) (posAtStart + p - lo - 1), &quot;Attribute name expected&quot;);</b>
+<i class="no-highlight">169</i>&nbsp;                            default:
+<i class="no-highlight">170</i>&nbsp;                                break;
+<i class="no-highlight">171</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                        listener.onEvent(EVT_OBJ_END, null, (int) (posAtStart + p - lo));</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;                        objDepth--;</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;                        arrayDepth = arrayDepthStack.pop();</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                        state = S_EXPECT_COMMA;</b>
+<i class="no-highlight">176</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;Dangling }&quot;);</b>
+<i class="no-highlight">178</i>&nbsp;                    }
+<i class="no-highlight">179</i>&nbsp;                    break;
+<i class="no-highlight">180</i>&nbsp;                case &#39;[&#39;:
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                    if (state != S_START &amp;&amp; state != S_EXPECT_VALUE) {</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;[ is not expected here&quot;);</b>
+<i class="no-highlight">183</i>&nbsp;                    }
+<i class="no-highlight">184</i>&nbsp;
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                    listener.onEvent(EVT_ARRAY_START, null, (int) (posAtStart + p - lo));</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;                    objDepthStack.push(objDepth);</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                    objDepth = 0;</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;                    arrayDepth++;</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;                    state = S_EXPECT_VALUE;</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                    break;</b>
+<i class="no-highlight">191</i>&nbsp;                case &#39;]&#39;:
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                    if (objDepth &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;] is not expected here. You have non-terminated object&quot;);</b>
+<i class="no-highlight">194</i>&nbsp;                    }
+<i class="no-highlight">195</i>&nbsp;
+<b class="fc"><i class="no-highlight">196</i>&nbsp;                    if (arrayDepth == 0) {</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;Dangling ]&quot;);</b>
+<i class="no-highlight">198</i>&nbsp;                    }
+<i class="no-highlight">199</i>&nbsp;
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                    listener.onEvent(EVT_ARRAY_END, null, (int) (posAtStart + p - lo));</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                    arrayDepth--;</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                    objDepth = objDepthStack.pop();</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    state = S_EXPECT_COMMA;</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;                    break;</b>
+<i class="no-highlight">205</i>&nbsp;                case &#39; &#39;:
+<i class="no-highlight">206</i>&nbsp;                case &#39;\t&#39;:
+<i class="no-highlight">207</i>&nbsp;                case &#39;\n&#39;:
+<i class="no-highlight">208</i>&nbsp;                case &#39;\r&#39;:
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                    break;</b>
+<i class="no-highlight">210</i>&nbsp;                case &#39;,&#39;:
+<b class="fc"><i class="no-highlight">211</i>&nbsp;                    if (state != S_EXPECT_COMMA) {</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;Unexpected comma&quot;);</b>
+<i class="no-highlight">213</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">214</i>&nbsp;                    if (arrayDepth &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                        state = S_EXPECT_VALUE;</b>
+<i class="no-highlight">216</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">217</i>&nbsp;                        state = S_EXPECT_NAME;</b>
+<i class="no-highlight">218</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">219</i>&nbsp;                    break;</b>
+<i class="no-highlight">220</i>&nbsp;                case &#39;:&#39;:
+<b class="fc"><i class="no-highlight">221</i>&nbsp;                    if (state != S_EXPECT_COLON) {</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;Misplaced &#39;:&#39;&quot;);</b>
+<i class="no-highlight">223</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                    state = S_EXPECT_VALUE;</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;                    break;</b>
+<i class="no-highlight">226</i>&nbsp;                case &#39;&quot;&#39;:
+<b class="fc"><i class="no-highlight">227</i>&nbsp;                    if (state != S_EXPECT_NAME &amp;&amp; state != S_EXPECT_FIRST_NAME &amp;&amp; state != S_EXPECT_VALUE) {</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;Unexpected quote &#39;\&quot;&#39;&quot;);</b>
+<i class="no-highlight">229</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                    valueStart = p;</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                    quoted = true;</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;                    break;</b>
+<i class="no-highlight">233</i>&nbsp;                default:
+<b class="fc"><i class="no-highlight">234</i>&nbsp;                    if (state != S_EXPECT_VALUE) {</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;                        throw JsonException.$((int) (posAtStart + p - lo), &quot;Unexpected symbol&quot;);</b>
+<i class="no-highlight">236</i>&nbsp;                    }
+<i class="no-highlight">237</i>&nbsp;                    // this isn&#39;t a quote, include this character
+<b class="fc"><i class="no-highlight">238</i>&nbsp;                    valueStart = p - 1;</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;                    quoted = false;</b>
+<i class="no-highlight">240</i>&nbsp;                    break;
+<i class="no-highlight">241</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        }</b>
+<i class="no-highlight">243</i>&nbsp;
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        this.position = (int) (posAtStart + p - lo);</b>
+<i class="no-highlight">245</i>&nbsp;
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        this.state = state;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        this.quoted = quoted;</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        this.ignoreNext = ignoreNext;</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        this.objDepth = objDepth;</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        this.arrayDepth = arrayDepth;</b>
+<i class="no-highlight">251</i>&nbsp;
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        if (valueStart &gt; 0) {</b>
+<i class="no-highlight">253</i>&nbsp;            // stash
+<b class="fc"><i class="no-highlight">254</i>&nbsp;            addToStash(valueStart, hi);</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            useCache = true;</b>
+<i class="no-highlight">256</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        this.useCache = useCache;</b>
+<i class="no-highlight">258</i>&nbsp;    }
+<i class="no-highlight">259</i>&nbsp;
+<i class="no-highlight">260</i>&nbsp;    public void parseLast() throws JsonException {
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        if (cacheSize &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            throw JsonException.$(position, &quot;Unterminated string&quot;);</b>
+<i class="no-highlight">263</i>&nbsp;        }
+<i class="no-highlight">264</i>&nbsp;
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        if (arrayDepth &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;            throw JsonException.$(position, &quot;Unterminated array&quot;);</b>
+<i class="no-highlight">267</i>&nbsp;        }
+<i class="no-highlight">268</i>&nbsp;
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        if (objDepth &gt; 0 || arrayDepthStack.size() &gt; 0 || objDepthStack.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            throw JsonException.$(position, &quot;Unterminated object&quot;);</b>
+<i class="no-highlight">271</i>&nbsp;        }
+<i class="no-highlight">272</i>&nbsp;    }
+<i class="no-highlight">273</i>&nbsp;
+<i class="no-highlight">274</i>&nbsp;    private static boolean isNotATerminator(char c) {
+<b class="fc"><i class="no-highlight">275</i>&nbsp;        return unquotedTerminators.excludes(c);</b>
+<i class="no-highlight">276</i>&nbsp;    }
+<i class="no-highlight">277</i>&nbsp;
+<i class="no-highlight">278</i>&nbsp;    private static JsonException unsupportedEncoding(int position) {
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        return JsonException.$(position, &quot;Unsupported encoding&quot;);</b>
+<i class="no-highlight">280</i>&nbsp;    }
+<i class="no-highlight">281</i>&nbsp;
+<i class="no-highlight">282</i>&nbsp;    private void addToStash(long lo, long hi) throws JsonException {
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        final int len = (int) (hi - lo);</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;        int n = len + cacheSize;</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        if (n &gt; cacheCapacity) {</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;            extendCache(Numbers.ceilPow2(n));</b>
+<i class="no-highlight">287</i>&nbsp;        }
+<i class="no-highlight">288</i>&nbsp;
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        if (len &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            Vect.memcpy(cache + cacheSize, lo, len);</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;            cacheSize += len;</b>
+<i class="no-highlight">292</i>&nbsp;        }
+<i class="no-highlight">293</i>&nbsp;    }
+<i class="no-highlight">294</i>&nbsp;
+<i class="no-highlight">295</i>&nbsp;    private void extendCache(int n) throws JsonException {
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        if (n &gt; cacheSizeLimit) {</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;            throw JsonException.$(position, &quot;String is too long&quot;);</b>
+<i class="no-highlight">298</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        long ptr = Unsafe.malloc(n, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        if (cacheCapacity &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            Vect.memcpy(ptr, cache, cacheSize);</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;            Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_TEXT_PARSER_RSS);</b>
+<i class="no-highlight">303</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        cacheCapacity = n;</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        cache = ptr;</b>
+<i class="no-highlight">306</i>&nbsp;    }
+<i class="no-highlight">307</i>&nbsp;
+<i class="no-highlight">308</i>&nbsp;    private CharSequence getCharSequence(long lo, long hi, int position) throws JsonException {
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        sink.clear();</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;        if (cacheSize == 0) {</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            if (!Chars.utf8Decode(lo, hi - 1, sink)) {</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                throw unsupportedEncoding(position);</b>
+<i class="no-highlight">313</i>&nbsp;            }
+<i class="no-highlight">314</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">315</i>&nbsp;            utf8DecodeCacheAndBuffer(lo, hi - 1, position);</b>
+<i class="no-highlight">316</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        return sink;</b>
+<i class="no-highlight">318</i>&nbsp;    }
+<i class="no-highlight">319</i>&nbsp;
+<i class="no-highlight">320</i>&nbsp;    private void utf8DecodeCacheAndBuffer(long lo, long hi, int position) throws JsonException {
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        long p = cache;</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        long lim = cache + cacheSize;</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        int loOffset = 0;</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        while (p &lt; lim) {</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;            byte b = Unsafe.getUnsafe().getByte(p);</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;            if (b &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                int len = Chars.utf8DecodeMultiByte(p, lim, b, sink);</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;                if (len != -1) {</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                    p += len;</b>
+<i class="no-highlight">330</i>&nbsp;                } else {
+<i class="no-highlight">331</i>&nbsp;                    // UTF8 error, check if we can switch to main buffer
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                    final int cacheRemaining = (int) (lim - p);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                    if (cacheRemaining &gt; 4) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                        throw unsupportedEncoding(position);</b>
+<i class="no-highlight">335</i>&nbsp;                    } else {
+<i class="no-highlight">336</i>&nbsp;                        // add up to four bytes to stash and try again
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                        int n = (int) Math.max(4, hi - lo);</b>
+<i class="no-highlight">338</i>&nbsp;
+<i class="no-highlight">339</i>&nbsp;                        // keep offset of &#39;p&#39; in case stash re-sizes and updates pointers
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                        long offset = p - cache;</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;                        addToStash(lo, lo + n);</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                        assert offset &lt; cacheSize;</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                        assert cacheSize &lt;= cacheCapacity;</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                        len = Chars.utf8DecodeMultiByte(cache + offset, cache + cacheSize, b, sink);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                        if (len == -1) {</b>
+<i class="no-highlight">346</i>&nbsp;                            // definitely UTF8 error
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                            throw unsupportedEncoding(position);</b>
+<i class="no-highlight">348</i>&nbsp;                        }
+<i class="no-highlight">349</i>&nbsp;                        // right, decoding was a success, we must continue with decoding main buffer from
+<i class="no-highlight">350</i>&nbsp;                        // non-zero offset, because we used some of the bytes to decode cache
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                        loOffset = len - cacheRemaining;</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                        p += cacheRemaining;</b>
+<i class="no-highlight">353</i>&nbsp;                    }
+<i class="no-highlight">354</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">355</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                sink.put((char) b);</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                ++p;</b>
+<i class="no-highlight">358</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        }</b>
+<i class="no-highlight">360</i>&nbsp;
+<b class="fc"><i class="no-highlight">361</i>&nbsp;        p = lo + loOffset;</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        while (p &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;            byte b = Unsafe.getUnsafe().getByte(p);</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;            if (b &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                int len = Chars.utf8DecodeMultiByte(p, hi, b, sink);</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                if (len == -1) {</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                    throw unsupportedEncoding(position);</b>
+<i class="no-highlight">368</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                p += len;</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;            } else {</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                sink.put((char) b);</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                ++p;</b>
+<i class="no-highlight">373</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        }</b>
+<i class="no-highlight">375</i>&nbsp;    }
+<i class="no-highlight">376</i>&nbsp;
+<i class="no-highlight">377</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">378</i>&nbsp;        unquotedTerminators.add(&#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        unquotedTerminators.add(&#39;\t&#39;);</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        unquotedTerminators.add(&#39;\n&#39;);</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        unquotedTerminators.add(&#39;\r&#39;);</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        unquotedTerminators.add(&#39;,&#39;);</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        unquotedTerminators.add(&#39;}&#39;);</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;        unquotedTerminators.add(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        unquotedTerminators.add(&#39;{&#39;);</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        unquotedTerminators.add(&#39;[&#39;);</b>
+<i class="no-highlight">387</i>&nbsp;    }
+<i class="no-highlight">388</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

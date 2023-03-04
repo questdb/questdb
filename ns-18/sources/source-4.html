@@ -1,0 +1,628 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > CairoTextWriter</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.text</a>
+</div>
+
+<h1>Coverage Summary for Class: CairoTextWriter (io.questdb.cutlass.text)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">CairoTextWriter</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (26/26)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.4%
+  </span>
+  <span class="absValue">
+    (168/169)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">CairoTextWriter$TableStructureAdapter</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (16/16)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.9%
+  </span>
+  <span class="absValue">
+    (31/32)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (42/42)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99%
+  </span>
+  <span class="absValue">
+    (199/201)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.text;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.api.MemoryMARW;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cutlass.text.types.*;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.log.LogRecord;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.str.DirectByteCharSequence;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">40</i>&nbsp;
+<b class="fc"><i class="no-highlight">41</i>&nbsp;public class CairoTextWriter implements Closeable, Mutable {</b>
+<i class="no-highlight">42</i>&nbsp;    public static final int NO_INDEX = -1;
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);</b>
+<i class="no-highlight">44</i>&nbsp;    private static final String WRITER_LOCK_REASON = &quot;textWriter&quot;;
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    private final LongList columnErrorCounts = new LongList();</b>
+<i class="no-highlight">46</i>&nbsp;    private final CairoConfiguration configuration;
+<b class="fc"><i class="no-highlight">47</i>&nbsp;    private final MemoryMARW ddlMem = Vm.getMARWInstance();</b>
+<i class="no-highlight">48</i>&nbsp;    private final CairoEngine engine;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    private final ObjectPool&lt;OtherToTimestampAdapter&gt; otherToTimestampAdapterPool = new ObjectPool&lt;&gt;(OtherToTimestampAdapter::new, 4);</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    private final IntList remapIndex = new IntList();</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();</b>
+<i class="no-highlight">52</i>&nbsp;    private long _size;
+<i class="no-highlight">53</i>&nbsp;    private int atomicity;
+<i class="no-highlight">54</i>&nbsp;    private CharSequence designatedTimestampColumnName;
+<i class="no-highlight">55</i>&nbsp;    private int designatedTimestampIndex;
+<i class="no-highlight">56</i>&nbsp;    private boolean durable;
+<i class="no-highlight">57</i>&nbsp;    private CharSequence importedTimestampColumnName;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private int maxUncommittedRows = -1;</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private long o3MaxLag = -1;</b>
+<i class="no-highlight">60</i>&nbsp;    private boolean overwrite;
+<i class="no-highlight">61</i>&nbsp;    private int partitionBy;
+<i class="no-highlight">62</i>&nbsp;    private CharSequence tableName;
+<i class="no-highlight">63</i>&nbsp;    private TimestampAdapter timestampAdapter;
+<b class="fc"><i class="no-highlight">64</i>&nbsp;    private int timestampIndex = NO_INDEX;</b>
+<i class="no-highlight">65</i>&nbsp;    private ObjList&lt;TypeAdapter&gt; types;
+<i class="no-highlight">66</i>&nbsp;    private int warnings;
+<i class="no-highlight">67</i>&nbsp;    private TableWriter writer;
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;</b>
+<i class="no-highlight">70</i>&nbsp;
+<b class="fc"><i class="no-highlight">71</i>&nbsp;    public CairoTextWriter(CairoEngine engine) {</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.engine = engine;</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        this.configuration = engine.getConfiguration();</b>
+<i class="no-highlight">74</i>&nbsp;    }
+<i class="no-highlight">75</i>&nbsp;
+<i class="no-highlight">76</i>&nbsp;    @Override
+<i class="no-highlight">77</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        otherToTimestampAdapterPool.clear();</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        writer = Misc.free(writer);</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        columnErrorCounts.clear();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        timestampAdapter = null;</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        _size = 0;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        warnings = TextLoadWarning.NONE;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        designatedTimestampColumnName = null;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        designatedTimestampIndex = NO_INDEX;</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        timestampIndex = NO_INDEX;</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        importedTimestampColumnName = null;</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        remapIndex.clear();</b>
+<i class="no-highlight">89</i>&nbsp;    }
+<i class="no-highlight">90</i>&nbsp;
+<i class="no-highlight">91</i>&nbsp;    @Override
+<i class="no-highlight">92</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        clear();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        ddlMem.close();</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    public void closeWriter() {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        writer = Misc.free(writer);</b>
+<i class="no-highlight">99</i>&nbsp;    }
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;    public void commit() {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        if (writer != null) {</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;            writer.commit(durable ? CommitMode.SYNC : CommitMode.NOSYNC);</b>
+<i class="no-highlight">104</i>&nbsp;        }
+<i class="no-highlight">105</i>&nbsp;    }
+<i class="no-highlight">106</i>&nbsp;
+<i class="no-highlight">107</i>&nbsp;    public LongList getColumnErrorCounts() {
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        return columnErrorCounts;</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    public RecordMetadata getMetadata() {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        return writer == null ? null : writer.getMetadata();</b>
+<i class="no-highlight">113</i>&nbsp;    }
+<i class="no-highlight">114</i>&nbsp;
+<i class="no-highlight">115</i>&nbsp;    public int getPartitionBy() {
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        return partitionBy;</b>
+<i class="no-highlight">117</i>&nbsp;    }
+<i class="no-highlight">118</i>&nbsp;
+<i class="no-highlight">119</i>&nbsp;    public CharSequence getTableName() {
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        return tableName;</b>
+<i class="no-highlight">121</i>&nbsp;    }
+<i class="no-highlight">122</i>&nbsp;
+<i class="no-highlight">123</i>&nbsp;    public CsvTextLexer.Listener getTextListener() {
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        return timestampAdapter != null ? partitionedListener : nonPartitionedListener;</b>
+<i class="no-highlight">125</i>&nbsp;    }
+<i class="no-highlight">126</i>&nbsp;
+<i class="no-highlight">127</i>&nbsp;    public CharSequence getTimestampCol() {
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        return designatedTimestampColumnName;</b>
+<i class="no-highlight">129</i>&nbsp;    }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;    public int getWarnings() {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        return warnings;</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    public long getWrittenLineCount() {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        return writer == null ? 0 : writer.size() - _size;</b>
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    public void of(
+<i class="no-highlight">140</i>&nbsp;            CharSequence name,
+<i class="no-highlight">141</i>&nbsp;            boolean overwrite,
+<i class="no-highlight">142</i>&nbsp;            boolean durable,
+<i class="no-highlight">143</i>&nbsp;            int atomicity,
+<i class="no-highlight">144</i>&nbsp;            int partitionBy,
+<i class="no-highlight">145</i>&nbsp;            CharSequence timestampColumn
+<i class="no-highlight">146</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        this.tableName = name;</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        this.overwrite = overwrite;</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        this.durable = durable;</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        this.atomicity = atomicity;</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        this.partitionBy = partitionBy;</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        this.importedTimestampColumnName = timestampColumn;</b>
+<i class="no-highlight">153</i>&nbsp;    }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    public void onFieldsNonPartitioned(long line, ObjList&lt;DirectByteCharSequence&gt; values, int valuesLength) {
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        final TableWriter.Row w = writer.newRow();</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        for (int i = 0; i &lt; valuesLength; i++) {</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            final DirectByteCharSequence dbcs = values.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;            if (dbcs.length() == 0) {</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                continue;</b>
+<i class="no-highlight">161</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">162</i>&nbsp;            if (onField(line, dbcs, w, i)) return;</b>
+<i class="no-highlight">163</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        w.append();</b>
+<i class="no-highlight">165</i>&nbsp;    }
+<i class="no-highlight">166</i>&nbsp;
+<i class="no-highlight">167</i>&nbsp;    public void onFieldsPartitioned(long line, ObjList&lt;DirectByteCharSequence&gt; values, int valuesLength) {
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        final int timestampIndex = this.timestampIndex;</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        DirectByteCharSequence dbcs = values.getQuick(timestampIndex);</b>
+<i class="no-highlight">170</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">171</i>&nbsp;            final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;            for (int i = 0; i &lt; valuesLength; i++) {</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;                dbcs = values.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;                if (i == timestampIndex || dbcs.length() == 0) {</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;                    continue;</b>
+<i class="no-highlight">176</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">177</i>&nbsp;                if (onField(line, dbcs, w, i)) {</b>
+<i class="no-highlight">178</i>&nbsp;                    return;
+<i class="no-highlight">179</i>&nbsp;                }
+<i class="no-highlight">180</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            w.append();</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            checkUncommittedRowCount();</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        } catch (Exception e) {</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            logError(line, timestampIndex, dbcs);</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        }</b>
+<i class="no-highlight">186</i>&nbsp;    }
+<i class="no-highlight">187</i>&nbsp;
+<i class="no-highlight">188</i>&nbsp;    public void setMaxUncommittedRows(int maxUncommittedRows) {
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        this.maxUncommittedRows = maxUncommittedRows;</b>
+<i class="no-highlight">190</i>&nbsp;    }
+<i class="no-highlight">191</i>&nbsp;
+<i class="no-highlight">192</i>&nbsp;    public void setO3MaxLag(long o3MaxLag) {
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        this.o3MaxLag = o3MaxLag;</b>
+<i class="no-highlight">194</i>&nbsp;    }
+<i class="no-highlight">195</i>&nbsp;
+<i class="no-highlight">196</i>&nbsp;    private void checkUncommittedRowCount() {
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        if (writer != null &amp;&amp; maxUncommittedRows &gt; 0 &amp;&amp; writer.getO3RowCount() &gt;= maxUncommittedRows) {</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;            writer.ic(durable ? CommitMode.SYNC : CommitMode.NOSYNC);</b>
+<i class="no-highlight">199</i>&nbsp;        }
+<i class="no-highlight">200</i>&nbsp;    }
+<i class="no-highlight">201</i>&nbsp;
+<i class="no-highlight">202</i>&nbsp;    private TableToken createTable(
+<i class="no-highlight">203</i>&nbsp;            ObjList&lt;CharSequence&gt; names,
+<i class="no-highlight">204</i>&nbsp;            ObjList&lt;TypeAdapter&gt; detectedTypes,
+<i class="no-highlight">205</i>&nbsp;            CairoSecurityContext cairoSecurityContext,
+<i class="no-highlight">206</i>&nbsp;            Path path
+<i class="no-highlight">207</i>&nbsp;    ) throws TextException {
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        TableToken tableToken = engine.createTable(</b>
+<i class="no-highlight">209</i>&nbsp;                cairoSecurityContext,
+<i class="no-highlight">210</i>&nbsp;                ddlMem,
+<i class="no-highlight">211</i>&nbsp;                path,
+<i class="no-highlight">212</i>&nbsp;                false,
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                tableStructureAdapter.of(names, detectedTypes),</b>
+<i class="no-highlight">214</i>&nbsp;                false
+<i class="no-highlight">215</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        this.types = detectedTypes;</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;        return tableToken;</b>
+<i class="no-highlight">218</i>&nbsp;    }
+<i class="no-highlight">219</i>&nbsp;
+<i class="no-highlight">220</i>&nbsp;    private void logError(long line, int i, DirectByteCharSequence dbcs) {
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        LogRecord logRecord = LOG.error().$(&quot;type syntax [type=&quot;).$(ColumnType.nameOf(types.getQuick(i).getType())).$(&quot;]\n\t&quot;);</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;        logRecord.$(&#39;[&#39;).$(line).$(&#39;:&#39;).$(i).$(&quot;] -&gt; &quot;).$(dbcs).$();</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        columnErrorCounts.increment(i);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    private void logTypeError(int i) {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        LOG.info()</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;                .$(&quot;mis-detected [table=&quot;).$(tableName)</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;                .$(&quot;, column=&quot;).$(i)</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                .$(&quot;, type=&quot;).$(ColumnType.nameOf(this.types.getQuick(i).getType()))</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                .$(&#39;]&#39;).$();</b>
+<i class="no-highlight">232</i>&nbsp;    }
+<i class="no-highlight">233</i>&nbsp;
+<i class="no-highlight">234</i>&nbsp;    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+<i class="no-highlight">235</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            final int tableIndex = remapIndex.size() &gt; 0 ? remapIndex.get(i) : i;</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            types.getQuick(i).write(w, tableIndex, dbcs);</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        } catch (Exception ignore) {</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;            logError(line, i, dbcs);</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;            switch (atomicity) {</b>
+<i class="no-highlight">241</i>&nbsp;                case Atomicity.SKIP_ALL:
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                    writer.rollback();</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;                    throw CairoException.nonCritical().put(&quot;bad syntax [line=&quot;).put(line).put(&quot;, col=&quot;).put(i).put(&#39;]&#39;);</b>
+<i class="no-highlight">244</i>&nbsp;                case Atomicity.SKIP_ROW:
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                    w.cancel();</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                    return true;</b>
+<i class="no-highlight">247</i>&nbsp;                default:
+<i class="no-highlight">248</i>&nbsp;                    // SKIP column
+<i class="no-highlight">249</i>&nbsp;                    break;
+<i class="no-highlight">250</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        return false;</b>
+<i class="no-highlight">253</i>&nbsp;    }
+<i class="no-highlight">254</i>&nbsp;
+<i class="no-highlight">255</i>&nbsp;    private TableWriter openWriterAndOverrideImportTypes(
+<i class="no-highlight">256</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">257</i>&nbsp;            ObjList&lt;CharSequence&gt; names,
+<i class="no-highlight">258</i>&nbsp;            ObjList&lt;TypeAdapter&gt; detectedTypes,
+<i class="no-highlight">259</i>&nbsp;            CairoSecurityContext cairoSecurityContext,
+<i class="no-highlight">260</i>&nbsp;            TypeManager typeManager
+<i class="no-highlight">261</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">262</i>&nbsp;        TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        RecordMetadata metadata = writer.getMetadata();</b>
+<i class="no-highlight">264</i>&nbsp;
+<i class="no-highlight">265</i>&nbsp;        // now, compare column count.
+<i class="no-highlight">266</i>&nbsp;        // Cannot continue if different
+<i class="no-highlight">267</i>&nbsp;
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        if (metadata.getColumnCount() &lt; detectedTypes.size()) {</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;            writer.close();</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            throw CairoException.nonCritical()</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;                    .put(&quot;column count mismatch [textColumnCount=&quot;).put(detectedTypes.size())</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                    .put(&quot;, tableColumnCount=&quot;).put(metadata.getColumnCount())</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                    .put(&quot;, table=&quot;).put(tableName)</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                    .put(&#39;]&#39;);</b>
+<i class="no-highlight">275</i>&nbsp;        }
+<i class="no-highlight">276</i>&nbsp;
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        this.types = detectedTypes;</b>
+<i class="no-highlight">278</i>&nbsp;
+<i class="no-highlight">279</i>&nbsp;        // now overwrite detected types with actual table column types
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        remapIndex.ensureCapacity(this.types.size());</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        for (int i = 0, n = this.types.size(); i &lt; n; i++) {</b>
+<i class="no-highlight">282</i>&nbsp;
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            final int idx = (columnIndex &gt; -1 &amp;&amp; columnIndex != i) ? columnIndex : i; // check for strict match ?</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;            remapIndex.set(i, idx);</b>
+<i class="no-highlight">286</i>&nbsp;
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            final int columnType = metadata.getColumnType(idx);</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            final TypeAdapter detectedAdapter = this.types.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            final int detectedType = detectedAdapter.getType();</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            if (detectedType != columnType) {</b>
+<i class="no-highlight">291</i>&nbsp;                // when DATE type is mis-detected as STRING we
+<i class="no-highlight">292</i>&nbsp;                // would not have either date format nor locale to
+<i class="no-highlight">293</i>&nbsp;                // use when populating this field
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">295</i>&nbsp;                    case ColumnType.DATE:
+<b class="fc"><i class="no-highlight">296</i>&nbsp;                        logTypeError(i);</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                        this.types.setQuick(i, BadDateAdapter.INSTANCE);</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                        break;</b>
+<i class="no-highlight">299</i>&nbsp;                    case ColumnType.TIMESTAMP:
+<b class="fc"><i class="no-highlight">300</i>&nbsp;                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;                            this.types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));</b>
+<i class="no-highlight">302</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;                            logTypeError(i);</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);</b>
+<i class="no-highlight">305</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">306</i>&nbsp;                        break;</b>
+<i class="no-highlight">307</i>&nbsp;                    case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                        writer.close();</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                        throw CairoException.nonCritical().put(&quot;cannot import text into BINARY column [index=&quot;).put(i).put(&#39;]&#39;);</b>
+<i class="no-highlight">310</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">311</i>&nbsp;                        this.types.setQuick(i, typeManager.getTypeAdapter(columnType));</b>
+<i class="no-highlight">312</i>&nbsp;                        break;
+<i class="no-highlight">313</i>&nbsp;                }
+<i class="no-highlight">314</i>&nbsp;            }
+<i class="no-highlight">315</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        return writer;</b>
+<i class="no-highlight">317</i>&nbsp;    }
+<i class="no-highlight">318</i>&nbsp;
+<i class="no-highlight">319</i>&nbsp;    void prepareTable(
+<i class="no-highlight">320</i>&nbsp;            CairoSecurityContext cairoSecurityContext,
+<i class="no-highlight">321</i>&nbsp;            ObjList&lt;CharSequence&gt; names,
+<i class="no-highlight">322</i>&nbsp;            ObjList&lt;TypeAdapter&gt; detectedTypes,
+<i class="no-highlight">323</i>&nbsp;            Path path,
+<i class="no-highlight">324</i>&nbsp;            TypeManager typeManager,
+<i class="no-highlight">325</i>&nbsp;            TimestampAdapter timestampAdapter
+<i class="no-highlight">326</i>&nbsp;    ) throws TextException {
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        assert writer == null;</b>
+<i class="no-highlight">328</i>&nbsp;
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        if (detectedTypes.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;            throw CairoException.nonCritical().put(&quot;cannot determine text structure&quot;);</b>
+<i class="no-highlight">331</i>&nbsp;        }
+<i class="no-highlight">332</i>&nbsp;
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        boolean canUpdateMetadata = true;</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;        TableToken tableToken = engine.getTableTokenIfExists(tableName);</b>
+<i class="no-highlight">335</i>&nbsp;
+<b class="fc"><i class="no-highlight">336</i>&nbsp;        switch (engine.getStatus(cairoSecurityContext, path, tableToken)) {</b>
+<i class="no-highlight">337</i>&nbsp;            case TableUtils.TABLE_DOES_NOT_EXIST:
+<b class="fc"><i class="no-highlight">338</i>&nbsp;                tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;                writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;                designatedTimestampIndex = writer.getMetadata().getTimestampIndex();</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                partitionBy = writer.getPartitionBy();</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                break;</b>
+<i class="no-highlight">344</i>&nbsp;            case TableUtils.TABLE_EXISTS:
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                if (overwrite) {</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                    engine.drop(cairoSecurityContext, path, tableToken);</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                    tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;                    writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);</b>
+<i class="no-highlight">349</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                    canUpdateMetadata = false;</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                    writer = openWriterAndOverrideImportTypes(tableToken, names, detectedTypes, cairoSecurityContext, typeManager);</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                    designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;                    designatedTimestampIndex = writer.getMetadata().getTimestampIndex();</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                    if (importedTimestampColumnName != null &amp;&amp;</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                            !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                        warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;</b>
+<i class="no-highlight">357</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                    if (PartitionBy.isPartitioned(partitionBy) &amp;&amp; partitionBy != writer.getPartitionBy()) {</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                        warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;</b>
+<i class="no-highlight">360</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                    partitionBy = writer.getPartitionBy();</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                    tableStructureAdapter.of(names, detectedTypes);</b>
+<i class="no-highlight">363</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                break;</b>
+<i class="no-highlight">365</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">366</i>&nbsp;                throw CairoException.nonCritical().put(&quot;name is reserved [table=&quot;).put(tableName).put(&#39;]&#39;);</b>
+<i class="no-highlight">367</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        if (canUpdateMetadata) {</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;            if (PartitionBy.isPartitioned(partitionBy)) {</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                if (o3MaxLag &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                    writer.setMetaO3MaxLag(o3MaxLag);</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;                    LOG.info().$(&quot;updating metadata attribute o3MaxLag to &quot;).$(o3MaxLag).$(&quot;, table=&quot;).utf8(tableName).$();</b>
+<i class="no-highlight">373</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">374</i>&nbsp;                if (maxUncommittedRows &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                    writer.setMetaMaxUncommittedRows(maxUncommittedRows);</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;                    LOG.info().$(&quot;updating metadata attribute maxUncommittedRows to &quot;).$(maxUncommittedRows).$(&quot;, table=&quot;).utf8(tableName).$();</b>
+<i class="no-highlight">377</i>&nbsp;                }
+<i class="no-highlight">378</i>&nbsp;            }
+<i class="no-highlight">379</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            LOG.info().$(&quot;cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false&quot;).$();</b>
+<i class="no-highlight">381</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        _size = writer.size();</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);</b>
+<i class="no-highlight">384</i>&nbsp;
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        if (timestampIndex != NO_INDEX) {</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;            if (timestampAdapter != null) {</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                this.timestampAdapter = timestampAdapter;</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;            } else if (ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                this.timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);</b>
+<i class="no-highlight">390</i>&nbsp;            }
+<i class="no-highlight">391</i>&nbsp;        }
+<i class="no-highlight">392</i>&nbsp;    }
+<i class="no-highlight">393</i>&nbsp;
+<b class="fc"><i class="no-highlight">394</i>&nbsp;    private class TableStructureAdapter implements TableStructure {</b>
+<i class="no-highlight">395</i>&nbsp;        private ObjList&lt;CharSequence&gt; names;
+<i class="no-highlight">396</i>&nbsp;        private ObjList&lt;TypeAdapter&gt; types;
+<i class="no-highlight">397</i>&nbsp;
+<i class="no-highlight">398</i>&nbsp;        @Override
+<i class="no-highlight">399</i>&nbsp;        public int getColumnCount() {
+<b class="fc"><i class="no-highlight">400</i>&nbsp;            return types.size();</b>
+<i class="no-highlight">401</i>&nbsp;        }
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;        @Override
+<i class="no-highlight">404</i>&nbsp;        public CharSequence getColumnName(int columnIndex) {
+<b class="fc"><i class="no-highlight">405</i>&nbsp;            return names.getQuick(columnIndex);</b>
+<i class="no-highlight">406</i>&nbsp;        }
+<i class="no-highlight">407</i>&nbsp;
+<i class="no-highlight">408</i>&nbsp;        @Override
+<i class="no-highlight">409</i>&nbsp;        public int getColumnType(int columnIndex) {
+<b class="fc"><i class="no-highlight">410</i>&nbsp;            return types.getQuick(columnIndex).getType();</b>
+<i class="no-highlight">411</i>&nbsp;        }
+<i class="no-highlight">412</i>&nbsp;
+<i class="no-highlight">413</i>&nbsp;        @Override
+<i class="no-highlight">414</i>&nbsp;        public int getIndexBlockCapacity(int columnIndex) {
+<b class="fc"><i class="no-highlight">415</i>&nbsp;            return configuration.getIndexValueBlockSize();</b>
+<i class="no-highlight">416</i>&nbsp;        }
+<i class="no-highlight">417</i>&nbsp;
+<i class="no-highlight">418</i>&nbsp;        @Override
+<i class="no-highlight">419</i>&nbsp;        public int getMaxUncommittedRows() {
+<b class="fc"><i class="no-highlight">420</i>&nbsp;            return configuration.getMaxUncommittedRows();</b>
+<i class="no-highlight">421</i>&nbsp;        }
+<i class="no-highlight">422</i>&nbsp;
+<i class="no-highlight">423</i>&nbsp;        @Override
+<i class="no-highlight">424</i>&nbsp;        public long getO3MaxLag() {
+<b class="fc"><i class="no-highlight">425</i>&nbsp;            return configuration.getO3MaxLag();</b>
+<i class="no-highlight">426</i>&nbsp;        }
+<i class="no-highlight">427</i>&nbsp;
+<i class="no-highlight">428</i>&nbsp;        @Override
+<i class="no-highlight">429</i>&nbsp;        public int getPartitionBy() {
+<b class="fc"><i class="no-highlight">430</i>&nbsp;            return partitionBy;</b>
+<i class="no-highlight">431</i>&nbsp;        }
+<i class="no-highlight">432</i>&nbsp;
+<i class="no-highlight">433</i>&nbsp;        @Override
+<i class="no-highlight">434</i>&nbsp;        public boolean getSymbolCacheFlag(int columnIndex) {
+<b class="fc"><i class="no-highlight">435</i>&nbsp;            return configuration.getDefaultSymbolCacheFlag();</b>
+<i class="no-highlight">436</i>&nbsp;        }
+<i class="no-highlight">437</i>&nbsp;
+<i class="no-highlight">438</i>&nbsp;        @Override
+<i class="no-highlight">439</i>&nbsp;        public int getSymbolCapacity(int columnIndex) {
+<b class="fc"><i class="no-highlight">440</i>&nbsp;            return configuration.getDefaultSymbolCapacity();</b>
+<i class="no-highlight">441</i>&nbsp;        }
+<i class="no-highlight">442</i>&nbsp;
+<i class="no-highlight">443</i>&nbsp;        @Override
+<i class="no-highlight">444</i>&nbsp;        public CharSequence getTableName() {
+<b class="fc"><i class="no-highlight">445</i>&nbsp;            return tableName;</b>
+<i class="no-highlight">446</i>&nbsp;        }
+<i class="no-highlight">447</i>&nbsp;
+<i class="no-highlight">448</i>&nbsp;        @Override
+<i class="no-highlight">449</i>&nbsp;        public int getTimestampIndex() {
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            return timestampIndex;</b>
+<i class="no-highlight">451</i>&nbsp;        }
+<i class="no-highlight">452</i>&nbsp;
+<i class="no-highlight">453</i>&nbsp;        @Override
+<i class="no-highlight">454</i>&nbsp;        public boolean isIndexed(int columnIndex) {
+<b class="fc"><i class="no-highlight">455</i>&nbsp;            return types.getQuick(columnIndex).isIndexed();</b>
+<i class="no-highlight">456</i>&nbsp;        }
+<i class="no-highlight">457</i>&nbsp;
+<i class="no-highlight">458</i>&nbsp;        @Override
+<i class="no-highlight">459</i>&nbsp;        public boolean isSequential(int columnIndex) {
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            return false;</b>
+<i class="no-highlight">461</i>&nbsp;        }
+<i class="no-highlight">462</i>&nbsp;
+<i class="no-highlight">463</i>&nbsp;        @Override
+<i class="no-highlight">464</i>&nbsp;        public boolean isWalEnabled() {
+<b class="fc"><i class="no-highlight">465</i>&nbsp;            return configuration.getWalEnabledDefault() &amp;&amp; PartitionBy.isPartitioned(partitionBy);</b>
+<i class="no-highlight">466</i>&nbsp;        }
+<i class="no-highlight">467</i>&nbsp;
+<i class="no-highlight">468</i>&nbsp;        TableStructureAdapter of(ObjList&lt;CharSequence&gt; names, ObjList&lt;TypeAdapter&gt; types) throws TextException {
+<b class="fc"><i class="no-highlight">469</i>&nbsp;            this.names = names;</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;            this.types = types;</b>
+<i class="no-highlight">471</i>&nbsp;
+<b class="fc"><i class="no-highlight">472</i>&nbsp;            if (importedTimestampColumnName == null &amp;&amp; designatedTimestampColumnName == null) {</b>
+<b class="fc"><i class="no-highlight">473</i>&nbsp;                timestampIndex = NO_INDEX;</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;            } else if (importedTimestampColumnName != null) {</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;                timestampIndex = names.indexOf(importedTimestampColumnName);</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;                if (timestampIndex == NO_INDEX) {</b>
+<b class="nc"><i class="no-highlight">477</i>&nbsp;                    throw TextException.$(&quot;invalid timestamp column &#39;&quot;).put(importedTimestampColumnName).put(&#39;\&#39;&#39;);</b>
+<i class="no-highlight">478</i>&nbsp;                }
+<i class="no-highlight">479</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">480</i>&nbsp;                timestampIndex = names.indexOf(designatedTimestampColumnName);</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;                if (timestampIndex == NO_INDEX) {</b>
+<i class="no-highlight">482</i>&nbsp;                    // columns in the imported file may not have headers, then use writer timestamp index
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                    timestampIndex = designatedTimestampIndex;</b>
+<i class="no-highlight">484</i>&nbsp;                }
+<i class="no-highlight">485</i>&nbsp;            }
+<i class="no-highlight">486</i>&nbsp;
+<b class="fc"><i class="no-highlight">487</i>&nbsp;            if (timestampIndex != NO_INDEX) {</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;                final int typeTag = ColumnType.tagOf(timestampAdapter.getType());</b>
+<b class="fc"><i class="no-highlight">490</i>&nbsp;                if ((typeTag != ColumnType.LONG &amp;&amp; typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                    throw TextException.$(&quot;not a timestamp &#39;&quot;).put(importedTimestampColumnName).put(&#39;\&#39;&#39;);</b>
+<i class="no-highlight">492</i>&nbsp;                }
+<i class="no-highlight">493</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">494</i>&nbsp;            return this;</b>
+<i class="no-highlight">495</i>&nbsp;        }
+<i class="no-highlight">496</i>&nbsp;    }
+<i class="no-highlight">497</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

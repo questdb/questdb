@@ -1,0 +1,758 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > SampleByInterpolateRecordCursorFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.engine.groupby</a>
+</div>
+
+<h1>Coverage Summary for Class: SampleByInterpolateRecordCursorFactory (io.questdb.griffin.engine.groupby)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">SampleByInterpolateRecordCursorFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    87.5%
+  </span>
+  <span class="absValue">
+    (7/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    85.7%
+  </span>
+  <span class="absValue">
+    (66/77)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">SampleByInterpolateRecordCursorFactory$SampleByInterpolateRecordCursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (18/18)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (207/207)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    96.2%
+  </span>
+  <span class="absValue">
+    (25/26)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.1%
+  </span>
+  <span class="absValue">
+    (273/284)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.engine.groupby;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.map.Map;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.map.MapFactory;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.map.MapKey;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.map.MapValue;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cairo.sql.Record;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cairo.sql.*;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.PlanSink;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.SqlExecutionContext;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.griffin.engine.functions.GroupByFunction;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.griffin.model.QueryModel;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">41</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">42</i>&nbsp;
+<i class="no-highlight">43</i>&nbsp;public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
+<i class="no-highlight">44</i>&nbsp;
+<i class="no-highlight">45</i>&nbsp;    protected final RecordCursorFactory base;
+<i class="no-highlight">46</i>&nbsp;    private final SampleByInterpolateRecordCursor cursor;
+<i class="no-highlight">47</i>&nbsp;    private final int groupByFunctionCount;
+<i class="no-highlight">48</i>&nbsp;    private final ObjList&lt;GroupByFunction&gt; groupByFunctions;
+<i class="no-highlight">49</i>&nbsp;    private final int groupByScalarFunctionCount;
+<i class="no-highlight">50</i>&nbsp;    private final ObjList&lt;GroupByFunction&gt; groupByScalarFunctions;
+<i class="no-highlight">51</i>&nbsp;    private final int groupByTwoPointFunctionCount;
+<i class="no-highlight">52</i>&nbsp;    private final ObjList&lt;GroupByFunction&gt; groupByTwoPointFunctions;
+<i class="no-highlight">53</i>&nbsp;    private final ObjList&lt;InterpolationUtil.InterpolatorFunction&gt; interpolatorFunctions;
+<i class="no-highlight">54</i>&nbsp;    private final RecordSink mapSink;
+<i class="no-highlight">55</i>&nbsp;    // this sink is used to copy recordKeyMap keys to dataMap
+<i class="no-highlight">56</i>&nbsp;    private final RecordSink mapSink2;
+<i class="no-highlight">57</i>&nbsp;    private final ObjList&lt;Function&gt; recordFunctions;
+<i class="no-highlight">58</i>&nbsp;    private final TimestampSampler sampler;
+<i class="no-highlight">59</i>&nbsp;    private final ObjList&lt;InterpolationUtil.StoreYFunction&gt; storeYFunctions;
+<i class="no-highlight">60</i>&nbsp;    private final int timestampIndex;
+<i class="no-highlight">61</i>&nbsp;    private final int yDataSize;
+<i class="no-highlight">62</i>&nbsp;    private long yData;
+<i class="no-highlight">63</i>&nbsp;
+<i class="no-highlight">64</i>&nbsp;    public SampleByInterpolateRecordCursorFactory(
+<i class="no-highlight">65</i>&nbsp;            @Transient @NotNull BytecodeAssembler asm,
+<i class="no-highlight">66</i>&nbsp;            CairoConfiguration configuration,
+<i class="no-highlight">67</i>&nbsp;            RecordCursorFactory base,
+<i class="no-highlight">68</i>&nbsp;            RecordMetadata metadata,
+<i class="no-highlight">69</i>&nbsp;            ObjList&lt;GroupByFunction&gt; groupByFunctions,
+<i class="no-highlight">70</i>&nbsp;            ObjList&lt;Function&gt; recordFunctions,
+<i class="no-highlight">71</i>&nbsp;            @NotNull TimestampSampler timestampSampler,
+<i class="no-highlight">72</i>&nbsp;            @Transient @NotNull QueryModel model,
+<i class="no-highlight">73</i>&nbsp;            @Transient @NotNull ListColumnFilter listColumnFilter,
+<i class="no-highlight">74</i>&nbsp;            @Transient @NotNull ArrayColumnTypes keyTypes,
+<i class="no-highlight">75</i>&nbsp;            @Transient @NotNull ArrayColumnTypes valueTypes,
+<i class="no-highlight">76</i>&nbsp;            @Transient @NotNull EntityColumnFilter entityColumnFilter,
+<i class="no-highlight">77</i>&nbsp;            @Transient @NotNull IntList groupByFunctionPositions,
+<i class="no-highlight">78</i>&nbsp;            int timestampIndex
+<i class="no-highlight">79</i>&nbsp;    ) throws SqlException {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        super(metadata);</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        final int columnCount = model.getBottomUpColumns().size();</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        this.groupByFunctions = groupByFunctions;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.recordFunctions = recordFunctions;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        this.base = base;</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        this.sampler = timestampSampler;</b>
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;        // create timestamp column
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        for (int i = 0, n = recordFunctions.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;            if (recordFunctions.getQuick(i) == null) {</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;                recordFunctions.setQuick(i, timestampColumn);</b>
+<i class="no-highlight">92</i>&nbsp;            }
+<i class="no-highlight">93</i>&nbsp;        }
+<i class="no-highlight">94</i>&nbsp;
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        this.groupByScalarFunctions = new ObjList&lt;&gt;(columnCount);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        this.groupByTwoPointFunctions = new ObjList&lt;&gt;(columnCount);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        this.storeYFunctions = new ObjList&lt;&gt;(columnCount);</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        this.interpolatorFunctions = new ObjList&lt;&gt;(columnCount);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        this.groupByFunctionCount = groupByFunctions.size();</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        for (int i = 0; i &lt; groupByFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            GroupByFunction function = groupByFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            if (function.isScalar()) {</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                groupByScalarFunctions.add(function);</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;                switch (ColumnType.tagOf(function.getType())) {</b>
+<i class="no-highlight">105</i>&nbsp;                    case ColumnType.BYTE:
+<b class="nc"><i class="no-highlight">106</i>&nbsp;                        storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);</b>
+<b class="nc"><i class="no-highlight">107</i>&nbsp;                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);</b>
+<b class="nc"><i class="no-highlight">108</i>&nbsp;                        break;</b>
+<i class="no-highlight">109</i>&nbsp;                    case ColumnType.SHORT:
+<b class="nc"><i class="no-highlight">110</i>&nbsp;                        storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);</b>
+<b class="nc"><i class="no-highlight">111</i>&nbsp;                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);</b>
+<b class="nc"><i class="no-highlight">112</i>&nbsp;                        break;</b>
+<i class="no-highlight">113</i>&nbsp;                    case ColumnType.INT:
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                        storeYFunctions.add(InterpolationUtil.STORE_Y_INT);</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                        break;</b>
+<i class="no-highlight">117</i>&nbsp;                    case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                        storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                        break;</b>
+<i class="no-highlight">121</i>&nbsp;                    case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                        storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                        break;</b>
+<i class="no-highlight">125</i>&nbsp;                    case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                        storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                        break;</b>
+<i class="no-highlight">129</i>&nbsp;                    default:
+<b class="fc"><i class="no-highlight">130</i>&nbsp;                        Misc.freeObjList(groupByScalarFunctions);</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;                        throw SqlException.$(groupByFunctionPositions.getQuick(i), &quot;Unsupported interpolation type: &quot;).put(ColumnType.nameOf(function.getType()));</b>
+<i class="no-highlight">132</i>&nbsp;                }
+<i class="no-highlight">133</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                groupByTwoPointFunctions.add(function);</b>
+<i class="no-highlight">135</i>&nbsp;            }
+<i class="no-highlight">136</i>&nbsp;        }
+<i class="no-highlight">137</i>&nbsp;
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        this.groupByScalarFunctionCount = groupByScalarFunctions.size();</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        this.timestampIndex = timestampIndex;</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        this.yDataSize = groupByFunctionCount * 16;</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);</b>
+<i class="no-highlight">143</i>&nbsp;
+<i class="no-highlight">144</i>&nbsp;        // sink will be storing record columns to map key
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        entityColumnFilter.of(keyTypes.getColumnCount());</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);</b>
+<i class="no-highlight">148</i>&nbsp;
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        this.cursor = new SampleByInterpolateRecordCursor(recordFunctions, configuration, keyTypes, valueTypes);</b>
+<i class="no-highlight">150</i>&nbsp;    }
+<i class="no-highlight">151</i>&nbsp;
+<i class="no-highlight">152</i>&nbsp;    @Override
+<i class="no-highlight">153</i>&nbsp;    public RecordCursorFactory getBaseFactory() {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        return base;</b>
+<i class="no-highlight">155</i>&nbsp;    }
+<i class="no-highlight">156</i>&nbsp;
+<i class="no-highlight">157</i>&nbsp;    @Override
+<i class="no-highlight">158</i>&nbsp;    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        for (int i = 0; i &lt; groupByTwoPointFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;            final GroupByFunction function = groupByTwoPointFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;            if (!function.isInterpolationSupported()) {</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;                throw SqlException.position(0).put(&quot;interpolation is not supported for function: &quot;).put(function.getClass().getName());</b>
+<i class="no-highlight">163</i>&nbsp;            }
+<i class="no-highlight">164</i>&nbsp;        }
+<i class="no-highlight">165</i>&nbsp;
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        final RecordCursor baseCursor = base.getCursor(executionContext);</b>
+<i class="no-highlight">167</i>&nbsp;        try {
+<i class="no-highlight">168</i>&nbsp;            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+<b class="fc"><i class="no-highlight">169</i>&nbsp;            Function.init(recordFunctions, baseCursor, executionContext);</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;            cursor.of(baseCursor, executionContext);</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;            return cursor;</b>
+<b class="nc"><i class="no-highlight">172</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="nc"><i class="no-highlight">173</i>&nbsp;            baseCursor.close();</b>
+<b class="nc"><i class="no-highlight">174</i>&nbsp;            cursor.close();</b>
+<b class="nc"><i class="no-highlight">175</i>&nbsp;            throw e;</b>
+<i class="no-highlight">176</i>&nbsp;        }
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    @Override
+<i class="no-highlight">180</i>&nbsp;    public boolean recordCursorSupportsRandomAccess() {
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        return true;</b>
+<i class="no-highlight">182</i>&nbsp;    }
+<i class="no-highlight">183</i>&nbsp;
+<i class="no-highlight">184</i>&nbsp;    @Override
+<i class="no-highlight">185</i>&nbsp;    public void toPlan(PlanSink sink) {
+<b class="fc"><i class="no-highlight">186</i>&nbsp;        sink.type(&quot;SampleBy&quot;);</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;        sink.attr(&quot;fill&quot;).val(&quot;linear&quot;);</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        sink.optAttr(&quot;keys&quot;, GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        sink.optAttr(&quot;values&quot;, groupByFunctions, true);</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        sink.child(base);</b>
+<i class="no-highlight">191</i>&nbsp;    }
+<i class="no-highlight">192</i>&nbsp;
+<i class="no-highlight">193</i>&nbsp;    @Override
+<i class="no-highlight">194</i>&nbsp;    public boolean usesCompiledFilter() {
+<b class="nc"><i class="no-highlight">195</i>&nbsp;        return base.usesCompiledFilter();</b>
+<i class="no-highlight">196</i>&nbsp;    }
+<i class="no-highlight">197</i>&nbsp;
+<i class="no-highlight">198</i>&nbsp;    private void freeYData() {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        if (yData != 0) {</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            yData = 0;</b>
+<i class="no-highlight">202</i>&nbsp;        }
+<i class="no-highlight">203</i>&nbsp;    }
+<i class="no-highlight">204</i>&nbsp;
+<i class="no-highlight">205</i>&nbsp;    @Override
+<i class="no-highlight">206</i>&nbsp;    protected void _close() {
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        Misc.freeObjList(recordFunctions);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        freeYData();</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        Misc.free(base);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        Misc.free(cursor);</b>
+<i class="no-highlight">211</i>&nbsp;    }
+<i class="no-highlight">212</i>&nbsp;
+<b class="fc"><i class="no-highlight">213</i>&nbsp;    private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {</b>
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;        protected final Map recordKeyMap;
+<i class="no-highlight">216</i>&nbsp;        private final Map dataMap;
+<i class="no-highlight">217</i>&nbsp;        private SqlExecutionCircuitBreaker circuitBreaker;
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        private long hiSample = -1;</b>
+<i class="no-highlight">219</i>&nbsp;        private boolean isHasNextPending;
+<i class="no-highlight">220</i>&nbsp;        private boolean isMapBuilt;
+<i class="no-highlight">221</i>&nbsp;        private boolean isMapFilled;
+<i class="no-highlight">222</i>&nbsp;        private boolean isMapInitialized;
+<i class="no-highlight">223</i>&nbsp;        private boolean isOpen;
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        private long loSample = -1;</b>
+<i class="no-highlight">225</i>&nbsp;        private Record managedRecord;
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        private long prevSample = -1;</b>
+<i class="no-highlight">227</i>&nbsp;
+<i class="no-highlight">228</i>&nbsp;        public SampleByInterpolateRecordCursor(
+<i class="no-highlight">229</i>&nbsp;                ObjList&lt;Function&gt; functions,
+<i class="no-highlight">230</i>&nbsp;                CairoConfiguration configuration,
+<i class="no-highlight">231</i>&nbsp;                @Transient @NotNull ArrayColumnTypes keyTypes,
+<i class="no-highlight">232</i>&nbsp;                @Transient @NotNull ArrayColumnTypes valueTypes
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        ) {</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;            super(functions);</b>
+<i class="no-highlight">235</i>&nbsp;            // this is the map itself, which we must not forget to free when factory closes
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            recordKeyMap = MapFactory.createMap(configuration, keyTypes);</b>
+<i class="no-highlight">237</i>&nbsp;            // data map will contain rounded timestamp value as last key column
+<b class="fc"><i class="no-highlight">238</i>&nbsp;            keyTypes.add(ColumnType.TIMESTAMP);</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;            dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;            isOpen = true;</b>
+<i class="no-highlight">241</i>&nbsp;        }
+<i class="no-highlight">242</i>&nbsp;
+<i class="no-highlight">243</i>&nbsp;        @Override
+<i class="no-highlight">244</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">245</i>&nbsp;            if (isOpen) {</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;                isOpen = false;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;                recordKeyMap.close();</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;                dataMap.close();</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;                Misc.clearObjList(groupByFunctions);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;                super.close();</b>
+<i class="no-highlight">251</i>&nbsp;            }
+<i class="no-highlight">252</i>&nbsp;        }
+<i class="no-highlight">253</i>&nbsp;
+<i class="no-highlight">254</i>&nbsp;        @Override
+<i class="no-highlight">255</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;            if (!isMapBuilt) {</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                buildMap();</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                isMapBuilt = true;</b>
+<i class="no-highlight">259</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">260</i>&nbsp;            return super.hasNext();</b>
+<i class="no-highlight">261</i>&nbsp;        }
+<i class="no-highlight">262</i>&nbsp;
+<i class="no-highlight">263</i>&nbsp;        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) {
+<b class="fc"><i class="no-highlight">264</i>&nbsp;            if (!isOpen) {</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                isOpen = true;</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;                recordKeyMap.reopen();</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                dataMap.reopen();</b>
+<i class="no-highlight">268</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">269</i>&nbsp;            super.of(managedCursor, dataMap.getCursor());</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;            circuitBreaker = executionContext.getCircuitBreaker();</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;            managedRecord = managedCursor.getRecord();</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;            loSample = -1;</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            hiSample = -1;</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;            prevSample = -1;</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            isHasNextPending = false;</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            isMapInitialized = false;</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            isMapFilled = false;</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            isMapBuilt = false;</b>
+<i class="no-highlight">279</i>&nbsp;        }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;        @Override
+<i class="no-highlight">282</i>&nbsp;        public long size() {
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            return isMapBuilt ? super.size() : -1;</b>
+<i class="no-highlight">284</i>&nbsp;        }
+<i class="no-highlight">285</i>&nbsp;
+<i class="no-highlight">286</i>&nbsp;        @Override
+<i class="no-highlight">287</i>&nbsp;        public void toTop() {
+<b class="fc"><i class="no-highlight">288</i>&nbsp;            super.toTop();</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            if (!isMapBuilt) {</b>
+<i class="no-highlight">290</i>&nbsp;                // we need to reset everything, so that the map will be re-built
+<b class="fc"><i class="no-highlight">291</i>&nbsp;                recordKeyMap.clear();</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                dataMap.clear();</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                loSample = -1;</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                hiSample = -1;</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                prevSample = -1;</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;                isHasNextPending = false;</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                isMapInitialized = false;</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                isMapFilled = false;</b>
+<i class="no-highlight">299</i>&nbsp;            }
+<i class="no-highlight">300</i>&nbsp;        }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;        private void buildMap() {
+<b class="fc"><i class="no-highlight">303</i>&nbsp;            if (!isMapInitialized) {</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                if (!initMap()) {</b>
+<i class="no-highlight">305</i>&nbsp;                    // managed cursor has no data, nothing to do
+<i class="no-highlight">306</i>&nbsp;                    return;
+<i class="no-highlight">307</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                isMapInitialized = true;</b>
+<i class="no-highlight">309</i>&nbsp;            }
+<i class="no-highlight">310</i>&nbsp;
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            if (!isMapFilled) {</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                fillMap();</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;                isMapFilled = true;</b>
+<i class="no-highlight">314</i>&nbsp;            }
+<i class="no-highlight">315</i>&nbsp;
+<i class="no-highlight">316</i>&nbsp;            // the rest doesn&#39;t use managed cursor, so we can proceed freely
+<i class="no-highlight">317</i>&nbsp;
+<b class="fc"><i class="no-highlight">318</i>&nbsp;            if (groupByTwoPointFunctionCount &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                final RecordCursor mapCursor = recordKeyMap.getCursor();</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                final Record mapRecord = mapCursor.getRecord();</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                while (mapCursor.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                    circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">323</i>&nbsp;
+<b class="fc"><i class="no-highlight">324</i>&nbsp;                    MapValue value = findDataMapValue(mapRecord, loSample);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                    if (value.getByte(0) == 0) { //we have at least 1 data point</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                        long x1 = loSample;</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                        long x2 = x1;</b>
+<i class="no-highlight">328</i>&nbsp;                        while (true) {
+<i class="no-highlight">329</i>&nbsp;                            // to timestamp after &#39;sample&#39; to begin with
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                            x2 = sampler.nextTimestamp(x2);</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;                            if (x2 &lt; hiSample) {</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                                value = findDataMapValue(mapRecord, x2);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                                if (value.getByte(0) == 0) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                                    interpolateBoundaryRange(x1, x2, mapRecord);</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                                    x1 = x2;</b>
+<i class="no-highlight">336</i>&nbsp;                                }
+<i class="no-highlight">337</i>&nbsp;                            } else {
+<i class="no-highlight">338</i>&nbsp;                                break;
+<i class="no-highlight">339</i>&nbsp;                            }
+<i class="no-highlight">340</i>&nbsp;                        }
+<i class="no-highlight">341</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                }</b>
+<i class="no-highlight">343</i>&nbsp;            }
+<i class="no-highlight">344</i>&nbsp;
+<i class="no-highlight">345</i>&nbsp;            // find gaps by checking each of the unique keys against every sample
+<i class="no-highlight">346</i>&nbsp;            long sample;
+<i class="no-highlight">347</i>&nbsp;            long prevSample;
+<b class="fc"><i class="no-highlight">348</i>&nbsp;            for (sample = prevSample = loSample; sample &lt; hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                final RecordCursor mapCursor = recordKeyMap.getCursor();</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                final Record mapRecord = mapCursor.getRecord();</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                while (mapCursor.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                    circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">353</i>&nbsp;
+<i class="no-highlight">354</i>&nbsp;                    // locate the first gap
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                    MapValue value = findDataMapValue(mapRecord, sample);</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                    if (value.getByte(0) == 1) {</b>
+<i class="no-highlight">357</i>&nbsp;                        // gap is at &#39;sample&#39;, so potential X-value is at &#39;prevSample&#39;
+<i class="no-highlight">358</i>&nbsp;                        // now we need to find Y-value
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                        long current = sample;</b>
+<i class="no-highlight">360</i>&nbsp;
+<i class="no-highlight">361</i>&nbsp;                        while (true) {
+<i class="no-highlight">362</i>&nbsp;                            // to timestamp after &#39;sample&#39; to begin with
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                            long x2 = sampler.nextTimestamp(current);</b>
+<i class="no-highlight">364</i>&nbsp;                            // is this timestamp within range?
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                            if (x2 &lt; hiSample) {</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                                value = findDataMapValue(mapRecord, x2);</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                                if (value.getByte(0) == 1) { // gap</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                                    current = x2;</b>
+<i class="no-highlight">369</i>&nbsp;                                } else {
+<i class="no-highlight">370</i>&nbsp;                                    // got something
+<i class="no-highlight">371</i>&nbsp;                                    // Y-value is at &#39;x2&#39;, which is on first iteration
+<i class="no-highlight">372</i>&nbsp;                                    // is &#39;sample+1&#39;, so
+<i class="no-highlight">373</i>&nbsp;
+<i class="no-highlight">374</i>&nbsp;                                    // do we really have X-value?
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                                    if (sample == loSample) {</b>
+<i class="no-highlight">376</i>&nbsp;                                        // prevSample does not exist
+<i class="no-highlight">377</i>&nbsp;                                        // find first valid value from &#39;x2+1&#39; onwards
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                                        long x1 = x2;</b>
+<i class="no-highlight">379</i>&nbsp;                                        while (true) {
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                                            x2 = sampler.nextTimestamp(x2);</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                                            if (x2 &lt; hiSample) {</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                                                final MapValue x2value = findDataMapValue(mapRecord, x2);</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;                                                if (x2value.getByte(0) == 0) { // non-gap</b>
+<i class="no-highlight">384</i>&nbsp;                                                    // found value at &#39;x2&#39; - this is our Y-value
+<i class="no-highlight">385</i>&nbsp;                                                    // the X-value it at &#39;x1&#39;
+<i class="no-highlight">386</i>&nbsp;                                                    // compute slope and go back down all the way to start
+<i class="no-highlight">387</i>&nbsp;                                                    // computing values in records
+<i class="no-highlight">388</i>&nbsp;
+<i class="no-highlight">389</i>&nbsp;                                                    // this has to be a loop that would store y1 and y2 values for each
+<i class="no-highlight">390</i>&nbsp;                                                    // group-by function
+<i class="no-highlight">391</i>&nbsp;                                                    // use current &#39;value&#39; for record
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                                                    MapValue x1Value = findDataMapValue2(mapRecord, x1);</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;                                                    interpolate(loSample, x1, mapRecord, x1, x2, x1Value, x2value);</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;                                                    break;</b>
+<i class="no-highlight">395</i>&nbsp;                                                }
+<b class="fc"><i class="no-highlight">396</i>&nbsp;                                            } else {</b>
+<i class="no-highlight">397</i>&nbsp;                                                // we only have a single value at &#39;x1&#39; - cannot interpolate
+<i class="no-highlight">398</i>&nbsp;                                                // make all values before and after &#39;x1&#39; NULL
+<b class="fc"><i class="no-highlight">399</i>&nbsp;                                                nullifyRange(loSample, x1, mapRecord);</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                                                nullifyRange(sampler.nextTimestamp(x1), hiSample, mapRecord);</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                                                break;</b>
+<i class="no-highlight">402</i>&nbsp;                                            }
+<i class="no-highlight">403</i>&nbsp;                                        }
+<b class="fc"><i class="no-highlight">404</i>&nbsp;                                    } else {</b>
+<i class="no-highlight">405</i>&nbsp;                                        // calculate slope between &#39;preSample&#39; and &#39;x2&#39;
+<i class="no-highlight">406</i>&nbsp;                                        // yep, that&#39;s right, and go all the way back down
+<i class="no-highlight">407</i>&nbsp;                                        // to &#39;sample&#39; calculating interpolated values
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                                        MapValue x1Value = findDataMapValue2(mapRecord, prevSample);</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                                        interpolate(sampler.nextTimestamp(prevSample), x2, mapRecord, prevSample, x2, x1Value, value);</b>
+<i class="no-highlight">410</i>&nbsp;                                    }
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                                    break;</b>
+<i class="no-highlight">412</i>&nbsp;                                }
+<i class="no-highlight">413</i>&nbsp;                            } else {
+<i class="no-highlight">414</i>&nbsp;                                // try using first two values
+<i class="no-highlight">415</i>&nbsp;                                // we had X-value at &#39;prevSample&#39;
+<i class="no-highlight">416</i>&nbsp;                                // it will become Y-value and X is at &#39;prevSample-1&#39;
+<i class="no-highlight">417</i>&nbsp;                                // and calculate interpolated value all the way to &#39;hiSample&#39;
+<i class="no-highlight">418</i>&nbsp;
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                                long x1 = sampler.previousTimestamp(prevSample);</b>
+<i class="no-highlight">420</i>&nbsp;
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                                if (x1 &lt; loSample) {</b>
+<i class="no-highlight">422</i>&nbsp;                                    // not enough data points
+<i class="no-highlight">423</i>&nbsp;                                    // fill all data points from &#39;sample&#39; down with null
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                                    nullifyRange(sample, hiSample, mapRecord);</b>
+<i class="no-highlight">425</i>&nbsp;                                } else {
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                                    MapValue x1Value = findDataMapValue2(mapRecord, x1);</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                                    MapValue x2value = findDataMapValue(mapRecord, prevSample);</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;                                    interpolate(sampler.nextTimestamp(prevSample), hiSample, mapRecord, x1, prevSample, x1Value, x2value);</b>
+<i class="no-highlight">429</i>&nbsp;                                }
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                                break;</b>
+<i class="no-highlight">431</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                        }</b>
+<i class="no-highlight">433</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">434</i>&nbsp;                }</b>
+<i class="no-highlight">435</i>&nbsp;            }
+<i class="no-highlight">436</i>&nbsp;            // refresh map cursor
+<b class="fc"><i class="no-highlight">437</i>&nbsp;            baseCursor = dataMap.getCursor();</b>
+<i class="no-highlight">438</i>&nbsp;        }
+<i class="no-highlight">439</i>&nbsp;
+<i class="no-highlight">440</i>&nbsp;        private void computeYPoints(MapValue x1Value, MapValue x2value) {
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            for (int i = 0; i &lt; groupByScalarFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                InterpolationUtil.StoreYFunction storeYFunction = storeYFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                GroupByFunction groupByFunction = groupByScalarFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                storeYFunction.store(groupByFunction, x1Value, yData + i * 16L);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;                storeYFunction.store(groupByFunction, x2value, yData + i * 16L + 8);</b>
+<i class="no-highlight">446</i>&nbsp;            }
+<i class="no-highlight">447</i>&nbsp;        }
+<i class="no-highlight">448</i>&nbsp;
+<i class="no-highlight">449</i>&nbsp;        private void fillGaps(long lo, long hi) {
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            final RecordCursor keyCursor = recordKeyMap.getCursor();</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            final Record record = keyCursor.getRecord();</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;            long timestamp = lo;</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;            while (timestamp &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;                while (keyCursor.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                    circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">456</i>&nbsp;
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                    MapKey key = dataMap.withKey();</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;                    mapSink2.copy(record, key);</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;                    key.putLong(timestamp);</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                    MapValue value = key.createValue();</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;                    if (value.isNew()) {</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;                        value.putByte(0, (byte) 1); // this is a gap</b>
+<i class="no-highlight">463</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">464</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;                timestamp = sampler.nextTimestamp(timestamp);</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;                keyCursor.toTop();</b>
+<i class="no-highlight">467</i>&nbsp;            }
+<i class="no-highlight">468</i>&nbsp;        }
+<i class="no-highlight">469</i>&nbsp;
+<i class="no-highlight">470</i>&nbsp;        private void fillMap() {
+<i class="no-highlight">471</i>&nbsp;            // Evaluate group-by functions.
+<i class="no-highlight">472</i>&nbsp;            // On every change of timestamp sample value we
+<i class="no-highlight">473</i>&nbsp;            // check group for gaps and fill them with placeholder
+<i class="no-highlight">474</i>&nbsp;            // entries. Values for these entries will be interpolated later.
+<i class="no-highlight">475</i>&nbsp;
+<b class="fc"><i class="no-highlight">476</i>&nbsp;            if (prevSample == -1) {</b>
+<i class="no-highlight">477</i>&nbsp;                // we have data in cursor, so we can grab first value
+<b class="fc"><i class="no-highlight">478</i>&nbsp;                final boolean good = managedCursor.hasNext();</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;                assert good;</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;                long timestamp = managedRecord.getTimestamp(timestampIndex);</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;                sampler.setStart(timestamp);</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;                prevSample = sampler.round(timestamp);</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;                loSample = prevSample; // the lowest timestamp value</b>
+<i class="no-highlight">484</i>&nbsp;            }
+<i class="no-highlight">485</i>&nbsp;
+<i class="no-highlight">486</i>&nbsp;            do {
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">488</i>&nbsp;
+<b class="fc"><i class="no-highlight">489</i>&nbsp;                if (!isHasNextPending) {</b>
+<i class="no-highlight">490</i>&nbsp;                    // this seems inefficient, but we only double-sample
+<i class="no-highlight">491</i>&nbsp;                    // very first record and nothing else
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                    long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                    if (sample != prevSample) {</b>
+<i class="no-highlight">494</i>&nbsp;                        // before we continue with next interval
+<i class="no-highlight">495</i>&nbsp;                        // we need to fill gaps in current interval
+<i class="no-highlight">496</i>&nbsp;                        // we will go over unique keys and attempt to
+<i class="no-highlight">497</i>&nbsp;                        // find them in data map with current timestamp
+<i class="no-highlight">498</i>&nbsp;
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                        fillGaps(prevSample, sample);</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                        prevSample = sample;</b>
+<b class="fc"><i class="no-highlight">501</i>&nbsp;                        GroupByUtils.toTop(groupByFunctions);</b>
+<i class="no-highlight">502</i>&nbsp;                    }
+<i class="no-highlight">503</i>&nbsp;
+<i class="no-highlight">504</i>&nbsp;                    // same data group - evaluate group-by functions
+<b class="fc"><i class="no-highlight">505</i>&nbsp;                    MapKey key = dataMap.withKey();</b>
+<b class="fc"><i class="no-highlight">506</i>&nbsp;                    mapSink.copy(managedRecord, key);</b>
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                    key.putLong(sample);</b>
+<i class="no-highlight">508</i>&nbsp;
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                    MapValue value = key.createValue();</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;                    if (value.isNew()) {</b>
+<b class="fc"><i class="no-highlight">511</i>&nbsp;                        value.putByte(0, (byte) 0); // not a gap</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;                        for (int i = 0; i &lt; groupByFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord);</b>
+<i class="no-highlight">514</i>&nbsp;                        }
+<i class="no-highlight">515</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">516</i>&nbsp;                        for (int i = 0; i &lt; groupByFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                            groupByFunctions.getQuick(i).computeNext(value, managedRecord);</b>
+<i class="no-highlight">518</i>&nbsp;                        }
+<i class="no-highlight">519</i>&nbsp;                    }
+<i class="no-highlight">520</i>&nbsp;                }
+<i class="no-highlight">521</i>&nbsp;
+<b class="fc"><i class="no-highlight">522</i>&nbsp;                isHasNextPending = true;</b>
+<b class="fc"><i class="no-highlight">523</i>&nbsp;                boolean hasNext = managedCursor.hasNext();</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;                isHasNextPending = false;</b>
+<i class="no-highlight">525</i>&nbsp;
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                if (!hasNext) {</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;                    hiSample = sampler.nextTimestamp(prevSample);</b>
+<b class="fc"><i class="no-highlight">528</i>&nbsp;                    break;</b>
+<i class="no-highlight">529</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">530</i>&nbsp;            } while (true);</b>
+<i class="no-highlight">531</i>&nbsp;
+<i class="no-highlight">532</i>&nbsp;            // fill gaps if any at the end of base cursor
+<b class="fc"><i class="no-highlight">533</i>&nbsp;            fillGaps(prevSample, hiSample);</b>
+<i class="no-highlight">534</i>&nbsp;        }
+<i class="no-highlight">535</i>&nbsp;
+<i class="no-highlight">536</i>&nbsp;        private MapValue findDataMapValue(Record record, long timestamp) {
+<b class="fc"><i class="no-highlight">537</i>&nbsp;            final MapKey key = dataMap.withKey();</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;            mapSink2.copy(record, key);</b>
+<b class="fc"><i class="no-highlight">539</i>&nbsp;            key.putLong(timestamp);</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;            return key.findValue();</b>
+<i class="no-highlight">541</i>&nbsp;        }
+<i class="no-highlight">542</i>&nbsp;
+<i class="no-highlight">543</i>&nbsp;        private MapValue findDataMapValue2(Record record, long timestamp) {
+<b class="fc"><i class="no-highlight">544</i>&nbsp;            final MapKey key = dataMap.withKey();</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;            mapSink2.copy(record, key);</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;            key.putLong(timestamp);</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;            return key.findValue2();</b>
+<i class="no-highlight">548</i>&nbsp;        }
+<i class="no-highlight">549</i>&nbsp;
+<i class="no-highlight">550</i>&nbsp;        private MapValue findDataMapValue3(Record record, long timestamp) {
+<b class="fc"><i class="no-highlight">551</i>&nbsp;            final MapKey key = dataMap.withKey();</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;            mapSink2.copy(record, key);</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;            key.putLong(timestamp);</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;            return key.findValue3();</b>
+<i class="no-highlight">555</i>&nbsp;        }
+<i class="no-highlight">556</i>&nbsp;
+<i class="no-highlight">557</i>&nbsp;        private boolean initMap() {
+<i class="no-highlight">558</i>&nbsp;            // Collect map of unique key values.
+<i class="no-highlight">559</i>&nbsp;            // using these values we will fill gaps in main
+<i class="no-highlight">560</i>&nbsp;            // data before jumping to another timestamp.
+<i class="no-highlight">561</i>&nbsp;            // This will allow maintaining chronological order of
+<i class="no-highlight">562</i>&nbsp;            // main data map.
+<i class="no-highlight">563</i>&nbsp;            //
+<i class="no-highlight">564</i>&nbsp;            // At the same time check if cursor has data.
+<b class="fc"><i class="no-highlight">565</i>&nbsp;            while (managedCursor.hasNext()) {</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;                circuitBreaker.statefulThrowExceptionIfTripped();</b>
+<i class="no-highlight">567</i>&nbsp;
+<b class="fc"><i class="no-highlight">568</i>&nbsp;                final MapKey key = recordKeyMap.withKey();</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                mapSink.copy(managedRecord, key);</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;                key.createValue();</b>
+<b class="fc"><i class="no-highlight">571</i>&nbsp;            }</b>
+<i class="no-highlight">572</i>&nbsp;
+<i class="no-highlight">573</i>&nbsp;            // no data, nothing to do
+<b class="fc"><i class="no-highlight">574</i>&nbsp;            if (recordKeyMap.size() == 0) {</b>
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                return false;</b>
+<i class="no-highlight">576</i>&nbsp;            }
+<i class="no-highlight">577</i>&nbsp;
+<i class="no-highlight">578</i>&nbsp;            // toTop() guarantees that we get
+<i class="no-highlight">579</i>&nbsp;            // the same data as previous while() loop
+<i class="no-highlight">580</i>&nbsp;            // there is no data
+<b class="fc"><i class="no-highlight">581</i>&nbsp;            managedCursor.toTop();</b>
+<b class="fc"><i class="no-highlight">582</i>&nbsp;            return true;</b>
+<i class="no-highlight">583</i>&nbsp;        }
+<i class="no-highlight">584</i>&nbsp;
+<i class="no-highlight">585</i>&nbsp;        private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
+<b class="fc"><i class="no-highlight">586</i>&nbsp;            computeYPoints(x1Value, x2value);</b>
+<b class="fc"><i class="no-highlight">587</i>&nbsp;            for (long x = lo; x &lt; hi; x = sampler.nextTimestamp(x)) {</b>
+<b class="fc"><i class="no-highlight">588</i>&nbsp;                final MapValue result = findDataMapValue3(mapRecord, x);</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;                assert result != null &amp;&amp; result.getByte(0) == 1;</b>
+<b class="fc"><i class="no-highlight">590</i>&nbsp;                for (int i = 0; i &lt; groupByTwoPointFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">591</i>&nbsp;                    GroupByFunction function = groupByTwoPointFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">592</i>&nbsp;                    InterpolationUtil.interpolateGap(function, result, sampler.getBucketSize(), x1Value, x2value);</b>
+<i class="no-highlight">593</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">594</i>&nbsp;                for (int i = 0; i &lt; groupByScalarFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">595</i>&nbsp;                    GroupByFunction function = groupByScalarFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;                    interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16L, yData + i * 16L + 8);</b>
+<i class="no-highlight">597</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">598</i>&nbsp;                result.putByte(0, (byte) 0); // fill the value, change flag from &#39;gap&#39; to &#39;fill&#39;</b>
+<i class="no-highlight">599</i>&nbsp;            }
+<i class="no-highlight">600</i>&nbsp;        }
+<i class="no-highlight">601</i>&nbsp;
+<i class="no-highlight">602</i>&nbsp;        private void interpolateBoundaryRange(long x1, long x2, Record record) {
+<i class="no-highlight">603</i>&nbsp;            // interpolating boundary
+<b class="fc"><i class="no-highlight">604</i>&nbsp;            for (int i = 0; i &lt; groupByTwoPointFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">605</i>&nbsp;                GroupByFunction function = groupByTwoPointFunctions.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">606</i>&nbsp;                MapValue startValue = findDataMapValue2(record, x1);</b>
+<b class="fc"><i class="no-highlight">607</i>&nbsp;                MapValue endValue = findDataMapValue3(record, x2);</b>
+<b class="fc"><i class="no-highlight">608</i>&nbsp;                InterpolationUtil.interpolateBoundary(function, sampler.nextTimestamp(x1), startValue, endValue, true);</b>
+<b class="fc"><i class="no-highlight">609</i>&nbsp;                InterpolationUtil.interpolateBoundary(function, x2, startValue, endValue, false);</b>
+<i class="no-highlight">610</i>&nbsp;            }
+<i class="no-highlight">611</i>&nbsp;        }
+<i class="no-highlight">612</i>&nbsp;
+<i class="no-highlight">613</i>&nbsp;        private void nullifyRange(long lo, long hi, Record record) {
+<b class="fc"><i class="no-highlight">614</i>&nbsp;            for (long x = lo; x &lt; hi; x = sampler.nextTimestamp(x)) {</b>
+<b class="fc"><i class="no-highlight">615</i>&nbsp;                final MapKey key = dataMap.withKey();</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;                mapSink2.copy(record, key);</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;                key.putLong(x);</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;                MapValue value = key.findValue();</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;                assert value != null &amp;&amp; value.getByte(0) == 1; // expect  &#39;gap&#39; flag</b>
+<b class="fc"><i class="no-highlight">620</i>&nbsp;                value.putByte(0, (byte) 0); // fill the value, change flag from &#39;gap&#39; to &#39;fill&#39;</b>
+<b class="fc"><i class="no-highlight">621</i>&nbsp;                for (int i = 0; i &lt; groupByFunctionCount; i++) {</b>
+<b class="fc"><i class="no-highlight">622</i>&nbsp;                    groupByFunctions.getQuick(i).setNull(value);</b>
+<i class="no-highlight">623</i>&nbsp;                }
+<i class="no-highlight">624</i>&nbsp;            }
+<i class="no-highlight">625</i>&nbsp;        }
+<i class="no-highlight">626</i>&nbsp;    }
+<i class="no-highlight">627</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

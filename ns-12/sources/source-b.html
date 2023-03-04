@@ -1,0 +1,658 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TextImportProcessor</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.http.processors</a>
+</div>
+
+<h1>Coverage Summary for Class: TextImportProcessor (io.questdb.cutlass.http.processors)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TextImportProcessor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (24/24)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    93.1%
+  </span>
+  <span class="absValue">
+    (257/276)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.http.processors;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cutlass.http.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cutlass.http.ex.RetryOperationException;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cutlass.text.Atomicity;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cutlass.text.TextException;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cutlass.text.TextLoadWarning;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.cutlass.text.TextLoader;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.network.NoSpaceLeftInResponseBufferException;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.network.PeerDisconnectedException;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.network.PeerIsSlowToReadException;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.network.ServerDisconnectException;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">42</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">43</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">44</i>&nbsp;
+<i class="no-highlight">45</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;import static io.questdb.cutlass.text.TextLoadWarning.*;
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
+<i class="no-highlight">50</i>&nbsp;    static final int MESSAGE_UNKNOWN = 3;
+<i class="no-highlight">51</i>&nbsp;    static final int RESPONSE_PREFIX = 1;
+<b class="fc"><i class="no-highlight">52</i>&nbsp;    private static final CharSequence CONTENT_TYPE_JSON = &quot;application/json; charset=utf-8&quot;;</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;    private static final CharSequence CONTENT_TYPE_TEXT = &quot;text/plain; charset=utf-8&quot;;</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);</b>
+<i class="no-highlight">55</i>&nbsp;    // Local value has to be static because each thread will have its own instance of
+<i class="no-highlight">56</i>&nbsp;    // processor. For different threads to lookup the same value from local value map the key,
+<i class="no-highlight">57</i>&nbsp;    // which is LV, has to be the same between processor instances
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private static final LocalValue&lt;TextImportProcessorState&gt; LV = new LocalValue&lt;&gt;();</b>
+<i class="no-highlight">59</i>&nbsp;    private static final int MESSAGE_DATA = 2;
+<i class="no-highlight">60</i>&nbsp;    private static final int MESSAGE_SCHEMA = 1;
+<i class="no-highlight">61</i>&nbsp;    private static final String OVERRIDDEN_FROM_TABLE = &quot;From Table&quot;;
+<i class="no-highlight">62</i>&nbsp;    private static final int RESPONSE_COLUMN = 2;
+<i class="no-highlight">63</i>&nbsp;    private static final int RESPONSE_COMPLETE = 6;
+<i class="no-highlight">64</i>&nbsp;    private static final int RESPONSE_DONE = 5;
+<i class="no-highlight">65</i>&nbsp;    private static final int RESPONSE_ERROR = 4;
+<i class="no-highlight">66</i>&nbsp;    private static final int RESPONSE_SUFFIX = 3;
+<i class="no-highlight">67</i>&nbsp;    private static final int TO_STRING_COL1_PAD = 15;
+<i class="no-highlight">68</i>&nbsp;    private static final int TO_STRING_COL2_PAD = 50;
+<i class="no-highlight">69</i>&nbsp;    private static final int TO_STRING_COL3_PAD = 15;
+<i class="no-highlight">70</i>&nbsp;    private static final int TO_STRING_COL4_PAD = 7;
+<i class="no-highlight">71</i>&nbsp;    private static final int TO_STRING_COL5_PAD = 12;
+<b class="fc"><i class="no-highlight">72</i>&nbsp;    private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();</b>
+<i class="no-highlight">73</i>&nbsp;    private final CairoEngine engine;
+<i class="no-highlight">74</i>&nbsp;    private HttpConnectionContext transientContext;
+<i class="no-highlight">75</i>&nbsp;    private TextImportProcessorState transientState;
+<i class="no-highlight">76</i>&nbsp;
+<b class="fc"><i class="no-highlight">77</i>&nbsp;    public TextImportProcessor(CairoEngine cairoEngine) {</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        this.engine = cairoEngine;</b>
+<i class="no-highlight">79</i>&nbsp;    }
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    @Override
+<i class="no-highlight">82</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">83</i>&nbsp;    }</b>
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    @Override
+<i class="no-highlight">86</i>&nbsp;    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        sendErrorAndThrowDisconnect(((FlyweightMessageContainer) e).getFlyweightMessage());</b>
+<i class="no-highlight">88</i>&nbsp;    }
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;    @Override
+<i class="no-highlight">91</i>&nbsp;    public void onChunk(long lo, long hi)
+<i class="no-highlight">92</i>&nbsp;            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        if (hi &gt; lo) {</b>
+<i class="no-highlight">94</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">95</i>&nbsp;                transientState.lo = lo;</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;                transientState.hi = hi;</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;                transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;                if (transientState.messagePart == MESSAGE_DATA &amp;&amp; !transientState.analysed) {</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;                    transientState.analysed = true;</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;                    transientState.textLoader.setState(TextLoader.LOAD_DATA);</b>
+<i class="no-highlight">101</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">102</i>&nbsp;            } catch (EntryUnavailableException e) {</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                throw RetryOperationException.INSTANCE;</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;            } catch (TextException | CairoException | CairoError e) {</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                sendErrorAndThrowDisconnect(e.getFlyweightMessage());</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;            }</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    @Override
+<i class="no-highlight">111</i>&nbsp;    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        final CharSequence contentDisposition = partHeader.getContentDispositionName();</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;        LOG.debug().$(&quot;part begin [name=&quot;).$(contentDisposition).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        if (Chars.equalsNc(&quot;data&quot;, contentDisposition)) {</b>
+<i class="no-highlight">115</i>&nbsp;
+<b class="fc"><i class="no-highlight">116</i>&nbsp;            final HttpRequestHeader rh = transientContext.getRequestHeader();</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;            CharSequence name = rh.getUrlParam(&quot;name&quot;);</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            if (name == null) {</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                name = partHeader.getContentDispositionFilename();</b>
+<i class="no-highlight">120</i>&nbsp;            }
+<i class="no-highlight">121</i>&nbsp;
+<b class="fc"><i class="no-highlight">122</i>&nbsp;            if (name == null) {</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;                sendErrorAndThrowDisconnect(&quot;no file name given&quot;);</b>
+<i class="no-highlight">124</i>&nbsp;            }
+<i class="no-highlight">125</i>&nbsp;
+<b class="fc"><i class="no-highlight">126</i>&nbsp;            CharSequence partitionedBy = rh.getUrlParam(&quot;partitionBy&quot;);</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;            if (partitionedBy == null) {</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                partitionedBy = &quot;NONE&quot;;</b>
+<i class="no-highlight">129</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">130</i>&nbsp;            int partitionBy = PartitionBy.fromString(partitionedBy);</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            if (partitionBy == -1) {</b>
+<b class="nc"><i class="no-highlight">132</i>&nbsp;                sendErrorAndThrowDisconnect(&quot;invalid partitionBy&quot;);</b>
+<i class="no-highlight">133</i>&nbsp;            }
+<i class="no-highlight">134</i>&nbsp;
+<b class="fc"><i class="no-highlight">135</i>&nbsp;            CharSequence timestampColumn = rh.getUrlParam(&quot;timestamp&quot;);</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;            if (PartitionBy.isPartitioned(partitionBy) &amp;&amp; timestampColumn == null) {</b>
+<b class="nc"><i class="no-highlight">137</i>&nbsp;                sendErrorAndThrowDisconnect(&quot;when specifying partitionBy you must also specify timestamp&quot;);</b>
+<i class="no-highlight">138</i>&nbsp;            }
+<i class="no-highlight">139</i>&nbsp;
+<b class="fc"><i class="no-highlight">140</i>&nbsp;            transientState.analysed = false;</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;            transientState.textLoader.configureDestination(</b>
+<i class="no-highlight">142</i>&nbsp;                    name,
+<b class="fc"><i class="no-highlight">143</i>&nbsp;                    Chars.equalsNc(&quot;true&quot;, rh.getUrlParam(&quot;overwrite&quot;)),</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;                    Chars.equalsNc(&quot;true&quot;, rh.getUrlParam(&quot;durable&quot;)),</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;                    getAtomicity(rh.getUrlParam(&quot;atomicity&quot;)),</b>
+<i class="no-highlight">146</i>&nbsp;                    partitionBy,
+<i class="no-highlight">147</i>&nbsp;                    timestampColumn,
+<i class="no-highlight">148</i>&nbsp;                    null
+<i class="no-highlight">149</i>&nbsp;            );
+<i class="no-highlight">150</i>&nbsp;
+<b class="fc"><i class="no-highlight">151</i>&nbsp;            CharSequence o3MaxLagChars = rh.getUrlParam(&quot;o3MaxLag&quot;);</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;            if (o3MaxLagChars != null) {</b>
+<i class="no-highlight">153</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;                    long o3MaxLag = Numbers.parseLong(o3MaxLagChars);</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;                    if (o3MaxLag &gt;= 0) {</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;                        transientState.textLoader.setO3MaxLag(o3MaxLag);</b>
+<i class="no-highlight">157</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">158</i>&nbsp;                } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;                    sendErrorAndThrowDisconnect(&quot;invalid o3MaxLag value, must be a long&quot;);</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;                }</b>
+<i class="no-highlight">161</i>&nbsp;            }
+<i class="no-highlight">162</i>&nbsp;
+<b class="fc"><i class="no-highlight">163</i>&nbsp;            CharSequence maxUncommittedRowsChars = rh.getUrlParam(&quot;maxUncommittedRows&quot;);</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;            if (maxUncommittedRowsChars != null) {</b>
+<i class="no-highlight">165</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;                    int maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;                    if (maxUncommittedRows &gt;= 0) {</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;                        transientState.textLoader.setMaxUncommittedRows(maxUncommittedRows);</b>
+<i class="no-highlight">169</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">170</i>&nbsp;                } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;                    sendErrorAndThrowDisconnect(&quot;invalid maxUncommittedRows, must be an int&quot;);</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;                }</b>
+<i class="no-highlight">173</i>&nbsp;            }
+<i class="no-highlight">174</i>&nbsp;
+<b class="fc"><i class="no-highlight">175</i>&nbsp;            transientState.textLoader.setForceHeaders(Chars.equalsNc(&quot;true&quot;, rh.getUrlParam(&quot;forceHeader&quot;)));</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            transientState.textLoader.setSkipLinesWithExtraValues(Chars.equalsNc(&quot;true&quot;, rh.getUrlParam(&quot;skipLev&quot;)));</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;            CharSequence delimiter = rh.getUrlParam(&quot;delimiter&quot;);</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;            if (delimiter != null &amp;&amp; delimiter.length() == 1) {</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;                transientState.textLoader.configureColumnDelimiter((byte) delimiter.charAt(0));</b>
+<i class="no-highlight">180</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);</b>
+<i class="no-highlight">182</i>&nbsp;
+<b class="fc"><i class="no-highlight">183</i>&nbsp;            transientState.forceHeader = Chars.equalsNc(&quot;true&quot;, rh.getUrlParam(&quot;forceHeader&quot;));</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;            transientState.messagePart = MESSAGE_DATA;</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;        } else if (Chars.equalsNc(&quot;schema&quot;, contentDisposition)) {</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;            transientState.messagePart = MESSAGE_SCHEMA;</b>
+<i class="no-highlight">188</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">189</i>&nbsp;            if (partHeader.getContentDisposition() == null) {</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                sendErrorAndThrowDisconnect(&quot;&#39;Content-Disposition&#39; multipart header missing&#39;&quot;);</b>
+<i class="no-highlight">191</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;                sendErrorAndThrowDisconnect(&quot;invalid value in &#39;Content-Disposition&#39; multipart header&quot;);</b>
+<i class="no-highlight">193</i>&nbsp;            }
+<i class="no-highlight">194</i>&nbsp;        }
+<i class="no-highlight">195</i>&nbsp;    }
+<i class="no-highlight">196</i>&nbsp;
+<i class="no-highlight">197</i>&nbsp;    @Override
+<i class="no-highlight">198</i>&nbsp;    public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<i class="no-highlight">199</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            LOG.debug().$(&quot;part end&quot;).$();</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            transientState.textLoader.wrapUp();</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;            if (transientState.messagePart == MESSAGE_DATA) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                sendResponse(transientContext);</b>
+<i class="no-highlight">204</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">205</i>&nbsp;        } catch (TextException | CairoException | CairoError e) {</b>
+<b class="nc"><i class="no-highlight">206</i>&nbsp;            sendErrorAndThrowDisconnect(e.getFlyweightMessage());</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        }</b>
+<i class="no-highlight">208</i>&nbsp;    }
+<i class="no-highlight">209</i>&nbsp;
+<i class="no-highlight">210</i>&nbsp;    // This processor implements HttpMultipartContentListener, methods of which
+<i class="no-highlight">211</i>&nbsp;    // have neither context nor dispatcher. During &quot;chunk&quot; processing we may need
+<i class="no-highlight">212</i>&nbsp;    // to send something back to client, or disconnect them. To do that we need
+<i class="no-highlight">213</i>&nbsp;    // these transient references. resumeRecv() will set them and they will remain
+<i class="no-highlight">214</i>&nbsp;    // valid during multipart events.
+<i class="no-highlight">215</i>&nbsp;
+<i class="no-highlight">216</i>&nbsp;    @Override
+<i class="no-highlight">217</i>&nbsp;    public void onRequestComplete(HttpConnectionContext context) {
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        transientState.clear();</b>
+<i class="no-highlight">219</i>&nbsp;    }
+<i class="no-highlight">220</i>&nbsp;
+<i class="no-highlight">221</i>&nbsp;    @Override
+<i class="no-highlight">222</i>&nbsp;    public void onRequestRetry(
+<i class="no-highlight">223</i>&nbsp;            HttpConnectionContext context
+<i class="no-highlight">224</i>&nbsp;    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        this.transientContext = context;</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        this.transientState = LV.get(context);</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        onChunk(transientState.lo, transientState.hi);</b>
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    @Override
+<i class="no-highlight">231</i>&nbsp;    public void resumeRecv(HttpConnectionContext context) {
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        this.transientContext = context;</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        this.transientState = LV.get(context);</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;        if (this.transientState == null) {</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;            LOG.debug().$(&quot;new text state&quot;).$();</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            LV.set(context, this.transientState = new TextImportProcessorState(engine));</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            transientState.json = isJson(context);</b>
+<i class="no-highlight">238</i>&nbsp;        }
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    @Override
+<i class="no-highlight">242</i>&nbsp;    public void resumeSend(
+<i class="no-highlight">243</i>&nbsp;            HttpConnectionContext context
+<i class="no-highlight">244</i>&nbsp;    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        context.resumeResponseSend();</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        doResumeSend(LV.get(context), context.getChunkedResponseSocket());</b>
+<i class="no-highlight">247</i>&nbsp;    }
+<i class="no-highlight">248</i>&nbsp;
+<i class="no-highlight">249</i>&nbsp;    private static int getAtomicity(CharSequence name) {
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        if (name == null) {</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            return Atomicity.SKIP_COL;</b>
+<i class="no-highlight">252</i>&nbsp;        }
+<i class="no-highlight">253</i>&nbsp;
+<b class="nc"><i class="no-highlight">254</i>&nbsp;        int atomicity = atomicityParamMap.get(name);</b>
+<b class="nc"><i class="no-highlight">255</i>&nbsp;        return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;</b>
+<i class="no-highlight">256</i>&nbsp;    }
+<i class="no-highlight">257</i>&nbsp;
+<i class="no-highlight">258</i>&nbsp;    private static void pad(CharSink b, int w, long value) {
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        int len = (int) Math.log10(value);</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        if (len &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            len = 0;</b>
+<i class="no-highlight">262</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        replicate(b, &#39; &#39;, w - len - 1);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        b.put(value);</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;        b.put(&quot;  |&quot;);</b>
+<i class="no-highlight">266</i>&nbsp;    }
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;    private static CharSink pad(CharSink b, int w, CharSequence value) {
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        int pad = value == null ? w : w - value.length();</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        replicate(b, &#39; &#39;, pad);</b>
+<i class="no-highlight">271</i>&nbsp;
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        if (value != null) {</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            if (pad &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">274</i>&nbsp;                b.put(&quot;...&quot;).put(value.subSequence(-pad + 3, value.length()));</b>
+<i class="no-highlight">275</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">276</i>&nbsp;                b.put(value);</b>
+<i class="no-highlight">277</i>&nbsp;            }
+<i class="no-highlight">278</i>&nbsp;        }
+<i class="no-highlight">279</i>&nbsp;
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        b.put(&quot;  |&quot;);</b>
+<i class="no-highlight">281</i>&nbsp;
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        return b;</b>
+<i class="no-highlight">283</i>&nbsp;    }
+<i class="no-highlight">284</i>&nbsp;
+<i class="no-highlight">285</i>&nbsp;    private static void replicate(CharSink b, char c, int times) {
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        for (int i = 0; i &lt; times; i++) {</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            b.put(c);</b>
+<i class="no-highlight">288</i>&nbsp;        }
+<i class="no-highlight">289</i>&nbsp;    }
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;    private static void resumeJson(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        final TextLoaderCompletedState completeState = state.completeState;</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        final RecordMetadata metadata = completeState.getMetadata();</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;        final LongList errors = completeState.getColumnErrorCounts();</b>
+<i class="no-highlight">295</i>&nbsp;
+<i class="no-highlight">296</i>&nbsp;
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        switch (state.responseState) {</b>
+<i class="no-highlight">298</i>&nbsp;            case RESPONSE_PREFIX:
+<b class="fc"><i class="no-highlight">299</i>&nbsp;                long totalRows = completeState.getParsedLineCount();</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;                long importedRows = completeState.getWrittenLineCount();</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;                socket.put(&#39;{&#39;)</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;                        .putQuoted(&quot;status&quot;).put(&#39;:&#39;).putQuoted(&quot;OK&quot;).put(&#39;,&#39;)</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;                        .putQuoted(&quot;location&quot;).put(&#39;:&#39;).encodeUtf8AndQuote(completeState.getTableName()).put(&#39;,&#39;)</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                        .putQuoted(&quot;rowsRejected&quot;).put(&#39;:&#39;).put(totalRows - importedRows + completeState.getErrorLineCount()).put(&#39;,&#39;)</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                        .putQuoted(&quot;rowsImported&quot;).put(&#39;:&#39;).put(importedRows).put(&#39;,&#39;)</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;                        .putQuoted(&quot;header&quot;).put(&#39;:&#39;).put(completeState.isForceHeaders()).put(&#39;,&#39;);</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                if (completeState.getWarnings() != TextLoadWarning.NONE) {</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                    final int warningFlags = completeState.getWarnings();</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                    socket.putQuoted(&quot;warnings&quot;).put(&#39;:&#39;).put(&#39;[&#39;);</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;                    boolean isFirst = true;</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;                    if ((warningFlags &amp; TextLoadWarning.TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;                        isFirst = false;</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;                        socket.putQuoted(&quot;Existing table timestamp column is used&quot;);</b>
+<i class="no-highlight">314</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">315</i>&nbsp;                    if ((warningFlags &amp; PARTITION_TYPE_MISMATCH) != TextLoadWarning.NONE) {</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;                        if (!isFirst) socket.put(&#39;,&#39;);</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;                        socket.putQuoted(&quot;Existing table PartitionBy is used&quot;);</b>
+<i class="no-highlight">318</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                    socket.put(&#39;]&#39;).put(&#39;,&#39;);</b>
+<i class="no-highlight">320</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">321</i>&nbsp;                socket.putQuoted(&quot;columns&quot;).put(&#39;:&#39;).put(&#39;[&#39;);</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                state.responseState = RESPONSE_COLUMN;</b>
+<i class="no-highlight">323</i>&nbsp;                // fall through
+<i class="no-highlight">324</i>&nbsp;            case RESPONSE_COLUMN:
+<b class="fc"><i class="no-highlight">325</i>&nbsp;                if (metadata != null) {</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                    final int columnCount = metadata.getColumnCount();</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;                    for (; state.columnIndex &lt; columnCount; state.columnIndex++) {</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;                        socket.bookmark();</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;                        if (state.columnIndex &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;                            socket.put(&#39;,&#39;);</b>
+<i class="no-highlight">331</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                        socket.put(&#39;{&#39;).</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                                putQuoted(&quot;name&quot;).put(&#39;:&#39;).putQuoted(metadata.getColumnName(state.columnIndex)).put(&#39;,&#39;).</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                                putQuoted(&quot;type&quot;).put(&#39;:&#39;).putQuoted(ColumnType.nameOf(metadata.getColumnType(state.columnIndex))).put(&#39;,&#39;).</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                                putQuoted(&quot;size&quot;).put(&#39;:&#39;).put(ColumnType.sizeOf(metadata.getColumnType(state.columnIndex))).put(&#39;,&#39;).</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                                putQuoted(&quot;errors&quot;).put(&#39;:&#39;).put(errors.getQuick(state.columnIndex));</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                        socket.put(&#39;}&#39;);</b>
+<i class="no-highlight">338</i>&nbsp;                    }
+<i class="no-highlight">339</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                state.responseState = RESPONSE_SUFFIX;</b>
+<i class="no-highlight">341</i>&nbsp;                // fall through
+<i class="no-highlight">342</i>&nbsp;            case RESPONSE_SUFFIX:
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                socket.bookmark();</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;                socket.put(&#39;]&#39;).put(&#39;}&#39;);</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                state.responseState = RESPONSE_COMPLETE;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;                socket.sendChunk(true);</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                break;</b>
+<i class="no-highlight">348</i>&nbsp;            case RESPONSE_DONE:
+<b class="nc"><i class="no-highlight">349</i>&nbsp;                state.responseState = RESPONSE_COMPLETE;</b>
+<b class="nc"><i class="no-highlight">350</i>&nbsp;                socket.done();</b>
+<b class="nc"><i class="no-highlight">351</i>&nbsp;                break;</b>
+<i class="no-highlight">352</i>&nbsp;            default:
+<i class="no-highlight">353</i>&nbsp;                break;
+<i class="no-highlight">354</i>&nbsp;        }
+<i class="no-highlight">355</i>&nbsp;    }
+<i class="no-highlight">356</i>&nbsp;
+<i class="no-highlight">357</i>&nbsp;    private static void resumeText(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        final TextLoaderCompletedState textLoaderCompletedState = state.completeState;</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        final RecordMetadata metadata = textLoaderCompletedState.getMetadata();</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;        LongList errors = textLoaderCompletedState.getColumnErrorCounts();</b>
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        switch (state.responseState) {</b>
+<i class="no-highlight">364</i>&nbsp;            case RESPONSE_PREFIX:
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                sep(socket);</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                socket.put(&#39;|&#39;);</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                pad(socket, TO_STRING_COL1_PAD, &quot;Location:&quot;);</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTableName());</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;                pad(socket, TO_STRING_COL3_PAD, &quot;Pattern&quot;);</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;                pad(socket, TO_STRING_COL4_PAD, &quot;Locale&quot;);</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;                pad(socket, TO_STRING_COL5_PAD, &quot;Errors&quot;).put(Misc.EOL);</b>
+<i class="no-highlight">372</i>&nbsp;
+<i class="no-highlight">373</i>&nbsp;
+<b class="fc"><i class="no-highlight">374</i>&nbsp;                socket.put(&#39;|&#39;);</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;                pad(socket, TO_STRING_COL1_PAD, &quot;Partition by&quot;);</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;                pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoaderCompletedState.getPartitionBy()));</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                pad(socket, TO_STRING_COL3_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                pad(socket, TO_STRING_COL4_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                if (hasFlag(textLoaderCompletedState.getWarnings(), PARTITION_TYPE_MISMATCH)) {</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                    pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);</b>
+<i class="no-highlight">381</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">382</i>&nbsp;                    pad(socket, TO_STRING_COL5_PAD, &quot;&quot;);</b>
+<i class="no-highlight">383</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                socket.put(Misc.EOL);</b>
+<i class="no-highlight">385</i>&nbsp;
+<b class="fc"><i class="no-highlight">386</i>&nbsp;                socket.put(&#39;|&#39;);</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;                pad(socket, TO_STRING_COL1_PAD, &quot;Timestamp&quot;);</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTimestampCol() == null ? &quot;NONE&quot; : textLoaderCompletedState.getTimestampCol());</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                pad(socket, TO_STRING_COL3_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;                pad(socket, TO_STRING_COL4_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;                if (hasFlag(textLoaderCompletedState.getWarnings(), TIMESTAMP_MISMATCH)) {</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;                    pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);</b>
+<i class="no-highlight">393</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">394</i>&nbsp;                    pad(socket, TO_STRING_COL5_PAD, &quot;&quot;);</b>
+<i class="no-highlight">395</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">396</i>&nbsp;                socket.put(Misc.EOL);</b>
+<i class="no-highlight">397</i>&nbsp;
+<b class="fc"><i class="no-highlight">398</i>&nbsp;                sep(socket);</b>
+<i class="no-highlight">399</i>&nbsp;
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                socket.put(&#39;|&#39;);</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;                pad(socket, TO_STRING_COL1_PAD, &quot;Rows handled&quot;);</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getParsedLineCount() + textLoaderCompletedState.getErrorLineCount());</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;                pad(socket, TO_STRING_COL3_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">404</i>&nbsp;                pad(socket, TO_STRING_COL4_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">405</i>&nbsp;                pad(socket, TO_STRING_COL5_PAD, &quot;&quot;).put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                socket.put(&#39;|&#39;);</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                pad(socket, TO_STRING_COL1_PAD, &quot;Rows imported&quot;);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getWrittenLineCount());</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                pad(socket, TO_STRING_COL3_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                pad(socket, TO_STRING_COL4_PAD, &quot;&quot;);</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                pad(socket, TO_STRING_COL5_PAD, &quot;&quot;).put(Misc.EOL);</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                sep(socket);</b>
+<i class="no-highlight">413</i>&nbsp;
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                state.responseState = RESPONSE_COLUMN;</b>
+<i class="no-highlight">415</i>&nbsp;                // fall through
+<i class="no-highlight">416</i>&nbsp;            case RESPONSE_COLUMN:
+<i class="no-highlight">417</i>&nbsp;
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                if (metadata != null) {</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                    final int columnCount = metadata.getColumnCount();</b>
+<i class="no-highlight">420</i>&nbsp;
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                    for (; state.columnIndex &lt; columnCount; state.columnIndex++) {</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                        socket.bookmark();</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;                        socket.put(&#39;|&#39;);</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                        pad(socket, TO_STRING_COL1_PAD, state.columnIndex);</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;                        pad(socket, TO_STRING_COL2_PAD, metadata.getColumnName(state.columnIndex));</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                        if (!metadata.isColumnIndexed(state.columnIndex)) {</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                            pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));</b>
+<i class="no-highlight">428</i>&nbsp;                        } else {
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                            StringSink sink = Misc.getThreadLocalBuilder();</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                            sink.put(&quot;(idx/&quot;).put(metadata.getIndexValueBlockCapacity(state.columnIndex)).put(&quot;) &quot;);</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                            sink.put(ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                            pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, sink);</b>
+<i class="no-highlight">433</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">434</i>&nbsp;                        pad(socket, TO_STRING_COL5_PAD, errors.getQuick(state.columnIndex));</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                        socket.put(Misc.EOL);</b>
+<i class="no-highlight">436</i>&nbsp;                    }
+<i class="no-highlight">437</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                state.responseState = RESPONSE_SUFFIX;</b>
+<i class="no-highlight">439</i>&nbsp;                // fall through
+<i class="no-highlight">440</i>&nbsp;            case RESPONSE_SUFFIX:
+<b class="fc"><i class="no-highlight">441</i>&nbsp;                socket.bookmark();</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;                sep(socket);</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                state.responseState = RESPONSE_COMPLETE;</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;                socket.sendChunk(true);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;                break;</b>
+<i class="no-highlight">446</i>&nbsp;            case RESPONSE_DONE:
+<b class="nc"><i class="no-highlight">447</i>&nbsp;                state.responseState = RESPONSE_COMPLETE;</b>
+<b class="nc"><i class="no-highlight">448</i>&nbsp;                socket.done();</b>
+<b class="nc"><i class="no-highlight">449</i>&nbsp;                break;</b>
+<i class="no-highlight">450</i>&nbsp;            default:
+<i class="no-highlight">451</i>&nbsp;                break;
+<i class="no-highlight">452</i>&nbsp;        }
+<i class="no-highlight">453</i>&nbsp;    }
+<i class="no-highlight">454</i>&nbsp;
+<i class="no-highlight">455</i>&nbsp;    private static void sep(CharSink b) {
+<b class="fc"><i class="no-highlight">456</i>&nbsp;        b.put(&#39;+&#39;);</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;        replicate(b, &#39;-&#39;, TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        b.put(&quot;+\r\n&quot;);</b>
+<i class="no-highlight">459</i>&nbsp;    }
+<i class="no-highlight">460</i>&nbsp;
+<i class="no-highlight">461</i>&nbsp;    private void doResumeSend(
+<i class="no-highlight">462</i>&nbsp;            TextImportProcessorState state,
+<i class="no-highlight">463</i>&nbsp;            HttpChunkedResponseSocket socket
+<i class="no-highlight">464</i>&nbsp;    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<i class="no-highlight">465</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">466</i>&nbsp;            if (state.errorMessage != null) {</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;                resumeError(state, socket);</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;            } else if (state.json) {</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;                resumeJson(state, socket);</b>
+<i class="no-highlight">470</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">471</i>&nbsp;                resumeText(state, socket);</b>
+<i class="no-highlight">472</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">473</i>&nbsp;        } catch (NoSpaceLeftInResponseBufferException ignored) {</b>
+<b class="nc"><i class="no-highlight">474</i>&nbsp;            if (socket.resetToBookmark()) {</b>
+<b class="nc"><i class="no-highlight">475</i>&nbsp;                socket.sendChunk(false);</b>
+<i class="no-highlight">476</i>&nbsp;            } else {
+<i class="no-highlight">477</i>&nbsp;                // what we have here is out unit of data, column value or query
+<i class="no-highlight">478</i>&nbsp;                // is larger that response content buffer
+<i class="no-highlight">479</i>&nbsp;                // all we can do in this scenario is to log appropriately
+<i class="no-highlight">480</i>&nbsp;                // and disconnect socket
+<b class="nc"><i class="no-highlight">481</i>&nbsp;                socket.shutdownWrite();</b>
+<b class="nc"><i class="no-highlight">482</i>&nbsp;                throw ServerDisconnectException.INSTANCE;</b>
+<i class="no-highlight">483</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">484</i>&nbsp;        }</b>
+<i class="no-highlight">485</i>&nbsp;
+<b class="fc"><i class="no-highlight">486</i>&nbsp;        state.clear();</b>
+<i class="no-highlight">487</i>&nbsp;    }
+<i class="no-highlight">488</i>&nbsp;
+<i class="no-highlight">489</i>&nbsp;    private boolean isJson(HttpConnectionContext transientContext) {
+<b class="fc"><i class="no-highlight">490</i>&nbsp;        return Chars.equalsNc(&quot;json&quot;, transientContext.getRequestHeader().getUrlParam(&quot;fmt&quot;));</b>
+<i class="no-highlight">491</i>&nbsp;    }
+<i class="no-highlight">492</i>&nbsp;
+<i class="no-highlight">493</i>&nbsp;    private void resumeError(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">494</i>&nbsp;        if (state.responseState == RESPONSE_ERROR) {</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;            socket.bookmark();</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;            if (state.json) {</b>
+<b class="fc"><i class="no-highlight">497</i>&nbsp;                socket.put(&#39;{&#39;).putQuoted(&quot;status&quot;).put(&#39;:&#39;).encodeUtf8AndQuote(state.errorMessage).put(&#39;}&#39;);</b>
+<i class="no-highlight">498</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                socket.encodeUtf8(state.errorMessage);</b>
+<i class="no-highlight">500</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">501</i>&nbsp;            state.responseState = RESPONSE_DONE;</b>
+<b class="fc"><i class="no-highlight">502</i>&nbsp;            socket.sendChunk(true);</b>
+<i class="no-highlight">503</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">504</i>&nbsp;        socket.shutdownWrite();</b>
+<b class="fc"><i class="no-highlight">505</i>&nbsp;        throw ServerDisconnectException.INSTANCE;</b>
+<i class="no-highlight">506</i>&nbsp;    }
+<i class="no-highlight">507</i>&nbsp;
+<i class="no-highlight">508</i>&nbsp;    private void sendErr(HttpConnectionContext context, CharSequence message, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">509</i>&nbsp;        final TextImportProcessorState state = LV.get(context);</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;        state.responseState = RESPONSE_ERROR;</b>
+<b class="fc"><i class="no-highlight">511</i>&nbsp;        state.errorMessage = message;</b>
+<b class="fc"><i class="no-highlight">512</i>&nbsp;        if (state.json) {</b>
+<b class="fc"><i class="no-highlight">513</i>&nbsp;            socket.status(200, CONTENT_TYPE_JSON);</b>
+<i class="no-highlight">514</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">515</i>&nbsp;            socket.status(200, CONTENT_TYPE_TEXT);</b>
+<i class="no-highlight">516</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">517</i>&nbsp;        socket.sendHeader();</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;        socket.sendChunk(false);</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;        resumeError(state, socket);</b>
+<i class="no-highlight">520</i>&nbsp;    }
+<i class="no-highlight">521</i>&nbsp;
+<i class="no-highlight">522</i>&nbsp;    private void sendErrorAndThrowDisconnect(CharSequence message)
+<i class="no-highlight">523</i>&nbsp;            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">524</i>&nbsp;        transientState.snapshotStateAndCloseWriter();</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;        final HttpChunkedResponseSocket socket = transientContext.getChunkedResponseSocket();</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        sendErr(transientContext, message, socket);</b>
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;    private void sendResponse(HttpConnectionContext context)
+<i class="no-highlight">530</i>&nbsp;            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+<b class="fc"><i class="no-highlight">531</i>&nbsp;        final TextImportProcessorState state = LV.get(context);</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();</b>
+<i class="no-highlight">533</i>&nbsp;
+<i class="no-highlight">534</i>&nbsp;        // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
+<b class="fc"><i class="no-highlight">535</i>&nbsp;        state.snapshotStateAndCloseWriter();</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;        if (state.state == TextImportProcessorState.STATE_OK) {</b>
+<b class="fc"><i class="no-highlight">537</i>&nbsp;            if (state.json) {</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;                socket.status(200, CONTENT_TYPE_JSON);</b>
+<i class="no-highlight">539</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">540</i>&nbsp;                socket.status(200, CONTENT_TYPE_TEXT);</b>
+<i class="no-highlight">541</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">542</i>&nbsp;            socket.sendHeader();</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;            doResumeSend(state, socket);</b>
+<i class="no-highlight">544</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">545</i>&nbsp;            sendErr(context, state.stateMessage, context.getChunkedResponseSocket());</b>
+<i class="no-highlight">546</i>&nbsp;        }
+<i class="no-highlight">547</i>&nbsp;    }
+<i class="no-highlight">548</i>&nbsp;
+<i class="no-highlight">549</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">550</i>&nbsp;        atomicityParamMap.put(&quot;skipRow&quot;, Atomicity.SKIP_ROW);</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;        atomicityParamMap.put(&quot;abort&quot;, Atomicity.SKIP_ALL);</b>
+<i class="no-highlight">552</i>&nbsp;    }
+<i class="no-highlight">553</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

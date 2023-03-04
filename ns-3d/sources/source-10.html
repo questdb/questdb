@@ -1,0 +1,1644 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > QueryModel</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin.model</a>
+</div>
+
+<h1>Coverage Summary for Class: QueryModel (io.questdb.griffin.model)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">QueryModel</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.4%
+  </span>
+  <span class="absValue">
+    (158/159)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.3%
+  </span>
+  <span class="absValue">
+    (646/685)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">QueryModel$QueryModelFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    99.4%
+  </span>
+  <span class="absValue">
+    (160/161)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.3%
+  </span>
+  <span class="absValue">
+    (648/687)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin.model;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.TableToken;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.Function;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.griffin.OrderByMnemonic;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.griffin.SqlException;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;import java.util.ArrayDeque;
+<i class="no-highlight">35</i>&nbsp;import java.util.Iterator;
+<i class="no-highlight">36</i>&nbsp;import java.util.Objects;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;import static io.questdb.griffin.SqlKeywords.isAndKeyword;
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;/**
+<i class="no-highlight">41</i>&nbsp; * Important note: Make sure to update clear, equals and hashCode methods, as well as
+<i class="no-highlight">42</i>&nbsp; * the unit tests, when you&#39;re adding a new field to this class. Instances of QueryModel
+<i class="no-highlight">43</i>&nbsp; * are reused across query compilation, so making sure that we reset all fields correctly
+<i class="no-highlight">44</i>&nbsp; * is important.
+<i class="no-highlight">45</i>&nbsp; */
+<b class="fc"><i class="no-highlight">46</i>&nbsp;public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {</b>
+<b class="fc"><i class="no-highlight">47</i>&nbsp;    public static final QueryModelFactory FACTORY = new QueryModelFactory();</b>
+<i class="no-highlight">48</i>&nbsp;    public static final int JOIN_ASOF = 4;
+<i class="no-highlight">49</i>&nbsp;    public static final int JOIN_CROSS = 3;
+<i class="no-highlight">50</i>&nbsp;    public static final int JOIN_CROSS_LEFT = 8;
+<i class="no-highlight">51</i>&nbsp;    public static final int JOIN_INNER = 1;
+<i class="no-highlight">52</i>&nbsp;    public static final int JOIN_LT = 6;
+<i class="no-highlight">53</i>&nbsp;    public static final int JOIN_MAX = JOIN_CROSS_LEFT;
+<i class="no-highlight">54</i>&nbsp;    public static final int JOIN_ONE = 7;
+<i class="no-highlight">55</i>&nbsp;    public static final int JOIN_OUTER = 2;
+<i class="no-highlight">56</i>&nbsp;    public static final int JOIN_SPLICE = 5;
+<i class="no-highlight">57</i>&nbsp;    public static final int LATEST_BY_DEPRECATED = 1;
+<i class="no-highlight">58</i>&nbsp;    public static final int LATEST_BY_NEW = 2;
+<i class="no-highlight">59</i>&nbsp;    public static final int LATEST_BY_NONE = 0;
+<i class="no-highlight">60</i>&nbsp;    public static final String NO_ROWID_MARKER = &quot;*!*&quot;;
+<i class="no-highlight">61</i>&nbsp;    public static final int ORDER_DIRECTION_ASCENDING = 0;
+<i class="no-highlight">62</i>&nbsp;    public static final int ORDER_DIRECTION_DESCENDING = 1;
+<i class="no-highlight">63</i>&nbsp;    public static final int SELECT_MODEL_ANALYTIC = 3;
+<i class="no-highlight">64</i>&nbsp;    public static final int SELECT_MODEL_CHOOSE = 1;
+<i class="no-highlight">65</i>&nbsp;    public static final int SELECT_MODEL_CURSOR = 6;
+<i class="no-highlight">66</i>&nbsp;    public static final int SELECT_MODEL_DISTINCT = 5;
+<i class="no-highlight">67</i>&nbsp;    public static final int SELECT_MODEL_GROUP_BY = 4;
+<i class="no-highlight">68</i>&nbsp;    public static final int SELECT_MODEL_NONE = 0;
+<i class="no-highlight">69</i>&nbsp;    public static final int SELECT_MODEL_VIRTUAL = 2;
+<i class="no-highlight">70</i>&nbsp;    public static final int SET_OPERATION_EXCEPT = 2;
+<i class="no-highlight">71</i>&nbsp;    public static final int SET_OPERATION_INTERSECT = 3;
+<i class="no-highlight">72</i>&nbsp;    public static final int SET_OPERATION_UNION = 1;
+<i class="no-highlight">73</i>&nbsp;    //types of set operations between this and union model
+<i class="no-highlight">74</i>&nbsp;    public static final int SET_OPERATION_UNION_ALL = 0;
+<i class="no-highlight">75</i>&nbsp;    public static final String SUB_QUERY_ALIAS_PREFIX = &quot;_xQdbA&quot;;
+<b class="fc"><i class="no-highlight">76</i>&nbsp;    private static final ObjList&lt;String&gt; modelTypeName = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;    private final LowerCaseCharSequenceObjHashMap&lt;QueryColumn&gt; aliasToColumnMap = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;    private final LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;    private final ObjList&lt;CharSequence&gt; bottomUpColumnNames = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;    private final ObjList&lt;QueryColumn&gt; bottomUpColumns = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;    private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;    private final LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;    private final IntHashSet dependencies = new IntHashSet();</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; expressionModels = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; groupBy = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; joinColumns = new ObjList&lt;&gt;(4);</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;    private final ObjList&lt;QueryModel&gt; joinModels = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; latestBy = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;    private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; orderBy = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; orderByAdvice = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;    private final IntList orderByDirection = new IntList();</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;    private final IntList orderByDirectionAdvice = new IntList();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;    private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;    private final IntList orderedJoinModels1 = new IntList();</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;    private final IntList orderedJoinModels2 = new IntList();</b>
+<i class="no-highlight">97</i>&nbsp;    // collect frequency of column names from each join model
+<i class="no-highlight">98</i>&nbsp;    // and check if any of columns with frequency &gt; 0 are selected
+<i class="no-highlight">99</i>&nbsp;    // column name frequency of 1 corresponds to map value 0
+<i class="no-highlight">100</i>&nbsp;    // column name frequency of 0 corresponds to map value -1
+<i class="no-highlight">101</i>&nbsp;    // list of &quot;and&quot; concatenated expressions
+<b class="fc"><i class="no-highlight">102</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; parsedWhere = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;    private final IntHashSet parsedWhereConstants = new IntHashSet();</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; sampleByFill = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;    private final ArrayDeque&lt;ExpressionNode&gt; sqlNodeStack = new ArrayDeque&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;    private final ObjList&lt;QueryColumn&gt; topDownColumns = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;    private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;    private final ObjList&lt;ExpressionNode&gt; updateSetColumns = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;    private final ObjList&lt;CharSequence&gt; updateTableColumnNames = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;    private final IntList updateTableColumnTypes = new IntList();</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;    private final LowerCaseCharSequenceObjHashMap&lt;WithClauseModel&gt; withClauseModel = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">112</i>&nbsp;    private ExpressionNode alias;
+<i class="no-highlight">113</i>&nbsp;    private boolean artificialStar;
+<i class="no-highlight">114</i>&nbsp;    // Used to store a deep copy of the whereClause field
+<i class="no-highlight">115</i>&nbsp;    // since whereClause can be changed during optimization/generation stage.
+<i class="no-highlight">116</i>&nbsp;    private ExpressionNode backupWhereClause;
+<i class="no-highlight">117</i>&nbsp;    private ExpressionNode constWhereClause;
+<i class="no-highlight">118</i>&nbsp;    private JoinContext context;
+<b class="fc"><i class="no-highlight">119</i>&nbsp;    private boolean distinct = false;</b>
+<i class="no-highlight">120</i>&nbsp;    //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
+<i class="no-highlight">121</i>&nbsp;    //and doesn&#39;t need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
+<i class="no-highlight">122</i>&nbsp;    private boolean isLimitImplemented;
+<i class="no-highlight">123</i>&nbsp;    // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
+<i class="no-highlight">124</i>&nbsp;    // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
+<b class="fc"><i class="no-highlight">125</i>&nbsp;    private boolean isSelectTranslation = false;</b>
+<i class="no-highlight">126</i>&nbsp;    private boolean isUpdateModel;
+<i class="no-highlight">127</i>&nbsp;    private ExpressionNode joinCriteria;
+<i class="no-highlight">128</i>&nbsp;    private int joinKeywordPosition;
+<b class="fc"><i class="no-highlight">129</i>&nbsp;    private int joinType = JOIN_INNER;</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;    private int latestByType = LATEST_BY_NONE;</b>
+<i class="no-highlight">131</i>&nbsp;    private ExpressionNode limitAdviceHi;
+<i class="no-highlight">132</i>&nbsp;    private ExpressionNode limitAdviceLo;
+<i class="no-highlight">133</i>&nbsp;    private ExpressionNode limitHi;
+<i class="no-highlight">134</i>&nbsp;    private ExpressionNode limitLo;
+<i class="no-highlight">135</i>&nbsp;    //position of the limit clause token
+<i class="no-highlight">136</i>&nbsp;    private int limitPosition;
+<b class="fc"><i class="no-highlight">137</i>&nbsp;    private int modelPosition = 0;</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;    private int modelType = ExecutionModel.QUERY;</b>
+<i class="no-highlight">139</i>&nbsp;    private QueryModel nestedModel;
+<b class="fc"><i class="no-highlight">140</i>&nbsp;    private boolean nestedModelIsSubQuery = false;</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;</b>
+<i class="no-highlight">142</i>&nbsp;    //position of the order by clause token
+<i class="no-highlight">143</i>&nbsp;    private int orderByPosition;
+<b class="fc"><i class="no-highlight">144</i>&nbsp;    private IntList orderedJoinModels = orderedJoinModels2;</b>
+<i class="no-highlight">145</i>&nbsp;    /* Expression clause that is actually part of left/outer join but not in join model.
+<i class="no-highlight">146</i>&nbsp;     *  Inner join expressions */
+<i class="no-highlight">147</i>&nbsp;    private ExpressionNode outerJoinExpressionClause;
+<i class="no-highlight">148</i>&nbsp;    private ExpressionNode postJoinWhereClause;
+<i class="no-highlight">149</i>&nbsp;    private ExpressionNode sampleBy;
+<b class="fc"><i class="no-highlight">150</i>&nbsp;    private ExpressionNode sampleByOffset = null;</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;    private ExpressionNode sampleByTimezoneName = null;</b>
+<i class="no-highlight">152</i>&nbsp;    private ExpressionNode sampleByUnit;
+<b class="fc"><i class="no-highlight">153</i>&nbsp;    private int selectModelType = SELECT_MODEL_NONE;</b>
+<i class="no-highlight">154</i>&nbsp;    private int setOperationType;
+<b class="fc"><i class="no-highlight">155</i>&nbsp;    private int tableId = -1;</b>
+<i class="no-highlight">156</i>&nbsp;    private ExpressionNode tableNameExpr;
+<i class="no-highlight">157</i>&nbsp;    private Function tableNameFunction;
+<b class="fc"><i class="no-highlight">158</i>&nbsp;    private long tableVersion = -1;</b>
+<i class="no-highlight">159</i>&nbsp;    private ExpressionNode timestamp;
+<i class="no-highlight">160</i>&nbsp;    private QueryModel unionModel;
+<i class="no-highlight">161</i>&nbsp;    private QueryModel updateTableModel;
+<i class="no-highlight">162</i>&nbsp;    private TableToken updateTableToken;
+<i class="no-highlight">163</i>&nbsp;    private ExpressionNode whereClause;
+<i class="no-highlight">164</i>&nbsp;
+<b class="fc"><i class="no-highlight">165</i>&nbsp;    private QueryModel() {</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        joinModels.add(this);</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+<i class="no-highlight">170</i>&nbsp;    public static void backupWhereClause(final ObjectPool&lt;ExpressionNode&gt; pool, final QueryModel model) {
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        QueryModel current = model;</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        while (current != null) {</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;            if (current.unionModel != null) {</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;                backupWhereClause(pool, current.unionModel);</b>
+<i class="no-highlight">175</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            if (current.updateTableModel != null) {</b>
+<b class="nc"><i class="no-highlight">177</i>&nbsp;                backupWhereClause(pool, current.updateTableModel);</b>
+<i class="no-highlight">178</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">179</i>&nbsp;            for (int i = 1, n = current.joinModels.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;                final QueryModel m = current.joinModels.get(i);</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;                if (m != null &amp;&amp; current != m) {</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                    backupWhereClause(pool, m);</b>
+<i class="no-highlight">183</i>&nbsp;                }
+<i class="no-highlight">184</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">185</i>&nbsp;            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            current = current.nestedModel;</b>
+<i class="no-highlight">187</i>&nbsp;        }
+<i class="no-highlight">188</i>&nbsp;    }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+<i class="no-highlight">191</i>&nbsp;    public static void restoreWhereClause(final ObjectPool&lt;ExpressionNode&gt; pool, final QueryModel model) {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        QueryModel current = model;</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        while (current != null) {</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            if (current.unionModel != null) {</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                restoreWhereClause(pool, current.unionModel);</b>
+<i class="no-highlight">196</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            if (current.updateTableModel != null) {</b>
+<b class="nc"><i class="no-highlight">198</i>&nbsp;                restoreWhereClause(pool, current.updateTableModel);</b>
+<i class="no-highlight">199</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">200</i>&nbsp;            for (int i = 1, n = current.joinModels.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;                final QueryModel m = current.joinModels.get(i);</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;                if (m != null &amp;&amp; current != m) {</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                    restoreWhereClause(pool, m);</b>
+<i class="no-highlight">204</i>&nbsp;                }
+<i class="no-highlight">205</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            current.whereClause = ExpressionNode.deepClone(pool, current.backupWhereClause);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            current = current.nestedModel;</b>
+<i class="no-highlight">208</i>&nbsp;        }
+<i class="no-highlight">209</i>&nbsp;    }
+<i class="no-highlight">210</i>&nbsp;
+<i class="no-highlight">211</i>&nbsp;    public void addBottomUpColumn(QueryColumn column) throws SqlException {
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        addBottomUpColumn(0, column, false, null);</b>
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    public void addBottomUpColumn(QueryColumn column, boolean allowDuplicates) throws SqlException {
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        addBottomUpColumn(0, column, allowDuplicates, null);</b>
+<i class="no-highlight">217</i>&nbsp;    }
+<i class="no-highlight">218</i>&nbsp;
+<i class="no-highlight">219</i>&nbsp;    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
+<b class="fc"><i class="no-highlight">220</i>&nbsp;        addBottomUpColumn(position, column, allowDuplicates, null);</b>
+<i class="no-highlight">221</i>&nbsp;    }
+<i class="no-highlight">222</i>&nbsp;
+<i class="no-highlight">223</i>&nbsp;    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
+<b class="fc"><i class="no-highlight">224</i>&nbsp;        if (!allowDuplicates &amp;&amp; aliasToColumnMap.contains(column.getName())) {</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);</b>
+<i class="no-highlight">226</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        bottomUpColumns.add(column);</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        addField(column);</b>
+<i class="no-highlight">229</i>&nbsp;    }
+<i class="no-highlight">230</i>&nbsp;
+<i class="no-highlight">231</i>&nbsp;    public void addDependency(int index) {
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        dependencies.add(index);</b>
+<i class="no-highlight">233</i>&nbsp;    }
+<i class="no-highlight">234</i>&nbsp;
+<i class="no-highlight">235</i>&nbsp;    public void addExpressionModel(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        assert node.queryModel != null;</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;        expressionModels.add(node);</b>
+<i class="no-highlight">238</i>&nbsp;    }
+<i class="no-highlight">239</i>&nbsp;
+<i class="no-highlight">240</i>&nbsp;    public void addField(QueryColumn column) {
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        final CharSequence alias = column.getAlias();</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        final ExpressionNode ast = column.getAst();</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        assert alias != null;</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        aliasToColumnNameMap.put(alias, ast.token);</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        columnNameToAliasMap.put(ast.token, alias);</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        bottomUpColumnNames.add(alias);</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        aliasToColumnMap.put(alias, column);</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    public void addGroupBy(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        groupBy.add(node);</b>
+<i class="no-highlight">253</i>&nbsp;    }
+<i class="no-highlight">254</i>&nbsp;
+<i class="no-highlight">255</i>&nbsp;    public void addJoinColumn(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        joinColumns.add(node);</b>
+<i class="no-highlight">257</i>&nbsp;    }
+<i class="no-highlight">258</i>&nbsp;
+<i class="no-highlight">259</i>&nbsp;    public void addJoinModel(QueryModel model) {
+<b class="fc"><i class="no-highlight">260</i>&nbsp;        joinModels.add(model);</b>
+<i class="no-highlight">261</i>&nbsp;    }
+<i class="no-highlight">262</i>&nbsp;
+<i class="no-highlight">263</i>&nbsp;    public void addLatestBy(ExpressionNode latestBy) {
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        this.latestBy.add(latestBy);</b>
+<i class="no-highlight">265</i>&nbsp;    }
+<i class="no-highlight">266</i>&nbsp;
+<i class="no-highlight">267</i>&nbsp;    public boolean addModelAliasIndex(ExpressionNode node, int index) {
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        return modelAliasIndexes.put(node.token, index);</b>
+<i class="no-highlight">269</i>&nbsp;    }
+<i class="no-highlight">270</i>&nbsp;
+<i class="no-highlight">271</i>&nbsp;    public void addOrderBy(ExpressionNode node, int direction) {
+<b class="fc"><i class="no-highlight">272</i>&nbsp;        orderBy.add(node);</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        orderByDirection.add(direction);</b>
+<i class="no-highlight">274</i>&nbsp;    }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;    public void addParsedWhereNode(ExpressionNode node, boolean innerPredicate) {
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        node.innerPredicate = innerPredicate;</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        parsedWhere.add(node);</b>
+<i class="no-highlight">279</i>&nbsp;    }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;    public void addSampleByFill(ExpressionNode sampleByFill) {
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        this.sampleByFill.add(sampleByFill);</b>
+<i class="no-highlight">283</i>&nbsp;    }
+<i class="no-highlight">284</i>&nbsp;
+<i class="no-highlight">285</i>&nbsp;    public void addTopDownColumn(QueryColumn column, CharSequence alias) {
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        if (topDownNameSet.add(alias)) {</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            topDownColumns.add(column);</b>
+<i class="no-highlight">288</i>&nbsp;        }
+<i class="no-highlight">289</i>&nbsp;    }
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        updateTableColumnTypes.add(columnType);</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        updateTableColumnNames.add(columnName);</b>
+<i class="no-highlight">294</i>&nbsp;    }
+<i class="no-highlight">295</i>&nbsp;
+<i class="no-highlight">296</i>&nbsp;    /* Determines whether this model allows pushing columns from parent model(s).
+<i class="no-highlight">297</i>&nbsp;     * If this is a UNION, EXCEPT or INTERSECT or contains a select distinct then it can&#39;t be done safely. */
+<i class="no-highlight">298</i>&nbsp;    public boolean allowsColumnsChange() {
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        QueryModel union = this;</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        while (union != null) {</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL ||</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;                    union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;                return false;</b>
+<i class="no-highlight">304</i>&nbsp;            }
+<i class="no-highlight">305</i>&nbsp;
+<b class="fc"><i class="no-highlight">306</i>&nbsp;            union = union.getUnionModel();</b>
+<i class="no-highlight">307</i>&nbsp;        }
+<i class="no-highlight">308</i>&nbsp;
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        return true;</b>
+<i class="no-highlight">310</i>&nbsp;    }
+<i class="no-highlight">311</i>&nbsp;
+<i class="no-highlight">312</i>&nbsp;    @Override
+<i class="no-highlight">313</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        bottomUpColumns.clear();</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;        aliasToColumnNameMap.clear();</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        joinModels.clear();</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        joinModels.add(this);</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;        clearSampleBy();</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        orderBy.clear();</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;        orderByDirection.clear();</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        orderByAdvice.clear();</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        orderByDirectionAdvice.clear();</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        orderByPosition = 0;</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        isSelectTranslation = false;</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        groupBy.clear();</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        dependencies.clear();</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        parsedWhere.clear();</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        whereClause = null;</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        constWhereClause = null;</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        nestedModel = null;</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        tableNameExpr = null;</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        alias = null;</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;        latestByType = LATEST_BY_NONE;</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;        latestBy.clear();</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;        joinCriteria = null;</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        joinType = JOIN_INNER;</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;        joinKeywordPosition = 0;</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;        orderedJoinModels1.clear();</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;        orderedJoinModels2.clear();</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        parsedWhereConstants.clear();</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        columnAliasIndexes.clear();</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        modelAliasIndexes.clear();</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;        postJoinWhereClause = null;</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        outerJoinExpressionClause = null;</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;        context = null;</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;        orderedJoinModels = orderedJoinModels2;</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;        limitHi = null;</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        limitLo = null;</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;        limitAdviceHi = null;</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        limitAdviceLo = null;</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;        limitPosition = 0;</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;        isLimitImplemented = false;</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;        timestamp = null;</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;        sqlNodeStack.clear();</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;        joinColumns.clear();</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        withClauseModel.clear();</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        selectModelType = SELECT_MODEL_NONE;</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        columnNameToAliasMap.clear();</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;        tableNameFunction = null;</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;        tableId = -1;</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        tableVersion = -1;</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        bottomUpColumnNames.clear();</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;        expressionModels.clear();</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;        distinct = false;</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;        nestedModelIsSubQuery = false;</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        unionModel = null;</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        orderHash.clear();</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        modelPosition = 0;</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        topDownColumns.clear();</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;        topDownNameSet.clear();</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;        aliasToColumnMap.clear();</b>
+<b class="fc"><i class="no-highlight">373</i>&nbsp;        isUpdateModel = false;</b>
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        modelType = ExecutionModel.QUERY;</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        updateSetColumns.clear();</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        updateTableColumnTypes.clear();</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;        updateTableColumnNames.clear();</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;        updateTableModel = null;</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        updateTableToken = null;</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        setOperationType = SET_OPERATION_UNION_ALL;</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        artificialStar = false;</b>
+<i class="no-highlight">382</i>&nbsp;    }
+<i class="no-highlight">383</i>&nbsp;
+<i class="no-highlight">384</i>&nbsp;    public void clearColumnMapStructs() {
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        this.aliasToColumnNameMap.clear();</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        this.bottomUpColumnNames.clear();</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;        this.aliasToColumnMap.clear();</b>
+<i class="no-highlight">388</i>&nbsp;    }
+<i class="no-highlight">389</i>&nbsp;
+<i class="no-highlight">390</i>&nbsp;    public void clearOrderBy() {
+<b class="fc"><i class="no-highlight">391</i>&nbsp;        orderBy.clear();</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;        orderByDirection.clear();</b>
+<i class="no-highlight">393</i>&nbsp;    }
+<i class="no-highlight">394</i>&nbsp;
+<i class="no-highlight">395</i>&nbsp;    public void clearSampleBy() {
+<b class="fc"><i class="no-highlight">396</i>&nbsp;        sampleBy = null;</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;        sampleByUnit = null;</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;        sampleByFill.clear();</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;        sampleByTimezoneName = null;</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;        sampleByOffset = null;</b>
+<i class="no-highlight">401</i>&nbsp;    }
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;    public boolean containsJoin() {
+<b class="fc"><i class="no-highlight">404</i>&nbsp;        QueryModel current = this;</b>
+<i class="no-highlight">405</i>&nbsp;        do {
+<b class="fc"><i class="no-highlight">406</i>&nbsp;            if (current.getJoinModels().size() &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                return true;</b>
+<i class="no-highlight">408</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">409</i>&nbsp;        } while ((current = current.getNestedModel()) != null);</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;        return false;</b>
+<i class="no-highlight">411</i>&nbsp;    }
+<i class="no-highlight">412</i>&nbsp;
+<i class="no-highlight">413</i>&nbsp;    public void copyBottomToTopColumns() {
+<b class="fc"><i class="no-highlight">414</i>&nbsp;        topDownColumns.clear();</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;        topDownNameSet.clear();</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;        for (int i = 0, n = bottomUpColumns.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;            QueryColumn column = bottomUpColumns.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;            addTopDownColumn(column, column.getAlias());</b>
+<i class="no-highlight">419</i>&nbsp;        }
+<i class="no-highlight">420</i>&nbsp;    }
+<i class="no-highlight">421</i>&nbsp;
+<i class="no-highlight">422</i>&nbsp;    public void copyColumnsFrom(
+<i class="no-highlight">423</i>&nbsp;            QueryModel other,
+<i class="no-highlight">424</i>&nbsp;            ObjectPool&lt;QueryColumn&gt; queryColumnPool,
+<i class="no-highlight">425</i>&nbsp;            ObjectPool&lt;ExpressionNode&gt; expressionNodePool
+<i class="no-highlight">426</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">427</i>&nbsp;        clearColumnMapStructs();</b>
+<i class="no-highlight">428</i>&nbsp;
+<i class="no-highlight">429</i>&nbsp;        // copy only literal columns and convert functions to literal while copying
+<b class="fc"><i class="no-highlight">430</i>&nbsp;        final ObjList&lt;CharSequence&gt; aliases = other.aliasToColumnMap.keys();</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;        for (int i = 0, n = aliases.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;            final CharSequence alias = aliases.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;            QueryColumn qc = other.aliasToColumnMap.get(alias);</b>
+<b class="fc"><i class="no-highlight">434</i>&nbsp;            if (qc.getAst().type != ExpressionNode.LITERAL) {</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                qc = queryColumnPool.next().of(</b>
+<i class="no-highlight">436</i>&nbsp;                        alias,
+<b class="fc"><i class="no-highlight">437</i>&nbsp;                        expressionNodePool.next().of(</b>
+<i class="no-highlight">438</i>&nbsp;                                ExpressionNode.LITERAL,
+<i class="no-highlight">439</i>&nbsp;                                alias,
+<i class="no-highlight">440</i>&nbsp;                                0,
+<b class="fc"><i class="no-highlight">441</i>&nbsp;                                qc.getAst().position</b>
+<i class="no-highlight">442</i>&nbsp;                        ),
+<b class="fc"><i class="no-highlight">443</i>&nbsp;                        qc.isIncludeIntoWildcard()</b>
+<i class="no-highlight">444</i>&nbsp;                );
+<i class="no-highlight">445</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">446</i>&nbsp;            this.aliasToColumnMap.put(alias, qc);</b>
+<i class="no-highlight">447</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">448</i>&nbsp;        ObjList&lt;CharSequence&gt; columnNames = other.bottomUpColumnNames;</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        this.bottomUpColumnNames.addAll(columnNames);</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        for (int i = 0, n = columnNames.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            final CharSequence name = columnNames.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;            this.aliasToColumnNameMap.put(name, name);</b>
+<i class="no-highlight">453</i>&nbsp;        }
+<i class="no-highlight">454</i>&nbsp;    }
+<i class="no-highlight">455</i>&nbsp;
+<i class="no-highlight">456</i>&nbsp;    public void copyOrderByAdvice(ObjList&lt;ExpressionNode&gt; orderByAdvice) {
+<b class="fc"><i class="no-highlight">457</i>&nbsp;        this.orderByAdvice.clear();</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        this.orderByAdvice.addAll(orderByAdvice);</b>
+<i class="no-highlight">459</i>&nbsp;    }
+<i class="no-highlight">460</i>&nbsp;
+<i class="no-highlight">461</i>&nbsp;    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
+<b class="fc"><i class="no-highlight">462</i>&nbsp;        this.orderByDirectionAdvice.clear();</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;        this.orderByDirectionAdvice.addAll(orderByDirection);</b>
+<i class="no-highlight">464</i>&nbsp;    }
+<i class="no-highlight">465</i>&nbsp;
+<i class="no-highlight">466</i>&nbsp;    public void copyUpdateTableMetadata(QueryModel updateTableModel) {
+<b class="fc"><i class="no-highlight">467</i>&nbsp;        this.updateTableModel = updateTableModel;</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;        this.tableId = updateTableModel.tableId;</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;        this.tableVersion = updateTableModel.tableVersion;</b>
+<i class="no-highlight">470</i>&nbsp;    }
+<i class="no-highlight">471</i>&nbsp;
+<i class="no-highlight">472</i>&nbsp;    @Override
+<i class="no-highlight">473</i>&nbsp;    public boolean equals(Object o) {
+<b class="fc"><i class="no-highlight">474</i>&nbsp;        if (this == o) return true;</b>
+<b class="fc"><i class="no-highlight">475</i>&nbsp;        if (o == null || getClass() != o.getClass()) return false;</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;        QueryModel that = (QueryModel) o;</b>
+<i class="no-highlight">477</i>&nbsp;        // joinModels always contain this as the first element, so we need to compare them manually.
+<b class="fc"><i class="no-highlight">478</i>&nbsp;        if (joinModels.size() != that.joinModels.size()) {</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;            return false;</b>
+<i class="no-highlight">480</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">481</i>&nbsp;        for (int i = 1, n = joinModels.size(); i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">482</i>&nbsp;            if (!joinModels.getQuick(i).equals(that.joinModels.getQuick(i))) {</b>
+<b class="nc"><i class="no-highlight">483</i>&nbsp;                return false;</b>
+<i class="no-highlight">484</i>&nbsp;            }
+<i class="no-highlight">485</i>&nbsp;        }
+<i class="no-highlight">486</i>&nbsp;        // ArrayDeque doesn&#39;t implement equals and hashCode, so we deal with sqlNodeStack separately.
+<b class="fc"><i class="no-highlight">487</i>&nbsp;        if (sqlNodeStack.size() != that.sqlNodeStack.size()) {</b>
+<b class="nc"><i class="no-highlight">488</i>&nbsp;            return false;</b>
+<i class="no-highlight">489</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">490</i>&nbsp;        Iterator&lt;ExpressionNode&gt; i1 = sqlNodeStack.iterator();</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;        Iterator&lt;ExpressionNode&gt; i2 = that.sqlNodeStack.iterator();</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;        while (i1.hasNext() &amp;&amp; i2.hasNext()) {</b>
+<b class="nc"><i class="no-highlight">493</i>&nbsp;            ExpressionNode n1 = i1.next();</b>
+<b class="nc"><i class="no-highlight">494</i>&nbsp;            ExpressionNode n2 = i2.next();</b>
+<b class="nc"><i class="no-highlight">495</i>&nbsp;            if (!Objects.equals(n1, n2)) {</b>
+<b class="nc"><i class="no-highlight">496</i>&nbsp;                return false;</b>
+<i class="no-highlight">497</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">498</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;        return orderByPosition == that.orderByPosition</b>
+<i class="no-highlight">500</i>&nbsp;                &amp;&amp; latestByType == that.latestByType
+<i class="no-highlight">501</i>&nbsp;                &amp;&amp; tableVersion == that.tableVersion
+<i class="no-highlight">502</i>&nbsp;                &amp;&amp; joinType == that.joinType
+<i class="no-highlight">503</i>&nbsp;                &amp;&amp; joinKeywordPosition == that.joinKeywordPosition
+<i class="no-highlight">504</i>&nbsp;                &amp;&amp; limitPosition == that.limitPosition
+<i class="no-highlight">505</i>&nbsp;                &amp;&amp; isLimitImplemented == that.isLimitImplemented
+<i class="no-highlight">506</i>&nbsp;                &amp;&amp; isSelectTranslation == that.isSelectTranslation
+<i class="no-highlight">507</i>&nbsp;                &amp;&amp; selectModelType == that.selectModelType
+<i class="no-highlight">508</i>&nbsp;                &amp;&amp; nestedModelIsSubQuery == that.nestedModelIsSubQuery
+<i class="no-highlight">509</i>&nbsp;                &amp;&amp; distinct == that.distinct
+<i class="no-highlight">510</i>&nbsp;                &amp;&amp; setOperationType == that.setOperationType
+<i class="no-highlight">511</i>&nbsp;                &amp;&amp; modelPosition == that.modelPosition
+<i class="no-highlight">512</i>&nbsp;                &amp;&amp; orderByAdviceMnemonic == that.orderByAdviceMnemonic
+<i class="no-highlight">513</i>&nbsp;                &amp;&amp; tableId == that.tableId
+<i class="no-highlight">514</i>&nbsp;                &amp;&amp; isUpdateModel == that.isUpdateModel
+<i class="no-highlight">515</i>&nbsp;                &amp;&amp; modelType == that.modelType
+<i class="no-highlight">516</i>&nbsp;                &amp;&amp; artificialStar == that.artificialStar
+<b class="fc"><i class="no-highlight">517</i>&nbsp;                &amp;&amp; Objects.equals(bottomUpColumns, that.bottomUpColumns)</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;                &amp;&amp; Objects.equals(topDownNameSet, that.topDownNameSet)</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;                &amp;&amp; Objects.equals(topDownColumns, that.topDownColumns)</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;                &amp;&amp; Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)</b>
+<b class="fc"><i class="no-highlight">521</i>&nbsp;                &amp;&amp; Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)</b>
+<b class="fc"><i class="no-highlight">522</i>&nbsp;                &amp;&amp; Objects.equals(aliasToColumnMap, that.aliasToColumnMap)</b>
+<b class="fc"><i class="no-highlight">523</i>&nbsp;                &amp;&amp; Objects.equals(bottomUpColumnNames, that.bottomUpColumnNames)</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;                &amp;&amp; Objects.equals(orderBy, that.orderBy)</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;                &amp;&amp; Objects.equals(groupBy, that.groupBy)</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                &amp;&amp; Objects.equals(orderByDirection, that.orderByDirection)</b>
+<b class="fc"><i class="no-highlight">527</i>&nbsp;                &amp;&amp; Objects.equals(dependencies, that.dependencies)</b>
+<b class="fc"><i class="no-highlight">528</i>&nbsp;                &amp;&amp; Objects.equals(orderedJoinModels1, that.orderedJoinModels1)</b>
+<b class="fc"><i class="no-highlight">529</i>&nbsp;                &amp;&amp; Objects.equals(orderedJoinModels2, that.orderedJoinModels2)</b>
+<b class="fc"><i class="no-highlight">530</i>&nbsp;                &amp;&amp; Objects.equals(columnAliasIndexes, that.columnAliasIndexes)</b>
+<b class="fc"><i class="no-highlight">531</i>&nbsp;                &amp;&amp; Objects.equals(modelAliasIndexes, that.modelAliasIndexes)</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;                &amp;&amp; Objects.equals(expressionModels, that.expressionModels)</b>
+<b class="fc"><i class="no-highlight">533</i>&nbsp;                &amp;&amp; Objects.equals(parsedWhere, that.parsedWhere)</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;                &amp;&amp; Objects.equals(parsedWhereConstants, that.parsedWhereConstants)</b>
+<b class="fc"><i class="no-highlight">535</i>&nbsp;                &amp;&amp; Objects.equals(orderHash, that.orderHash)</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;                &amp;&amp; Objects.equals(joinColumns, that.joinColumns)</b>
+<b class="fc"><i class="no-highlight">537</i>&nbsp;                &amp;&amp; Objects.equals(sampleByFill, that.sampleByFill)</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;                &amp;&amp; Objects.equals(latestBy, that.latestBy)</b>
+<b class="fc"><i class="no-highlight">539</i>&nbsp;                &amp;&amp; Objects.equals(orderByAdvice, that.orderByAdvice)</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;                &amp;&amp; Objects.equals(orderByDirectionAdvice, that.orderByDirectionAdvice)</b>
+<b class="fc"><i class="no-highlight">541</i>&nbsp;                &amp;&amp; Objects.equals(withClauseModel, that.withClauseModel)</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;                &amp;&amp; Objects.equals(updateSetColumns, that.updateSetColumns)</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;                &amp;&amp; Objects.equals(updateTableColumnTypes, that.updateTableColumnTypes)</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;                &amp;&amp; Objects.equals(updateTableColumnNames, that.updateTableColumnNames)</b>
+<b class="fc"><i class="no-highlight">545</i>&nbsp;                &amp;&amp; Objects.equals(sampleByTimezoneName, that.sampleByTimezoneName)</b>
+<b class="fc"><i class="no-highlight">546</i>&nbsp;                &amp;&amp; Objects.equals(sampleByOffset, that.sampleByOffset)</b>
+<b class="fc"><i class="no-highlight">547</i>&nbsp;                &amp;&amp; Objects.equals(whereClause, that.whereClause)</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;                &amp;&amp; Objects.equals(backupWhereClause, that.backupWhereClause)</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;                &amp;&amp; Objects.equals(postJoinWhereClause, that.postJoinWhereClause)</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;                &amp;&amp; Objects.equals(outerJoinExpressionClause, that.outerJoinExpressionClause)</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;                &amp;&amp; Objects.equals(constWhereClause, that.constWhereClause)</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;                &amp;&amp; Objects.equals(nestedModel, that.nestedModel)</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                &amp;&amp; Objects.equals(tableNameExpr, that.tableNameExpr)</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;                &amp;&amp; Objects.equals(tableNameFunction, that.tableNameFunction)</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;                &amp;&amp; Objects.equals(alias, that.alias)</b>
+<b class="fc"><i class="no-highlight">556</i>&nbsp;                &amp;&amp; Objects.equals(timestamp, that.timestamp)</b>
+<b class="fc"><i class="no-highlight">557</i>&nbsp;                &amp;&amp; Objects.equals(sampleBy, that.sampleBy)</b>
+<b class="fc"><i class="no-highlight">558</i>&nbsp;                &amp;&amp; Objects.equals(sampleByUnit, that.sampleByUnit)</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;                &amp;&amp; Objects.equals(context, that.context)</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;                &amp;&amp; Objects.equals(joinCriteria, that.joinCriteria)</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;                &amp;&amp; Objects.equals(orderedJoinModels, that.orderedJoinModels)</b>
+<b class="fc"><i class="no-highlight">562</i>&nbsp;                &amp;&amp; Objects.equals(limitLo, that.limitLo)</b>
+<b class="fc"><i class="no-highlight">563</i>&nbsp;                &amp;&amp; Objects.equals(limitHi, that.limitHi)</b>
+<b class="fc"><i class="no-highlight">564</i>&nbsp;                &amp;&amp; Objects.equals(limitAdviceLo, that.limitAdviceLo)</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;                &amp;&amp; Objects.equals(limitAdviceHi, that.limitAdviceHi)</b>
+<b class="fc"><i class="no-highlight">566</i>&nbsp;                &amp;&amp; Objects.equals(unionModel, that.unionModel)</b>
+<b class="fc"><i class="no-highlight">567</i>&nbsp;                &amp;&amp; Objects.equals(updateTableModel, that.updateTableModel)</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;                &amp;&amp; Objects.equals(updateTableToken, that.updateTableToken);</b>
+<i class="no-highlight">569</i>&nbsp;    }
+<i class="no-highlight">570</i>&nbsp;
+<i class="no-highlight">571</i>&nbsp;    public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
+<b class="fc"><i class="no-highlight">572</i>&nbsp;        for (int i = 0, n = bottomUpColumns.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">573</i>&nbsp;            QueryColumn qc = bottomUpColumns.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">574</i>&nbsp;            if (ExpressionNode.compareNodesExact(node, qc.getAst())) {</b>
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                return qc;</b>
+<i class="no-highlight">576</i>&nbsp;            }
+<i class="no-highlight">577</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">578</i>&nbsp;        return null;</b>
+<i class="no-highlight">579</i>&nbsp;    }
+<i class="no-highlight">580</i>&nbsp;
+<i class="no-highlight">581</i>&nbsp;    public ExpressionNode getAlias() {
+<b class="fc"><i class="no-highlight">582</i>&nbsp;        return alias;</b>
+<i class="no-highlight">583</i>&nbsp;    }
+<i class="no-highlight">584</i>&nbsp;
+<i class="no-highlight">585</i>&nbsp;    public LowerCaseCharSequenceObjHashMap&lt;QueryColumn&gt; getAliasToColumnMap() {
+<b class="fc"><i class="no-highlight">586</i>&nbsp;        return aliasToColumnMap;</b>
+<i class="no-highlight">587</i>&nbsp;    }
+<i class="no-highlight">588</i>&nbsp;
+<i class="no-highlight">589</i>&nbsp;    public LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; getAliasToColumnNameMap() {
+<b class="fc"><i class="no-highlight">590</i>&nbsp;        return aliasToColumnNameMap;</b>
+<i class="no-highlight">591</i>&nbsp;    }
+<i class="no-highlight">592</i>&nbsp;
+<i class="no-highlight">593</i>&nbsp;    public ObjList&lt;CharSequence&gt; getBottomUpColumnNames() {
+<b class="fc"><i class="no-highlight">594</i>&nbsp;        return bottomUpColumnNames;</b>
+<i class="no-highlight">595</i>&nbsp;    }
+<i class="no-highlight">596</i>&nbsp;
+<i class="no-highlight">597</i>&nbsp;    public ObjList&lt;QueryColumn&gt; getBottomUpColumns() {
+<b class="fc"><i class="no-highlight">598</i>&nbsp;        return bottomUpColumns;</b>
+<i class="no-highlight">599</i>&nbsp;    }
+<i class="no-highlight">600</i>&nbsp;
+<i class="no-highlight">601</i>&nbsp;    public int getColumnAliasIndex(CharSequence alias) {
+<b class="fc"><i class="no-highlight">602</i>&nbsp;        return columnAliasIndexes.get(alias);</b>
+<i class="no-highlight">603</i>&nbsp;    }
+<i class="no-highlight">604</i>&nbsp;
+<i class="no-highlight">605</i>&nbsp;    public LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; getColumnNameToAliasMap() {
+<b class="fc"><i class="no-highlight">606</i>&nbsp;        return columnNameToAliasMap;</b>
+<i class="no-highlight">607</i>&nbsp;    }
+<i class="no-highlight">608</i>&nbsp;
+<i class="no-highlight">609</i>&nbsp;    public ObjList&lt;QueryColumn&gt; getColumns() {
+<b class="fc"><i class="no-highlight">610</i>&nbsp;        return topDownColumns.size() &gt; 0 ? topDownColumns : bottomUpColumns;</b>
+<i class="no-highlight">611</i>&nbsp;    }
+<i class="no-highlight">612</i>&nbsp;
+<i class="no-highlight">613</i>&nbsp;    public ExpressionNode getConstWhereClause() {
+<b class="fc"><i class="no-highlight">614</i>&nbsp;        return constWhereClause;</b>
+<i class="no-highlight">615</i>&nbsp;    }
+<i class="no-highlight">616</i>&nbsp;
+<i class="no-highlight">617</i>&nbsp;    public JoinContext getContext() {
+<b class="fc"><i class="no-highlight">618</i>&nbsp;        return context;</b>
+<i class="no-highlight">619</i>&nbsp;    }
+<i class="no-highlight">620</i>&nbsp;
+<i class="no-highlight">621</i>&nbsp;    public IntHashSet getDependencies() {
+<b class="fc"><i class="no-highlight">622</i>&nbsp;        return dependencies;</b>
+<i class="no-highlight">623</i>&nbsp;    }
+<i class="no-highlight">624</i>&nbsp;
+<i class="no-highlight">625</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getExpressionModels() {
+<b class="fc"><i class="no-highlight">626</i>&nbsp;        return expressionModels;</b>
+<i class="no-highlight">627</i>&nbsp;    }
+<i class="no-highlight">628</i>&nbsp;
+<i class="no-highlight">629</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getGroupBy() {
+<b class="fc"><i class="no-highlight">630</i>&nbsp;        return groupBy;</b>
+<i class="no-highlight">631</i>&nbsp;    }
+<i class="no-highlight">632</i>&nbsp;
+<i class="no-highlight">633</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getJoinColumns() {
+<b class="fc"><i class="no-highlight">634</i>&nbsp;        return joinColumns;</b>
+<i class="no-highlight">635</i>&nbsp;    }
+<i class="no-highlight">636</i>&nbsp;
+<i class="no-highlight">637</i>&nbsp;    public ExpressionNode getJoinCriteria() {
+<b class="fc"><i class="no-highlight">638</i>&nbsp;        return joinCriteria;</b>
+<i class="no-highlight">639</i>&nbsp;    }
+<i class="no-highlight">640</i>&nbsp;
+<i class="no-highlight">641</i>&nbsp;    public int getJoinKeywordPosition() {
+<b class="fc"><i class="no-highlight">642</i>&nbsp;        return joinKeywordPosition;</b>
+<i class="no-highlight">643</i>&nbsp;    }
+<i class="no-highlight">644</i>&nbsp;
+<i class="no-highlight">645</i>&nbsp;    public ObjList&lt;QueryModel&gt; getJoinModels() {
+<b class="fc"><i class="no-highlight">646</i>&nbsp;        return joinModels;</b>
+<i class="no-highlight">647</i>&nbsp;    }
+<i class="no-highlight">648</i>&nbsp;
+<i class="no-highlight">649</i>&nbsp;    public int getJoinType() {
+<b class="fc"><i class="no-highlight">650</i>&nbsp;        return joinType;</b>
+<i class="no-highlight">651</i>&nbsp;    }
+<i class="no-highlight">652</i>&nbsp;
+<i class="no-highlight">653</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getLatestBy() {
+<b class="fc"><i class="no-highlight">654</i>&nbsp;        return latestBy;</b>
+<i class="no-highlight">655</i>&nbsp;    }
+<i class="no-highlight">656</i>&nbsp;
+<i class="no-highlight">657</i>&nbsp;    public int getLatestByType() {
+<b class="fc"><i class="no-highlight">658</i>&nbsp;        return latestByType;</b>
+<i class="no-highlight">659</i>&nbsp;    }
+<i class="no-highlight">660</i>&nbsp;
+<i class="no-highlight">661</i>&nbsp;    public ExpressionNode getLimitAdviceHi() {
+<b class="fc"><i class="no-highlight">662</i>&nbsp;        return limitAdviceHi;</b>
+<i class="no-highlight">663</i>&nbsp;    }
+<i class="no-highlight">664</i>&nbsp;
+<i class="no-highlight">665</i>&nbsp;    public ExpressionNode getLimitAdviceLo() {
+<b class="fc"><i class="no-highlight">666</i>&nbsp;        return limitAdviceLo;</b>
+<i class="no-highlight">667</i>&nbsp;    }
+<i class="no-highlight">668</i>&nbsp;
+<i class="no-highlight">669</i>&nbsp;    public ExpressionNode getLimitHi() {
+<b class="fc"><i class="no-highlight">670</i>&nbsp;        return limitHi;</b>
+<i class="no-highlight">671</i>&nbsp;    }
+<i class="no-highlight">672</i>&nbsp;
+<i class="no-highlight">673</i>&nbsp;    public ExpressionNode getLimitLo() {
+<b class="fc"><i class="no-highlight">674</i>&nbsp;        return limitLo;</b>
+<i class="no-highlight">675</i>&nbsp;    }
+<i class="no-highlight">676</i>&nbsp;
+<i class="no-highlight">677</i>&nbsp;    public int getLimitPosition() {
+<b class="fc"><i class="no-highlight">678</i>&nbsp;        return limitPosition;</b>
+<i class="no-highlight">679</i>&nbsp;    }
+<i class="no-highlight">680</i>&nbsp;
+<i class="no-highlight">681</i>&nbsp;    public int getModelAliasIndex(CharSequence column, int start, int end) {
+<b class="fc"><i class="no-highlight">682</i>&nbsp;        int index = modelAliasIndexes.keyIndex(column, start, end);</b>
+<b class="fc"><i class="no-highlight">683</i>&nbsp;        if (index &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">684</i>&nbsp;            return modelAliasIndexes.valueAt(index);</b>
+<i class="no-highlight">685</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">686</i>&nbsp;        return -1;</b>
+<i class="no-highlight">687</i>&nbsp;    }
+<i class="no-highlight">688</i>&nbsp;
+<i class="no-highlight">689</i>&nbsp;    public LowerCaseCharSequenceIntHashMap getModelAliasIndexes() {
+<b class="fc"><i class="no-highlight">690</i>&nbsp;        return modelAliasIndexes;</b>
+<i class="no-highlight">691</i>&nbsp;    }
+<i class="no-highlight">692</i>&nbsp;
+<i class="no-highlight">693</i>&nbsp;    public int getModelPosition() {
+<b class="fc"><i class="no-highlight">694</i>&nbsp;        return modelPosition;</b>
+<i class="no-highlight">695</i>&nbsp;    }
+<i class="no-highlight">696</i>&nbsp;
+<i class="no-highlight">697</i>&nbsp;    @Override
+<i class="no-highlight">698</i>&nbsp;    public int getModelType() {
+<b class="fc"><i class="no-highlight">699</i>&nbsp;        return modelType;</b>
+<i class="no-highlight">700</i>&nbsp;    }
+<i class="no-highlight">701</i>&nbsp;
+<i class="no-highlight">702</i>&nbsp;    public CharSequence getName() {
+<b class="fc"><i class="no-highlight">703</i>&nbsp;        if (alias != null) {</b>
+<b class="fc"><i class="no-highlight">704</i>&nbsp;            return alias.token;</b>
+<i class="no-highlight">705</i>&nbsp;        }
+<i class="no-highlight">706</i>&nbsp;
+<b class="fc"><i class="no-highlight">707</i>&nbsp;        if (tableNameExpr != null) {</b>
+<b class="fc"><i class="no-highlight">708</i>&nbsp;            return tableNameExpr.token;</b>
+<i class="no-highlight">709</i>&nbsp;        }
+<i class="no-highlight">710</i>&nbsp;
+<b class="fc"><i class="no-highlight">711</i>&nbsp;        return null;</b>
+<i class="no-highlight">712</i>&nbsp;    }
+<i class="no-highlight">713</i>&nbsp;
+<i class="no-highlight">714</i>&nbsp;    public QueryModel getNestedModel() {
+<b class="fc"><i class="no-highlight">715</i>&nbsp;        return nestedModel;</b>
+<i class="no-highlight">716</i>&nbsp;    }
+<i class="no-highlight">717</i>&nbsp;
+<i class="no-highlight">718</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getOrderBy() {
+<b class="fc"><i class="no-highlight">719</i>&nbsp;        return orderBy;</b>
+<i class="no-highlight">720</i>&nbsp;    }
+<i class="no-highlight">721</i>&nbsp;
+<i class="no-highlight">722</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getOrderByAdvice() {
+<b class="fc"><i class="no-highlight">723</i>&nbsp;        return orderByAdvice;</b>
+<i class="no-highlight">724</i>&nbsp;    }
+<i class="no-highlight">725</i>&nbsp;
+<i class="no-highlight">726</i>&nbsp;    public int getOrderByAdviceMnemonic() {
+<b class="fc"><i class="no-highlight">727</i>&nbsp;        return orderByAdviceMnemonic;</b>
+<i class="no-highlight">728</i>&nbsp;    }
+<i class="no-highlight">729</i>&nbsp;
+<i class="no-highlight">730</i>&nbsp;    public IntList getOrderByDirection() {
+<b class="fc"><i class="no-highlight">731</i>&nbsp;        return orderByDirection;</b>
+<i class="no-highlight">732</i>&nbsp;    }
+<i class="no-highlight">733</i>&nbsp;
+<i class="no-highlight">734</i>&nbsp;    public IntList getOrderByDirectionAdvice() {
+<b class="fc"><i class="no-highlight">735</i>&nbsp;        return orderByDirectionAdvice;</b>
+<i class="no-highlight">736</i>&nbsp;    }
+<i class="no-highlight">737</i>&nbsp;
+<i class="no-highlight">738</i>&nbsp;    public int getOrderByPosition() {
+<b class="fc"><i class="no-highlight">739</i>&nbsp;        return orderByPosition;</b>
+<i class="no-highlight">740</i>&nbsp;    }
+<i class="no-highlight">741</i>&nbsp;
+<i class="no-highlight">742</i>&nbsp;    public LowerCaseCharSequenceIntHashMap getOrderHash() {
+<b class="fc"><i class="no-highlight">743</i>&nbsp;        return orderHash;</b>
+<i class="no-highlight">744</i>&nbsp;    }
+<i class="no-highlight">745</i>&nbsp;
+<i class="no-highlight">746</i>&nbsp;    public IntList getOrderedJoinModels() {
+<b class="fc"><i class="no-highlight">747</i>&nbsp;        return orderedJoinModels;</b>
+<i class="no-highlight">748</i>&nbsp;    }
+<i class="no-highlight">749</i>&nbsp;
+<i class="no-highlight">750</i>&nbsp;    public ExpressionNode getOuterJoinExpressionClause() {
+<b class="fc"><i class="no-highlight">751</i>&nbsp;        return outerJoinExpressionClause;</b>
+<i class="no-highlight">752</i>&nbsp;    }
+<i class="no-highlight">753</i>&nbsp;
+<i class="no-highlight">754</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getParsedWhere() {
+<b class="fc"><i class="no-highlight">755</i>&nbsp;        return parsedWhere;</b>
+<i class="no-highlight">756</i>&nbsp;    }
+<i class="no-highlight">757</i>&nbsp;
+<i class="no-highlight">758</i>&nbsp;    public ExpressionNode getPostJoinWhereClause() {
+<b class="fc"><i class="no-highlight">759</i>&nbsp;        return postJoinWhereClause;</b>
+<i class="no-highlight">760</i>&nbsp;    }
+<i class="no-highlight">761</i>&nbsp;
+<i class="no-highlight">762</i>&nbsp;    @Override
+<i class="no-highlight">763</i>&nbsp;    public QueryModel getQueryModel() {
+<b class="fc"><i class="no-highlight">764</i>&nbsp;        return this;</b>
+<i class="no-highlight">765</i>&nbsp;    }
+<i class="no-highlight">766</i>&nbsp;
+<i class="no-highlight">767</i>&nbsp;    public ExpressionNode getSampleBy() {
+<b class="fc"><i class="no-highlight">768</i>&nbsp;        return sampleBy;</b>
+<i class="no-highlight">769</i>&nbsp;    }
+<i class="no-highlight">770</i>&nbsp;
+<i class="no-highlight">771</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getSampleByFill() {
+<b class="fc"><i class="no-highlight">772</i>&nbsp;        return sampleByFill;</b>
+<i class="no-highlight">773</i>&nbsp;    }
+<i class="no-highlight">774</i>&nbsp;
+<i class="no-highlight">775</i>&nbsp;    public ExpressionNode getSampleByOffset() {
+<b class="fc"><i class="no-highlight">776</i>&nbsp;        return sampleByOffset;</b>
+<i class="no-highlight">777</i>&nbsp;    }
+<i class="no-highlight">778</i>&nbsp;
+<i class="no-highlight">779</i>&nbsp;    public ExpressionNode getSampleByTimezoneName() {
+<b class="fc"><i class="no-highlight">780</i>&nbsp;        return sampleByTimezoneName;</b>
+<i class="no-highlight">781</i>&nbsp;    }
+<i class="no-highlight">782</i>&nbsp;
+<i class="no-highlight">783</i>&nbsp;    public ExpressionNode getSampleByUnit() {
+<b class="fc"><i class="no-highlight">784</i>&nbsp;        return sampleByUnit;</b>
+<i class="no-highlight">785</i>&nbsp;    }
+<i class="no-highlight">786</i>&nbsp;
+<i class="no-highlight">787</i>&nbsp;    public int getSelectModelType() {
+<b class="fc"><i class="no-highlight">788</i>&nbsp;        return selectModelType;</b>
+<i class="no-highlight">789</i>&nbsp;    }
+<i class="no-highlight">790</i>&nbsp;
+<i class="no-highlight">791</i>&nbsp;    public int getSetOperationType() {
+<b class="fc"><i class="no-highlight">792</i>&nbsp;        return setOperationType;</b>
+<i class="no-highlight">793</i>&nbsp;    }
+<i class="no-highlight">794</i>&nbsp;
+<i class="no-highlight">795</i>&nbsp;    public int getTableId() {
+<b class="fc"><i class="no-highlight">796</i>&nbsp;        return tableId;</b>
+<i class="no-highlight">797</i>&nbsp;    }
+<i class="no-highlight">798</i>&nbsp;
+<i class="no-highlight">799</i>&nbsp;    public CharSequence getTableName() {
+<b class="fc"><i class="no-highlight">800</i>&nbsp;        return tableNameExpr != null ? tableNameExpr.token : null;</b>
+<i class="no-highlight">801</i>&nbsp;    }
+<i class="no-highlight">802</i>&nbsp;
+<i class="no-highlight">803</i>&nbsp;    @Override
+<i class="no-highlight">804</i>&nbsp;    public ExpressionNode getTableNameExpr() {
+<b class="fc"><i class="no-highlight">805</i>&nbsp;        return tableNameExpr;</b>
+<i class="no-highlight">806</i>&nbsp;    }
+<i class="no-highlight">807</i>&nbsp;
+<i class="no-highlight">808</i>&nbsp;    public Function getTableNameFunction() {
+<b class="fc"><i class="no-highlight">809</i>&nbsp;        return tableNameFunction;</b>
+<i class="no-highlight">810</i>&nbsp;    }
+<i class="no-highlight">811</i>&nbsp;
+<i class="no-highlight">812</i>&nbsp;    public long getTableVersion() {
+<b class="fc"><i class="no-highlight">813</i>&nbsp;        return tableVersion;</b>
+<i class="no-highlight">814</i>&nbsp;    }
+<i class="no-highlight">815</i>&nbsp;
+<i class="no-highlight">816</i>&nbsp;    public ExpressionNode getTimestamp() {
+<b class="fc"><i class="no-highlight">817</i>&nbsp;        return timestamp;</b>
+<i class="no-highlight">818</i>&nbsp;    }
+<i class="no-highlight">819</i>&nbsp;
+<i class="no-highlight">820</i>&nbsp;    public ObjList&lt;QueryColumn&gt; getTopDownColumns() {
+<b class="fc"><i class="no-highlight">821</i>&nbsp;        return topDownColumns;</b>
+<i class="no-highlight">822</i>&nbsp;    }
+<i class="no-highlight">823</i>&nbsp;
+<i class="no-highlight">824</i>&nbsp;    public QueryModel getUnionModel() {
+<b class="fc"><i class="no-highlight">825</i>&nbsp;        return unionModel;</b>
+<i class="no-highlight">826</i>&nbsp;    }
+<i class="no-highlight">827</i>&nbsp;
+<i class="no-highlight">828</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; getUpdateExpressions() {
+<b class="fc"><i class="no-highlight">829</i>&nbsp;        return updateSetColumns;</b>
+<i class="no-highlight">830</i>&nbsp;    }
+<i class="no-highlight">831</i>&nbsp;
+<i class="no-highlight">832</i>&nbsp;    public ObjList&lt;CharSequence&gt; getUpdateTableColumnNames() {
+<b class="fc"><i class="no-highlight">833</i>&nbsp;        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;</b>
+<i class="no-highlight">834</i>&nbsp;    }
+<i class="no-highlight">835</i>&nbsp;
+<i class="no-highlight">836</i>&nbsp;    public IntList getUpdateTableColumnTypes() {
+<b class="fc"><i class="no-highlight">837</i>&nbsp;        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;</b>
+<i class="no-highlight">838</i>&nbsp;    }
+<i class="no-highlight">839</i>&nbsp;
+<i class="no-highlight">840</i>&nbsp;    public TableToken getUpdateTableToken() {
+<b class="fc"><i class="no-highlight">841</i>&nbsp;        return updateTableToken;</b>
+<i class="no-highlight">842</i>&nbsp;    }
+<i class="no-highlight">843</i>&nbsp;
+<i class="no-highlight">844</i>&nbsp;    public ExpressionNode getWhereClause() {
+<b class="fc"><i class="no-highlight">845</i>&nbsp;        return whereClause;</b>
+<i class="no-highlight">846</i>&nbsp;    }
+<i class="no-highlight">847</i>&nbsp;
+<i class="no-highlight">848</i>&nbsp;    public LowerCaseCharSequenceObjHashMap&lt;WithClauseModel&gt; getWithClauses() {
+<b class="fc"><i class="no-highlight">849</i>&nbsp;        return withClauseModel;</b>
+<i class="no-highlight">850</i>&nbsp;    }
+<i class="no-highlight">851</i>&nbsp;
+<i class="no-highlight">852</i>&nbsp;    @Override
+<i class="no-highlight">853</i>&nbsp;    public int hashCode() {
+<b class="nc"><i class="no-highlight">854</i>&nbsp;        int hash = super.hashCode();</b>
+<i class="no-highlight">855</i>&nbsp;        // joinModels always contain this as the first element, so we need to hash them manually.
+<b class="nc"><i class="no-highlight">856</i>&nbsp;        for (int i = 1, n = joinModels.size(); i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">857</i>&nbsp;            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));</b>
+<i class="no-highlight">858</i>&nbsp;        }
+<i class="no-highlight">859</i>&nbsp;        // ArrayDeque doesn&#39;t implement equals and hashCode, so we deal with sqlNodeStack separately.
+<b class="nc"><i class="no-highlight">860</i>&nbsp;        for (ExpressionNode node : sqlNodeStack) {</b>
+<b class="nc"><i class="no-highlight">861</i>&nbsp;            hash = 31 * hash + Objects.hash(node);</b>
+<b class="nc"><i class="no-highlight">862</i>&nbsp;        }</b>
+<b class="nc"><i class="no-highlight">863</i>&nbsp;        return 31 * hash + Objects.hash(</b>
+<i class="no-highlight">864</i>&nbsp;                bottomUpColumns, topDownNameSet, topDownColumns,
+<i class="no-highlight">865</i>&nbsp;                aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
+<i class="no-highlight">866</i>&nbsp;                bottomUpColumnNames, orderBy,
+<b class="nc"><i class="no-highlight">867</i>&nbsp;                orderByPosition, groupBy, orderByDirection,</b>
+<i class="no-highlight">868</i>&nbsp;                dependencies, orderedJoinModels1, orderedJoinModels2,
+<i class="no-highlight">869</i>&nbsp;                columnAliasIndexes, modelAliasIndexes, expressionModels,
+<i class="no-highlight">870</i>&nbsp;                parsedWhere, parsedWhereConstants,
+<i class="no-highlight">871</i>&nbsp;                orderHash, joinColumns, sampleByFill,
+<i class="no-highlight">872</i>&nbsp;                latestBy, orderByAdvice, orderByDirectionAdvice,
+<i class="no-highlight">873</i>&nbsp;                withClauseModel, updateSetColumns, updateTableColumnTypes,
+<i class="no-highlight">874</i>&nbsp;                updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
+<b class="nc"><i class="no-highlight">875</i>&nbsp;                latestByType, whereClause, backupWhereClause,</b>
+<i class="no-highlight">876</i>&nbsp;                postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
+<b class="nc"><i class="no-highlight">877</i>&nbsp;                tableNameExpr, tableVersion, tableNameFunction,</b>
+<i class="no-highlight">878</i>&nbsp;                alias, timestamp, sampleBy,
+<i class="no-highlight">879</i>&nbsp;                sampleByUnit, context, joinCriteria,
+<b class="nc"><i class="no-highlight">880</i>&nbsp;                joinType, joinKeywordPosition, orderedJoinModels,</b>
+<b class="nc"><i class="no-highlight">881</i>&nbsp;                limitLo, limitHi, limitPosition,</b>
+<b class="nc"><i class="no-highlight">882</i>&nbsp;                limitAdviceLo, limitAdviceHi, isLimitImplemented,</b>
+<b class="nc"><i class="no-highlight">883</i>&nbsp;                isSelectTranslation, selectModelType, nestedModelIsSubQuery,</b>
+<b class="nc"><i class="no-highlight">884</i>&nbsp;                distinct, unionModel, setOperationType,</b>
+<b class="nc"><i class="no-highlight">885</i>&nbsp;                modelPosition, orderByAdviceMnemonic, tableId,</b>
+<b class="nc"><i class="no-highlight">886</i>&nbsp;                isUpdateModel, modelType, updateTableModel,</b>
+<b class="nc"><i class="no-highlight">887</i>&nbsp;                updateTableToken, artificialStar</b>
+<i class="no-highlight">888</i>&nbsp;        );
+<i class="no-highlight">889</i>&nbsp;    }
+<i class="no-highlight">890</i>&nbsp;
+<i class="no-highlight">891</i>&nbsp;    public boolean isArtificialStar() {
+<b class="fc"><i class="no-highlight">892</i>&nbsp;        return artificialStar;</b>
+<i class="no-highlight">893</i>&nbsp;    }
+<i class="no-highlight">894</i>&nbsp;
+<i class="no-highlight">895</i>&nbsp;    public boolean isDistinct() {
+<b class="fc"><i class="no-highlight">896</i>&nbsp;        return distinct;</b>
+<i class="no-highlight">897</i>&nbsp;    }
+<i class="no-highlight">898</i>&nbsp;
+<i class="no-highlight">899</i>&nbsp;    public boolean isLimitImplemented() {
+<b class="fc"><i class="no-highlight">900</i>&nbsp;        return isLimitImplemented;</b>
+<i class="no-highlight">901</i>&nbsp;    }
+<i class="no-highlight">902</i>&nbsp;
+<i class="no-highlight">903</i>&nbsp;    public boolean isNestedModelIsSubQuery() {
+<b class="fc"><i class="no-highlight">904</i>&nbsp;        return nestedModelIsSubQuery;</b>
+<i class="no-highlight">905</i>&nbsp;    }
+<i class="no-highlight">906</i>&nbsp;
+<i class="no-highlight">907</i>&nbsp;    public boolean isSelectTranslation() {
+<b class="fc"><i class="no-highlight">908</i>&nbsp;        return isSelectTranslation;</b>
+<i class="no-highlight">909</i>&nbsp;    }
+<i class="no-highlight">910</i>&nbsp;
+<i class="no-highlight">911</i>&nbsp;    public boolean isTopDownNameMissing(CharSequence columnName) {
+<b class="fc"><i class="no-highlight">912</i>&nbsp;        return topDownNameSet.excludes(columnName);</b>
+<i class="no-highlight">913</i>&nbsp;    }
+<i class="no-highlight">914</i>&nbsp;
+<i class="no-highlight">915</i>&nbsp;    public boolean isUpdate() {
+<b class="fc"><i class="no-highlight">916</i>&nbsp;        return isUpdateModel;</b>
+<i class="no-highlight">917</i>&nbsp;    }
+<i class="no-highlight">918</i>&nbsp;
+<i class="no-highlight">919</i>&nbsp;    public void moveGroupByFrom(QueryModel model) {
+<b class="fc"><i class="no-highlight">920</i>&nbsp;        this.groupBy.addAll(model.groupBy);</b>
+<i class="no-highlight">921</i>&nbsp;        // clear the source
+<b class="fc"><i class="no-highlight">922</i>&nbsp;        model.groupBy.clear();</b>
+<i class="no-highlight">923</i>&nbsp;    }
+<i class="no-highlight">924</i>&nbsp;
+<i class="no-highlight">925</i>&nbsp;    public void moveJoinAliasFrom(QueryModel that) {
+<b class="fc"><i class="no-highlight">926</i>&nbsp;        final ExpressionNode alias = that.alias;</b>
+<b class="fc"><i class="no-highlight">927</i>&nbsp;        if (alias != null &amp;&amp; !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {</b>
+<b class="fc"><i class="no-highlight">928</i>&nbsp;            setAlias(alias);</b>
+<b class="fc"><i class="no-highlight">929</i>&nbsp;            addModelAliasIndex(alias, 0);</b>
+<i class="no-highlight">930</i>&nbsp;        }
+<i class="no-highlight">931</i>&nbsp;    }
+<i class="no-highlight">932</i>&nbsp;
+<i class="no-highlight">933</i>&nbsp;    public void moveLimitFrom(QueryModel baseModel) {
+<b class="fc"><i class="no-highlight">934</i>&nbsp;        this.limitLo = baseModel.getLimitLo();</b>
+<b class="fc"><i class="no-highlight">935</i>&nbsp;        this.limitHi = baseModel.getLimitHi();</b>
+<b class="fc"><i class="no-highlight">936</i>&nbsp;        baseModel.setLimit(null, null);</b>
+<i class="no-highlight">937</i>&nbsp;    }
+<i class="no-highlight">938</i>&nbsp;
+<i class="no-highlight">939</i>&nbsp;    public void moveSampleByFrom(QueryModel model) {
+<b class="fc"><i class="no-highlight">940</i>&nbsp;        this.sampleBy = model.sampleBy;</b>
+<b class="fc"><i class="no-highlight">941</i>&nbsp;        this.sampleByUnit = model.sampleByUnit;</b>
+<b class="fc"><i class="no-highlight">942</i>&nbsp;        this.sampleByFill.clear();</b>
+<b class="fc"><i class="no-highlight">943</i>&nbsp;        this.sampleByFill.addAll(model.sampleByFill);</b>
+<b class="fc"><i class="no-highlight">944</i>&nbsp;        this.sampleByTimezoneName = model.sampleByTimezoneName;</b>
+<b class="fc"><i class="no-highlight">945</i>&nbsp;        this.sampleByOffset = model.sampleByOffset;</b>
+<i class="no-highlight">946</i>&nbsp;
+<i class="no-highlight">947</i>&nbsp;        // clear the source
+<b class="fc"><i class="no-highlight">948</i>&nbsp;        model.clearSampleBy();</b>
+<i class="no-highlight">949</i>&nbsp;    }
+<i class="no-highlight">950</i>&nbsp;
+<i class="no-highlight">951</i>&nbsp;    /**
+<i class="no-highlight">952</i>&nbsp;     * Optimiser may be attempting to order join clauses several times.
+<i class="no-highlight">953</i>&nbsp;     * Every time ordering takes place optimiser will keep at most two lists:
+<i class="no-highlight">954</i>&nbsp;     * one is last known order the other is new order. If new order cost is better
+<i class="no-highlight">955</i>&nbsp;     * optimiser will replace last known order with new one.
+<i class="no-highlight">956</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">957</i>&nbsp;     * To facilitate this behaviour the function will always return non-current list.
+<i class="no-highlight">958</i>&nbsp;     *
+<i class="no-highlight">959</i>&nbsp;     * @return non current order list.
+<i class="no-highlight">960</i>&nbsp;     */
+<i class="no-highlight">961</i>&nbsp;    public IntList nextOrderedJoinModels() {
+<b class="fc"><i class="no-highlight">962</i>&nbsp;        IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;</b>
+<b class="fc"><i class="no-highlight">963</i>&nbsp;        ordered.clear();</b>
+<b class="fc"><i class="no-highlight">964</i>&nbsp;        return ordered;</b>
+<i class="no-highlight">965</i>&nbsp;    }
+<i class="no-highlight">966</i>&nbsp;
+<i class="no-highlight">967</i>&nbsp;    /*
+<i class="no-highlight">968</i>&nbsp;     * Splits &quot;where&quot; clauses into &quot;and&quot; chunks
+<i class="no-highlight">969</i>&nbsp;     */
+<i class="no-highlight">970</i>&nbsp;    public ObjList&lt;ExpressionNode&gt; parseWhereClause() {
+<b class="fc"><i class="no-highlight">971</i>&nbsp;        ExpressionNode n = getWhereClause();</b>
+<i class="no-highlight">972</i>&nbsp;        // pre-order traversal
+<b class="fc"><i class="no-highlight">973</i>&nbsp;        sqlNodeStack.clear();</b>
+<b class="fc"><i class="no-highlight">974</i>&nbsp;        while (!sqlNodeStack.isEmpty() || n != null) {</b>
+<b class="fc"><i class="no-highlight">975</i>&nbsp;            if (n != null &amp;&amp; n.token != null) {</b>
+<b class="fc"><i class="no-highlight">976</i>&nbsp;                if (isAndKeyword(n.token)) {</b>
+<b class="fc"><i class="no-highlight">977</i>&nbsp;                    if (n.rhs != null) {</b>
+<b class="fc"><i class="no-highlight">978</i>&nbsp;                        sqlNodeStack.push(n.rhs);</b>
+<i class="no-highlight">979</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">980</i>&nbsp;                    n = n.lhs;</b>
+<i class="no-highlight">981</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">982</i>&nbsp;                    addParsedWhereNode(n, false);</b>
+<b class="fc"><i class="no-highlight">983</i>&nbsp;                    n = null;</b>
+<i class="no-highlight">984</i>&nbsp;
+<i class="no-highlight">985</i>&nbsp;                }
+<i class="no-highlight">986</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">987</i>&nbsp;                n = sqlNodeStack.poll();</b>
+<i class="no-highlight">988</i>&nbsp;            }
+<i class="no-highlight">989</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">990</i>&nbsp;        return getParsedWhere();</b>
+<i class="no-highlight">991</i>&nbsp;    }
+<i class="no-highlight">992</i>&nbsp;
+<i class="no-highlight">993</i>&nbsp;    public void removeDependency(int index) {
+<b class="fc"><i class="no-highlight">994</i>&nbsp;        dependencies.remove(index);</b>
+<i class="no-highlight">995</i>&nbsp;    }
+<i class="no-highlight">996</i>&nbsp;
+<i class="no-highlight">997</i>&nbsp;    public void replaceJoinModel(int pos, QueryModel model) {
+<b class="fc"><i class="no-highlight">998</i>&nbsp;        joinModels.setQuick(pos, model);</b>
+<i class="no-highlight">999</i>&nbsp;    }
+<i class="no-highlight">1000</i>&nbsp;
+<i class="no-highlight">1001</i>&nbsp;    public void setAlias(ExpressionNode alias) {
+<b class="fc"><i class="no-highlight">1002</i>&nbsp;        this.alias = alias;</b>
+<i class="no-highlight">1003</i>&nbsp;    }
+<i class="no-highlight">1004</i>&nbsp;
+<i class="no-highlight">1005</i>&nbsp;    public void setArtificialStar(boolean artificialStar) {
+<b class="fc"><i class="no-highlight">1006</i>&nbsp;        this.artificialStar = artificialStar;</b>
+<i class="no-highlight">1007</i>&nbsp;    }
+<i class="no-highlight">1008</i>&nbsp;
+<i class="no-highlight">1009</i>&nbsp;    public void setConstWhereClause(ExpressionNode constWhereClause) {
+<b class="fc"><i class="no-highlight">1010</i>&nbsp;        this.constWhereClause = constWhereClause;</b>
+<i class="no-highlight">1011</i>&nbsp;    }
+<i class="no-highlight">1012</i>&nbsp;
+<i class="no-highlight">1013</i>&nbsp;    public void setContext(JoinContext context) {
+<b class="fc"><i class="no-highlight">1014</i>&nbsp;        this.context = context;</b>
+<i class="no-highlight">1015</i>&nbsp;    }
+<i class="no-highlight">1016</i>&nbsp;
+<i class="no-highlight">1017</i>&nbsp;    public void setDistinct(boolean distinct) {
+<b class="fc"><i class="no-highlight">1018</i>&nbsp;        this.distinct = distinct;</b>
+<i class="no-highlight">1019</i>&nbsp;    }
+<i class="no-highlight">1020</i>&nbsp;
+<i class="no-highlight">1021</i>&nbsp;    public void setIsUpdate(boolean isUpdate) {
+<b class="fc"><i class="no-highlight">1022</i>&nbsp;        this.isUpdateModel = isUpdate;</b>
+<i class="no-highlight">1023</i>&nbsp;    }
+<i class="no-highlight">1024</i>&nbsp;
+<i class="no-highlight">1025</i>&nbsp;    public void setJoinCriteria(ExpressionNode joinCriteria) {
+<b class="fc"><i class="no-highlight">1026</i>&nbsp;        this.joinCriteria = joinCriteria;</b>
+<i class="no-highlight">1027</i>&nbsp;    }
+<i class="no-highlight">1028</i>&nbsp;
+<i class="no-highlight">1029</i>&nbsp;    public void setJoinKeywordPosition(int position) {
+<b class="fc"><i class="no-highlight">1030</i>&nbsp;        this.joinKeywordPosition = position;</b>
+<i class="no-highlight">1031</i>&nbsp;    }
+<i class="no-highlight">1032</i>&nbsp;
+<i class="no-highlight">1033</i>&nbsp;    public void setJoinType(int joinType) {
+<b class="fc"><i class="no-highlight">1034</i>&nbsp;        this.joinType = joinType;</b>
+<i class="no-highlight">1035</i>&nbsp;    }
+<i class="no-highlight">1036</i>&nbsp;
+<i class="no-highlight">1037</i>&nbsp;    public void setLatestByType(int latestByType) {
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;        this.latestByType = latestByType;</b>
+<i class="no-highlight">1039</i>&nbsp;    }
+<i class="no-highlight">1040</i>&nbsp;
+<i class="no-highlight">1041</i>&nbsp;    public void setLimit(ExpressionNode lo, ExpressionNode hi) {
+<b class="fc"><i class="no-highlight">1042</i>&nbsp;        this.limitLo = lo;</b>
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;        this.limitHi = hi;</b>
+<i class="no-highlight">1044</i>&nbsp;    }
+<i class="no-highlight">1045</i>&nbsp;
+<i class="no-highlight">1046</i>&nbsp;    public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
+<b class="fc"><i class="no-highlight">1047</i>&nbsp;        this.limitAdviceLo = lo;</b>
+<b class="fc"><i class="no-highlight">1048</i>&nbsp;        this.limitAdviceHi = hi;</b>
+<i class="no-highlight">1049</i>&nbsp;    }
+<i class="no-highlight">1050</i>&nbsp;
+<i class="no-highlight">1051</i>&nbsp;    public void setLimitImplemented(boolean limitImplemented) {
+<b class="fc"><i class="no-highlight">1052</i>&nbsp;        isLimitImplemented = limitImplemented;</b>
+<i class="no-highlight">1053</i>&nbsp;    }
+<i class="no-highlight">1054</i>&nbsp;
+<i class="no-highlight">1055</i>&nbsp;    public void setLimitPosition(int limitPosition) {
+<b class="fc"><i class="no-highlight">1056</i>&nbsp;        this.limitPosition = limitPosition;</b>
+<i class="no-highlight">1057</i>&nbsp;    }
+<i class="no-highlight">1058</i>&nbsp;
+<i class="no-highlight">1059</i>&nbsp;    public void setModelPosition(int modelPosition) {
+<b class="fc"><i class="no-highlight">1060</i>&nbsp;        this.modelPosition = modelPosition;</b>
+<i class="no-highlight">1061</i>&nbsp;    }
+<i class="no-highlight">1062</i>&nbsp;
+<i class="no-highlight">1063</i>&nbsp;    public void setModelType(int modelType) {
+<b class="fc"><i class="no-highlight">1064</i>&nbsp;        this.modelType = modelType;</b>
+<i class="no-highlight">1065</i>&nbsp;    }
+<i class="no-highlight">1066</i>&nbsp;
+<i class="no-highlight">1067</i>&nbsp;    public void setNestedModel(QueryModel nestedModel) {
+<b class="fc"><i class="no-highlight">1068</i>&nbsp;        this.nestedModel = nestedModel;</b>
+<i class="no-highlight">1069</i>&nbsp;    }
+<i class="no-highlight">1070</i>&nbsp;
+<i class="no-highlight">1071</i>&nbsp;    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
+<b class="fc"><i class="no-highlight">1072</i>&nbsp;        this.nestedModelIsSubQuery = nestedModelIsSubQuery;</b>
+<i class="no-highlight">1073</i>&nbsp;    }
+<i class="no-highlight">1074</i>&nbsp;
+<i class="no-highlight">1075</i>&nbsp;    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
+<b class="fc"><i class="no-highlight">1076</i>&nbsp;        this.orderByAdviceMnemonic = orderByAdviceMnemonic;</b>
+<i class="no-highlight">1077</i>&nbsp;    }
+<i class="no-highlight">1078</i>&nbsp;
+<i class="no-highlight">1079</i>&nbsp;    public void setOrderByPosition(int orderByPosition) {
+<b class="fc"><i class="no-highlight">1080</i>&nbsp;        this.orderByPosition = orderByPosition;</b>
+<i class="no-highlight">1081</i>&nbsp;    }
+<i class="no-highlight">1082</i>&nbsp;
+<i class="no-highlight">1083</i>&nbsp;    public void setOrderedJoinModels(IntList that) {
+<b class="fc"><i class="no-highlight">1084</i>&nbsp;        assert that == orderedJoinModels1 || that == orderedJoinModels2;</b>
+<b class="fc"><i class="no-highlight">1085</i>&nbsp;        this.orderedJoinModels = that;</b>
+<i class="no-highlight">1086</i>&nbsp;    }
+<i class="no-highlight">1087</i>&nbsp;
+<i class="no-highlight">1088</i>&nbsp;    public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+<b class="fc"><i class="no-highlight">1089</i>&nbsp;        this.outerJoinExpressionClause = outerJoinExpressionClause;</b>
+<i class="no-highlight">1090</i>&nbsp;    }
+<i class="no-highlight">1091</i>&nbsp;
+<i class="no-highlight">1092</i>&nbsp;    public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
+<b class="fc"><i class="no-highlight">1093</i>&nbsp;        this.postJoinWhereClause = postJoinWhereClause;</b>
+<i class="no-highlight">1094</i>&nbsp;    }
+<i class="no-highlight">1095</i>&nbsp;
+<i class="no-highlight">1096</i>&nbsp;    public void setSampleBy(ExpressionNode sampleBy) {
+<b class="fc"><i class="no-highlight">1097</i>&nbsp;        this.sampleBy = sampleBy;</b>
+<i class="no-highlight">1098</i>&nbsp;    }
+<i class="no-highlight">1099</i>&nbsp;
+<i class="no-highlight">1100</i>&nbsp;    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
+<b class="fc"><i class="no-highlight">1101</i>&nbsp;        this.sampleBy = sampleBy;</b>
+<b class="fc"><i class="no-highlight">1102</i>&nbsp;        this.sampleByUnit = sampleByUnit;</b>
+<i class="no-highlight">1103</i>&nbsp;    }
+<i class="no-highlight">1104</i>&nbsp;
+<i class="no-highlight">1105</i>&nbsp;    public void setSampleByOffset(ExpressionNode sampleByOffset) {
+<b class="fc"><i class="no-highlight">1106</i>&nbsp;        this.sampleByOffset = sampleByOffset;</b>
+<i class="no-highlight">1107</i>&nbsp;    }
+<i class="no-highlight">1108</i>&nbsp;
+<i class="no-highlight">1109</i>&nbsp;    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+<b class="fc"><i class="no-highlight">1110</i>&nbsp;        this.sampleByTimezoneName = sampleByTimezoneName;</b>
+<i class="no-highlight">1111</i>&nbsp;    }
+<i class="no-highlight">1112</i>&nbsp;
+<i class="no-highlight">1113</i>&nbsp;    public void setSelectModelType(int selectModelType) {
+<b class="fc"><i class="no-highlight">1114</i>&nbsp;        this.selectModelType = selectModelType;</b>
+<i class="no-highlight">1115</i>&nbsp;    }
+<i class="no-highlight">1116</i>&nbsp;
+<i class="no-highlight">1117</i>&nbsp;    public void setSelectTranslation(boolean isSelectTranslation) {
+<b class="fc"><i class="no-highlight">1118</i>&nbsp;        this.isSelectTranslation = isSelectTranslation;</b>
+<i class="no-highlight">1119</i>&nbsp;    }
+<i class="no-highlight">1120</i>&nbsp;
+<i class="no-highlight">1121</i>&nbsp;    public void setSetOperationType(int setOperationType) {
+<b class="fc"><i class="no-highlight">1122</i>&nbsp;        this.setOperationType = setOperationType;</b>
+<i class="no-highlight">1123</i>&nbsp;    }
+<i class="no-highlight">1124</i>&nbsp;
+<i class="no-highlight">1125</i>&nbsp;    public void setTableId(int id) {
+<b class="fc"><i class="no-highlight">1126</i>&nbsp;        this.tableId = id;</b>
+<i class="no-highlight">1127</i>&nbsp;    }
+<i class="no-highlight">1128</i>&nbsp;
+<i class="no-highlight">1129</i>&nbsp;    public void setTableNameExpr(ExpressionNode tableNameExpr) {
+<b class="fc"><i class="no-highlight">1130</i>&nbsp;        this.tableNameExpr = tableNameExpr;</b>
+<i class="no-highlight">1131</i>&nbsp;    }
+<i class="no-highlight">1132</i>&nbsp;
+<i class="no-highlight">1133</i>&nbsp;    public void setTableNameFunction(Function function) {
+<b class="fc"><i class="no-highlight">1134</i>&nbsp;        this.tableNameFunction = function;</b>
+<i class="no-highlight">1135</i>&nbsp;    }
+<i class="no-highlight">1136</i>&nbsp;
+<i class="no-highlight">1137</i>&nbsp;    public void setTableVersion(long tableVersion) {
+<b class="fc"><i class="no-highlight">1138</i>&nbsp;        this.tableVersion = tableVersion;</b>
+<i class="no-highlight">1139</i>&nbsp;    }
+<i class="no-highlight">1140</i>&nbsp;
+<i class="no-highlight">1141</i>&nbsp;    public void setTimestamp(ExpressionNode timestamp) {
+<b class="fc"><i class="no-highlight">1142</i>&nbsp;        this.timestamp = timestamp;</b>
+<i class="no-highlight">1143</i>&nbsp;    }
+<i class="no-highlight">1144</i>&nbsp;
+<i class="no-highlight">1145</i>&nbsp;    public void setUnionModel(QueryModel unionModel) {
+<b class="fc"><i class="no-highlight">1146</i>&nbsp;        this.unionModel = unionModel;</b>
+<i class="no-highlight">1147</i>&nbsp;    }
+<i class="no-highlight">1148</i>&nbsp;
+<i class="no-highlight">1149</i>&nbsp;    public void setUpdateTableToken(TableToken tableName) {
+<b class="fc"><i class="no-highlight">1150</i>&nbsp;        this.updateTableToken = tableName;</b>
+<i class="no-highlight">1151</i>&nbsp;    }
+<i class="no-highlight">1152</i>&nbsp;
+<i class="no-highlight">1153</i>&nbsp;    public void setWhereClause(ExpressionNode whereClause) {
+<b class="fc"><i class="no-highlight">1154</i>&nbsp;        this.whereClause = whereClause;</b>
+<i class="no-highlight">1155</i>&nbsp;    }
+<i class="no-highlight">1156</i>&nbsp;
+<i class="no-highlight">1157</i>&nbsp;    @Override
+<i class="no-highlight">1158</i>&nbsp;    public void toSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">1159</i>&nbsp;        if (modelType == ExecutionModel.QUERY) {</b>
+<b class="fc"><i class="no-highlight">1160</i>&nbsp;            toSink0(sink, false, false);</b>
+<b class="fc"><i class="no-highlight">1161</i>&nbsp;        } else if (modelType == ExecutionModel.UPDATE) {</b>
+<b class="fc"><i class="no-highlight">1162</i>&nbsp;            updateToSink(sink);</b>
+<i class="no-highlight">1163</i>&nbsp;        }
+<i class="no-highlight">1164</i>&nbsp;    }
+<i class="no-highlight">1165</i>&nbsp;
+<i class="no-highlight">1166</i>&nbsp;    @Override
+<i class="no-highlight">1167</i>&nbsp;    public CharSequence translateAlias(CharSequence column) {
+<b class="fc"><i class="no-highlight">1168</i>&nbsp;        return aliasToColumnNameMap.get(column);</b>
+<i class="no-highlight">1169</i>&nbsp;    }
+<i class="no-highlight">1170</i>&nbsp;
+<i class="no-highlight">1171</i>&nbsp;    private static void aliasToSink(CharSequence alias, CharSink sink) {
+<b class="fc"><i class="no-highlight">1172</i>&nbsp;        sink.put(&#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">1173</i>&nbsp;        boolean quote = Chars.indexOf(alias, &#39; &#39;) != -1;</b>
+<b class="fc"><i class="no-highlight">1174</i>&nbsp;        if (quote) {</b>
+<b class="fc"><i class="no-highlight">1175</i>&nbsp;            sink.put(&#39;\&#39;&#39;).put(alias).put(&#39;\&#39;&#39;);</b>
+<i class="no-highlight">1176</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1177</i>&nbsp;            sink.put(alias);</b>
+<i class="no-highlight">1178</i>&nbsp;        }
+<i class="no-highlight">1179</i>&nbsp;    }
+<i class="no-highlight">1180</i>&nbsp;
+<i class="no-highlight">1181</i>&nbsp;    private String getSelectModelTypeText() {
+<b class="fc"><i class="no-highlight">1182</i>&nbsp;        return modelTypeName.get(selectModelType);</b>
+<i class="no-highlight">1183</i>&nbsp;    }
+<i class="no-highlight">1184</i>&nbsp;
+<i class="no-highlight">1185</i>&nbsp;    private void sinkColumns(CharSink sink, ObjList&lt;QueryColumn&gt; columns) {
+<b class="fc"><i class="no-highlight">1186</i>&nbsp;        for (int i = 0, n = columns.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1187</i>&nbsp;            if (i &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1188</i>&nbsp;                sink.put(&quot;, &quot;);</b>
+<i class="no-highlight">1189</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1190</i>&nbsp;            QueryColumn column = columns.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">1191</i>&nbsp;            CharSequence name = column.getName();</b>
+<b class="fc"><i class="no-highlight">1192</i>&nbsp;            CharSequence alias = column.getAlias();</b>
+<b class="fc"><i class="no-highlight">1193</i>&nbsp;            ExpressionNode ast = column.getAst();</b>
+<b class="fc"><i class="no-highlight">1194</i>&nbsp;            ast.toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1195</i>&nbsp;            if (column instanceof AnalyticColumn || name == null) {</b>
+<i class="no-highlight">1196</i>&nbsp;
+<b class="fc"><i class="no-highlight">1197</i>&nbsp;                if (alias != null) {</b>
+<b class="fc"><i class="no-highlight">1198</i>&nbsp;                    aliasToSink(alias, sink);</b>
+<i class="no-highlight">1199</i>&nbsp;                }
+<i class="no-highlight">1200</i>&nbsp;
+<i class="no-highlight">1201</i>&nbsp;                // this can only be analytic column
+<b class="fc"><i class="no-highlight">1202</i>&nbsp;                if (name != null) {</b>
+<b class="fc"><i class="no-highlight">1203</i>&nbsp;                    AnalyticColumn ac = (AnalyticColumn) column;</b>
+<b class="fc"><i class="no-highlight">1204</i>&nbsp;                    sink.put(&quot; over (&quot;);</b>
+<b class="fc"><i class="no-highlight">1205</i>&nbsp;                    final ObjList&lt;ExpressionNode&gt; partitionBy = ac.getPartitionBy();</b>
+<b class="fc"><i class="no-highlight">1206</i>&nbsp;                    if (partitionBy.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1207</i>&nbsp;                        sink.put(&quot;partition by &quot;);</b>
+<b class="fc"><i class="no-highlight">1208</i>&nbsp;                        for (int k = 0, z = partitionBy.size(); k &lt; z; k++) {</b>
+<b class="fc"><i class="no-highlight">1209</i>&nbsp;                            if (k &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1210</i>&nbsp;                                sink.put(&quot;, &quot;);</b>
+<i class="no-highlight">1211</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">1212</i>&nbsp;                            partitionBy.getQuick(k).toSink(sink);</b>
+<i class="no-highlight">1213</i>&nbsp;                        }
+<i class="no-highlight">1214</i>&nbsp;                    }
+<i class="no-highlight">1215</i>&nbsp;
+<b class="fc"><i class="no-highlight">1216</i>&nbsp;                    final ObjList&lt;ExpressionNode&gt; orderBy = ac.getOrderBy();</b>
+<b class="fc"><i class="no-highlight">1217</i>&nbsp;                    if (orderBy.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1218</i>&nbsp;                        if (partitionBy.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1219</i>&nbsp;                            sink.put(&#39; &#39;);</b>
+<i class="no-highlight">1220</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">1221</i>&nbsp;                        sink.put(&quot;order by &quot;);</b>
+<b class="fc"><i class="no-highlight">1222</i>&nbsp;                        for (int k = 0, z = orderBy.size(); k &lt; z; k++) {</b>
+<b class="fc"><i class="no-highlight">1223</i>&nbsp;                            if (k &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1224</i>&nbsp;                                sink.put(&quot;, &quot;);</b>
+<i class="no-highlight">1225</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">1226</i>&nbsp;                            orderBy.getQuick(k).toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1227</i>&nbsp;                            if (ac.getOrderByDirection().getQuick(k) == 1) {</b>
+<b class="fc"><i class="no-highlight">1228</i>&nbsp;                                sink.put(&quot; desc&quot;);</b>
+<i class="no-highlight">1229</i>&nbsp;                            }
+<i class="no-highlight">1230</i>&nbsp;                        }
+<i class="no-highlight">1231</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1232</i>&nbsp;                    sink.put(&#39;)&#39;);</b>
+<b class="fc"><i class="no-highlight">1233</i>&nbsp;                }</b>
+<i class="no-highlight">1234</i>&nbsp;            } else {
+<i class="no-highlight">1235</i>&nbsp;                // do not repeat alias when it is the same as AST token, provided AST is a literal
+<b class="fc"><i class="no-highlight">1236</i>&nbsp;                if (alias != null &amp;&amp; (ast.type != ExpressionNode.LITERAL || !ast.token.equals(alias))) {</b>
+<b class="fc"><i class="no-highlight">1237</i>&nbsp;                    aliasToSink(alias, sink);</b>
+<i class="no-highlight">1238</i>&nbsp;                }
+<i class="no-highlight">1239</i>&nbsp;            }
+<i class="no-highlight">1240</i>&nbsp;        }
+<i class="no-highlight">1241</i>&nbsp;    }
+<i class="no-highlight">1242</i>&nbsp;
+<i class="no-highlight">1243</i>&nbsp;    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
+<i class="no-highlight">1244</i>&nbsp;    private void toSink0(CharSink sink, boolean joinSlave, boolean showOrderBy) {
+<b class="fc"><i class="no-highlight">1245</i>&nbsp;        final boolean hasColumns = this.topDownColumns.size() &gt; 0 || this.bottomUpColumns.size() &gt; 0;</b>
+<b class="fc"><i class="no-highlight">1246</i>&nbsp;        if (hasColumns) {</b>
+<b class="fc"><i class="no-highlight">1247</i>&nbsp;            sink.put(getSelectModelTypeText());</b>
+<b class="fc"><i class="no-highlight">1248</i>&nbsp;            if (this.topDownColumns.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1249</i>&nbsp;                sink.put(&#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">1250</i>&nbsp;                sink.put(&#39;[&#39;);</b>
+<b class="fc"><i class="no-highlight">1251</i>&nbsp;                sinkColumns(sink, this.topDownColumns);</b>
+<b class="fc"><i class="no-highlight">1252</i>&nbsp;                sink.put(&#39;]&#39;);</b>
+<i class="no-highlight">1253</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1254</i>&nbsp;            if (this.bottomUpColumns.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1255</i>&nbsp;                sink.put(&#39; &#39;);</b>
+<b class="fc"><i class="no-highlight">1256</i>&nbsp;                sinkColumns(sink, this.bottomUpColumns);</b>
+<i class="no-highlight">1257</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1258</i>&nbsp;            sink.put(&quot; from &quot;);</b>
+<i class="no-highlight">1259</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1260</i>&nbsp;        if (tableNameExpr != null) {</b>
+<b class="fc"><i class="no-highlight">1261</i>&nbsp;            tableNameExpr.toSink(sink);</b>
+<i class="no-highlight">1262</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">1263</i>&nbsp;            sink.put(&#39;(&#39;);</b>
+<b class="fc"><i class="no-highlight">1264</i>&nbsp;            nestedModel.toSink0(sink, false, showOrderBy);</b>
+<b class="fc"><i class="no-highlight">1265</i>&nbsp;            sink.put(&#39;)&#39;);</b>
+<i class="no-highlight">1266</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1267</i>&nbsp;        if (alias != null) {</b>
+<b class="fc"><i class="no-highlight">1268</i>&nbsp;            aliasToSink(alias.token, sink);</b>
+<i class="no-highlight">1269</i>&nbsp;        }
+<i class="no-highlight">1270</i>&nbsp;
+<b class="fc"><i class="no-highlight">1271</i>&nbsp;        if (getLatestByType() != LATEST_BY_NEW &amp;&amp; timestamp != null) {</b>
+<b class="fc"><i class="no-highlight">1272</i>&nbsp;            sink.put(&quot; timestamp (&quot;);</b>
+<b class="fc"><i class="no-highlight">1273</i>&nbsp;            timestamp.toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1274</i>&nbsp;            sink.put(&#39;)&#39;);</b>
+<i class="no-highlight">1275</i>&nbsp;        }
+<i class="no-highlight">1276</i>&nbsp;
+<b class="fc"><i class="no-highlight">1277</i>&nbsp;        if (getLatestByType() == LATEST_BY_DEPRECATED &amp;&amp; getLatestBy().size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1278</i>&nbsp;            sink.put(&quot; latest by &quot;);</b>
+<b class="fc"><i class="no-highlight">1279</i>&nbsp;            for (int i = 0, n = getLatestBy().size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1280</i>&nbsp;                if (i &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1281</i>&nbsp;                    sink.put(&#39;,&#39;);</b>
+<i class="no-highlight">1282</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1283</i>&nbsp;                getLatestBy().getQuick(i).toSink(sink);</b>
+<i class="no-highlight">1284</i>&nbsp;            }
+<i class="no-highlight">1285</i>&nbsp;        }
+<i class="no-highlight">1286</i>&nbsp;
+<b class="fc"><i class="no-highlight">1287</i>&nbsp;        if (orderedJoinModels.size() &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">1288</i>&nbsp;            for (int i = 0, n = orderedJoinModels.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1289</i>&nbsp;                QueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));</b>
+<b class="fc"><i class="no-highlight">1290</i>&nbsp;                if (model != this) {</b>
+<b class="fc"><i class="no-highlight">1291</i>&nbsp;                    switch (model.getJoinType()) {</b>
+<i class="no-highlight">1292</i>&nbsp;                        case JOIN_OUTER:
+<b class="fc"><i class="no-highlight">1293</i>&nbsp;                            sink.put(&quot; left join &quot;);</b>
+<b class="fc"><i class="no-highlight">1294</i>&nbsp;                            break;</b>
+<i class="no-highlight">1295</i>&nbsp;                        case JOIN_ASOF:
+<b class="fc"><i class="no-highlight">1296</i>&nbsp;                            sink.put(&quot; asof join &quot;);</b>
+<b class="fc"><i class="no-highlight">1297</i>&nbsp;                            break;</b>
+<i class="no-highlight">1298</i>&nbsp;                        case JOIN_SPLICE:
+<b class="fc"><i class="no-highlight">1299</i>&nbsp;                            sink.put(&quot; splice join &quot;);</b>
+<b class="fc"><i class="no-highlight">1300</i>&nbsp;                            break;</b>
+<i class="no-highlight">1301</i>&nbsp;                        case JOIN_CROSS:
+<b class="fc"><i class="no-highlight">1302</i>&nbsp;                            sink.put(&quot; cross join &quot;);</b>
+<b class="fc"><i class="no-highlight">1303</i>&nbsp;                            break;</b>
+<i class="no-highlight">1304</i>&nbsp;                        case JOIN_LT:
+<b class="fc"><i class="no-highlight">1305</i>&nbsp;                            sink.put(&quot; lt join &quot;);</b>
+<b class="fc"><i class="no-highlight">1306</i>&nbsp;                            break;</b>
+<i class="no-highlight">1307</i>&nbsp;                        default:
+<b class="fc"><i class="no-highlight">1308</i>&nbsp;                            sink.put(&quot; join &quot;);</b>
+<i class="no-highlight">1309</i>&nbsp;                            break;
+<i class="no-highlight">1310</i>&nbsp;                    }
+<i class="no-highlight">1311</i>&nbsp;
+<b class="fc"><i class="no-highlight">1312</i>&nbsp;                    if (model.getWhereClause() != null) {</b>
+<b class="fc"><i class="no-highlight">1313</i>&nbsp;                        sink.put(&#39;(&#39;);</b>
+<b class="fc"><i class="no-highlight">1314</i>&nbsp;                        model.toSink0(sink, true, showOrderBy);</b>
+<b class="fc"><i class="no-highlight">1315</i>&nbsp;                        sink.put(&#39;)&#39;);</b>
+<b class="fc"><i class="no-highlight">1316</i>&nbsp;                        if (model.getAlias() != null) {</b>
+<b class="fc"><i class="no-highlight">1317</i>&nbsp;                            aliasToSink(model.getAlias().token, sink);</b>
+<b class="fc"><i class="no-highlight">1318</i>&nbsp;                        } else if (model.getTableName() != null) {</b>
+<b class="fc"><i class="no-highlight">1319</i>&nbsp;                            aliasToSink(model.getTableName(), sink);</b>
+<i class="no-highlight">1320</i>&nbsp;                        }
+<i class="no-highlight">1321</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1322</i>&nbsp;                        model.toSink0(sink, true, showOrderBy);</b>
+<i class="no-highlight">1323</i>&nbsp;                    }
+<i class="no-highlight">1324</i>&nbsp;
+<b class="fc"><i class="no-highlight">1325</i>&nbsp;                    JoinContext jc = model.getContext();</b>
+<b class="fc"><i class="no-highlight">1326</i>&nbsp;                    if (jc != null &amp;&amp; jc.aIndexes.size() &gt; 0) {</b>
+<i class="no-highlight">1327</i>&nbsp;                        // join clause
+<b class="fc"><i class="no-highlight">1328</i>&nbsp;                        sink.put(&quot; on &quot;);</b>
+<b class="fc"><i class="no-highlight">1329</i>&nbsp;                        for (int k = 0, z = jc.aIndexes.size(); k &lt; z; k++) {</b>
+<b class="fc"><i class="no-highlight">1330</i>&nbsp;                            if (k &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1331</i>&nbsp;                                sink.put(&quot; and &quot;);</b>
+<i class="no-highlight">1332</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">1333</i>&nbsp;                            jc.aNodes.getQuick(k).toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1334</i>&nbsp;                            sink.put(&quot; = &quot;);</b>
+<b class="fc"><i class="no-highlight">1335</i>&nbsp;                            jc.bNodes.getQuick(k).toSink(sink);</b>
+<i class="no-highlight">1336</i>&nbsp;                        }
+<i class="no-highlight">1337</i>&nbsp;                    }
+<i class="no-highlight">1338</i>&nbsp;
+<b class="fc"><i class="no-highlight">1339</i>&nbsp;                    if (model.getOuterJoinExpressionClause() != null) {</b>
+<b class="fc"><i class="no-highlight">1340</i>&nbsp;                        sink.put(&quot; outer-join-expression &quot;);</b>
+<b class="fc"><i class="no-highlight">1341</i>&nbsp;                        model.getOuterJoinExpressionClause().toSink(sink);</b>
+<i class="no-highlight">1342</i>&nbsp;                    }
+<i class="no-highlight">1343</i>&nbsp;
+<b class="fc"><i class="no-highlight">1344</i>&nbsp;                    if (model.getPostJoinWhereClause() != null) {</b>
+<b class="fc"><i class="no-highlight">1345</i>&nbsp;                        sink.put(&quot; post-join-where &quot;);</b>
+<b class="fc"><i class="no-highlight">1346</i>&nbsp;                        model.getPostJoinWhereClause().toSink(sink);</b>
+<i class="no-highlight">1347</i>&nbsp;                    }
+<i class="no-highlight">1348</i>&nbsp;                }
+<i class="no-highlight">1349</i>&nbsp;            }
+<i class="no-highlight">1350</i>&nbsp;        }
+<i class="no-highlight">1351</i>&nbsp;
+<b class="fc"><i class="no-highlight">1352</i>&nbsp;        if (getWhereClause() != null) {</b>
+<b class="fc"><i class="no-highlight">1353</i>&nbsp;            sink.put(&quot; where &quot;);</b>
+<b class="fc"><i class="no-highlight">1354</i>&nbsp;            whereClause.toSink(sink);</b>
+<i class="no-highlight">1355</i>&nbsp;        }
+<i class="no-highlight">1356</i>&nbsp;
+<b class="fc"><i class="no-highlight">1357</i>&nbsp;        if (constWhereClause != null) {</b>
+<b class="fc"><i class="no-highlight">1358</i>&nbsp;            sink.put(&quot; const-where &quot;);</b>
+<b class="fc"><i class="no-highlight">1359</i>&nbsp;            constWhereClause.toSink(sink);</b>
+<i class="no-highlight">1360</i>&nbsp;        }
+<i class="no-highlight">1361</i>&nbsp;
+<b class="fc"><i class="no-highlight">1362</i>&nbsp;        if (!joinSlave &amp;&amp; postJoinWhereClause != null) {</b>
+<b class="nc"><i class="no-highlight">1363</i>&nbsp;            sink.put(&quot; post-join-where &quot;);</b>
+<b class="nc"><i class="no-highlight">1364</i>&nbsp;            postJoinWhereClause.toSink(sink);</b>
+<i class="no-highlight">1365</i>&nbsp;        }
+<i class="no-highlight">1366</i>&nbsp;
+<b class="fc"><i class="no-highlight">1367</i>&nbsp;        if (!joinSlave &amp;&amp; outerJoinExpressionClause != null) {</b>
+<b class="nc"><i class="no-highlight">1368</i>&nbsp;            sink.put(&quot; outer-join-expressions &quot;);</b>
+<b class="nc"><i class="no-highlight">1369</i>&nbsp;            outerJoinExpressionClause.toSink(sink);</b>
+<i class="no-highlight">1370</i>&nbsp;        }
+<i class="no-highlight">1371</i>&nbsp;
+<b class="fc"><i class="no-highlight">1372</i>&nbsp;        if (getLatestByType() == LATEST_BY_NEW &amp;&amp; getLatestBy().size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1373</i>&nbsp;            sink.put(&quot; latest on &quot;);</b>
+<b class="fc"><i class="no-highlight">1374</i>&nbsp;            timestamp.toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1375</i>&nbsp;            sink.put(&quot; partition by &quot;);</b>
+<b class="fc"><i class="no-highlight">1376</i>&nbsp;            for (int i = 0, n = getLatestBy().size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1377</i>&nbsp;                if (i &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1378</i>&nbsp;                    sink.put(&#39;,&#39;);</b>
+<i class="no-highlight">1379</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1380</i>&nbsp;                getLatestBy().getQuick(i).toSink(sink);</b>
+<i class="no-highlight">1381</i>&nbsp;            }
+<i class="no-highlight">1382</i>&nbsp;        }
+<i class="no-highlight">1383</i>&nbsp;
+<b class="fc"><i class="no-highlight">1384</i>&nbsp;        if (sampleBy != null) {</b>
+<b class="fc"><i class="no-highlight">1385</i>&nbsp;            sink.put(&quot; sample by &quot;);</b>
+<b class="fc"><i class="no-highlight">1386</i>&nbsp;            sampleBy.toSink(sink);</b>
+<i class="no-highlight">1387</i>&nbsp;
+<b class="fc"><i class="no-highlight">1388</i>&nbsp;            final int fillCount = sampleByFill.size();</b>
+<b class="fc"><i class="no-highlight">1389</i>&nbsp;            if (fillCount &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1390</i>&nbsp;                sink.put(&quot; fill(&quot;);</b>
+<b class="fc"><i class="no-highlight">1391</i>&nbsp;                sink.put(sampleByFill.getQuick(0));</b>
+<i class="no-highlight">1392</i>&nbsp;
+<b class="fc"><i class="no-highlight">1393</i>&nbsp;                if (fillCount &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">1394</i>&nbsp;                    for (int i = 1; i &lt; fillCount; i++) {</b>
+<b class="fc"><i class="no-highlight">1395</i>&nbsp;                        sink.put(&#39;,&#39;);</b>
+<b class="fc"><i class="no-highlight">1396</i>&nbsp;                        sink.put(sampleByFill.getQuick(i));</b>
+<i class="no-highlight">1397</i>&nbsp;                    }
+<i class="no-highlight">1398</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1399</i>&nbsp;                sink.put(&#39;)&#39;);</b>
+<i class="no-highlight">1400</i>&nbsp;            }
+<i class="no-highlight">1401</i>&nbsp;
+<b class="fc"><i class="no-highlight">1402</i>&nbsp;            if (sampleByTimezoneName != null || sampleByOffset != null) {</b>
+<b class="fc"><i class="no-highlight">1403</i>&nbsp;                sink.put(&quot; align to calendar&quot;);</b>
+<b class="fc"><i class="no-highlight">1404</i>&nbsp;                if (sampleByTimezoneName != null) {</b>
+<b class="fc"><i class="no-highlight">1405</i>&nbsp;                    sink.put(&quot; time zone &quot;);</b>
+<b class="fc"><i class="no-highlight">1406</i>&nbsp;                    sink.put(sampleByTimezoneName);</b>
+<i class="no-highlight">1407</i>&nbsp;                }
+<i class="no-highlight">1408</i>&nbsp;
+<b class="fc"><i class="no-highlight">1409</i>&nbsp;                if (sampleByOffset != null) {</b>
+<b class="fc"><i class="no-highlight">1410</i>&nbsp;                    sink.put(&quot; with offset &quot;);</b>
+<b class="fc"><i class="no-highlight">1411</i>&nbsp;                    sink.put(sampleByOffset);</b>
+<i class="no-highlight">1412</i>&nbsp;                }
+<i class="no-highlight">1413</i>&nbsp;            }
+<i class="no-highlight">1414</i>&nbsp;        }
+<i class="no-highlight">1415</i>&nbsp;
+<b class="fc"><i class="no-highlight">1416</i>&nbsp;        if (showOrderBy &amp;&amp; orderBy.size() &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">1417</i>&nbsp;            sink.put(&quot; order by &quot;);</b>
+<b class="nc"><i class="no-highlight">1418</i>&nbsp;            for (int i = 0, n = orderBy.size(); i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">1419</i>&nbsp;                if (i &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">1420</i>&nbsp;                    sink.put(&quot;, &quot;);</b>
+<i class="no-highlight">1421</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">1422</i>&nbsp;                sink.put(orderBy.get(i));</b>
+<b class="nc"><i class="no-highlight">1423</i>&nbsp;                if (orderByDirection.get(i) == 1) {</b>
+<b class="nc"><i class="no-highlight">1424</i>&nbsp;                    sink.put(&quot; desc&quot;);</b>
+<i class="no-highlight">1425</i>&nbsp;                }
+<i class="no-highlight">1426</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1427</i>&nbsp;        } else if (orderHash.size() &gt; 0 &amp;&amp; orderBy.size() &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1428</i>&nbsp;            sink.put(&quot; order by &quot;);</b>
+<i class="no-highlight">1429</i>&nbsp;
+<b class="fc"><i class="no-highlight">1430</i>&nbsp;            ObjList&lt;CharSequence&gt; columnNames = orderHash.keys();</b>
+<b class="fc"><i class="no-highlight">1431</i>&nbsp;            for (int i = 0, n = columnNames.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1432</i>&nbsp;                if (i &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1433</i>&nbsp;                    sink.put(&quot;, &quot;);</b>
+<i class="no-highlight">1434</i>&nbsp;                }
+<i class="no-highlight">1435</i>&nbsp;
+<b class="fc"><i class="no-highlight">1436</i>&nbsp;                CharSequence key = columnNames.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">1437</i>&nbsp;                sink.put(key);</b>
+<b class="fc"><i class="no-highlight">1438</i>&nbsp;                if (orderHash.get(key) == 1) {</b>
+<b class="fc"><i class="no-highlight">1439</i>&nbsp;                    sink.put(&quot; desc&quot;);</b>
+<i class="no-highlight">1440</i>&nbsp;                }
+<i class="no-highlight">1441</i>&nbsp;            }
+<i class="no-highlight">1442</i>&nbsp;        }
+<i class="no-highlight">1443</i>&nbsp;
+<b class="fc"><i class="no-highlight">1444</i>&nbsp;        if (getLimitLo() != null || getLimitHi() != null) {</b>
+<b class="fc"><i class="no-highlight">1445</i>&nbsp;            sink.put(&quot; limit &quot;);</b>
+<b class="fc"><i class="no-highlight">1446</i>&nbsp;            if (getLimitLo() != null) {</b>
+<b class="fc"><i class="no-highlight">1447</i>&nbsp;                getLimitLo().toSink(sink);</b>
+<i class="no-highlight">1448</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1449</i>&nbsp;            if (getLimitHi() != null) {</b>
+<b class="fc"><i class="no-highlight">1450</i>&nbsp;                sink.put(&#39;,&#39;);</b>
+<b class="fc"><i class="no-highlight">1451</i>&nbsp;                getLimitHi().toSink(sink);</b>
+<i class="no-highlight">1452</i>&nbsp;            }
+<i class="no-highlight">1453</i>&nbsp;        }
+<i class="no-highlight">1454</i>&nbsp;
+<b class="fc"><i class="no-highlight">1455</i>&nbsp;        if (unionModel != null) {</b>
+<b class="fc"><i class="no-highlight">1456</i>&nbsp;            if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {</b>
+<b class="fc"><i class="no-highlight">1457</i>&nbsp;                sink.put(&quot; intersect &quot;);</b>
+<b class="fc"><i class="no-highlight">1458</i>&nbsp;            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {</b>
+<b class="fc"><i class="no-highlight">1459</i>&nbsp;                sink.put(&quot; except &quot;);</b>
+<i class="no-highlight">1460</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">1461</i>&nbsp;                sink.put(&quot; union &quot;);</b>
+<b class="fc"><i class="no-highlight">1462</i>&nbsp;                if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {</b>
+<b class="fc"><i class="no-highlight">1463</i>&nbsp;                    sink.put(&quot;all &quot;);</b>
+<i class="no-highlight">1464</i>&nbsp;                }
+<i class="no-highlight">1465</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1466</i>&nbsp;            unionModel.toSink0(sink, false, showOrderBy);</b>
+<i class="no-highlight">1467</i>&nbsp;        }
+<i class="no-highlight">1468</i>&nbsp;    }
+<i class="no-highlight">1469</i>&nbsp;
+<i class="no-highlight">1470</i>&nbsp;    private void updateToSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">1471</i>&nbsp;        sink.put(&quot;update &quot;);</b>
+<b class="fc"><i class="no-highlight">1472</i>&nbsp;        tableNameExpr.toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1473</i>&nbsp;        if (alias != null) {</b>
+<b class="fc"><i class="no-highlight">1474</i>&nbsp;            sink.put(&quot; as&quot;);</b>
+<b class="fc"><i class="no-highlight">1475</i>&nbsp;            aliasToSink(alias.token, sink);</b>
+<i class="no-highlight">1476</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">1477</i>&nbsp;        sink.put(&quot; set &quot;);</b>
+<b class="fc"><i class="no-highlight">1478</i>&nbsp;        for (int i = 0, n = getUpdateExpressions().size(); i &lt; n; i++) {</b>
+<i class="no-highlight">1479</i>&nbsp;
+<b class="fc"><i class="no-highlight">1480</i>&nbsp;            if (i &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">1481</i>&nbsp;                sink.put(&#39;,&#39;);</b>
+<i class="no-highlight">1482</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1483</i>&nbsp;            CharSequence columnExpr = getUpdateExpressions().get(i).token;</b>
+<b class="fc"><i class="no-highlight">1484</i>&nbsp;            sink.put(columnExpr);</b>
+<b class="fc"><i class="no-highlight">1485</i>&nbsp;            sink.put(&quot; = &quot;);</b>
+<b class="fc"><i class="no-highlight">1486</i>&nbsp;            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);</b>
+<b class="fc"><i class="no-highlight">1487</i>&nbsp;            setColumn.getAst().toSink(sink);</b>
+<i class="no-highlight">1488</i>&nbsp;        }
+<i class="no-highlight">1489</i>&nbsp;
+<b class="fc"><i class="no-highlight">1490</i>&nbsp;        if (getNestedModel() != null) {</b>
+<b class="fc"><i class="no-highlight">1491</i>&nbsp;            sink.put(&quot; from (&quot;);</b>
+<b class="fc"><i class="no-highlight">1492</i>&nbsp;            getNestedModel().toSink(sink);</b>
+<b class="fc"><i class="no-highlight">1493</i>&nbsp;            sink.put(&quot;)&quot;);</b>
+<i class="no-highlight">1494</i>&nbsp;        }
+<i class="no-highlight">1495</i>&nbsp;    }
+<i class="no-highlight">1496</i>&nbsp;
+<b class="fc"><i class="no-highlight">1497</i>&nbsp;    public static final class QueryModelFactory implements ObjectFactory&lt;QueryModel&gt; {</b>
+<i class="no-highlight">1498</i>&nbsp;        @Override
+<i class="no-highlight">1499</i>&nbsp;        public QueryModel newInstance() {
+<b class="fc"><i class="no-highlight">1500</i>&nbsp;            return new QueryModel();</b>
+<i class="no-highlight">1501</i>&nbsp;        }
+<i class="no-highlight">1502</i>&nbsp;    }
+<i class="no-highlight">1503</i>&nbsp;
+<i class="no-highlight">1504</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">1505</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_NONE, &quot;select&quot;);</b>
+<b class="fc"><i class="no-highlight">1506</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, &quot;select-choose&quot;);</b>
+<b class="fc"><i class="no-highlight">1507</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, &quot;select-virtual&quot;);</b>
+<b class="fc"><i class="no-highlight">1508</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, &quot;select-analytic&quot;);</b>
+<b class="fc"><i class="no-highlight">1509</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, &quot;select-group-by&quot;);</b>
+<b class="fc"><i class="no-highlight">1510</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, &quot;select-distinct&quot;);</b>
+<b class="fc"><i class="no-highlight">1511</i>&nbsp;        modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, &quot;select-cursor&quot;);</b>
+<i class="no-highlight">1512</i>&nbsp;    }
+<i class="no-highlight">1513</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

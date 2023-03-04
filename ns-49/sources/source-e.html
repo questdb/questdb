@@ -1,0 +1,468 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > Path</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.str</a>
+</div>
+
+<h1>Coverage Summary for Class: Path (io.questdb.std.str)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">Path</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.6%
+  </span>
+  <span class="absValue">
+    (41/42)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.6%
+  </span>
+  <span class="absValue">
+    (136/138)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.str;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.TableToken;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.ThreadLocal;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">30</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">31</i>&nbsp;
+<i class="no-highlight">32</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;/**
+<i class="no-highlight">35</i>&nbsp; * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
+<i class="no-highlight">36</i>&nbsp; * to create file system paths for files and directories and passing them to {@link Files} static methods, those
+<i class="no-highlight">37</i>&nbsp; * that accept @link {@link LPSZ} as input.
+<i class="no-highlight">38</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">39</i>&nbsp; * Instances of this class can be re-cycled for creating many different paths and
+<i class="no-highlight">40</i>&nbsp; * must be closed when no longer required.
+<i class="no-highlight">41</i>&nbsp; * &lt;/p&gt;
+<i class="no-highlight">42</i>&nbsp; */
+<b class="fc"><i class="no-highlight">43</i>&nbsp;public class Path extends AbstractCharSink implements Closeable, LPSZ {</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    public static final ThreadLocal&lt;Path&gt; PATH = new ThreadLocal&lt;&gt;(Path::new);</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    public static final ThreadLocal&lt;Path&gt; PATH2 = new ThreadLocal&lt;&gt;(Path::new);</b>
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;</b>
+<i class="no-highlight">47</i>&nbsp;    private static final byte NULL = (byte) 0;
+<i class="no-highlight">48</i>&nbsp;    private static final int OVERHEAD = 4;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    private final static ThreadLocal&lt;StringSink&gt; tlBuilder = new ThreadLocal&lt;&gt;(StringSink::new);</b>
+<i class="no-highlight">50</i>&nbsp;    private int capacity;
+<i class="no-highlight">51</i>&nbsp;    private long headPtr;
+<i class="no-highlight">52</i>&nbsp;    private long tailPtr;
+<i class="no-highlight">53</i>&nbsp;
+<i class="no-highlight">54</i>&nbsp;    public Path() {
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        this(255);</b>
+<i class="no-highlight">56</i>&nbsp;    }
+<i class="no-highlight">57</i>&nbsp;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    public Path(int capacity) {</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;        assert capacity &gt; 0;</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        this.capacity = capacity;</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;        headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);</b>
+<i class="no-highlight">62</i>&nbsp;    }
+<i class="no-highlight">63</i>&nbsp;
+<i class="no-highlight">64</i>&nbsp;    public static void clearThreadLocals() {
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        Misc.free(PATH);</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        Misc.free(PATH2);</b>
+<i class="no-highlight">67</i>&nbsp;    }
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;    public static Path getThreadLocal(CharSequence root) {
+<b class="fc"><i class="no-highlight">70</i>&nbsp;        return PATH.get().of(root);</b>
+<i class="no-highlight">71</i>&nbsp;    }
+<i class="no-highlight">72</i>&nbsp;
+<i class="no-highlight">73</i>&nbsp;    /**
+<i class="no-highlight">74</i>&nbsp;     * Creates path from another instance of Path. The assumption is that
+<i class="no-highlight">75</i>&nbsp;     * the source path is already UTF8 encoded and does not require re-encoding.
+<i class="no-highlight">76</i>&nbsp;     *
+<i class="no-highlight">77</i>&nbsp;     * @param root path
+<i class="no-highlight">78</i>&nbsp;     * @return copy of root path
+<i class="no-highlight">79</i>&nbsp;     */
+<i class="no-highlight">80</i>&nbsp;    public static Path getThreadLocal(Path root) {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        return PATH.get().of(root);</b>
+<i class="no-highlight">82</i>&nbsp;    }
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;    public static Path getThreadLocal2(CharSequence root) {
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        return PATH2.get().of(root);</b>
+<i class="no-highlight">86</i>&nbsp;    }
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    public Path $() {
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        if (tailPtr == headPtr || Unsafe.getUnsafe().getByte(tailPtr) != NULL) {</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;            Unsafe.getUnsafe().putByte(tailPtr, NULL);</b>
+<i class="no-highlight">91</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        return this;</b>
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    public void $at(int index) {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        Unsafe.getUnsafe().putByte(headPtr + index, NULL);</b>
+<i class="no-highlight">97</i>&nbsp;    }
+<i class="no-highlight">98</i>&nbsp;
+<i class="no-highlight">99</i>&nbsp;    @Override
+<i class="no-highlight">100</i>&nbsp;    public long address() {
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        return headPtr;</b>
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    @Override
+<i class="no-highlight">105</i>&nbsp;    public int capacity() {
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        return capacity;</b>
+<i class="no-highlight">107</i>&nbsp;    }
+<i class="no-highlight">108</i>&nbsp;
+<i class="no-highlight">109</i>&nbsp;    @Override
+<i class="no-highlight">110</i>&nbsp;    public char charAt(int index) {
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        return (char) Unsafe.getUnsafe().getByte(headPtr + index);</b>
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;    @Override
+<i class="no-highlight">115</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        if (headPtr != 0L) {</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;            Unsafe.free(headPtr, capacity + 1, MemoryTag.NATIVE_PATH);</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;            headPtr = tailPtr = 0L;</b>
+<i class="no-highlight">119</i>&nbsp;        }
+<i class="no-highlight">120</i>&nbsp;    }
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;    public Path concat(CharSequence str) {
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        return concat(str, 0, str.length());</b>
+<i class="no-highlight">124</i>&nbsp;    }
+<i class="no-highlight">125</i>&nbsp;
+<i class="no-highlight">126</i>&nbsp;    public Path concat(TableToken token) {
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        return concat(token.getDirName());</b>
+<i class="no-highlight">128</i>&nbsp;    }
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;    public Path concat(long pUtf8NameZ) {
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        ensureSeparator();</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        long p = pUtf8NameZ;</b>
+<i class="no-highlight">133</i>&nbsp;        while (true) {
+<b class="fc"><i class="no-highlight">134</i>&nbsp;            byte b = Unsafe.getUnsafe().getByte(p++);</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;            if (b == NULL) {</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;                break;</b>
+<i class="no-highlight">137</i>&nbsp;            }
+<i class="no-highlight">138</i>&nbsp;
+<b class="fc"><i class="no-highlight">139</i>&nbsp;            int requiredCapacity = length();</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;            if (requiredCapacity + OVERHEAD &gt;= capacity) {</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;                extend(requiredCapacity * 2 + OVERHEAD);</b>
+<i class="no-highlight">142</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">143</i>&nbsp;            Unsafe.getUnsafe().putByte(tailPtr++, (byte) (b == &#39;/&#39; &amp;&amp; Os.isWindows() ? &#39;\\&#39; : b));</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        return this;</b>
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    public Path concat(CharSequence str, int from, int to) {
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        ensureSeparator();</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        encodeUtf8(str, from, to);</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        return this;</b>
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    @Override
+<i class="no-highlight">155</i>&nbsp;    public void flush() {
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        $();</b>
+<i class="no-highlight">157</i>&nbsp;    }
+<i class="no-highlight">158</i>&nbsp;
+<i class="no-highlight">159</i>&nbsp;    @Override
+<i class="no-highlight">160</i>&nbsp;    public final int length() {
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        return (int) (tailPtr - headPtr);</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    public Path of(CharSequence str) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        checkClosed();</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        if (str == this) {</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;            tailPtr = headPtr + str.length();</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;            return this;</b>
+<i class="no-highlight">169</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;            tailPtr = headPtr;</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;            return concat(str);</b>
+<i class="no-highlight">172</i>&nbsp;        }
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    public Path of(Path other) {
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        return of((LPSZ) other);</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    public Path of(LPSZ other) {
+<i class="no-highlight">180</i>&nbsp;        // This is different from of(CharSequence str) because
+<i class="no-highlight">181</i>&nbsp;        // another Path is already UTF8 encoded and cannot be treated as CharSequence.
+<i class="no-highlight">182</i>&nbsp;        // Copy binary array representation instead of trying to UTF8 encode it
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        int len = other.length();</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;        if (headPtr == 0L) {</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;            headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;            capacity = len;</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;        } else if (capacity &lt; len) {</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;            extend(len);</b>
+<i class="no-highlight">189</i>&nbsp;        }
+<i class="no-highlight">190</i>&nbsp;
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        if (len &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;            Unsafe.getUnsafe().copyMemory(other.address(), headPtr, len);</b>
+<i class="no-highlight">193</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">194</i>&nbsp;        tailPtr = headPtr + len;</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;        return this;</b>
+<i class="no-highlight">196</i>&nbsp;    }
+<i class="no-highlight">197</i>&nbsp;
+<i class="no-highlight">198</i>&nbsp;    public Path of(CharSequence str, int from, int to) {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        checkClosed();</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        tailPtr = headPtr;</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        return concat(str, from, to);</b>
+<i class="no-highlight">202</i>&nbsp;    }
+<i class="no-highlight">203</i>&nbsp;
+<i class="no-highlight">204</i>&nbsp;    public Path parent() {
+<b class="fc"><i class="no-highlight">205</i>&nbsp;        if (tailPtr &gt; headPtr) {</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;            long p = tailPtr - 1;</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            byte last = Unsafe.getUnsafe().getByte(p);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;            if (last == Files.SEPARATOR || last == NULL) {</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                if (p &lt; headPtr + 2) {</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                    return this;</b>
+<i class="no-highlight">211</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">212</i>&nbsp;                p--;</b>
+<i class="no-highlight">213</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            while (p &gt; headPtr &amp;&amp; (char) Unsafe.getUnsafe().getByte(p) != Files.SEPARATOR) {</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;                p--;</b>
+<i class="no-highlight">216</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">217</i>&nbsp;            tailPtr = p;</b>
+<i class="no-highlight">218</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        return this;</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    public void put(int index, char c) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        Unsafe.getUnsafe().putByte(headPtr + index, (byte) c);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    @Override
+<i class="no-highlight">227</i>&nbsp;    public Path put(CharSequence str) {
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        int l = str.length();</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;        int requiredCapacity = length() + l;</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        if (requiredCapacity &gt; capacity) {</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;            extend(requiredCapacity);</b>
+<i class="no-highlight">232</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        Chars.asciiStrCpy(str, l, tailPtr);</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;        tailPtr += l;</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        return this;</b>
+<i class="no-highlight">236</i>&nbsp;    }
+<i class="no-highlight">237</i>&nbsp;
+<i class="no-highlight">238</i>&nbsp;    @Override
+<i class="no-highlight">239</i>&nbsp;    public CharSink put(CharSequence cs, int lo, int hi) {
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        int l = hi - lo;</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;        int requiredCapacity = length() + l;</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        if (requiredCapacity &gt; capacity) {</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;            extend(requiredCapacity);</b>
+<i class="no-highlight">244</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        Chars.asciiStrCpy(cs, lo, l, tailPtr);</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        tailPtr += l;</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        return this;</b>
+<i class="no-highlight">248</i>&nbsp;    }
+<i class="no-highlight">249</i>&nbsp;
+<i class="no-highlight">250</i>&nbsp;    @Override
+<i class="no-highlight">251</i>&nbsp;    public Path put(char c) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        assert c != NULL;</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        int requiredCapacity = length() + 1;</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        if (requiredCapacity &gt;= capacity) {</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;            extend(requiredCapacity + 15);</b>
+<i class="no-highlight">256</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        Unsafe.getUnsafe().putByte(tailPtr++, (byte) c);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        return this;</b>
+<i class="no-highlight">259</i>&nbsp;    }
+<i class="no-highlight">260</i>&nbsp;
+<i class="no-highlight">261</i>&nbsp;    @Override
+<i class="no-highlight">262</i>&nbsp;    public Path put(int value) {
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        super.put(value);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;        return this;</b>
+<i class="no-highlight">265</i>&nbsp;    }
+<i class="no-highlight">266</i>&nbsp;
+<i class="no-highlight">267</i>&nbsp;    @Override
+<i class="no-highlight">268</i>&nbsp;    public Path put(long value) {
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        super.put(value);</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        return this;</b>
+<i class="no-highlight">271</i>&nbsp;    }
+<i class="no-highlight">272</i>&nbsp;
+<i class="no-highlight">273</i>&nbsp;    @Override
+<i class="no-highlight">274</i>&nbsp;    public CharSink put(char[] chars, int start, int len) {
+<b class="fc"><i class="no-highlight">275</i>&nbsp;        int requiredCapacity = length() + len;</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;        if (requiredCapacity &gt;= capacity) {</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            extend(requiredCapacity);</b>
+<i class="no-highlight">278</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        Chars.asciiCopyTo(chars, start, len, tailPtr);</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;        tailPtr += len;</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        return this;</b>
+<i class="no-highlight">282</i>&nbsp;    }
+<i class="no-highlight">283</i>&nbsp;
+<i class="no-highlight">284</i>&nbsp;    @Override
+<i class="no-highlight">285</i>&nbsp;    public void putUtf8Special(char c) {
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        if (c == &#39;/&#39; &amp;&amp; Os.isWindows()) {</b>
+<b class="nc"><i class="no-highlight">287</i>&nbsp;            put(&#39;\\&#39;);</b>
+<i class="no-highlight">288</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            put(c);</b>
+<i class="no-highlight">290</i>&nbsp;        }
+<i class="no-highlight">291</i>&nbsp;    }
+<i class="no-highlight">292</i>&nbsp;
+<i class="no-highlight">293</i>&nbsp;    public Path seekZ() {
+<b class="fc"><i class="no-highlight">294</i>&nbsp;        int count = 0;</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        while (count &lt; capacity) {</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;            if (Unsafe.getUnsafe().getByte(headPtr + count) == NULL) {</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;                tailPtr = headPtr + count;</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;                break;</b>
+<i class="no-highlight">299</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            count++;</b>
+<i class="no-highlight">301</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        return this;</b>
+<i class="no-highlight">303</i>&nbsp;    }
+<i class="no-highlight">304</i>&nbsp;
+<i class="no-highlight">305</i>&nbsp;    public Path slash() {
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        ensureSeparator();</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;        return this;</b>
+<i class="no-highlight">308</i>&nbsp;    }
+<i class="no-highlight">309</i>&nbsp;
+<i class="no-highlight">310</i>&nbsp;    public Path slash$() {
+<b class="fc"><i class="no-highlight">311</i>&nbsp;        ensureSeparator();</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        return $();</b>
+<i class="no-highlight">313</i>&nbsp;    }
+<i class="no-highlight">314</i>&nbsp;
+<i class="no-highlight">315</i>&nbsp;    @Override
+<i class="no-highlight">316</i>&nbsp;    public CharSequence subSequence(int start, int end) {
+<b class="nc"><i class="no-highlight">317</i>&nbsp;        throw new UnsupportedOperationException();</b>
+<i class="no-highlight">318</i>&nbsp;    }
+<i class="no-highlight">319</i>&nbsp;
+<i class="no-highlight">320</i>&nbsp;    public void toSink(CharSink sink) {
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        Chars.utf8Decode(headPtr, tailPtr, sink);</b>
+<i class="no-highlight">322</i>&nbsp;    }
+<i class="no-highlight">323</i>&nbsp;
+<i class="no-highlight">324</i>&nbsp;    @Override
+<i class="no-highlight">325</i>&nbsp;    @NotNull
+<i class="no-highlight">326</i>&nbsp;    public String toString() {
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        if (headPtr != 0L) {</b>
+<i class="no-highlight">328</i>&nbsp;            // Don&#39;t use Misc.getThreadLocalBuilder() to convert Path to String.
+<i class="no-highlight">329</i>&nbsp;            // This leads difficulties in debugging / running tests when FilesFacade tracks open files 
+<i class="no-highlight">330</i>&nbsp;            // when this method called implicitly
+<b class="fc"><i class="no-highlight">331</i>&nbsp;            final StringSink b = tlBuilder.get();</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;            b.clear();</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;            toSink(b);</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            return b.toString();</b>
+<i class="no-highlight">335</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">336</i>&nbsp;        return &quot;&quot;;</b>
+<i class="no-highlight">337</i>&nbsp;    }
+<i class="no-highlight">338</i>&nbsp;
+<i class="no-highlight">339</i>&nbsp;    public Path trimTo(int len) {
+<b class="fc"><i class="no-highlight">340</i>&nbsp;        tailPtr = headPtr + len;</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        return this;</b>
+<i class="no-highlight">342</i>&nbsp;    }
+<i class="no-highlight">343</i>&nbsp;
+<i class="no-highlight">344</i>&nbsp;    private void checkClosed() {
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        if (headPtr == 0L) {</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;            headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);</b>
+<i class="no-highlight">347</i>&nbsp;        }
+<i class="no-highlight">348</i>&nbsp;    }
+<i class="no-highlight">349</i>&nbsp;
+<i class="no-highlight">350</i>&nbsp;    protected final void ensureSeparator() {
+<b class="fc"><i class="no-highlight">351</i>&nbsp;        if (tailPtr &gt; headPtr &amp;&amp; Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;            Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);</b>
+<i class="no-highlight">353</i>&nbsp;        }
+<i class="no-highlight">354</i>&nbsp;    }
+<i class="no-highlight">355</i>&nbsp;
+<i class="no-highlight">356</i>&nbsp;    void extend(int newCapacity) {
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        assert newCapacity &gt; capacity;</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        int len = length();</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;        tailPtr = headPtr + len;</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;        capacity = newCapacity;</b>
+<i class="no-highlight">362</i>&nbsp;    }
+<i class="no-highlight">363</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

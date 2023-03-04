@@ -1,0 +1,559 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > FastMapRecord</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.map</a>
+</div>
+
+<h1>Coverage Summary for Class: FastMapRecord (io.questdb.cairo.map)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">FastMapRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.4%
+  </span>
+  <span class="absValue">
+    (34/36)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.8%
+  </span>
+  <span class="absValue">
+    (178/182)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.map;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.ArrayColumnTypes;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.ColumnTypes;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.TableUtils;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.RecordCursor;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.str.CharSink;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.str.DirectCharSequence;
+<i class="no-highlight">35</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">36</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;/**
+<i class="no-highlight">39</i>&nbsp; * Provides Record access interface for FastMap key-value pairs.
+<i class="no-highlight">40</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">41</i>&nbsp; * Uses an offsets array to speed up value column look-ups.
+<i class="no-highlight">42</i>&nbsp; * Key column offsets are calculated dynamically since keys may be var-size.
+<i class="no-highlight">43</i>&nbsp; * The last accessed key column offset is cached to speed up sequential access.
+<i class="no-highlight">44</i>&nbsp; */
+<i class="no-highlight">45</i>&nbsp;final class FastMapRecord implements MapRecord {
+<i class="no-highlight">46</i>&nbsp;    private final DirectBinarySequence[] bs;
+<i class="no-highlight">47</i>&nbsp;    private final DirectCharSequence[] csA;
+<i class="no-highlight">48</i>&nbsp;    private final DirectCharSequence[] csB;
+<i class="no-highlight">49</i>&nbsp;    private final Long256Impl[] keyLong256A;
+<i class="no-highlight">50</i>&nbsp;    private final Long256Impl[] keyLong256B;
+<i class="no-highlight">51</i>&nbsp;    private final int keyOffset;
+<i class="no-highlight">52</i>&nbsp;    private final ColumnTypes keyTypes;
+<i class="no-highlight">53</i>&nbsp;    private final int split;
+<i class="no-highlight">54</i>&nbsp;    private final FastMapValue value;
+<i class="no-highlight">55</i>&nbsp;    private final int[] valueOffsets;
+<i class="no-highlight">56</i>&nbsp;    private long keyAddress;
+<b class="fc"><i class="no-highlight">57</i>&nbsp;    private int lastKeyIndex = -1;</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    private int lastKeyOffset = -1;</b>
+<i class="no-highlight">59</i>&nbsp;    private long limit;
+<i class="no-highlight">60</i>&nbsp;    private IntList symbolTableIndex;
+<i class="no-highlight">61</i>&nbsp;    private RecordCursor symbolTableResolver;
+<i class="no-highlight">62</i>&nbsp;    private long valueAddress;
+<i class="no-highlight">63</i>&nbsp;
+<i class="no-highlight">64</i>&nbsp;    FastMapRecord(
+<i class="no-highlight">65</i>&nbsp;            @Nullable int[] valueOffsets,
+<i class="no-highlight">66</i>&nbsp;            int keyOffset,
+<i class="no-highlight">67</i>&nbsp;            FastMapValue value,
+<i class="no-highlight">68</i>&nbsp;            @NotNull @Transient ColumnTypes keyTypes,
+<i class="no-highlight">69</i>&nbsp;            @Nullable @Transient ColumnTypes valueTypes
+<b class="fc"><i class="no-highlight">70</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;        this.valueOffsets = valueOffsets;</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        this.keyOffset = keyOffset;</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        this.value = value;</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        this.value.linkRecord(this); // provides feature to position this record at location of map value</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        this.split = valueOffsets != null ? valueOffsets.length : 0;</b>
+<i class="no-highlight">76</i>&nbsp;
+<i class="no-highlight">77</i>&nbsp;        int nColumns;
+<i class="no-highlight">78</i>&nbsp;        int keyIndexOffset;
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        if (valueTypes != null) {</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;            keyIndexOffset = valueTypes.getColumnCount();</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            nColumns = keyTypes.getColumnCount() + valueTypes.getColumnCount();</b>
+<i class="no-highlight">82</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">83</i>&nbsp;            keyIndexOffset = 0;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;            nColumns = keyTypes.getColumnCount();</b>
+<i class="no-highlight">85</i>&nbsp;        }
+<i class="no-highlight">86</i>&nbsp;
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        DirectCharSequence[] csA = null;</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        DirectCharSequence[] csB = null;</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        DirectBinarySequence[] bs = null;</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        Long256Impl[] long256A = null;</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        Long256Impl[] long256B = null;</b>
+<i class="no-highlight">92</i>&nbsp;
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        for (int i = 0, n = keyTypes.getColumnCount(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;            final int columnType = keyTypes.getColumnType(i);</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;            keyTypesCopy.add(columnType);</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">98</i>&nbsp;                case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">99</i>&nbsp;                    if (csA == null) {</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;                        csA = new DirectCharSequence[nColumns];</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;                        csB = new DirectCharSequence[nColumns];</b>
+<i class="no-highlight">102</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">103</i>&nbsp;                    csA[i + keyIndexOffset] = new DirectCharSequence();</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;                    csB[i + keyIndexOffset] = new DirectCharSequence();</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;                    break;</b>
+<i class="no-highlight">106</i>&nbsp;                case ColumnType.BINARY:
+<b class="fc"><i class="no-highlight">107</i>&nbsp;                    if (bs == null) {</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                        bs = new DirectBinarySequence[nColumns];</b>
+<i class="no-highlight">109</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                    bs[i + keyIndexOffset] = new DirectBinarySequence();</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;                    break;</b>
+<i class="no-highlight">112</i>&nbsp;                case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                    if (long256A == null) {</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                        long256A = new Long256Impl[nColumns];</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;                        long256B = new Long256Impl[nColumns];</b>
+<i class="no-highlight">116</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                    long256A[i + keyIndexOffset] = new Long256Impl();</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                    long256B[i + keyIndexOffset] = new Long256Impl();</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;                    break;</b>
+<i class="no-highlight">120</i>&nbsp;                default:
+<i class="no-highlight">121</i>&nbsp;                    break;
+<i class="no-highlight">122</i>&nbsp;            }
+<i class="no-highlight">123</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        this.keyTypes = keyTypesCopy;</b>
+<i class="no-highlight">125</i>&nbsp;
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        if (valueTypes != null) {</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;            for (int i = 0, n = valueTypes.getColumnCount(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                if (ColumnType.tagOf(valueTypes.getColumnType(i)) == ColumnType.LONG256) {</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;                    if (long256A == null) {</b>
+<b class="nc"><i class="no-highlight">130</i>&nbsp;                        long256A = new Long256Impl[nColumns];</b>
+<b class="nc"><i class="no-highlight">131</i>&nbsp;                        long256B = new Long256Impl[nColumns];</b>
+<i class="no-highlight">132</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                    long256A[i] = new Long256Impl();</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                    long256B[i] = new Long256Impl();</b>
+<i class="no-highlight">135</i>&nbsp;                }
+<i class="no-highlight">136</i>&nbsp;            }
+<i class="no-highlight">137</i>&nbsp;        }
+<i class="no-highlight">138</i>&nbsp;
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        this.csA = csA;</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        this.csB = csB;</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        this.bs = bs;</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        this.keyLong256A = long256A;</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        this.keyLong256B = long256B;</b>
+<i class="no-highlight">144</i>&nbsp;    }
+<i class="no-highlight">145</i>&nbsp;
+<i class="no-highlight">146</i>&nbsp;    private FastMapRecord(
+<i class="no-highlight">147</i>&nbsp;            int[] valueOffsets,
+<i class="no-highlight">148</i>&nbsp;            ColumnTypes keyTypes,
+<i class="no-highlight">149</i>&nbsp;            int split,
+<i class="no-highlight">150</i>&nbsp;            int keyOffset,
+<i class="no-highlight">151</i>&nbsp;            DirectCharSequence[] csA,
+<i class="no-highlight">152</i>&nbsp;            DirectCharSequence[] csB,
+<i class="no-highlight">153</i>&nbsp;            DirectBinarySequence[] bs,
+<i class="no-highlight">154</i>&nbsp;            Long256Impl[] keyLong256A,
+<i class="no-highlight">155</i>&nbsp;            Long256Impl[] keyLong256B
+<b class="fc"><i class="no-highlight">156</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        this.valueOffsets = valueOffsets;</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        this.keyTypes = keyTypes;</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        this.split = split;</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        this.keyOffset = keyOffset;</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        this.value = new FastMapValue(valueOffsets);</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        this.csA = csA;</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        this.csB = csB;</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;        this.bs = bs;</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        this.keyLong256A = keyLong256A;</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        this.keyLong256B = keyLong256B;</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    @Override
+<i class="no-highlight">170</i>&nbsp;    public BinarySequence getBin(int columnIndex) {
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        long address = addressOfColumn(columnIndex);</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        int len = Unsafe.getUnsafe().getInt(address);</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        if (len == TableUtils.NULL_LEN) {</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            return null;</b>
+<i class="no-highlight">175</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        DirectBinarySequence bs = this.bs[columnIndex];</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        bs.of(address + 4, len);</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        return bs;</b>
+<i class="no-highlight">179</i>&nbsp;    }
+<i class="no-highlight">180</i>&nbsp;
+<i class="no-highlight">181</i>&nbsp;    @Override
+<i class="no-highlight">182</i>&nbsp;    public long getBinLen(int columnIndex) {
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    @Override
+<i class="no-highlight">187</i>&nbsp;    public boolean getBool(int columnIndex) {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        return Unsafe.getBool(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">189</i>&nbsp;    }
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;    @Override
+<i class="no-highlight">192</i>&nbsp;    public byte getByte(int columnIndex) {
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">194</i>&nbsp;    }
+<i class="no-highlight">195</i>&nbsp;
+<i class="no-highlight">196</i>&nbsp;    @Override
+<i class="no-highlight">197</i>&nbsp;    public char getChar(int columnIndex) {
+<b class="fc"><i class="no-highlight">198</i>&nbsp;        return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">199</i>&nbsp;    }
+<i class="no-highlight">200</i>&nbsp;
+<i class="no-highlight">201</i>&nbsp;    @Override
+<i class="no-highlight">202</i>&nbsp;    public double getDouble(int columnIndex) {
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        return Unsafe.getUnsafe().getDouble(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">204</i>&nbsp;    }
+<i class="no-highlight">205</i>&nbsp;
+<i class="no-highlight">206</i>&nbsp;    @Override
+<i class="no-highlight">207</i>&nbsp;    public float getFloat(int columnIndex) {
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        return Unsafe.getUnsafe().getFloat(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">209</i>&nbsp;    }
+<i class="no-highlight">210</i>&nbsp;
+<i class="no-highlight">211</i>&nbsp;    @Override
+<i class="no-highlight">212</i>&nbsp;    public byte getGeoByte(int col) {
+<b class="fc"><i class="no-highlight">213</i>&nbsp;        return getByte(col);</b>
+<i class="no-highlight">214</i>&nbsp;    }
+<i class="no-highlight">215</i>&nbsp;
+<i class="no-highlight">216</i>&nbsp;    @Override
+<i class="no-highlight">217</i>&nbsp;    public int getGeoInt(int col) {
+<b class="fc"><i class="no-highlight">218</i>&nbsp;        return getInt(col);</b>
+<i class="no-highlight">219</i>&nbsp;    }
+<i class="no-highlight">220</i>&nbsp;
+<i class="no-highlight">221</i>&nbsp;    @Override
+<i class="no-highlight">222</i>&nbsp;    public long getGeoLong(int col) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        return getLong(col);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    @Override
+<i class="no-highlight">227</i>&nbsp;    public short getGeoShort(int col) {
+<b class="fc"><i class="no-highlight">228</i>&nbsp;        return getShort(col);</b>
+<i class="no-highlight">229</i>&nbsp;    }
+<i class="no-highlight">230</i>&nbsp;
+<i class="no-highlight">231</i>&nbsp;    @Override
+<i class="no-highlight">232</i>&nbsp;    public int getInt(int columnIndex) {
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">234</i>&nbsp;    }
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;    @Override
+<i class="no-highlight">237</i>&nbsp;    public long getLong(int columnIndex) {
+<b class="fc"><i class="no-highlight">238</i>&nbsp;        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    @Override
+<i class="no-highlight">242</i>&nbsp;    public long getLong128Hi(int columnIndex) {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);</b>
+<i class="no-highlight">244</i>&nbsp;    }
+<i class="no-highlight">245</i>&nbsp;
+<i class="no-highlight">246</i>&nbsp;    @Override
+<i class="no-highlight">247</i>&nbsp;    public long getLong128Lo(int columnIndex) {
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    @Override
+<i class="no-highlight">252</i>&nbsp;    public void getLong256(int columnIndex, CharSink sink) {
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        long address = addressOfColumn(columnIndex);</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        final long a = Unsafe.getUnsafe().getLong(address);</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;        Numbers.appendLong256(a, b, c, d, sink);</b>
+<i class="no-highlight">259</i>&nbsp;    }
+<i class="no-highlight">260</i>&nbsp;
+<i class="no-highlight">261</i>&nbsp;    @Override
+<i class="no-highlight">262</i>&nbsp;    public Long256 getLong256A(int columnIndex) {
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        return getLong256Generic(keyLong256A, columnIndex);</b>
+<i class="no-highlight">264</i>&nbsp;    }
+<i class="no-highlight">265</i>&nbsp;
+<i class="no-highlight">266</i>&nbsp;    @Override
+<i class="no-highlight">267</i>&nbsp;    public Long256 getLong256B(int columnIndex) {
+<b class="fc"><i class="no-highlight">268</i>&nbsp;        return getLong256Generic(keyLong256B, columnIndex);</b>
+<i class="no-highlight">269</i>&nbsp;    }
+<i class="no-highlight">270</i>&nbsp;
+<i class="no-highlight">271</i>&nbsp;    @Override
+<i class="no-highlight">272</i>&nbsp;    public long getRowId() {
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        return valueAddress;</b>
+<i class="no-highlight">274</i>&nbsp;    }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;    @Override
+<i class="no-highlight">277</i>&nbsp;    public short getShort(int columnIndex) {
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">279</i>&nbsp;    }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;    @Override
+<i class="no-highlight">282</i>&nbsp;    public CharSequence getStr(int columnIndex) {
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        return getStr0(columnIndex, csA[columnIndex]);</b>
+<i class="no-highlight">284</i>&nbsp;    }
+<i class="no-highlight">285</i>&nbsp;
+<i class="no-highlight">286</i>&nbsp;    @Override
+<i class="no-highlight">287</i>&nbsp;    public void getStr(int columnIndex, CharSink sink) {
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        long address = addressOfColumn(columnIndex);</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        int len = Unsafe.getUnsafe().getInt(address);</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        address += 4;</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        for (int i = 0; i &lt; len; i++) {</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;            sink.put(Unsafe.getUnsafe().getChar(address));</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;            address += 2;</b>
+<i class="no-highlight">294</i>&nbsp;        }
+<i class="no-highlight">295</i>&nbsp;    }
+<i class="no-highlight">296</i>&nbsp;
+<i class="no-highlight">297</i>&nbsp;    @Override
+<i class="no-highlight">298</i>&nbsp;    public CharSequence getStrB(int columnIndex) {
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        return getStr0(columnIndex, csB[columnIndex]);</b>
+<i class="no-highlight">300</i>&nbsp;    }
+<i class="no-highlight">301</i>&nbsp;
+<i class="no-highlight">302</i>&nbsp;    @Override
+<i class="no-highlight">303</i>&nbsp;    public int getStrLen(int columnIndex) {
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));</b>
+<i class="no-highlight">305</i>&nbsp;    }
+<i class="no-highlight">306</i>&nbsp;
+<i class="no-highlight">307</i>&nbsp;    @Override
+<i class="no-highlight">308</i>&nbsp;    public CharSequence getSym(int col) {
+<b class="nc"><i class="no-highlight">309</i>&nbsp;        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueOf(getInt(col));</b>
+<i class="no-highlight">310</i>&nbsp;    }
+<i class="no-highlight">311</i>&nbsp;
+<i class="no-highlight">312</i>&nbsp;    @Override
+<i class="no-highlight">313</i>&nbsp;    public CharSequence getSymB(int col) {
+<b class="nc"><i class="no-highlight">314</i>&nbsp;        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));</b>
+<i class="no-highlight">315</i>&nbsp;    }
+<i class="no-highlight">316</i>&nbsp;
+<i class="no-highlight">317</i>&nbsp;    @Override
+<i class="no-highlight">318</i>&nbsp;    public MapValue getValue() {
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        return value.of(valueAddress, limit, false);</b>
+<i class="no-highlight">320</i>&nbsp;    }
+<i class="no-highlight">321</i>&nbsp;
+<i class="no-highlight">322</i>&nbsp;    @Override
+<i class="no-highlight">323</i>&nbsp;    public void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex) {
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        this.symbolTableResolver = resolver;</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        this.symbolTableIndex = symbolTableIndex;</b>
+<i class="no-highlight">326</i>&nbsp;    }
+<i class="no-highlight">327</i>&nbsp;
+<i class="no-highlight">328</i>&nbsp;    private long addressOfColumn(int index) {
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        if (index &lt; split) {</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;            return valueAddress + valueOffsets[index];</b>
+<i class="no-highlight">331</i>&nbsp;        }
+<i class="no-highlight">332</i>&nbsp;
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        if (index == split) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            return keyAddress;</b>
+<i class="no-highlight">335</i>&nbsp;        }
+<i class="no-highlight">336</i>&nbsp;
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        return addressOfKeyColumn(index - split);</b>
+<i class="no-highlight">338</i>&nbsp;    }
+<i class="no-highlight">339</i>&nbsp;
+<i class="no-highlight">340</i>&nbsp;    private long addressOfKeyColumn(int index) {
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        long addr = keyAddress;</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        int i = 0;</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        if (lastKeyIndex &gt; -1 &amp;&amp; index &gt;= lastKeyIndex) {</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;            addr += lastKeyOffset;</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;            i = lastKeyIndex;</b>
+<i class="no-highlight">346</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">347</i>&nbsp;        while (i &lt; index) {</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;            final int columnType = keyTypes.getColumnType(i);</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;            final int size = ColumnType.sizeOf(columnType);</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;            if (size &gt; 0) {</b>
+<i class="no-highlight">351</i>&nbsp;                // Fixed-size type.
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                addr += size;</b>
+<i class="no-highlight">353</i>&nbsp;            } else {
+<i class="no-highlight">354</i>&nbsp;                // Var-size type: string or binary.
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                final int len = Unsafe.getUnsafe().getInt(addr);</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                addr += Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                if (len != TableUtils.NULL_LEN) {</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                    if (ColumnType.isString(columnType)) {</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                        addr += (long) len &lt;&lt; 1;</b>
+<i class="no-highlight">360</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">361</i>&nbsp;                        addr += len;</b>
+<i class="no-highlight">362</i>&nbsp;                    }
+<i class="no-highlight">363</i>&nbsp;                }
+<i class="no-highlight">364</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">365</i>&nbsp;            i++;</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;        }</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        lastKeyOffset = (int) (addr - keyAddress);</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;        lastKeyIndex = i;</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;        return addr;</b>
+<i class="no-highlight">370</i>&nbsp;    }
+<i class="no-highlight">371</i>&nbsp;
+<i class="no-highlight">372</i>&nbsp;    @NotNull
+<i class="no-highlight">373</i>&nbsp;    private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        long address = addressOfColumn(columnIndex);</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        Long256Impl long256 = keyLong256[columnIndex];</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        long256.setAll(</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                Unsafe.getUnsafe().getLong(address),</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                Unsafe.getUnsafe().getLong(address + Long.BYTES),</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)</b>
+<i class="no-highlight">381</i>&nbsp;        );
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        return long256;</b>
+<i class="no-highlight">383</i>&nbsp;    }
+<i class="no-highlight">384</i>&nbsp;
+<i class="no-highlight">385</i>&nbsp;    private CharSequence getStr0(int index, DirectCharSequence cs) {
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        long address = addressOfColumn(index);</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;        int len = Unsafe.getUnsafe().getInt(address);</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;        return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2L);</b>
+<i class="no-highlight">389</i>&nbsp;    }
+<i class="no-highlight">390</i>&nbsp;
+<i class="no-highlight">391</i>&nbsp;    @SuppressWarnings(&quot;MethodDoesntCallSuperMethod&quot;)
+<i class="no-highlight">392</i>&nbsp;    @Override
+<i class="no-highlight">393</i>&nbsp;    protected MapRecord clone() {
+<i class="no-highlight">394</i>&nbsp;        final DirectCharSequence[] csA;
+<i class="no-highlight">395</i>&nbsp;        final DirectCharSequence[] csB;
+<i class="no-highlight">396</i>&nbsp;        final DirectBinarySequence[] bs;
+<i class="no-highlight">397</i>&nbsp;        final Long256Impl[] long256A;
+<i class="no-highlight">398</i>&nbsp;        final Long256Impl[] long256B;
+<i class="no-highlight">399</i>&nbsp;
+<i class="no-highlight">400</i>&nbsp;        // csA and csB are pegged, checking one for null should be enough
+<b class="fc"><i class="no-highlight">401</i>&nbsp;        if (this.csA != null) {</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;            int n = this.csA.length;</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;            csA = new DirectCharSequence[n];</b>
+<b class="fc"><i class="no-highlight">404</i>&nbsp;            csB = new DirectCharSequence[n];</b>
+<i class="no-highlight">405</i>&nbsp;
+<b class="fc"><i class="no-highlight">406</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                if (this.csA[i] != null) {</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                    csA[i] = new DirectCharSequence();</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                    csB[i] = new DirectCharSequence();</b>
+<i class="no-highlight">410</i>&nbsp;                }
+<i class="no-highlight">411</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">412</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;            csA = null;</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;            csB = null;</b>
+<i class="no-highlight">415</i>&nbsp;        }
+<i class="no-highlight">416</i>&nbsp;
+<b class="fc"><i class="no-highlight">417</i>&nbsp;        if (this.bs != null) {</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;            int n = this.bs.length;</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;            bs = new DirectBinarySequence[n];</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                if (this.bs[i] != null) {</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;                    bs[i] = new DirectBinarySequence();</b>
+<i class="no-highlight">423</i>&nbsp;                }
+<i class="no-highlight">424</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">425</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;            bs = null;</b>
+<i class="no-highlight">427</i>&nbsp;        }
+<i class="no-highlight">428</i>&nbsp;
+<b class="fc"><i class="no-highlight">429</i>&nbsp;        if (this.keyLong256A != null) {</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;            int n = this.keyLong256A.length;</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;            long256A = new Long256Impl[n];</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;            long256B = new Long256Impl[n];</b>
+<i class="no-highlight">433</i>&nbsp;
+<b class="fc"><i class="no-highlight">434</i>&nbsp;            for (int i = 0; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;                if (this.keyLong256A[i] != null) {</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;                    long256A[i] = new Long256Impl();</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;                    long256B[i] = new Long256Impl();</b>
+<i class="no-highlight">438</i>&nbsp;                }
+<i class="no-highlight">439</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">440</i>&nbsp;        } else {</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            long256A = null;</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            long256B = null;</b>
+<i class="no-highlight">443</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">444</i>&nbsp;        return new FastMapRecord(valueOffsets, keyTypes, split, keyOffset, csA, csB, bs, long256A, long256B);</b>
+<i class="no-highlight">445</i>&nbsp;    }
+<i class="no-highlight">446</i>&nbsp;
+<i class="no-highlight">447</i>&nbsp;    void of(long address, long limit) {
+<b class="fc"><i class="no-highlight">448</i>&nbsp;        this.valueAddress = address;</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        this.keyAddress = address + keyOffset;</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        this.limit = limit;</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        this.lastKeyIndex = -1;</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        this.lastKeyOffset = -1;</b>
+<i class="no-highlight">453</i>&nbsp;    }
+<i class="no-highlight">454</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

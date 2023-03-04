@@ -1,0 +1,1663 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TextImportTask</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.text</a>
+</div>
+
+<h1>Coverage Summary for Class: TextImportTask (io.questdb.cutlass.text)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TextImportTask</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (25/25)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98%
+  </span>
+  <span class="absValue">
+    (99/101)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">TextImportTask$PhaseBoundaryCheck</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (9/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (53/53)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TextImportTask$PhaseBuildSymbolIndex</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (25/25)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TextImportTask$PhaseIndexing</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (7/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.7%
+  </span>
+  <span class="absValue">
+    (42/43)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TextImportTask$PhasePartitionImport</td>
+<td class="coverageStat">
+  <span class="percent">
+    85%
+  </span>
+  <span class="absValue">
+    (17/20)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    67.2%
+  </span>
+  <span class="absValue">
+    (209/311)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TextImportTask$PhaseSymbolTableMerge</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.4%
+  </span>
+  <span class="absValue">
+    (37/38)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">TextImportTask$PhaseUpdateSymbolKeys</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (48/48)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    95.9%
+  </span>
+  <span class="absValue">
+    (70/73)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    82.9%
+  </span>
+  <span class="absValue">
+    (513/619)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.text;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.*;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.RecordMetadata;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.vm.api.MemoryCMARW;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cutlass.text.types.TimestampAdapter;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.cutlass.text.types.TypeAdapter;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.engine.functions.columns.ColumnUtils;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.str.DirectByteCharSequence;
+<i class="no-highlight">39</i>&nbsp;import io.questdb.std.str.DirectCharSink;
+<i class="no-highlight">40</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">41</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">42</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">43</i>&nbsp;
+<i class="no-highlight">44</i>&nbsp;import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+<i class="no-highlight">45</i>&nbsp;import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
+<i class="no-highlight">46</i>&nbsp;
+<b class="fc"><i class="no-highlight">47</i>&nbsp;public class TextImportTask {</b>
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;    public static final byte NO_PHASE = -1;
+<i class="no-highlight">50</i>&nbsp;    public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
+<i class="no-highlight">51</i>&nbsp;    public static final byte PHASE_ATTACH_PARTITIONS = 8;
+<i class="no-highlight">52</i>&nbsp;    public static final byte PHASE_BOUNDARY_CHECK = 1;
+<i class="no-highlight">53</i>&nbsp;    public static final byte PHASE_BUILD_SYMBOL_INDEX = 6;
+<i class="no-highlight">54</i>&nbsp;    public static final byte PHASE_CLEANUP = 10;
+<i class="no-highlight">55</i>&nbsp;    public static final byte PHASE_INDEXING = 2;
+<i class="no-highlight">56</i>&nbsp;    public static final byte PHASE_MOVE_PARTITIONS = 7;
+<i class="no-highlight">57</i>&nbsp;    public static final byte PHASE_PARTITION_IMPORT = 3;
+<i class="no-highlight">58</i>&nbsp;    public static final byte PHASE_SETUP = 0;
+<i class="no-highlight">59</i>&nbsp;    public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
+<i class="no-highlight">60</i>&nbsp;    public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
+<i class="no-highlight">61</i>&nbsp;    public static final byte STATUS_CANCELLED = 3;
+<i class="no-highlight">62</i>&nbsp;    public static final byte STATUS_FAILED = 2;
+<i class="no-highlight">63</i>&nbsp;    public static final byte STATUS_FINISHED = 1;
+<i class="no-highlight">64</i>&nbsp;    public static final byte STATUS_STARTED = 0;
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    private static final Log LOG = LogFactory.getLog(TextImportTask.class);</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    private static final IntObjHashMap&lt;String&gt; PHASE_NAME_MAP = new IntObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    private static final IntObjHashMap&lt;String&gt; STATUS_NAME_MAP = new IntObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">68</i>&nbsp;
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;    private final PhaseBuildSymbolIndex phaseBuildSymbolIndex = new PhaseBuildSymbolIndex();</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;    private final PhaseIndexing phaseIndexing = new PhaseIndexing();</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;    private final PhasePartitionImport phasePartitionImport = new PhasePartitionImport();</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;    private final PhaseSymbolTableMerge phaseSymbolTableMerge = new PhaseSymbolTableMerge();</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    private final PhaseUpdateSymbolKeys phaseUpdateSymbolKeys = new PhaseUpdateSymbolKeys();</b>
+<i class="no-highlight">75</i>&nbsp;    private int chunkIndex;
+<i class="no-highlight">76</i>&nbsp;    private @Nullable ExecutionCircuitBreaker circuitBreaker;
+<i class="no-highlight">77</i>&nbsp;    private @Nullable CharSequence errorMessage;
+<i class="no-highlight">78</i>&nbsp;    private byte phase;
+<i class="no-highlight">79</i>&nbsp;    private byte status;
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    public static String getPhaseName(byte phase) {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        return PHASE_NAME_MAP.get(phase);</b>
+<i class="no-highlight">83</i>&nbsp;    }
+<i class="no-highlight">84</i>&nbsp;
+<i class="no-highlight">85</i>&nbsp;    public static String getStatusName(byte status) {
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        return STATUS_NAME_MAP.get(status);</b>
+<i class="no-highlight">87</i>&nbsp;    }
+<i class="no-highlight">88</i>&nbsp;
+<i class="no-highlight">89</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        if (phase == PHASE_BOUNDARY_CHECK) {</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;            phaseBoundaryCheck.clear();</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        } else if (phase == PHASE_INDEXING) {</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;            phaseIndexing.clear();</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        } else if (phase == PHASE_PARTITION_IMPORT) {</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;            phasePartitionImport.clear();</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;            phaseSymbolTableMerge.clear();</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;            phaseUpdateSymbolKeys.clear();</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        } else if (phase == PHASE_BUILD_SYMBOL_INDEX) {</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;            phaseBuildSymbolIndex.clear();</b>
+<i class="no-highlight">102</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">103</i>&nbsp;            throw TextException.$(&quot;Unexpected phase &quot;).put(phase);</b>
+<i class="no-highlight">104</i>&nbsp;        }
+<i class="no-highlight">105</i>&nbsp;    }
+<i class="no-highlight">106</i>&nbsp;
+<i class="no-highlight">107</i>&nbsp;    public PhaseIndexing getBuildPartitionIndexPhase() {
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        return phaseIndexing;</b>
+<i class="no-highlight">109</i>&nbsp;    }
+<i class="no-highlight">110</i>&nbsp;
+<i class="no-highlight">111</i>&nbsp;    public int getChunkIndex() {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        return chunkIndex;</b>
+<i class="no-highlight">113</i>&nbsp;    }
+<i class="no-highlight">114</i>&nbsp;
+<i class="no-highlight">115</i>&nbsp;    public PhaseBoundaryCheck getCountQuotesPhase() {
+<b class="fc"><i class="no-highlight">116</i>&nbsp;        return phaseBoundaryCheck;</b>
+<i class="no-highlight">117</i>&nbsp;    }
+<i class="no-highlight">118</i>&nbsp;
+<i class="no-highlight">119</i>&nbsp;    public @Nullable CharSequence getErrorMessage() {
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        return errorMessage;</b>
+<i class="no-highlight">121</i>&nbsp;    }
+<i class="no-highlight">122</i>&nbsp;
+<i class="no-highlight">123</i>&nbsp;    public PhasePartitionImport getImportPartitionDataPhase() {
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        return phasePartitionImport;</b>
+<i class="no-highlight">125</i>&nbsp;    }
+<i class="no-highlight">126</i>&nbsp;
+<i class="no-highlight">127</i>&nbsp;    public byte getPhase() {
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        return phase;</b>
+<i class="no-highlight">129</i>&nbsp;    }
+<i class="no-highlight">130</i>&nbsp;
+<i class="no-highlight">131</i>&nbsp;    public byte getStatus() {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        return status;</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    public boolean isCancelled() {
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        return this.status == STATUS_CANCELLED;</b>
+<i class="no-highlight">137</i>&nbsp;    }
+<i class="no-highlight">138</i>&nbsp;
+<i class="no-highlight">139</i>&nbsp;    public boolean isFailed() {
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        return this.status == STATUS_FAILED;</b>
+<i class="no-highlight">141</i>&nbsp;    }
+<i class="no-highlight">142</i>&nbsp;
+<i class="no-highlight">143</i>&nbsp;    public void ofPhaseBoundaryCheck(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        this.phase = PHASE_BOUNDARY_CHECK;</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        this.phaseBoundaryCheck.of(ff, path, chunkStart, chunkEnd);</b>
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    public void ofPhaseBuildSymbolIndex(
+<i class="no-highlight">149</i>&nbsp;            CairoEngine cairoEngine,
+<i class="no-highlight">150</i>&nbsp;            TableStructure tableStructure,
+<i class="no-highlight">151</i>&nbsp;            CharSequence root,
+<i class="no-highlight">152</i>&nbsp;            int index,
+<i class="no-highlight">153</i>&nbsp;            RecordMetadata metadata
+<i class="no-highlight">154</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        this.phase = PHASE_BUILD_SYMBOL_INDEX;</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        this.phaseBuildSymbolIndex.of(cairoEngine, tableStructure, root, index, metadata);</b>
+<i class="no-highlight">157</i>&nbsp;    }
+<i class="no-highlight">158</i>&nbsp;
+<i class="no-highlight">159</i>&nbsp;    public void ofPhaseIndexing(
+<i class="no-highlight">160</i>&nbsp;            long chunkStart,
+<i class="no-highlight">161</i>&nbsp;            long chunkEnd,
+<i class="no-highlight">162</i>&nbsp;            long lineNumber,
+<i class="no-highlight">163</i>&nbsp;            int index,
+<i class="no-highlight">164</i>&nbsp;            CharSequence inputFileName,
+<i class="no-highlight">165</i>&nbsp;            CharSequence importRoot,
+<i class="no-highlight">166</i>&nbsp;            int partitionBy,
+<i class="no-highlight">167</i>&nbsp;            byte columnDelimiter,
+<i class="no-highlight">168</i>&nbsp;            int timestampIndex,
+<i class="no-highlight">169</i>&nbsp;            TimestampAdapter adapter,
+<i class="no-highlight">170</i>&nbsp;            boolean ignoreHeader,
+<i class="no-highlight">171</i>&nbsp;            int atomicity
+<i class="no-highlight">172</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        this.phase = PHASE_INDEXING;</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        this.phaseIndexing.of(</b>
+<i class="no-highlight">175</i>&nbsp;                chunkStart,
+<i class="no-highlight">176</i>&nbsp;                chunkEnd,
+<i class="no-highlight">177</i>&nbsp;                lineNumber,
+<i class="no-highlight">178</i>&nbsp;                index,
+<i class="no-highlight">179</i>&nbsp;                inputFileName,
+<i class="no-highlight">180</i>&nbsp;                importRoot,
+<i class="no-highlight">181</i>&nbsp;                partitionBy,
+<i class="no-highlight">182</i>&nbsp;                columnDelimiter,
+<i class="no-highlight">183</i>&nbsp;                timestampIndex,
+<i class="no-highlight">184</i>&nbsp;                adapter,
+<i class="no-highlight">185</i>&nbsp;                ignoreHeader,
+<i class="no-highlight">186</i>&nbsp;                atomicity
+<i class="no-highlight">187</i>&nbsp;        );
+<i class="no-highlight">188</i>&nbsp;    }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;    public void ofPhaseSymbolTableMerge(
+<i class="no-highlight">191</i>&nbsp;            CairoConfiguration cfg,
+<i class="no-highlight">192</i>&nbsp;            CharSequence importRoot,
+<i class="no-highlight">193</i>&nbsp;            TableWriter writer,
+<i class="no-highlight">194</i>&nbsp;            TableToken tableToken,
+<i class="no-highlight">195</i>&nbsp;            CharSequence column,
+<i class="no-highlight">196</i>&nbsp;            int columnIndex,
+<i class="no-highlight">197</i>&nbsp;            int symbolColumnIndex,
+<i class="no-highlight">198</i>&nbsp;            int tmpTableCount,
+<i class="no-highlight">199</i>&nbsp;            int partitionBy
+<i class="no-highlight">200</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        this.phase = PHASE_SYMBOL_TABLE_MERGE;</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;        this.phaseSymbolTableMerge.of(</b>
+<i class="no-highlight">203</i>&nbsp;                cfg,
+<i class="no-highlight">204</i>&nbsp;                importRoot,
+<i class="no-highlight">205</i>&nbsp;                writer,
+<i class="no-highlight">206</i>&nbsp;                tableToken,
+<i class="no-highlight">207</i>&nbsp;                column,
+<i class="no-highlight">208</i>&nbsp;                columnIndex,
+<i class="no-highlight">209</i>&nbsp;                symbolColumnIndex,
+<i class="no-highlight">210</i>&nbsp;                tmpTableCount,
+<i class="no-highlight">211</i>&nbsp;                partitionBy
+<i class="no-highlight">212</i>&nbsp;        );
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    public void ofPhaseUpdateSymbolKeys(
+<i class="no-highlight">216</i>&nbsp;            CairoEngine cairoEngine,
+<i class="no-highlight">217</i>&nbsp;            TableStructure tableStructure,
+<i class="no-highlight">218</i>&nbsp;            int index,
+<i class="no-highlight">219</i>&nbsp;            long partitionSize,
+<i class="no-highlight">220</i>&nbsp;            long partitionTimestamp,
+<i class="no-highlight">221</i>&nbsp;            CharSequence root,
+<i class="no-highlight">222</i>&nbsp;            CharSequence columnName,
+<i class="no-highlight">223</i>&nbsp;            int symbolCount
+<i class="no-highlight">224</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        this.phase = PHASE_UPDATE_SYMBOL_KEYS;</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        this.phaseUpdateSymbolKeys.of(</b>
+<i class="no-highlight">227</i>&nbsp;                cairoEngine,
+<i class="no-highlight">228</i>&nbsp;                tableStructure,
+<i class="no-highlight">229</i>&nbsp;                index,
+<i class="no-highlight">230</i>&nbsp;                partitionSize,
+<i class="no-highlight">231</i>&nbsp;                partitionTimestamp,
+<i class="no-highlight">232</i>&nbsp;                root,
+<i class="no-highlight">233</i>&nbsp;                columnName,
+<i class="no-highlight">234</i>&nbsp;                symbolCount
+<i class="no-highlight">235</i>&nbsp;        );
+<i class="no-highlight">236</i>&nbsp;    }
+<i class="no-highlight">237</i>&nbsp;
+<i class="no-highlight">238</i>&nbsp;    public boolean run(
+<i class="no-highlight">239</i>&nbsp;            TextLexerWrapper lf,
+<i class="no-highlight">240</i>&nbsp;            CsvFileIndexer indexer,
+<i class="no-highlight">241</i>&nbsp;            DirectCharSink utf8Sink,
+<i class="no-highlight">242</i>&nbsp;            DirectLongList unmergedIndexes,
+<i class="no-highlight">243</i>&nbsp;            long fileBufAddr,
+<i class="no-highlight">244</i>&nbsp;            long fileBufSize,
+<i class="no-highlight">245</i>&nbsp;            Path p1,
+<i class="no-highlight">246</i>&nbsp;            Path p2
+<i class="no-highlight">247</i>&nbsp;    ) {
+<i class="no-highlight">248</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">249</i>&nbsp;            LOG.debug().$(&quot;starting [phase=&quot;).$(getPhaseName(phase)).$(&quot;,index=&quot;).$(chunkIndex).I$();</b>
+<i class="no-highlight">250</i>&nbsp;
+<b class="fc"><i class="no-highlight">251</i>&nbsp;            this.status = STATUS_STARTED;</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;            this.errorMessage = null;</b>
+<i class="no-highlight">253</i>&nbsp;
+<b class="fc"><i class="no-highlight">254</i>&nbsp;            throwIfCancelled();</b>
+<i class="no-highlight">255</i>&nbsp;
+<b class="fc"><i class="no-highlight">256</i>&nbsp;            if (phase == PHASE_BOUNDARY_CHECK) {</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                phaseBoundaryCheck.run(fileBufAddr, fileBufSize);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            } else if (phase == PHASE_INDEXING) {</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                phaseIndexing.run(indexer, fileBufAddr, fileBufSize);</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;            } else if (phase == PHASE_PARTITION_IMPORT) {</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf8Sink, unmergedIndexes, p1, p2);</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                phaseSymbolTableMerge.run(p1);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;            } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;                phaseUpdateSymbolKeys.run(p1);</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;            } else if (phase == PHASE_BUILD_SYMBOL_INDEX) {</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                phaseBuildSymbolIndex.run();</b>
+<i class="no-highlight">268</i>&nbsp;            } else {
+<b class="nc"><i class="no-highlight">269</i>&nbsp;                throw TextException.$(&quot;Unexpected phase &quot;).put(phase);</b>
+<i class="no-highlight">270</i>&nbsp;            }
+<i class="no-highlight">271</i>&nbsp;
+<b class="fc"><i class="no-highlight">272</i>&nbsp;            LOG.debug().$(&quot;finished [phase=&quot;).$(getPhaseName(phase)).$(&quot;,index=&quot;).$(chunkIndex).I$();</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        } catch (TextImportException e) {</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;            this.status = STATUS_CANCELLED;</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;            this.errorMessage = e.getMessage();</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;            LOG.error().$(&quot;Import cancelled [phase=&quot;).$(getPhaseName(e.getPhase())).I$();</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            return false;</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        } catch (Throwable t) {</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;            LOG.error()</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                    .$(&quot;could not import [phase=&quot;).$(getPhaseName(phase))</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;                    .$(&quot;, ex=&quot;).$(t)</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;                    .I$();</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;            this.status = STATUS_FAILED;</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            this.errorMessage = t.getMessage();</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;            return false;</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        }</b>
+<i class="no-highlight">287</i>&nbsp;
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        return true;</b>
+<i class="no-highlight">289</i>&nbsp;    }
+<i class="no-highlight">290</i>&nbsp;
+<i class="no-highlight">291</i>&nbsp;    public void setChunkIndex(int chunkIndex) {
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        this.chunkIndex = chunkIndex;</b>
+<i class="no-highlight">293</i>&nbsp;    }
+<i class="no-highlight">294</i>&nbsp;
+<i class="no-highlight">295</i>&nbsp;    public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker circuitBreaker) {
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        this.circuitBreaker = circuitBreaker;</b>
+<i class="no-highlight">297</i>&nbsp;    }
+<i class="no-highlight">298</i>&nbsp;
+<i class="no-highlight">299</i>&nbsp;    private TextImportException getCancelException() {
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        TextImportException ex = TextImportException.instance(this.phase, &quot;Cancelled&quot;);</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        ex.setCancelled(true);</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        return ex;</b>
+<i class="no-highlight">303</i>&nbsp;    }
+<i class="no-highlight">304</i>&nbsp;
+<i class="no-highlight">305</i>&nbsp;    private void throwIfCancelled() throws TextImportException {
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        if (circuitBreaker != null &amp;&amp; circuitBreaker.checkIfTripped()) {</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;            throw getCancelException();</b>
+<i class="no-highlight">308</i>&nbsp;        }
+<i class="no-highlight">309</i>&nbsp;    }
+<i class="no-highlight">310</i>&nbsp;
+<i class="no-highlight">311</i>&nbsp;    void ofPhasePartitionImport(
+<i class="no-highlight">312</i>&nbsp;            CairoEngine cairoEngine,
+<i class="no-highlight">313</i>&nbsp;            TableStructure targetTableStructure,
+<i class="no-highlight">314</i>&nbsp;            ObjList&lt;TypeAdapter&gt; types,
+<i class="no-highlight">315</i>&nbsp;            int atomicity,
+<i class="no-highlight">316</i>&nbsp;            byte columnDelimiter,
+<i class="no-highlight">317</i>&nbsp;            CharSequence importRoot,
+<i class="no-highlight">318</i>&nbsp;            CharSequence inputFileName,
+<i class="no-highlight">319</i>&nbsp;            int index,
+<i class="no-highlight">320</i>&nbsp;            int lo,
+<i class="no-highlight">321</i>&nbsp;            int hi,
+<i class="no-highlight">322</i>&nbsp;            final ObjList&lt;ParallelCsvFileImporter.PartitionInfo&gt; partitions
+<i class="no-highlight">323</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        this.phase = PHASE_PARTITION_IMPORT;</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        this.phasePartitionImport.of(</b>
+<i class="no-highlight">326</i>&nbsp;                cairoEngine,
+<i class="no-highlight">327</i>&nbsp;                targetTableStructure,
+<i class="no-highlight">328</i>&nbsp;                types,
+<i class="no-highlight">329</i>&nbsp;                atomicity,
+<i class="no-highlight">330</i>&nbsp;                columnDelimiter,
+<i class="no-highlight">331</i>&nbsp;                importRoot,
+<i class="no-highlight">332</i>&nbsp;                inputFileName,
+<i class="no-highlight">333</i>&nbsp;                index,
+<i class="no-highlight">334</i>&nbsp;                lo,
+<i class="no-highlight">335</i>&nbsp;                hi,
+<i class="no-highlight">336</i>&nbsp;                partitions
+<i class="no-highlight">337</i>&nbsp;        );
+<i class="no-highlight">338</i>&nbsp;    }
+<i class="no-highlight">339</i>&nbsp;
+<b class="fc"><i class="no-highlight">340</i>&nbsp;    public static class PhaseBoundaryCheck {</b>
+<i class="no-highlight">341</i>&nbsp;        private long chunkEnd;
+<i class="no-highlight">342</i>&nbsp;        private long chunkStart;
+<i class="no-highlight">343</i>&nbsp;        private FilesFacade ff;
+<i class="no-highlight">344</i>&nbsp;        private long newLineCountEven;
+<i class="no-highlight">345</i>&nbsp;        private long newLineCountOdd;
+<i class="no-highlight">346</i>&nbsp;        private long newLineOffsetEven;
+<i class="no-highlight">347</i>&nbsp;        private long newLineOffsetOdd;
+<i class="no-highlight">348</i>&nbsp;        private Path path;
+<i class="no-highlight">349</i>&nbsp;        private long quoteCount;
+<i class="no-highlight">350</i>&nbsp;
+<i class="no-highlight">351</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">352</i>&nbsp;            this.ff = null;</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;            this.path = null;</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;            this.chunkStart = -1;</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;            this.chunkEnd = -1;</b>
+<i class="no-highlight">356</i>&nbsp;        }
+<i class="no-highlight">357</i>&nbsp;
+<i class="no-highlight">358</i>&nbsp;        public long getNewLineCountEven() {
+<b class="fc"><i class="no-highlight">359</i>&nbsp;            return newLineCountEven;</b>
+<i class="no-highlight">360</i>&nbsp;        }
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;        public long getNewLineCountOdd() {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;            return newLineCountOdd;</b>
+<i class="no-highlight">364</i>&nbsp;        }
+<i class="no-highlight">365</i>&nbsp;
+<i class="no-highlight">366</i>&nbsp;        public long getNewLineOffsetEven() {
+<b class="fc"><i class="no-highlight">367</i>&nbsp;            return newLineOffsetEven;</b>
+<i class="no-highlight">368</i>&nbsp;        }
+<i class="no-highlight">369</i>&nbsp;
+<i class="no-highlight">370</i>&nbsp;        public long getNewLineOffsetOdd() {
+<b class="fc"><i class="no-highlight">371</i>&nbsp;            return newLineOffsetOdd;</b>
+<i class="no-highlight">372</i>&nbsp;        }
+<i class="no-highlight">373</i>&nbsp;
+<i class="no-highlight">374</i>&nbsp;        public long getQuoteCount() {
+<b class="fc"><i class="no-highlight">375</i>&nbsp;            return quoteCount;</b>
+<i class="no-highlight">376</i>&nbsp;        }
+<i class="no-highlight">377</i>&nbsp;
+<i class="no-highlight">378</i>&nbsp;        public void of(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
+<b class="fc"><i class="no-highlight">379</i>&nbsp;            assert ff != null;</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;            assert path != null;</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;            assert chunkStart &gt;= 0 &amp;&amp; chunkEnd &gt; chunkStart;</b>
+<i class="no-highlight">382</i>&nbsp;
+<b class="fc"><i class="no-highlight">383</i>&nbsp;            this.ff = ff;</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;            this.path = path;</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;            this.chunkStart = chunkStart;</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;            this.chunkEnd = chunkEnd;</b>
+<i class="no-highlight">387</i>&nbsp;        }
+<i class="no-highlight">388</i>&nbsp;
+<i class="no-highlight">389</i>&nbsp;        public void run(long fileBufPtr, long fileBufSize) throws TextException {
+<b class="fc"><i class="no-highlight">390</i>&nbsp;            long offset = chunkStart;</b>
+<i class="no-highlight">391</i>&nbsp;
+<i class="no-highlight">392</i>&nbsp;            //output vars
+<b class="fc"><i class="no-highlight">393</i>&nbsp;            long quotes = 0;</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;            long[] nlCount = new long[2];</b>
+<b class="fc"><i class="no-highlight">395</i>&nbsp;            long[] nlFirst = new long[]{-1, -1};</b>
+<i class="no-highlight">396</i>&nbsp;
+<i class="no-highlight">397</i>&nbsp;            long read;
+<i class="no-highlight">398</i>&nbsp;            long ptr;
+<i class="no-highlight">399</i>&nbsp;            long hi;
+<i class="no-highlight">400</i>&nbsp;
+<b class="fc"><i class="no-highlight">401</i>&nbsp;            int fd = TableUtils.openRO(ff, path, LOG);</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;            ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);</b>
+<i class="no-highlight">403</i>&nbsp;            try {
+<i class="no-highlight">404</i>&nbsp;
+<i class="no-highlight">405</i>&nbsp;                do {
+<b class="fc"><i class="no-highlight">406</i>&nbsp;                    long leftToRead = Math.min(chunkEnd - offset, fileBufSize);</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;                    read = (int) ff.read(fd, fileBufPtr, leftToRead, offset);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;                    if (read &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;                        break;</b>
+<i class="no-highlight">410</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                    hi = fileBufPtr + read;</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                    ptr = fileBufPtr;</b>
+<i class="no-highlight">413</i>&nbsp;
+<b class="fc"><i class="no-highlight">414</i>&nbsp;                    while (ptr &lt; hi) {</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                        final byte c = Unsafe.getUnsafe().getByte(ptr++);</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                        if (c == &#39;&quot;&#39;) {</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                            quotes++;</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;                        } else if (c == &#39;\n&#39;) {</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;                            nlCount[(int) (quotes &amp; 1)]++;</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;                            if (nlFirst[(int) (quotes &amp; 1)] == -1) {</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;                                nlFirst[(int) (quotes &amp; 1)] = offset + (ptr - fileBufPtr);</b>
+<i class="no-highlight">422</i>&nbsp;                            }
+<i class="no-highlight">423</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">424</i>&nbsp;                    }</b>
+<i class="no-highlight">425</i>&nbsp;
+<b class="fc"><i class="no-highlight">426</i>&nbsp;                    offset += read;</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;                } while (offset &lt; chunkEnd);</b>
+<i class="no-highlight">428</i>&nbsp;
+<b class="fc"><i class="no-highlight">429</i>&nbsp;                if (read &lt; 0 || offset &lt; chunkEnd) {</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;                    throw TextException</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;                            .$(&quot;could not read import file [path=&#39;&quot;).put(path)</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;                            .put(&quot;&#39;, offset=&quot;).put(offset)</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;                            .put(&quot;, errno=&quot;).put(ff.errno())</b>
+<b class="fc"><i class="no-highlight">434</i>&nbsp;                            .put(&#39;]&#39;);</b>
+<i class="no-highlight">435</i>&nbsp;                }
+<i class="no-highlight">436</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">437</i>&nbsp;                ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;            }</b>
+<i class="no-highlight">439</i>&nbsp;
+<b class="fc"><i class="no-highlight">440</i>&nbsp;            this.quoteCount = quotes;</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            this.newLineCountEven = nlCount[0];</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            this.newLineCountOdd = nlCount[1];</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;            this.newLineOffsetEven = nlFirst[0];</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;            this.newLineOffsetOdd = nlFirst[1];</b>
+<i class="no-highlight">445</i>&nbsp;        }
+<i class="no-highlight">446</i>&nbsp;    }
+<i class="no-highlight">447</i>&nbsp;
+<b class="fc"><i class="no-highlight">448</i>&nbsp;    public static class PhaseBuildSymbolIndex {</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        private final StringSink tableNameSink = new StringSink();</b>
+<i class="no-highlight">450</i>&nbsp;        private CairoEngine cairoEngine;
+<i class="no-highlight">451</i>&nbsp;        private int index;
+<i class="no-highlight">452</i>&nbsp;        private RecordMetadata metadata;
+<i class="no-highlight">453</i>&nbsp;        private CharSequence root;
+<i class="no-highlight">454</i>&nbsp;        private TableStructure tableStructure;
+<i class="no-highlight">455</i>&nbsp;
+<i class="no-highlight">456</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">457</i>&nbsp;            this.cairoEngine = null;</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;            this.tableStructure = null;</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;            this.root = null;</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;            this.index = -1;</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;            this.metadata = null;</b>
+<i class="no-highlight">462</i>&nbsp;        }
+<i class="no-highlight">463</i>&nbsp;
+<i class="no-highlight">464</i>&nbsp;        public void of(
+<i class="no-highlight">465</i>&nbsp;                CairoEngine cairoEngine,
+<i class="no-highlight">466</i>&nbsp;                TableStructure tableStructure,
+<i class="no-highlight">467</i>&nbsp;                CharSequence root,
+<i class="no-highlight">468</i>&nbsp;                int index, RecordMetadata metadata) {
+<b class="fc"><i class="no-highlight">469</i>&nbsp;            this.cairoEngine = cairoEngine;</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;            this.tableStructure = tableStructure;</b>
+<b class="fc"><i class="no-highlight">471</i>&nbsp;            this.root = root;</b>
+<b class="fc"><i class="no-highlight">472</i>&nbsp;            this.index = index;</b>
+<b class="fc"><i class="no-highlight">473</i>&nbsp;            this.metadata = metadata;</b>
+<i class="no-highlight">474</i>&nbsp;        }
+<i class="no-highlight">475</i>&nbsp;
+<i class="no-highlight">476</i>&nbsp;        public void run() {
+<b class="fc"><i class="no-highlight">477</i>&nbsp;            final CairoConfiguration configuration = cairoEngine.getConfiguration();</b>
+<i class="no-highlight">478</i>&nbsp;
+<b class="fc"><i class="no-highlight">479</i>&nbsp;            tableNameSink.clear();</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;            tableNameSink.put(tableStructure.getTableName()).put(&#39;_&#39;).put(index);</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;            String tableName = tableNameSink.toString();</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);</b>
+<i class="no-highlight">483</i>&nbsp;
+<b class="fc"><i class="no-highlight">484</i>&nbsp;            final int columnCount = metadata.getColumnCount();</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;            try (TableWriter w = new TableWriter(configuration,</b>
+<i class="no-highlight">486</i>&nbsp;                    tableToken,
+<b class="fc"><i class="no-highlight">487</i>&nbsp;                    cairoEngine.getMessageBus(),</b>
+<i class="no-highlight">488</i>&nbsp;                    null,
+<i class="no-highlight">489</i>&nbsp;                    true,
+<i class="no-highlight">490</i>&nbsp;                    DefaultLifecycleManager.INSTANCE,
+<i class="no-highlight">491</i>&nbsp;                    root,
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                    cairoEngine.getMetrics())) {</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;                for (int i = 0; i &lt; columnCount; i++) {</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;                    if (metadata.isColumnIndexed(i)) {</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));</b>
+<i class="no-highlight">496</i>&nbsp;                    }
+<i class="no-highlight">497</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">498</i>&nbsp;            }</b>
+<i class="no-highlight">499</i>&nbsp;        }
+<i class="no-highlight">500</i>&nbsp;    }
+<i class="no-highlight">501</i>&nbsp;
+<b class="fc"><i class="no-highlight">502</i>&nbsp;    public static class PhaseSymbolTableMerge {</b>
+<i class="no-highlight">503</i>&nbsp;        private CairoConfiguration cfg;
+<i class="no-highlight">504</i>&nbsp;        private CharSequence column;
+<i class="no-highlight">505</i>&nbsp;        private int columnIndex;
+<i class="no-highlight">506</i>&nbsp;        private CharSequence importRoot;
+<i class="no-highlight">507</i>&nbsp;        private int partitionBy;
+<i class="no-highlight">508</i>&nbsp;        private int symbolColumnIndex;
+<i class="no-highlight">509</i>&nbsp;        private TableToken tableToken;
+<i class="no-highlight">510</i>&nbsp;        private int tmpTableCount;
+<i class="no-highlight">511</i>&nbsp;        private TableWriter writer;
+<i class="no-highlight">512</i>&nbsp;
+<i class="no-highlight">513</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">514</i>&nbsp;            this.cfg = null;</b>
+<b class="fc"><i class="no-highlight">515</i>&nbsp;            this.importRoot = null;</b>
+<b class="fc"><i class="no-highlight">516</i>&nbsp;            this.writer = null;</b>
+<b class="fc"><i class="no-highlight">517</i>&nbsp;            this.tableToken = null;</b>
+<b class="fc"><i class="no-highlight">518</i>&nbsp;            this.column = null;</b>
+<b class="fc"><i class="no-highlight">519</i>&nbsp;            this.columnIndex = -1;</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;            this.symbolColumnIndex = -1;</b>
+<b class="fc"><i class="no-highlight">521</i>&nbsp;            this.tmpTableCount = -1;</b>
+<b class="fc"><i class="no-highlight">522</i>&nbsp;            this.partitionBy = -1;</b>
+<i class="no-highlight">523</i>&nbsp;        }
+<i class="no-highlight">524</i>&nbsp;
+<i class="no-highlight">525</i>&nbsp;        public void of(CairoConfiguration cfg,
+<i class="no-highlight">526</i>&nbsp;                       CharSequence importRoot,
+<i class="no-highlight">527</i>&nbsp;                       TableWriter writer,
+<i class="no-highlight">528</i>&nbsp;                       TableToken tableToken,
+<i class="no-highlight">529</i>&nbsp;                       CharSequence column,
+<i class="no-highlight">530</i>&nbsp;                       int columnIndex,
+<i class="no-highlight">531</i>&nbsp;                       int symbolColumnIndex,
+<i class="no-highlight">532</i>&nbsp;                       int tmpTableCount,
+<i class="no-highlight">533</i>&nbsp;                       int partitionBy
+<i class="no-highlight">534</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">535</i>&nbsp;            this.cfg = cfg;</b>
+<b class="fc"><i class="no-highlight">536</i>&nbsp;            this.importRoot = importRoot;</b>
+<b class="fc"><i class="no-highlight">537</i>&nbsp;            this.writer = writer;</b>
+<b class="fc"><i class="no-highlight">538</i>&nbsp;            this.tableToken = tableToken;</b>
+<b class="fc"><i class="no-highlight">539</i>&nbsp;            this.column = column;</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;            this.columnIndex = columnIndex;</b>
+<b class="fc"><i class="no-highlight">541</i>&nbsp;            this.symbolColumnIndex = symbolColumnIndex;</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;            this.tmpTableCount = tmpTableCount;</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;            this.partitionBy = partitionBy;</b>
+<i class="no-highlight">544</i>&nbsp;        }
+<i class="no-highlight">545</i>&nbsp;
+<i class="no-highlight">546</i>&nbsp;        public void run(Path path) {
+<b class="fc"><i class="no-highlight">547</i>&nbsp;            final FilesFacade ff = cfg.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">548</i>&nbsp;            path.of(importRoot).concat(tableToken.getTableName());</b>
+<b class="fc"><i class="no-highlight">549</i>&nbsp;            int plen = path.length();</b>
+<b class="fc"><i class="no-highlight">550</i>&nbsp;            for (int i = 0; i &lt; tmpTableCount; i++) {</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;                path.trimTo(plen);</b>
+<b class="fc"><i class="no-highlight">552</i>&nbsp;                path.put(&#39;_&#39;).put(i);</b>
+<b class="fc"><i class="no-highlight">553</i>&nbsp;                int tableLen = path.length();</b>
+<b class="fc"><i class="no-highlight">554</i>&nbsp;                try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {</b>
+<b class="fc"><i class="no-highlight">555</i>&nbsp;                    path.trimTo(tableLen);</b>
+<b class="fc"><i class="no-highlight">556</i>&nbsp;                    txFile.unsafeLoadAll();</b>
+<b class="fc"><i class="no-highlight">557</i>&nbsp;                    int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);</b>
+<b class="nc"><i class="no-highlight">558</i>&nbsp;                    try (</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;                            SymbolMapReaderImpl reader = new SymbolMapReaderImpl(</b>
+<i class="no-highlight">560</i>&nbsp;                                    cfg,
+<i class="no-highlight">561</i>&nbsp;                                    path,
+<i class="no-highlight">562</i>&nbsp;                                    column,
+<i class="no-highlight">563</i>&nbsp;                                    TableUtils.COLUMN_NAME_TXN_NONE, symbolCount
+<i class="no-highlight">564</i>&nbsp;                            );
+<b class="fc"><i class="no-highlight">565</i>&nbsp;                            MemoryCMARW mem = Vm.getSmallCMARWInstance(</b>
+<i class="no-highlight">566</i>&nbsp;                                    ff,
+<b class="fc"><i class="no-highlight">567</i>&nbsp;                                    path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),</b>
+<i class="no-highlight">568</i>&nbsp;                                    MemoryTag.MMAP_IMPORT,
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                                    cfg.getWriterFileOpenOpts()</b>
+<i class="no-highlight">570</i>&nbsp;                            )
+<i class="no-highlight">571</i>&nbsp;                    ) {
+<i class="no-highlight">572</i>&nbsp;                        // It is possible to skip symbol rewrite when symbols do not clash.
+<i class="no-highlight">573</i>&nbsp;                        // From our benchmarks rewriting symbols take a tiny fraction of time compared to everything else
+<i class="no-highlight">574</i>&nbsp;                        // so that we don&#39;t need to optimise this yet.
+<b class="fc"><i class="no-highlight">575</i>&nbsp;                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);</b>
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                    }</b>
+<b class="fc"><i class="no-highlight">577</i>&nbsp;                }</b>
+<i class="no-highlight">578</i>&nbsp;            }
+<i class="no-highlight">579</i>&nbsp;        }
+<i class="no-highlight">580</i>&nbsp;    }
+<i class="no-highlight">581</i>&nbsp;
+<b class="fc"><i class="no-highlight">582</i>&nbsp;    public static class PhaseUpdateSymbolKeys {</b>
+<i class="no-highlight">583</i>&nbsp;        CharSequence columnName;
+<i class="no-highlight">584</i>&nbsp;        int index;
+<i class="no-highlight">585</i>&nbsp;        long partitionSize;
+<i class="no-highlight">586</i>&nbsp;        long partitionTimestamp;
+<i class="no-highlight">587</i>&nbsp;        CharSequence root;
+<i class="no-highlight">588</i>&nbsp;        int symbolCount;
+<i class="no-highlight">589</i>&nbsp;        private CairoEngine cairoEngine;
+<i class="no-highlight">590</i>&nbsp;        private TableStructure tableStructure;
+<i class="no-highlight">591</i>&nbsp;
+<i class="no-highlight">592</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">593</i>&nbsp;            this.cairoEngine = null;</b>
+<b class="fc"><i class="no-highlight">594</i>&nbsp;            this.tableStructure = null;</b>
+<b class="fc"><i class="no-highlight">595</i>&nbsp;            this.index = -1;</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;            this.partitionSize = -1;</b>
+<b class="fc"><i class="no-highlight">597</i>&nbsp;            this.partitionTimestamp = -1;</b>
+<b class="fc"><i class="no-highlight">598</i>&nbsp;            this.root = null;</b>
+<b class="fc"><i class="no-highlight">599</i>&nbsp;            this.columnName = null;</b>
+<b class="fc"><i class="no-highlight">600</i>&nbsp;            this.symbolCount = -1;</b>
+<i class="no-highlight">601</i>&nbsp;        }
+<i class="no-highlight">602</i>&nbsp;
+<i class="no-highlight">603</i>&nbsp;        public void of(CairoEngine cairoEngine,
+<i class="no-highlight">604</i>&nbsp;                       TableStructure tableStructure,
+<i class="no-highlight">605</i>&nbsp;                       int index,
+<i class="no-highlight">606</i>&nbsp;                       long partitionSize,
+<i class="no-highlight">607</i>&nbsp;                       long partitionTimestamp,
+<i class="no-highlight">608</i>&nbsp;                       CharSequence root,
+<i class="no-highlight">609</i>&nbsp;                       CharSequence columnName,
+<i class="no-highlight">610</i>&nbsp;                       int symbolCount
+<i class="no-highlight">611</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">612</i>&nbsp;            this.cairoEngine = cairoEngine;</b>
+<b class="fc"><i class="no-highlight">613</i>&nbsp;            this.tableStructure = tableStructure;</b>
+<b class="fc"><i class="no-highlight">614</i>&nbsp;            this.index = index;</b>
+<b class="fc"><i class="no-highlight">615</i>&nbsp;            this.partitionSize = partitionSize;</b>
+<b class="fc"><i class="no-highlight">616</i>&nbsp;            this.partitionTimestamp = partitionTimestamp;</b>
+<b class="fc"><i class="no-highlight">617</i>&nbsp;            this.root = root;</b>
+<b class="fc"><i class="no-highlight">618</i>&nbsp;            this.columnName = columnName;</b>
+<b class="fc"><i class="no-highlight">619</i>&nbsp;            this.symbolCount = symbolCount;</b>
+<i class="no-highlight">620</i>&nbsp;        }
+<i class="no-highlight">621</i>&nbsp;
+<i class="no-highlight">622</i>&nbsp;        public void run(Path path) {
+<b class="fc"><i class="no-highlight">623</i>&nbsp;            final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();</b>
+<i class="no-highlight">624</i>&nbsp;
+<b class="fc"><i class="no-highlight">625</i>&nbsp;            TableToken tableToken = cairoEngine.getTableToken(tableStructure.getTableName());</b>
+<b class="fc"><i class="no-highlight">626</i>&nbsp;            path.of(root).concat(tableToken.getTableName()).put(&#39;_&#39;).put(index);</b>
+<b class="fc"><i class="no-highlight">627</i>&nbsp;            int plen = path.length();</b>
+<b class="fc"><i class="no-highlight">628</i>&nbsp;            PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);</b>
+<b class="fc"><i class="no-highlight">629</i>&nbsp;            path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);</b>
+<i class="no-highlight">630</i>&nbsp;
+<b class="fc"><i class="no-highlight">631</i>&nbsp;            long columnMemory = 0;</b>
+<b class="fc"><i class="no-highlight">632</i>&nbsp;            long columnMemorySize = 0;</b>
+<b class="fc"><i class="no-highlight">633</i>&nbsp;            long remapTableMemory = 0;</b>
+<b class="fc"><i class="no-highlight">634</i>&nbsp;            long remapTableMemorySize = 0;</b>
+<b class="fc"><i class="no-highlight">635</i>&nbsp;            int columnFd = -1;</b>
+<b class="fc"><i class="no-highlight">636</i>&nbsp;            int remapFd = -1;</b>
+<i class="no-highlight">637</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">638</i>&nbsp;                columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);</b>
+<b class="fc"><i class="no-highlight">639</i>&nbsp;                columnMemorySize = ff.length(columnFd);</b>
+<i class="no-highlight">640</i>&nbsp;
+<b class="fc"><i class="no-highlight">641</i>&nbsp;                path.trimTo(plen);</b>
+<b class="fc"><i class="no-highlight">642</i>&nbsp;                path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);</b>
+<b class="fc"><i class="no-highlight">643</i>&nbsp;                remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);</b>
+<b class="fc"><i class="no-highlight">644</i>&nbsp;                remapTableMemorySize = ff.length(remapFd);</b>
+<i class="no-highlight">645</i>&nbsp;
+<b class="fc"><i class="no-highlight">646</i>&nbsp;                if (columnMemorySize &gt;= Integer.BYTES &amp;&amp; remapTableMemorySize &gt;= Integer.BYTES) {</b>
+<b class="fc"><i class="no-highlight">647</i>&nbsp;                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_IMPORT);</b>
+<b class="fc"><i class="no-highlight">648</i>&nbsp;                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_IMPORT);</b>
+<b class="fc"><i class="no-highlight">649</i>&nbsp;                    long columnMemSize = partitionSize * Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">650</i>&nbsp;                    long remapMemSize = (long) symbolCount * Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">651</i>&nbsp;                    ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);</b>
+<i class="no-highlight">652</i>&nbsp;                }
+<i class="no-highlight">653</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">654</i>&nbsp;                ff.close(columnFd);</b>
+<b class="fc"><i class="no-highlight">655</i>&nbsp;                ff.close(remapFd);</b>
+<b class="fc"><i class="no-highlight">656</i>&nbsp;                if (columnMemory &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">657</i>&nbsp;                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_IMPORT);</b>
+<i class="no-highlight">658</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">659</i>&nbsp;                if (remapTableMemory &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">660</i>&nbsp;                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_IMPORT);</b>
+<i class="no-highlight">661</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">662</i>&nbsp;            }</b>
+<i class="no-highlight">663</i>&nbsp;        }
+<i class="no-highlight">664</i>&nbsp;    }
+<i class="no-highlight">665</i>&nbsp;
+<b class="fc"><i class="no-highlight">666</i>&nbsp;    public class PhaseIndexing {</b>
+<i class="no-highlight">667</i>&nbsp;        //stores partition key and size for all indexed partitions
+<b class="fc"><i class="no-highlight">668</i>&nbsp;        private final LongList partitionKeysAndSizes = new LongList();</b>
+<i class="no-highlight">669</i>&nbsp;        private TimestampAdapter adapter;
+<i class="no-highlight">670</i>&nbsp;        private int atomicity;
+<i class="no-highlight">671</i>&nbsp;        private long chunkEnd;
+<i class="no-highlight">672</i>&nbsp;        private long chunkStart;
+<i class="no-highlight">673</i>&nbsp;        private byte columnDelimiter;
+<i class="no-highlight">674</i>&nbsp;        private long errorCount;
+<i class="no-highlight">675</i>&nbsp;        private boolean ignoreHeader;
+<i class="no-highlight">676</i>&nbsp;        private CharSequence importRoot;
+<i class="no-highlight">677</i>&nbsp;        private int index;
+<i class="no-highlight">678</i>&nbsp;        private CharSequence inputFileName;
+<i class="no-highlight">679</i>&nbsp;        private long lineCount;
+<i class="no-highlight">680</i>&nbsp;        private long lineNumber;
+<i class="no-highlight">681</i>&nbsp;        private int partitionBy;
+<i class="no-highlight">682</i>&nbsp;        private int timestampIndex;
+<i class="no-highlight">683</i>&nbsp;
+<i class="no-highlight">684</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">685</i>&nbsp;            this.chunkStart = -1;</b>
+<b class="fc"><i class="no-highlight">686</i>&nbsp;            this.chunkEnd = -1;</b>
+<b class="fc"><i class="no-highlight">687</i>&nbsp;            this.lineNumber = -1;</b>
+<b class="fc"><i class="no-highlight">688</i>&nbsp;            this.lineCount = 0;</b>
+<b class="fc"><i class="no-highlight">689</i>&nbsp;            this.errorCount = 0;</b>
+<i class="no-highlight">690</i>&nbsp;
+<b class="fc"><i class="no-highlight">691</i>&nbsp;            this.index = -1;</b>
+<b class="fc"><i class="no-highlight">692</i>&nbsp;            this.inputFileName = null;</b>
+<b class="fc"><i class="no-highlight">693</i>&nbsp;            this.importRoot = null;</b>
+<b class="fc"><i class="no-highlight">694</i>&nbsp;            this.partitionBy = -1;</b>
+<b class="fc"><i class="no-highlight">695</i>&nbsp;            this.columnDelimiter = (byte) -1;</b>
+<b class="fc"><i class="no-highlight">696</i>&nbsp;            this.timestampIndex = -1;</b>
+<b class="fc"><i class="no-highlight">697</i>&nbsp;            this.adapter = null;</b>
+<b class="fc"><i class="no-highlight">698</i>&nbsp;            this.ignoreHeader = false;</b>
+<b class="fc"><i class="no-highlight">699</i>&nbsp;            this.atomicity = -1;</b>
+<i class="no-highlight">700</i>&nbsp;        }
+<i class="no-highlight">701</i>&nbsp;
+<i class="no-highlight">702</i>&nbsp;        public long getErrorCount() {
+<b class="fc"><i class="no-highlight">703</i>&nbsp;            return errorCount;</b>
+<i class="no-highlight">704</i>&nbsp;        }
+<i class="no-highlight">705</i>&nbsp;
+<i class="no-highlight">706</i>&nbsp;        public long getLineCount() {
+<b class="fc"><i class="no-highlight">707</i>&nbsp;            return lineCount;</b>
+<i class="no-highlight">708</i>&nbsp;        }
+<i class="no-highlight">709</i>&nbsp;
+<i class="no-highlight">710</i>&nbsp;        public LongList getPartitionKeysAndSizes() {
+<b class="fc"><i class="no-highlight">711</i>&nbsp;            return partitionKeysAndSizes;</b>
+<i class="no-highlight">712</i>&nbsp;        }
+<i class="no-highlight">713</i>&nbsp;
+<i class="no-highlight">714</i>&nbsp;        public void of(long chunkStart,
+<i class="no-highlight">715</i>&nbsp;                       long chunkEnd,
+<i class="no-highlight">716</i>&nbsp;                       long lineNumber,
+<i class="no-highlight">717</i>&nbsp;                       int index,
+<i class="no-highlight">718</i>&nbsp;                       CharSequence inputFileName,
+<i class="no-highlight">719</i>&nbsp;                       CharSequence importRoot,
+<i class="no-highlight">720</i>&nbsp;                       int partitionBy,
+<i class="no-highlight">721</i>&nbsp;                       byte columnDelimiter,
+<i class="no-highlight">722</i>&nbsp;                       int timestampIndex,
+<i class="no-highlight">723</i>&nbsp;                       TimestampAdapter adapter,
+<i class="no-highlight">724</i>&nbsp;                       boolean ignoreHeader,
+<i class="no-highlight">725</i>&nbsp;                       int atomicity
+<i class="no-highlight">726</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">727</i>&nbsp;            assert chunkStart &gt;= 0 &amp;&amp; chunkEnd &gt; chunkStart;</b>
+<b class="fc"><i class="no-highlight">728</i>&nbsp;            assert lineNumber &gt;= 0;</b>
+<i class="no-highlight">729</i>&nbsp;
+<b class="fc"><i class="no-highlight">730</i>&nbsp;            this.chunkStart = chunkStart;</b>
+<b class="fc"><i class="no-highlight">731</i>&nbsp;            this.chunkEnd = chunkEnd;</b>
+<b class="fc"><i class="no-highlight">732</i>&nbsp;            this.lineNumber = lineNumber;</b>
+<i class="no-highlight">733</i>&nbsp;
+<b class="fc"><i class="no-highlight">734</i>&nbsp;            this.index = index;</b>
+<b class="fc"><i class="no-highlight">735</i>&nbsp;            this.inputFileName = inputFileName;</b>
+<b class="fc"><i class="no-highlight">736</i>&nbsp;            this.importRoot = importRoot;</b>
+<b class="fc"><i class="no-highlight">737</i>&nbsp;            this.partitionBy = partitionBy;</b>
+<b class="fc"><i class="no-highlight">738</i>&nbsp;            this.columnDelimiter = columnDelimiter;</b>
+<b class="fc"><i class="no-highlight">739</i>&nbsp;            this.timestampIndex = timestampIndex;</b>
+<b class="fc"><i class="no-highlight">740</i>&nbsp;            this.adapter = adapter;</b>
+<b class="fc"><i class="no-highlight">741</i>&nbsp;            this.ignoreHeader = ignoreHeader;</b>
+<b class="fc"><i class="no-highlight">742</i>&nbsp;            this.atomicity = atomicity;</b>
+<i class="no-highlight">743</i>&nbsp;        }
+<i class="no-highlight">744</i>&nbsp;
+<i class="no-highlight">745</i>&nbsp;        public void run(CsvFileIndexer indexer, long fileBufAddr, long fileBufSize) throws TextException {
+<i class="no-highlight">746</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">747</i>&nbsp;                indexer.of(</b>
+<i class="no-highlight">748</i>&nbsp;                        inputFileName,
+<i class="no-highlight">749</i>&nbsp;                        importRoot,
+<i class="no-highlight">750</i>&nbsp;                        index,
+<i class="no-highlight">751</i>&nbsp;                        partitionBy,
+<i class="no-highlight">752</i>&nbsp;                        columnDelimiter,
+<i class="no-highlight">753</i>&nbsp;                        timestampIndex,
+<i class="no-highlight">754</i>&nbsp;                        adapter,
+<i class="no-highlight">755</i>&nbsp;                        ignoreHeader,
+<i class="no-highlight">756</i>&nbsp;                        atomicity,
+<i class="no-highlight">757</i>&nbsp;                        circuitBreaker
+<i class="no-highlight">758</i>&nbsp;                );
+<b class="fc"><i class="no-highlight">759</i>&nbsp;                indexer.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes, fileBufAddr, fileBufSize);</b>
+<b class="fc"><i class="no-highlight">760</i>&nbsp;                lineCount = indexer.getLineCount();</b>
+<b class="fc"><i class="no-highlight">761</i>&nbsp;                errorCount = indexer.getErrorCount();</b>
+<b class="fc"><i class="no-highlight">762</i>&nbsp;            } catch (TextException e) {</b>
+<b class="fc"><i class="no-highlight">763</i>&nbsp;                if (indexer.isCancelled()) {</b>
+<b class="nc"><i class="no-highlight">764</i>&nbsp;                    throw getCancelException();</b>
+<i class="no-highlight">765</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">766</i>&nbsp;                    throw e;</b>
+<i class="no-highlight">767</i>&nbsp;                }
+<i class="no-highlight">768</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">769</i>&nbsp;                indexer.clear();</b>
+<b class="fc"><i class="no-highlight">770</i>&nbsp;            }</b>
+<i class="no-highlight">771</i>&nbsp;        }
+<i class="no-highlight">772</i>&nbsp;    }
+<i class="no-highlight">773</i>&nbsp;
+<b class="fc"><i class="no-highlight">774</i>&nbsp;    public class PhasePartitionImport {</b>
+<b class="fc"><i class="no-highlight">775</i>&nbsp;        private final LongList importedRows = new LongList();</b>
+<b class="fc"><i class="no-highlight">776</i>&nbsp;        private final LongList offsets = new LongList();</b>
+<b class="fc"><i class="no-highlight">777</i>&nbsp;        private final StringSink tableNameSink = new StringSink();</b>
+<i class="no-highlight">778</i>&nbsp;        private int atomicity;
+<i class="no-highlight">779</i>&nbsp;        private CairoEngine cairoEngine;
+<i class="no-highlight">780</i>&nbsp;        private byte columnDelimiter;
+<i class="no-highlight">781</i>&nbsp;        private long errors;
+<i class="no-highlight">782</i>&nbsp;        private int hi;
+<i class="no-highlight">783</i>&nbsp;        private CharSequence importRoot;
+<i class="no-highlight">784</i>&nbsp;        private int index;
+<i class="no-highlight">785</i>&nbsp;        private CharSequence inputFileName;
+<i class="no-highlight">786</i>&nbsp;        private int lo;
+<i class="no-highlight">787</i>&nbsp;        private long offset;
+<i class="no-highlight">788</i>&nbsp;        private ObjList&lt;ParallelCsvFileImporter.PartitionInfo&gt; partitions;
+<i class="no-highlight">789</i>&nbsp;        private long rowsHandled;
+<i class="no-highlight">790</i>&nbsp;        private long rowsImported;
+<i class="no-highlight">791</i>&nbsp;        private TableWriter tableWriterRef;
+<i class="no-highlight">792</i>&nbsp;        private TableStructure targetTableStructure;
+<i class="no-highlight">793</i>&nbsp;        private TimestampAdapter timestampAdapter;
+<i class="no-highlight">794</i>&nbsp;        private int timestampIndex;
+<i class="no-highlight">795</i>&nbsp;        private ObjList&lt;TypeAdapter&gt; types;
+<i class="no-highlight">796</i>&nbsp;        private DirectCharSink utf8Sink;
+<b class="fc"><i class="no-highlight">797</i>&nbsp;        private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;</b>
+<i class="no-highlight">798</i>&nbsp;
+<i class="no-highlight">799</i>&nbsp;        public void clear() {
+<b class="fc"><i class="no-highlight">800</i>&nbsp;            this.cairoEngine = null;</b>
+<b class="fc"><i class="no-highlight">801</i>&nbsp;            this.targetTableStructure = null;</b>
+<b class="fc"><i class="no-highlight">802</i>&nbsp;            this.types = null;</b>
+<b class="fc"><i class="no-highlight">803</i>&nbsp;            this.atomicity = -1;</b>
+<b class="fc"><i class="no-highlight">804</i>&nbsp;            this.columnDelimiter = (byte) -1;</b>
+<b class="fc"><i class="no-highlight">805</i>&nbsp;            this.importRoot = null;</b>
+<b class="fc"><i class="no-highlight">806</i>&nbsp;            this.inputFileName = null;</b>
+<b class="fc"><i class="no-highlight">807</i>&nbsp;            this.index = -1;</b>
+<b class="fc"><i class="no-highlight">808</i>&nbsp;            this.partitions = null;</b>
+<b class="fc"><i class="no-highlight">809</i>&nbsp;            this.timestampIndex = -1;</b>
+<b class="fc"><i class="no-highlight">810</i>&nbsp;            this.timestampAdapter = null;</b>
+<i class="no-highlight">811</i>&nbsp;
+<b class="fc"><i class="no-highlight">812</i>&nbsp;            this.offset = 0;</b>
+<b class="fc"><i class="no-highlight">813</i>&nbsp;            this.importedRows.clear();</b>
+<b class="fc"><i class="no-highlight">814</i>&nbsp;            this.tableNameSink.clear();</b>
+<b class="fc"><i class="no-highlight">815</i>&nbsp;            this.rowsHandled = 0;</b>
+<b class="fc"><i class="no-highlight">816</i>&nbsp;            this.rowsImported = 0;</b>
+<b class="fc"><i class="no-highlight">817</i>&nbsp;            this.errors = 0;</b>
+<i class="no-highlight">818</i>&nbsp;
+<b class="fc"><i class="no-highlight">819</i>&nbsp;            this.utf8Sink = null;</b>
+<i class="no-highlight">820</i>&nbsp;        }
+<i class="no-highlight">821</i>&nbsp;
+<i class="no-highlight">822</i>&nbsp;        public long getErrors() {
+<b class="fc"><i class="no-highlight">823</i>&nbsp;            return errors;</b>
+<i class="no-highlight">824</i>&nbsp;        }
+<i class="no-highlight">825</i>&nbsp;
+<i class="no-highlight">826</i>&nbsp;        public LongList getImportedRows() {
+<b class="fc"><i class="no-highlight">827</i>&nbsp;            return importedRows;</b>
+<i class="no-highlight">828</i>&nbsp;        }
+<i class="no-highlight">829</i>&nbsp;
+<i class="no-highlight">830</i>&nbsp;        public long getRowsHandled() {
+<b class="fc"><i class="no-highlight">831</i>&nbsp;            return rowsHandled;</b>
+<i class="no-highlight">832</i>&nbsp;        }
+<i class="no-highlight">833</i>&nbsp;
+<i class="no-highlight">834</i>&nbsp;        public long getRowsImported() {
+<b class="fc"><i class="no-highlight">835</i>&nbsp;            return rowsImported;</b>
+<i class="no-highlight">836</i>&nbsp;        }
+<i class="no-highlight">837</i>&nbsp;
+<i class="no-highlight">838</i>&nbsp;        public void run(
+<i class="no-highlight">839</i>&nbsp;                TextLexerWrapper lf,
+<i class="no-highlight">840</i>&nbsp;                long fileBufAddr,
+<i class="no-highlight">841</i>&nbsp;                long fileBufSize,
+<i class="no-highlight">842</i>&nbsp;                DirectCharSink utf8Sink,
+<i class="no-highlight">843</i>&nbsp;                DirectLongList unmergedIndexes,
+<i class="no-highlight">844</i>&nbsp;                Path path,
+<i class="no-highlight">845</i>&nbsp;                Path tmpPath
+<i class="no-highlight">846</i>&nbsp;        ) throws TextException {
+<i class="no-highlight">847</i>&nbsp;
+<b class="fc"><i class="no-highlight">848</i>&nbsp;            this.utf8Sink = utf8Sink;</b>
+<i class="no-highlight">849</i>&nbsp;
+<b class="fc"><i class="no-highlight">850</i>&nbsp;            final CairoConfiguration configuration = cairoEngine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">851</i>&nbsp;            final FilesFacade ff = configuration.getFilesFacade();</b>
+<i class="no-highlight">852</i>&nbsp;
+<b class="fc"><i class="no-highlight">853</i>&nbsp;            tableNameSink.clear();</b>
+<b class="fc"><i class="no-highlight">854</i>&nbsp;            tableNameSink.put(targetTableStructure.getTableName()).put(&#39;_&#39;).put(index);</b>
+<b class="fc"><i class="no-highlight">855</i>&nbsp;            String publicTableName = tableNameSink.toString();</b>
+<b class="fc"><i class="no-highlight">856</i>&nbsp;            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);</b>
+<b class="fc"><i class="no-highlight">857</i>&nbsp;            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0);</b>
+<i class="no-highlight">858</i>&nbsp;
+<b class="fc"><i class="no-highlight">859</i>&nbsp;            try (</b>
+<b class="fc"><i class="no-highlight">860</i>&nbsp;                    TableWriter writer = new TableWriter(</b>
+<i class="no-highlight">861</i>&nbsp;                            configuration,
+<i class="no-highlight">862</i>&nbsp;                            tableToken,
+<b class="fc"><i class="no-highlight">863</i>&nbsp;                            cairoEngine.getMessageBus(),</b>
+<i class="no-highlight">864</i>&nbsp;                            null,
+<i class="no-highlight">865</i>&nbsp;                            true,
+<i class="no-highlight">866</i>&nbsp;                            DefaultLifecycleManager.INSTANCE,
+<i class="no-highlight">867</i>&nbsp;                            importRoot,
+<b class="fc"><i class="no-highlight">868</i>&nbsp;                            cairoEngine.getMetrics())</b>
+<i class="no-highlight">869</i>&nbsp;            ) {
+<b class="fc"><i class="no-highlight">870</i>&nbsp;                tableWriterRef = writer;</b>
+<b class="fc"><i class="no-highlight">871</i>&nbsp;                AbstractTextLexer lexer = lf.getLexer(columnDelimiter);</b>
+<b class="fc"><i class="no-highlight">872</i>&nbsp;                lexer.setTableName(tableNameSink);</b>
+<b class="fc"><i class="no-highlight">873</i>&nbsp;                lexer.setSkipLinesWithExtraValues(false);</b>
+<i class="no-highlight">874</i>&nbsp;
+<i class="no-highlight">875</i>&nbsp;                long prevErrors;
+<i class="no-highlight">876</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">877</i>&nbsp;                    for (int i = lo; i &lt; hi; i++) {</b>
+<b class="fc"><i class="no-highlight">878</i>&nbsp;                        throwIfCancelled();</b>
+<i class="no-highlight">879</i>&nbsp;
+<b class="fc"><i class="no-highlight">880</i>&nbsp;                        lexer.clear();</b>
+<b class="fc"><i class="no-highlight">881</i>&nbsp;                        prevErrors = errors;</b>
+<i class="no-highlight">882</i>&nbsp;
+<b class="fc"><i class="no-highlight">883</i>&nbsp;                        final CharSequence name = partitions.getQuick(i).name;</b>
+<b class="fc"><i class="no-highlight">884</i>&nbsp;                        path.of(importRoot).concat(name);</b>
+<b class="fc"><i class="no-highlight">885</i>&nbsp;                        mergePartitionIndexAndImportData(</b>
+<i class="no-highlight">886</i>&nbsp;                                ff,
+<b class="fc"><i class="no-highlight">887</i>&nbsp;                                configuration.getIOURingFacade(),</b>
+<b class="fc"><i class="no-highlight">888</i>&nbsp;                                configuration.isIOURingEnabled(),</b>
+<i class="no-highlight">889</i>&nbsp;                                path,
+<i class="no-highlight">890</i>&nbsp;                                lexer,
+<i class="no-highlight">891</i>&nbsp;                                fileBufAddr,
+<i class="no-highlight">892</i>&nbsp;                                fileBufSize,
+<i class="no-highlight">893</i>&nbsp;                                utf8Sink,
+<i class="no-highlight">894</i>&nbsp;                                unmergedIndexes,
+<i class="no-highlight">895</i>&nbsp;                                tmpPath
+<i class="no-highlight">896</i>&nbsp;                        );
+<i class="no-highlight">897</i>&nbsp;
+<b class="fc"><i class="no-highlight">898</i>&nbsp;                        long newErrors = errors - prevErrors;</b>
+<b class="fc"><i class="no-highlight">899</i>&nbsp;                        long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - newErrors : lexer.getLineCount();</b>
+<b class="fc"><i class="no-highlight">900</i>&nbsp;                        importedRows.add(i);</b>
+<b class="fc"><i class="no-highlight">901</i>&nbsp;                        importedRows.add(imported);</b>
+<b class="fc"><i class="no-highlight">902</i>&nbsp;                        rowsHandled += lexer.getLineCount();</b>
+<b class="fc"><i class="no-highlight">903</i>&nbsp;                        rowsImported += imported;</b>
+<i class="no-highlight">904</i>&nbsp;
+<b class="fc"><i class="no-highlight">905</i>&nbsp;                        LOG.info()</b>
+<b class="fc"><i class="no-highlight">906</i>&nbsp;                                .$(&quot;imported data [temp_table=&quot;).$(tableNameSink)</b>
+<b class="fc"><i class="no-highlight">907</i>&nbsp;                                .$(&quot;, partition=&quot;).$(name)</b>
+<b class="fc"><i class="no-highlight">908</i>&nbsp;                                .$(&quot;, lines=&quot;).$(lexer.getLineCount())</b>
+<b class="fc"><i class="no-highlight">909</i>&nbsp;                                .$(&quot;, errors=&quot;).$(newErrors)</b>
+<b class="fc"><i class="no-highlight">910</i>&nbsp;                                .I$();</b>
+<i class="no-highlight">911</i>&nbsp;                    }
+<i class="no-highlight">912</i>&nbsp;                } finally {
+<b class="fc"><i class="no-highlight">913</i>&nbsp;                    writer.commit(CommitMode.SYNC);</b>
+<b class="fc"><i class="no-highlight">914</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">915</i>&nbsp;            }</b>
+<i class="no-highlight">916</i>&nbsp;        }
+<i class="no-highlight">917</i>&nbsp;
+<i class="no-highlight">918</i>&nbsp;        private void consumeIOURing(
+<i class="no-highlight">919</i>&nbsp;                FilesFacade ff,
+<i class="no-highlight">920</i>&nbsp;                long sqeMin,
+<i class="no-highlight">921</i>&nbsp;                AbstractTextLexer lexer,
+<i class="no-highlight">922</i>&nbsp;                long fileBufAddr,
+<i class="no-highlight">923</i>&nbsp;                LongList offsets,
+<i class="no-highlight">924</i>&nbsp;                IOURing ring,
+<i class="no-highlight">925</i>&nbsp;                int cc,
+<i class="no-highlight">926</i>&nbsp;                Path tmpPath
+<i class="no-highlight">927</i>&nbsp;        ) {
+<b class="nc"><i class="no-highlight">928</i>&nbsp;            int submitted = ring.submit();</b>
+<b class="nc"><i class="no-highlight">929</i>&nbsp;            assert submitted == cc;</b>
+<i class="no-highlight">930</i>&nbsp;
+<b class="nc"><i class="no-highlight">931</i>&nbsp;            long nextCqe = sqeMin;</b>
+<b class="nc"><i class="no-highlight">932</i>&nbsp;            int writtenMax = 0;</b>
+<i class="no-highlight">933</i>&nbsp;            // consume submitted tasks
+<b class="nc"><i class="no-highlight">934</i>&nbsp;            for (int i = 0; i &lt; submitted; i++) {</b>
+<i class="no-highlight">935</i>&nbsp;
+<b class="nc"><i class="no-highlight">936</i>&nbsp;                while (!ring.nextCqe()) {</b>
+<b class="nc"><i class="no-highlight">937</i>&nbsp;                    Os.pause();</b>
+<i class="no-highlight">938</i>&nbsp;                }
+<i class="no-highlight">939</i>&nbsp;
+<b class="nc"><i class="no-highlight">940</i>&nbsp;                if (ring.getCqeRes() &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">941</i>&nbsp;                    throw TextException</b>
+<b class="nc"><i class="no-highlight">942</i>&nbsp;                            .$(&quot;could not read from file [path=&#39;&quot;).put(tmpPath)</b>
+<b class="nc"><i class="no-highlight">943</i>&nbsp;                            .put(&quot;&#39;, errno=&quot;).put(ff.errno())</b>
+<b class="nc"><i class="no-highlight">944</i>&nbsp;                            .put(&quot;, offset=&quot;).put(offset)</b>
+<b class="nc"><i class="no-highlight">945</i>&nbsp;                            .put(&quot;]&quot;);</b>
+<i class="no-highlight">946</i>&nbsp;                }
+<i class="no-highlight">947</i>&nbsp;
+<b class="nc"><i class="no-highlight">948</i>&nbsp;                if (ring.getCqeId() == nextCqe) {</b>
+<i class="no-highlight">949</i>&nbsp;                    // only parse lines in order of submissions
+<b class="nc"><i class="no-highlight">950</i>&nbsp;                    nextCqe++;</b>
+<b class="nc"><i class="no-highlight">951</i>&nbsp;                    parseLinesAndWrite(lexer, fileBufAddr, offsets, writtenMax);</b>
+<b class="nc"><i class="no-highlight">952</i>&nbsp;                    writtenMax++;</b>
+<i class="no-highlight">953</i>&nbsp;                }
+<i class="no-highlight">954</i>&nbsp;            }
+<i class="no-highlight">955</i>&nbsp;
+<i class="no-highlight">956</i>&nbsp;            // if reads came out of order, the writtenMax should be less than submitted
+<b class="nc"><i class="no-highlight">957</i>&nbsp;            for (int i = writtenMax; i &lt; submitted; i++) {</b>
+<b class="nc"><i class="no-highlight">958</i>&nbsp;                parseLinesAndWrite(lexer, fileBufAddr, offsets, i);</b>
+<i class="no-highlight">959</i>&nbsp;            }
+<i class="no-highlight">960</i>&nbsp;        }
+<i class="no-highlight">961</i>&nbsp;
+<i class="no-highlight">962</i>&nbsp;        private TableWriter.Row getRow(DirectByteCharSequence dbcs, long offset) {
+<i class="no-highlight">963</i>&nbsp;            final long timestamp;
+<i class="no-highlight">964</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">965</i>&nbsp;                timestamp = timestampAdapter.getTimestamp(dbcs);</b>
+<b class="nc"><i class="no-highlight">966</i>&nbsp;            } catch (Throwable e) {</b>
+<b class="nc"><i class="no-highlight">967</i>&nbsp;                if (atomicity == Atomicity.SKIP_ALL) {</b>
+<b class="nc"><i class="no-highlight">968</i>&nbsp;                    throw TextException.$(&quot;could not parse timestamp [offset=&quot;).put(offset).put(&quot;, msg=&quot;).put(e.getMessage()).put(&#39;]&#39;);</b>
+<i class="no-highlight">969</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">970</i>&nbsp;                    logError(offset, timestampIndex, dbcs);</b>
+<b class="nc"><i class="no-highlight">971</i>&nbsp;                    return null;</b>
+<i class="no-highlight">972</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">973</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">974</i>&nbsp;            return tableWriterRef.newRow(timestamp);</b>
+<i class="no-highlight">975</i>&nbsp;        }
+<i class="no-highlight">976</i>&nbsp;
+<i class="no-highlight">977</i>&nbsp;        private void importPartitionData(
+<i class="no-highlight">978</i>&nbsp;                final IOURingFacade rf,
+<i class="no-highlight">979</i>&nbsp;                final boolean ioURingEnabled,
+<i class="no-highlight">980</i>&nbsp;                final AbstractTextLexer lexer,
+<i class="no-highlight">981</i>&nbsp;                long address,
+<i class="no-highlight">982</i>&nbsp;                long size,
+<i class="no-highlight">983</i>&nbsp;                long fileBufAddr,
+<i class="no-highlight">984</i>&nbsp;                long fileBufSize,
+<i class="no-highlight">985</i>&nbsp;                DirectCharSink utf8Sink,
+<i class="no-highlight">986</i>&nbsp;                Path tmpPath
+<i class="no-highlight">987</i>&nbsp;        ) throws TextException {
+<b class="fc"><i class="no-highlight">988</i>&nbsp;            if (ioURingEnabled &amp;&amp; rf.isAvailable()) {</b>
+<b class="nc"><i class="no-highlight">989</i>&nbsp;                importPartitionDataURing(</b>
+<i class="no-highlight">990</i>&nbsp;                        rf,
+<i class="no-highlight">991</i>&nbsp;                        lexer,
+<i class="no-highlight">992</i>&nbsp;                        address,
+<i class="no-highlight">993</i>&nbsp;                        size,
+<i class="no-highlight">994</i>&nbsp;                        fileBufAddr,
+<i class="no-highlight">995</i>&nbsp;                        fileBufSize,
+<i class="no-highlight">996</i>&nbsp;                        utf8Sink,
+<i class="no-highlight">997</i>&nbsp;                        tmpPath
+<i class="no-highlight">998</i>&nbsp;                );
+<i class="no-highlight">999</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">1000</i>&nbsp;                importPartitionDataVanilla(</b>
+<i class="no-highlight">1001</i>&nbsp;                        lexer,
+<i class="no-highlight">1002</i>&nbsp;                        address,
+<i class="no-highlight">1003</i>&nbsp;                        size,
+<i class="no-highlight">1004</i>&nbsp;                        fileBufAddr,
+<i class="no-highlight">1005</i>&nbsp;                        fileBufSize,
+<i class="no-highlight">1006</i>&nbsp;                        utf8Sink,
+<i class="no-highlight">1007</i>&nbsp;                        tmpPath
+<i class="no-highlight">1008</i>&nbsp;                );
+<i class="no-highlight">1009</i>&nbsp;            }
+<i class="no-highlight">1010</i>&nbsp;        }
+<i class="no-highlight">1011</i>&nbsp;
+<i class="no-highlight">1012</i>&nbsp;        private void importPartitionDataURing(
+<i class="no-highlight">1013</i>&nbsp;                final IOURingFacade rf,
+<i class="no-highlight">1014</i>&nbsp;                AbstractTextLexer lexer,
+<i class="no-highlight">1015</i>&nbsp;                long address,
+<i class="no-highlight">1016</i>&nbsp;                long size,
+<i class="no-highlight">1017</i>&nbsp;                long fileBufAddr,
+<i class="no-highlight">1018</i>&nbsp;                long fileBufSize,
+<i class="no-highlight">1019</i>&nbsp;                DirectCharSink utf8Sink,
+<i class="no-highlight">1020</i>&nbsp;                Path tmpPath
+<i class="no-highlight">1021</i>&nbsp;        ) {
+<b class="nc"><i class="no-highlight">1022</i>&nbsp;            final CairoConfiguration configuration = cairoEngine.getConfiguration();</b>
+<b class="nc"><i class="no-highlight">1023</i>&nbsp;            final FilesFacade ff = configuration.getFilesFacade();</b>
+<i class="no-highlight">1024</i>&nbsp;
+<b class="nc"><i class="no-highlight">1025</i>&nbsp;            offsets.clear();</b>
+<b class="nc"><i class="no-highlight">1026</i>&nbsp;            lexer.setupBeforeExactLines(onFieldsPartitioned);</b>
+<i class="no-highlight">1027</i>&nbsp;
+<b class="nc"><i class="no-highlight">1028</i>&nbsp;            int fd = -1;</b>
+<i class="no-highlight">1029</i>&nbsp;            try {
+<b class="nc"><i class="no-highlight">1030</i>&nbsp;                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();</b>
+<b class="nc"><i class="no-highlight">1031</i>&nbsp;                utf8Sink.clear();</b>
+<b class="nc"><i class="no-highlight">1032</i>&nbsp;                fd = TableUtils.openRO(ff, tmpPath, LOG);</b>
+<i class="no-highlight">1033</i>&nbsp;
+<b class="nc"><i class="no-highlight">1034</i>&nbsp;                final long len = ff.length(fd);</b>
+<b class="nc"><i class="no-highlight">1035</i>&nbsp;                if (len == -1) {</b>
+<b class="nc"><i class="no-highlight">1036</i>&nbsp;                    throw CairoException.critical(ff.errno())</b>
+<b class="nc"><i class="no-highlight">1037</i>&nbsp;                            .put(&quot;could not get length of file [path=&quot;).put(tmpPath)</b>
+<b class="nc"><i class="no-highlight">1038</i>&nbsp;                            .put(&#39;]&#39;);</b>
+<i class="no-highlight">1039</i>&nbsp;                }
+<i class="no-highlight">1040</i>&nbsp;
+<b class="nc"><i class="no-highlight">1041</i>&nbsp;                ff.fadvise(fd, 0, len, Files.POSIX_FADV_RANDOM);</b>
+<i class="no-highlight">1042</i>&nbsp;
+<b class="nc"><i class="no-highlight">1043</i>&nbsp;                final long MASK = ~((255L) &lt;&lt; 56 | (255L) &lt;&lt; 48);</b>
+<b class="nc"><i class="no-highlight">1044</i>&nbsp;                final long count = size / (2 * Long.BYTES);</b>
+<i class="no-highlight">1045</i>&nbsp;
+<b class="nc"><i class="no-highlight">1046</i>&nbsp;                int ringCapacity = 32;</b>
+<b class="nc"><i class="no-highlight">1047</i>&nbsp;                long sqeMin = 0;</b>
+<b class="nc"><i class="no-highlight">1048</i>&nbsp;                long sqeMax = -1;</b>
+<b class="nc"><i class="no-highlight">1049</i>&nbsp;                try (IOURing ring = rf.newInstance(ringCapacity)) {</b>
+<b class="nc"><i class="no-highlight">1050</i>&nbsp;                    long addr = fileBufAddr;</b>
+<b class="nc"><i class="no-highlight">1051</i>&nbsp;                    long lim = fileBufAddr + fileBufSize;</b>
+<b class="nc"><i class="no-highlight">1052</i>&nbsp;                    int cc = 0;</b>
+<i class="no-highlight">1053</i>&nbsp;                    int bytesToRead;
+<i class="no-highlight">1054</i>&nbsp;                    int additionalLines;
+<b class="nc"><i class="no-highlight">1055</i>&nbsp;                    for (long i = 0; i &lt; count; i++) {</b>
+<b class="nc"><i class="no-highlight">1056</i>&nbsp;                        throwIfCancelled();</b>
+<i class="no-highlight">1057</i>&nbsp;
+<b class="nc"><i class="no-highlight">1058</i>&nbsp;                        final long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);</b>
+<b class="nc"><i class="no-highlight">1059</i>&nbsp;                        final int lineLength = (int) (lengthAndOffset &gt;&gt;&gt; 48);</b>
+<i class="no-highlight">1060</i>&nbsp;                        // the offset is used by the callback to report errors
+<b class="nc"><i class="no-highlight">1061</i>&nbsp;                        offset = lengthAndOffset &amp; MASK;</b>
+<b class="nc"><i class="no-highlight">1062</i>&nbsp;                        bytesToRead = lineLength;</b>
+<i class="no-highlight">1063</i>&nbsp;
+<i class="no-highlight">1064</i>&nbsp;                        // schedule reads until we either run out of ring capacity or
+<i class="no-highlight">1065</i>&nbsp;                        // our read buffer size
+<i class="no-highlight">1066</i>&nbsp;
+<b class="nc"><i class="no-highlight">1067</i>&nbsp;                        if (cc == ringCapacity || (cc &gt; 0 &amp;&amp; addr + lineLength &gt; lim)) {</b>
+<i class="no-highlight">1068</i>&nbsp;                            // we are out of ring capacity or our buffer is exhausted
+<b class="nc"><i class="no-highlight">1069</i>&nbsp;                            consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);</b>
+<i class="no-highlight">1070</i>&nbsp;
+<b class="nc"><i class="no-highlight">1071</i>&nbsp;                            cc = 0;</b>
+<b class="nc"><i class="no-highlight">1072</i>&nbsp;                            addr = fileBufAddr;</b>
+<b class="nc"><i class="no-highlight">1073</i>&nbsp;                            offsets.clear();</b>
+<b class="nc"><i class="no-highlight">1074</i>&nbsp;                            sqeMin = sqeMax + 1;</b>
+<i class="no-highlight">1075</i>&nbsp;                        }
+<b class="nc"><i class="no-highlight">1076</i>&nbsp;                        if (addr + lineLength &gt; lim) {</b>
+<b class="nc"><i class="no-highlight">1077</i>&nbsp;                            throw TextException.$(&quot;buffer overflow [path=&#39;&quot;).put(tmpPath)</b>
+<b class="nc"><i class="no-highlight">1078</i>&nbsp;                                    .put(&quot;&#39;, lineLength=&quot;).put(lineLength)</b>
+<b class="nc"><i class="no-highlight">1079</i>&nbsp;                                    .put(&quot;, fileBufSize=&quot;).put(fileBufSize)</b>
+<b class="nc"><i class="no-highlight">1080</i>&nbsp;                                    .put(&quot;]&quot;);</b>
+<i class="no-highlight">1081</i>&nbsp;                        }
+<i class="no-highlight">1082</i>&nbsp;
+<i class="no-highlight">1083</i>&nbsp;                        // try to coalesce ahead lines into the same read, if they&#39;re sequential
+<b class="nc"><i class="no-highlight">1084</i>&nbsp;                        additionalLines = 0;</b>
+<b class="nc"><i class="no-highlight">1085</i>&nbsp;                        for (long j = i + 1; j &lt; count; j++) {</b>
+<b class="nc"><i class="no-highlight">1086</i>&nbsp;                            long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);</b>
+<b class="nc"><i class="no-highlight">1087</i>&nbsp;                            int nextLineLength = (int) (nextLengthAndOffset &gt;&gt;&gt; 48);</b>
+<b class="nc"><i class="no-highlight">1088</i>&nbsp;                            long nextOffset = nextLengthAndOffset &amp; MASK;</b>
+<i class="no-highlight">1089</i>&nbsp;
+<i class="no-highlight">1090</i>&nbsp;                            // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
+<b class="nc"><i class="no-highlight">1091</i>&nbsp;                            long diff = nextOffset - offset - bytesToRead;</b>
+<b class="nc"><i class="no-highlight">1092</i>&nbsp;                            long nextBytesToRead = diff + nextLineLength;</b>
+<b class="nc"><i class="no-highlight">1093</i>&nbsp;                            if (diff &gt; -1 &amp;&amp; diff &lt; 2 &amp;&amp; addr + bytesToRead + nextBytesToRead &lt;= lim) {</b>
+<b class="nc"><i class="no-highlight">1094</i>&nbsp;                                bytesToRead += nextBytesToRead;</b>
+<b class="nc"><i class="no-highlight">1095</i>&nbsp;                                additionalLines++;</b>
+<i class="no-highlight">1096</i>&nbsp;                            } else {
+<i class="no-highlight">1097</i>&nbsp;                                break;
+<i class="no-highlight">1098</i>&nbsp;                            }
+<i class="no-highlight">1099</i>&nbsp;                        }
+<b class="nc"><i class="no-highlight">1100</i>&nbsp;                        i += additionalLines;</b>
+<i class="no-highlight">1101</i>&nbsp;
+<b class="nc"><i class="no-highlight">1102</i>&nbsp;                        sqeMax = ring.enqueueRead(fd, offset, addr, bytesToRead);</b>
+<b class="nc"><i class="no-highlight">1103</i>&nbsp;                        if (sqeMax == -1) {</b>
+<b class="nc"><i class="no-highlight">1104</i>&nbsp;                            throw TextException.$(&quot;io_uring error [path=&#39;&quot;).put(tmpPath)</b>
+<b class="nc"><i class="no-highlight">1105</i>&nbsp;                                    .put(&quot;&#39;, cqeRes=&quot;).put(-ring.getCqeRes())</b>
+<b class="nc"><i class="no-highlight">1106</i>&nbsp;                                    .put(&quot;]&quot;);</b>
+<i class="no-highlight">1107</i>&nbsp;                        }
+<i class="no-highlight">1108</i>&nbsp;
+<b class="nc"><i class="no-highlight">1109</i>&nbsp;                        offsets.add(addr - fileBufAddr, bytesToRead);</b>
+<i class="no-highlight">1110</i>&nbsp;
+<b class="nc"><i class="no-highlight">1111</i>&nbsp;                        cc++;</b>
+<b class="nc"><i class="no-highlight">1112</i>&nbsp;                        addr += bytesToRead;</b>
+<i class="no-highlight">1113</i>&nbsp;                    } // for
+<i class="no-highlight">1114</i>&nbsp;
+<i class="no-highlight">1115</i>&nbsp;                    // check if something is enqueued
+<b class="nc"><i class="no-highlight">1116</i>&nbsp;                    if (cc &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">1117</i>&nbsp;                        consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);</b>
+<i class="no-highlight">1118</i>&nbsp;                    }
+<b class="nc"><i class="no-highlight">1119</i>&nbsp;                }</b>
+<i class="no-highlight">1120</i>&nbsp;
+<i class="no-highlight">1121</i>&nbsp;            } finally {
+<b class="nc"><i class="no-highlight">1122</i>&nbsp;                ff.close(fd);</b>
+<b class="nc"><i class="no-highlight">1123</i>&nbsp;            }</b>
+<i class="no-highlight">1124</i>&nbsp;        }
+<i class="no-highlight">1125</i>&nbsp;
+<i class="no-highlight">1126</i>&nbsp;        private void importPartitionDataVanilla(
+<i class="no-highlight">1127</i>&nbsp;                AbstractTextLexer lexer,
+<i class="no-highlight">1128</i>&nbsp;                long address,
+<i class="no-highlight">1129</i>&nbsp;                long size,
+<i class="no-highlight">1130</i>&nbsp;                long fileBufAddr,
+<i class="no-highlight">1131</i>&nbsp;                long fileBufSize,
+<i class="no-highlight">1132</i>&nbsp;                DirectCharSink utf8Sink,
+<i class="no-highlight">1133</i>&nbsp;                Path tmpPath
+<i class="no-highlight">1134</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">1135</i>&nbsp;            final CairoConfiguration configuration = cairoEngine.getConfiguration();</b>
+<b class="fc"><i class="no-highlight">1136</i>&nbsp;            final FilesFacade ff = configuration.getFilesFacade();</b>
+<i class="no-highlight">1137</i>&nbsp;
+<b class="fc"><i class="no-highlight">1138</i>&nbsp;            lexer.setupBeforeExactLines(onFieldsPartitioned);</b>
+<i class="no-highlight">1139</i>&nbsp;
+<b class="fc"><i class="no-highlight">1140</i>&nbsp;            int fd = -1;</b>
+<i class="no-highlight">1141</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">1142</i>&nbsp;                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();</b>
+<b class="fc"><i class="no-highlight">1143</i>&nbsp;                utf8Sink.clear();</b>
+<b class="fc"><i class="no-highlight">1144</i>&nbsp;                fd = TableUtils.openRO(ff, tmpPath, LOG);</b>
+<i class="no-highlight">1145</i>&nbsp;
+<b class="fc"><i class="no-highlight">1146</i>&nbsp;                final long len = ff.length(fd);</b>
+<b class="fc"><i class="no-highlight">1147</i>&nbsp;                if (len == -1) {</b>
+<b class="nc"><i class="no-highlight">1148</i>&nbsp;                    throw CairoException.critical(ff.errno()).put(</b>
+<b class="nc"><i class="no-highlight">1149</i>&nbsp;                                    &quot;could not get length of file [path=&quot;).put(tmpPath)</b>
+<b class="nc"><i class="no-highlight">1150</i>&nbsp;                            .put(&#39;]&#39;);</b>
+<i class="no-highlight">1151</i>&nbsp;                }
+<i class="no-highlight">1152</i>&nbsp;
+<b class="fc"><i class="no-highlight">1153</i>&nbsp;                ff.fadvise(fd, 0, len, Files.POSIX_FADV_RANDOM);</b>
+<i class="no-highlight">1154</i>&nbsp;
+<b class="fc"><i class="no-highlight">1155</i>&nbsp;                final long MASK = ~((255L) &lt;&lt; 56 | (255L) &lt;&lt; 48);</b>
+<b class="fc"><i class="no-highlight">1156</i>&nbsp;                final long count = size / (2 * Long.BYTES);</b>
+<i class="no-highlight">1157</i>&nbsp;                int bytesToRead;
+<i class="no-highlight">1158</i>&nbsp;                int additionalLines;
+<i class="no-highlight">1159</i>&nbsp;
+<b class="fc"><i class="no-highlight">1160</i>&nbsp;                for (long i = 0; i &lt; count; i++) {</b>
+<b class="fc"><i class="no-highlight">1161</i>&nbsp;                    throwIfCancelled();</b>
+<i class="no-highlight">1162</i>&nbsp;
+<b class="fc"><i class="no-highlight">1163</i>&nbsp;                    long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">1164</i>&nbsp;                    int lineLength = (int) (lengthAndOffset &gt;&gt;&gt; 48);</b>
+<b class="fc"><i class="no-highlight">1165</i>&nbsp;                    offset = lengthAndOffset &amp; MASK;</b>
+<b class="fc"><i class="no-highlight">1166</i>&nbsp;                    bytesToRead = lineLength;</b>
+<i class="no-highlight">1167</i>&nbsp;
+<i class="no-highlight">1168</i>&nbsp;                    // try to coalesce ahead lines into the same read, if they&#39;re sequential
+<b class="fc"><i class="no-highlight">1169</i>&nbsp;                    additionalLines = 0;</b>
+<b class="fc"><i class="no-highlight">1170</i>&nbsp;                    for (long j = i + 1; j &lt; count; j++) {</b>
+<b class="fc"><i class="no-highlight">1171</i>&nbsp;                        long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">1172</i>&nbsp;                        int nextLineLength = (int) (nextLengthAndOffset &gt;&gt;&gt; 48);</b>
+<b class="fc"><i class="no-highlight">1173</i>&nbsp;                        long nextOffset = nextLengthAndOffset &amp; MASK;</b>
+<i class="no-highlight">1174</i>&nbsp;
+<i class="no-highlight">1175</i>&nbsp;                        // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
+<b class="fc"><i class="no-highlight">1176</i>&nbsp;                        long diff = nextOffset - offset - bytesToRead;</b>
+<b class="fc"><i class="no-highlight">1177</i>&nbsp;                        long nextBytesToRead = diff + nextLineLength;</b>
+<b class="fc"><i class="no-highlight">1178</i>&nbsp;                        if (diff &gt; -1 &amp;&amp; diff &lt; 2 &amp;&amp; bytesToRead + nextBytesToRead &lt;= fileBufSize) {</b>
+<b class="fc"><i class="no-highlight">1179</i>&nbsp;                            bytesToRead += diff + nextLineLength;</b>
+<b class="fc"><i class="no-highlight">1180</i>&nbsp;                            additionalLines++;</b>
+<i class="no-highlight">1181</i>&nbsp;                        } else {
+<i class="no-highlight">1182</i>&nbsp;                            break;
+<i class="no-highlight">1183</i>&nbsp;                        }
+<i class="no-highlight">1184</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">1185</i>&nbsp;                    i += additionalLines;</b>
+<i class="no-highlight">1186</i>&nbsp;
+<b class="fc"><i class="no-highlight">1187</i>&nbsp;                    if (bytesToRead &gt; fileBufSize) {</b>
+<b class="fc"><i class="no-highlight">1188</i>&nbsp;                        throw TextException</b>
+<b class="fc"><i class="no-highlight">1189</i>&nbsp;                                .$(&quot;buffer overflow [path=&#39;&quot;).put(tmpPath)</b>
+<b class="fc"><i class="no-highlight">1190</i>&nbsp;                                .put(&quot;&#39;, bytesToRead=&quot;).put(bytesToRead)</b>
+<b class="fc"><i class="no-highlight">1191</i>&nbsp;                                .put(&quot;, fileBufSize=&quot;).put(fileBufSize)</b>
+<b class="fc"><i class="no-highlight">1192</i>&nbsp;                                .put(&quot;]&quot;);</b>
+<i class="no-highlight">1193</i>&nbsp;                    }
+<i class="no-highlight">1194</i>&nbsp;
+<b class="fc"><i class="no-highlight">1195</i>&nbsp;                    long n = ff.read(fd, fileBufAddr, bytesToRead, offset);</b>
+<b class="fc"><i class="no-highlight">1196</i>&nbsp;                    if (n &gt; 0) {</b>
+<i class="no-highlight">1197</i>&nbsp;                        // at this phase there is no way for lines to be split across buffers
+<b class="fc"><i class="no-highlight">1198</i>&nbsp;                        lexer.parseExactLines(fileBufAddr, fileBufAddr + n);</b>
+<i class="no-highlight">1199</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">1200</i>&nbsp;                        throw TextException</b>
+<b class="fc"><i class="no-highlight">1201</i>&nbsp;                                .$(&quot;could not read from file [path=&#39;&quot;).put(tmpPath)</b>
+<b class="fc"><i class="no-highlight">1202</i>&nbsp;                                .put(&quot;&#39;, errno=&quot;).put(ff.errno())</b>
+<b class="fc"><i class="no-highlight">1203</i>&nbsp;                                .put(&quot;, offset=&quot;).put(offset)</b>
+<b class="fc"><i class="no-highlight">1204</i>&nbsp;                                .put(&quot;]&quot;);</b>
+<i class="no-highlight">1205</i>&nbsp;                    }
+<i class="no-highlight">1206</i>&nbsp;                }
+<i class="no-highlight">1207</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">1208</i>&nbsp;                ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">1209</i>&nbsp;            }</b>
+<i class="no-highlight">1210</i>&nbsp;        }
+<i class="no-highlight">1211</i>&nbsp;
+<i class="no-highlight">1212</i>&nbsp;        private void logError(long offset, int column, final DirectByteCharSequence dbcs) {
+<b class="fc"><i class="no-highlight">1213</i>&nbsp;            LOG.error()</b>
+<b class="fc"><i class="no-highlight">1214</i>&nbsp;                    .$(&quot;type syntax [type=&quot;).$(ColumnType.nameOf(types.getQuick(column).getType()))</b>
+<b class="fc"><i class="no-highlight">1215</i>&nbsp;                    .$(&quot;, offset=&quot;).$(offset)</b>
+<b class="fc"><i class="no-highlight">1216</i>&nbsp;                    .$(&quot;, column=&quot;).$(column)</b>
+<b class="fc"><i class="no-highlight">1217</i>&nbsp;                    .$(&quot;, value=&#39;&quot;).$(dbcs)</b>
+<b class="fc"><i class="no-highlight">1218</i>&nbsp;                    .$(&quot;&#39;]&quot;).$();</b>
+<i class="no-highlight">1219</i>&nbsp;        }
+<i class="no-highlight">1220</i>&nbsp;
+<i class="no-highlight">1221</i>&nbsp;        private void mergePartitionIndexAndImportData(
+<i class="no-highlight">1222</i>&nbsp;                final FilesFacade ff,
+<i class="no-highlight">1223</i>&nbsp;                final IOURingFacade rf,
+<i class="no-highlight">1224</i>&nbsp;                boolean ioURingEnabled,
+<i class="no-highlight">1225</i>&nbsp;                Path partitionPath,
+<i class="no-highlight">1226</i>&nbsp;                final AbstractTextLexer lexer,
+<i class="no-highlight">1227</i>&nbsp;                long fileBufAddr,
+<i class="no-highlight">1228</i>&nbsp;                long fileBufSize,
+<i class="no-highlight">1229</i>&nbsp;                DirectCharSink utf8Sink,
+<i class="no-highlight">1230</i>&nbsp;                DirectLongList unmergedIndexes,
+<i class="no-highlight">1231</i>&nbsp;                Path tmpPath
+<i class="no-highlight">1232</i>&nbsp;        ) throws TextException {
+<b class="fc"><i class="no-highlight">1233</i>&nbsp;            unmergedIndexes.clear();</b>
+<b class="fc"><i class="no-highlight">1234</i>&nbsp;            partitionPath.slash$();</b>
+<b class="fc"><i class="no-highlight">1235</i>&nbsp;            int partitionLen = partitionPath.length();</b>
+<i class="no-highlight">1236</i>&nbsp;
+<b class="fc"><i class="no-highlight">1237</i>&nbsp;            long mergedIndexSize = -1;</b>
+<b class="fc"><i class="no-highlight">1238</i>&nbsp;            long mergeIndexAddr = 0;</b>
+<b class="fc"><i class="no-highlight">1239</i>&nbsp;            int fd = -1;</b>
+<i class="no-highlight">1240</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">1241</i>&nbsp;                mergedIndexSize = openIndexChunks(ff, partitionPath, unmergedIndexes, partitionLen);</b>
+<i class="no-highlight">1242</i>&nbsp;
+<b class="fc"><i class="no-highlight">1243</i>&nbsp;                if (unmergedIndexes.size() &gt; 2) { // there&#39;s more than 1 chunk so we&#39;ve to merge</b>
+<b class="fc"><i class="no-highlight">1244</i>&nbsp;                    partitionPath.trimTo(partitionLen);</b>
+<b class="fc"><i class="no-highlight">1245</i>&nbsp;                    partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();</b>
+<i class="no-highlight">1246</i>&nbsp;
+<b class="fc"><i class="no-highlight">1247</i>&nbsp;                    fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);</b>
+<b class="fc"><i class="no-highlight">1248</i>&nbsp;                    mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_IMPORT);</b>
+<i class="no-highlight">1249</i>&nbsp;
+<b class="fc"><i class="no-highlight">1250</i>&nbsp;                    Vect.mergeLongIndexesAsc(unmergedIndexes.getAddress(), (int) unmergedIndexes.size() / 2, mergeIndexAddr);</b>
+<i class="no-highlight">1251</i>&nbsp;                    // release chunk memory because it&#39;s been copied to merge area
+<b class="fc"><i class="no-highlight">1252</i>&nbsp;                    unmap(ff, unmergedIndexes);</b>
+<i class="no-highlight">1253</i>&nbsp;
+<b class="fc"><i class="no-highlight">1254</i>&nbsp;                    importPartitionData(</b>
+<i class="no-highlight">1255</i>&nbsp;                            rf,
+<i class="no-highlight">1256</i>&nbsp;                            ioURingEnabled,
+<i class="no-highlight">1257</i>&nbsp;                            lexer,
+<i class="no-highlight">1258</i>&nbsp;                            mergeIndexAddr,
+<i class="no-highlight">1259</i>&nbsp;                            mergedIndexSize,
+<i class="no-highlight">1260</i>&nbsp;                            fileBufAddr,
+<i class="no-highlight">1261</i>&nbsp;                            fileBufSize,
+<i class="no-highlight">1262</i>&nbsp;                            utf8Sink,
+<i class="no-highlight">1263</i>&nbsp;                            tmpPath
+<i class="no-highlight">1264</i>&nbsp;                    );
+<i class="no-highlight">1265</i>&nbsp;                } else { // we can use the single chunk as is
+<b class="fc"><i class="no-highlight">1266</i>&nbsp;                    importPartitionData(</b>
+<i class="no-highlight">1267</i>&nbsp;                            rf,
+<i class="no-highlight">1268</i>&nbsp;                            ioURingEnabled,
+<i class="no-highlight">1269</i>&nbsp;                            lexer,
+<b class="fc"><i class="no-highlight">1270</i>&nbsp;                            unmergedIndexes.get(0),</b>
+<i class="no-highlight">1271</i>&nbsp;                            mergedIndexSize,
+<i class="no-highlight">1272</i>&nbsp;                            fileBufAddr,
+<i class="no-highlight">1273</i>&nbsp;                            fileBufSize,
+<i class="no-highlight">1274</i>&nbsp;                            utf8Sink,
+<i class="no-highlight">1275</i>&nbsp;                            tmpPath
+<i class="no-highlight">1276</i>&nbsp;                    );
+<i class="no-highlight">1277</i>&nbsp;                }
+<i class="no-highlight">1278</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">1279</i>&nbsp;                ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">1280</i>&nbsp;                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);</b>
+<b class="fc"><i class="no-highlight">1281</i>&nbsp;                unmap(ff, unmergedIndexes);</b>
+<b class="fc"><i class="no-highlight">1282</i>&nbsp;            }</b>
+<i class="no-highlight">1283</i>&nbsp;        }
+<i class="no-highlight">1284</i>&nbsp;
+<i class="no-highlight">1285</i>&nbsp;        private boolean onField(
+<i class="no-highlight">1286</i>&nbsp;                long offset,
+<i class="no-highlight">1287</i>&nbsp;                final DirectByteCharSequence dbcs,
+<i class="no-highlight">1288</i>&nbsp;                TableWriter.Row w,
+<i class="no-highlight">1289</i>&nbsp;                int fieldIndex
+<i class="no-highlight">1290</i>&nbsp;        ) throws TextException {
+<b class="fc"><i class="no-highlight">1291</i>&nbsp;            TypeAdapter type = this.types.getQuick(fieldIndex);</b>
+<i class="no-highlight">1292</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">1293</i>&nbsp;                type.write(w, fieldIndex, dbcs, utf8Sink);</b>
+<b class="fc"><i class="no-highlight">1294</i>&nbsp;            } catch (NumericException | Utf8Exception | ImplicitCastException ignore) {</b>
+<b class="fc"><i class="no-highlight">1295</i>&nbsp;                errors++;</b>
+<b class="fc"><i class="no-highlight">1296</i>&nbsp;                logError(offset, fieldIndex, dbcs);</b>
+<b class="fc"><i class="no-highlight">1297</i>&nbsp;                switch (atomicity) {</b>
+<i class="no-highlight">1298</i>&nbsp;                    case Atomicity.SKIP_ALL:
+<b class="fc"><i class="no-highlight">1299</i>&nbsp;                        tableWriterRef.rollback();</b>
+<b class="fc"><i class="no-highlight">1300</i>&nbsp;                        throw TextException.$(&quot;bad syntax [line offset=&quot;).put(offset).put(&quot;,column=&quot;).put(fieldIndex).put(&#39;]&#39;);</b>
+<i class="no-highlight">1301</i>&nbsp;                    case Atomicity.SKIP_ROW:
+<b class="fc"><i class="no-highlight">1302</i>&nbsp;                        w.cancel();</b>
+<b class="fc"><i class="no-highlight">1303</i>&nbsp;                        return true;</b>
+<i class="no-highlight">1304</i>&nbsp;                    default: // SKIP column
+<i class="no-highlight">1305</i>&nbsp;                        break;
+<i class="no-highlight">1306</i>&nbsp;                }
+<b class="nc"><i class="no-highlight">1307</i>&nbsp;            } catch (Exception e) {</b>
+<b class="nc"><i class="no-highlight">1308</i>&nbsp;                throw TextException.$(&quot;unexpected error [line offset=&quot;).put(offset).put(&quot;,column=&quot;).put(fieldIndex).put(&quot;,message=&quot;).put(e.getMessage()).put(&#39;]&#39;);</b>
+<b class="fc"><i class="no-highlight">1309</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">1310</i>&nbsp;            return false;</b>
+<i class="no-highlight">1311</i>&nbsp;        }
+<i class="no-highlight">1312</i>&nbsp;
+<i class="no-highlight">1313</i>&nbsp;        private void onFieldsPartitioned(long line, ObjList&lt;DirectByteCharSequence&gt; values, int valuesLength) {
+<b class="fc"><i class="no-highlight">1314</i>&nbsp;            assert tableWriterRef != null;</b>
+<b class="fc"><i class="no-highlight">1315</i>&nbsp;            DirectByteCharSequence dbcs = values.getQuick(timestampIndex);</b>
+<b class="fc"><i class="no-highlight">1316</i>&nbsp;            final TableWriter.Row w = getRow(dbcs, offset);</b>
+<b class="fc"><i class="no-highlight">1317</i>&nbsp;            if (w == null) {</b>
+<i class="no-highlight">1318</i>&nbsp;                return;
+<i class="no-highlight">1319</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1320</i>&nbsp;            for (int i = 0; i &lt; valuesLength; i++) {</b>
+<b class="fc"><i class="no-highlight">1321</i>&nbsp;                dbcs = values.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">1322</i>&nbsp;                if (i == timestampIndex || dbcs.length() == 0) {</b>
+<b class="fc"><i class="no-highlight">1323</i>&nbsp;                    continue;</b>
+<i class="no-highlight">1324</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">1325</i>&nbsp;                if (onField(offset, dbcs, w, i)) return;</b>
+<i class="no-highlight">1326</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1327</i>&nbsp;            w.append();</b>
+<i class="no-highlight">1328</i>&nbsp;        }
+<i class="no-highlight">1329</i>&nbsp;
+<i class="no-highlight">1330</i>&nbsp;        private long openIndexChunks(FilesFacade ff, Path partitionPath, DirectLongList mergeIndexes, int partitionLen) {
+<b class="fc"><i class="no-highlight">1331</i>&nbsp;            long mergedIndexSize = 0;</b>
+<b class="fc"><i class="no-highlight">1332</i>&nbsp;            long chunk = ff.findFirst(partitionPath);</b>
+<b class="fc"><i class="no-highlight">1333</i>&nbsp;            if (chunk &gt; 0) {</b>
+<i class="no-highlight">1334</i>&nbsp;                try {
+<i class="no-highlight">1335</i>&nbsp;                    do {
+<i class="no-highlight">1336</i>&nbsp;                        // chunk loop
+<b class="fc"><i class="no-highlight">1337</i>&nbsp;                        long chunkName = ff.findName(chunk);</b>
+<b class="fc"><i class="no-highlight">1338</i>&nbsp;                        long chunkType = ff.findType(chunk);</b>
+<b class="fc"><i class="no-highlight">1339</i>&nbsp;                        if (chunkType == Files.DT_FILE) {</b>
+<b class="fc"><i class="no-highlight">1340</i>&nbsp;                            partitionPath.trimTo(partitionLen);</b>
+<b class="fc"><i class="no-highlight">1341</i>&nbsp;                            partitionPath.concat(chunkName).$();</b>
+<i class="no-highlight">1342</i>&nbsp;
+<b class="fc"><i class="no-highlight">1343</i>&nbsp;                            int fd = TableUtils.openRO(ff, partitionPath, LOG);</b>
+<b class="fc"><i class="no-highlight">1344</i>&nbsp;                            long size = 0;</b>
+<b class="fc"><i class="no-highlight">1345</i>&nbsp;                            long address = -1;</b>
+<i class="no-highlight">1346</i>&nbsp;
+<i class="no-highlight">1347</i>&nbsp;                            try {
+<b class="fc"><i class="no-highlight">1348</i>&nbsp;                                size = ff.length(fd);</b>
+<b class="fc"><i class="no-highlight">1349</i>&nbsp;                                if (size &lt; 1) {</b>
+<b class="nc"><i class="no-highlight">1350</i>&nbsp;                                    throw TextException.$(&quot;index chunk is empty [path=&#39;&quot;).put(partitionPath).put(&#39;]&#39;);</b>
+<i class="no-highlight">1351</i>&nbsp;                                }
+<b class="fc"><i class="no-highlight">1352</i>&nbsp;                                address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_IMPORT);</b>
+<b class="fc"><i class="no-highlight">1353</i>&nbsp;                                mergeIndexes.add(address);</b>
+<b class="fc"><i class="no-highlight">1354</i>&nbsp;                                mergeIndexes.add(size / CsvFileIndexer.INDEX_ENTRY_SIZE);</b>
+<b class="fc"><i class="no-highlight">1355</i>&nbsp;                                mergedIndexSize += size;</b>
+<b class="nc"><i class="no-highlight">1356</i>&nbsp;                            } catch (Throwable t) {</b>
+<b class="nc"><i class="no-highlight">1357</i>&nbsp;                                if (address != -1) { //release mem if it can&#39;t be added to mergeIndexes</b>
+<b class="nc"><i class="no-highlight">1358</i>&nbsp;                                    ff.munmap(address, size, MemoryTag.MMAP_IMPORT);</b>
+<i class="no-highlight">1359</i>&nbsp;                                }
+<b class="nc"><i class="no-highlight">1360</i>&nbsp;                                throw t;</b>
+<i class="no-highlight">1361</i>&nbsp;                            } finally {
+<b class="fc"><i class="no-highlight">1362</i>&nbsp;                                ff.close(fd);</b>
+<b class="fc"><i class="no-highlight">1363</i>&nbsp;                            }</b>
+<i class="no-highlight">1364</i>&nbsp;                        }
+<b class="fc"><i class="no-highlight">1365</i>&nbsp;                    } while (ff.findNext(chunk) &gt; 0);</b>
+<i class="no-highlight">1366</i>&nbsp;                } finally {
+<b class="fc"><i class="no-highlight">1367</i>&nbsp;                    ff.findClose(chunk);</b>
+<b class="fc"><i class="no-highlight">1368</i>&nbsp;                }</b>
+<i class="no-highlight">1369</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1370</i>&nbsp;            return mergedIndexSize;</b>
+<i class="no-highlight">1371</i>&nbsp;        }
+<i class="no-highlight">1372</i>&nbsp;
+<i class="no-highlight">1373</i>&nbsp;        private void parseLinesAndWrite(AbstractTextLexer lexer, long fileBufAddr, LongList offsets, int j) {
+<b class="nc"><i class="no-highlight">1374</i>&nbsp;            final long lo = fileBufAddr + offsets.getQuick(j * 2);</b>
+<b class="nc"><i class="no-highlight">1375</i>&nbsp;            final long hi = lo + offsets.getQuick(j * 2 + 1);</b>
+<b class="nc"><i class="no-highlight">1376</i>&nbsp;            lexer.parseExactLines(lo, hi);</b>
+<i class="no-highlight">1377</i>&nbsp;        }
+<i class="no-highlight">1378</i>&nbsp;
+<i class="no-highlight">1379</i>&nbsp;        private void unmap(FilesFacade ff, DirectLongList mergeIndexes) {
+<b class="fc"><i class="no-highlight">1380</i>&nbsp;            for (long i = 0, sz = mergeIndexes.size() / 2; i &lt; sz; i++) {</b>
+<b class="fc"><i class="no-highlight">1381</i>&nbsp;                final long addr = mergeIndexes.get(2 * i);</b>
+<b class="fc"><i class="no-highlight">1382</i>&nbsp;                final long size = mergeIndexes.get(2 * i + 1) * CsvFileIndexer.INDEX_ENTRY_SIZE;</b>
+<b class="fc"><i class="no-highlight">1383</i>&nbsp;                ff.munmap(addr, size, MemoryTag.MMAP_IMPORT);</b>
+<i class="no-highlight">1384</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">1385</i>&nbsp;            mergeIndexes.clear();</b>
+<i class="no-highlight">1386</i>&nbsp;        }
+<i class="no-highlight">1387</i>&nbsp;
+<i class="no-highlight">1388</i>&nbsp;        void of(
+<i class="no-highlight">1389</i>&nbsp;                CairoEngine cairoEngine,
+<i class="no-highlight">1390</i>&nbsp;                TableStructure targetTableStructure,
+<i class="no-highlight">1391</i>&nbsp;                ObjList&lt;TypeAdapter&gt; types,
+<i class="no-highlight">1392</i>&nbsp;                int atomicity,
+<i class="no-highlight">1393</i>&nbsp;                byte columnDelimiter,
+<i class="no-highlight">1394</i>&nbsp;                CharSequence importRoot,
+<i class="no-highlight">1395</i>&nbsp;                CharSequence inputFileName,
+<i class="no-highlight">1396</i>&nbsp;                int index,
+<i class="no-highlight">1397</i>&nbsp;                int lo,
+<i class="no-highlight">1398</i>&nbsp;                int hi,
+<i class="no-highlight">1399</i>&nbsp;                final ObjList&lt;ParallelCsvFileImporter.PartitionInfo&gt; partitions
+<i class="no-highlight">1400</i>&nbsp;        ) {
+<b class="fc"><i class="no-highlight">1401</i>&nbsp;            this.cairoEngine = cairoEngine;</b>
+<b class="fc"><i class="no-highlight">1402</i>&nbsp;            this.targetTableStructure = targetTableStructure;</b>
+<b class="fc"><i class="no-highlight">1403</i>&nbsp;            this.types = types;</b>
+<b class="fc"><i class="no-highlight">1404</i>&nbsp;            this.atomicity = atomicity;</b>
+<b class="fc"><i class="no-highlight">1405</i>&nbsp;            this.columnDelimiter = columnDelimiter;</b>
+<b class="fc"><i class="no-highlight">1406</i>&nbsp;            this.importRoot = importRoot;</b>
+<b class="fc"><i class="no-highlight">1407</i>&nbsp;            this.inputFileName = inputFileName;</b>
+<b class="fc"><i class="no-highlight">1408</i>&nbsp;            this.index = index;</b>
+<b class="fc"><i class="no-highlight">1409</i>&nbsp;            this.lo = lo;</b>
+<b class="fc"><i class="no-highlight">1410</i>&nbsp;            this.hi = hi;</b>
+<b class="fc"><i class="no-highlight">1411</i>&nbsp;            this.partitions = partitions;</b>
+<b class="fc"><i class="no-highlight">1412</i>&nbsp;            this.timestampIndex = targetTableStructure.getTimestampIndex();</b>
+<b class="fc"><i class="no-highlight">1413</i>&nbsp;            this.timestampAdapter = (timestampIndex &gt; -1 &amp;&amp; timestampIndex &lt; types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;</b>
+<b class="fc"><i class="no-highlight">1414</i>&nbsp;            this.errors = 0;</b>
+<b class="fc"><i class="no-highlight">1415</i>&nbsp;            this.importedRows.clear();</b>
+<i class="no-highlight">1416</i>&nbsp;        }
+<i class="no-highlight">1417</i>&nbsp;    }
+<i class="no-highlight">1418</i>&nbsp;
+<i class="no-highlight">1419</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">1420</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_SETUP, &quot;setup&quot;);</b>
+<b class="fc"><i class="no-highlight">1421</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, &quot;boundary_check&quot;);</b>
+<b class="fc"><i class="no-highlight">1422</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_INDEXING, &quot;indexing&quot;);</b>
+<b class="fc"><i class="no-highlight">1423</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, &quot;partition_import&quot;);</b>
+<b class="fc"><i class="no-highlight">1424</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, &quot;symbol_table_merge&quot;);</b>
+<b class="fc"><i class="no-highlight">1425</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, &quot;update_symbol_keys&quot;);</b>
+<b class="fc"><i class="no-highlight">1426</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_BUILD_SYMBOL_INDEX, &quot;build_symbol_index&quot;);</b>
+<b class="fc"><i class="no-highlight">1427</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, &quot;move_partitions&quot;);</b>
+<b class="fc"><i class="no-highlight">1428</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, &quot;attach_partitions&quot;);</b>
+<b class="fc"><i class="no-highlight">1429</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, &quot;analyze_file_structure&quot;);</b>
+<b class="fc"><i class="no-highlight">1430</i>&nbsp;        PHASE_NAME_MAP.put(PHASE_CLEANUP, &quot;cleanup&quot;);</b>
+<i class="no-highlight">1431</i>&nbsp;
+<b class="fc"><i class="no-highlight">1432</i>&nbsp;        STATUS_NAME_MAP.put(STATUS_STARTED, &quot;started&quot;);</b>
+<b class="fc"><i class="no-highlight">1433</i>&nbsp;        STATUS_NAME_MAP.put(STATUS_FINISHED, &quot;finished&quot;);</b>
+<b class="fc"><i class="no-highlight">1434</i>&nbsp;        STATUS_NAME_MAP.put(STATUS_FAILED, &quot;failed&quot;);</b>
+<b class="fc"><i class="no-highlight">1435</i>&nbsp;        STATUS_NAME_MAP.put(STATUS_CANCELLED, &quot;cancelled&quot;);</b>
+<i class="no-highlight">1436</i>&nbsp;    }
+<i class="no-highlight">1437</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

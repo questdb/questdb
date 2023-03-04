@@ -1,0 +1,669 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > BitmapIndexWriter</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: BitmapIndexWriter (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">BitmapIndexWriter</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (27/27)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.9%
+  </span>
+  <span class="absValue">
+    (208/217)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">BitmapIndexWriter$Cursor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (7/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (15/15)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (34/34)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.1%
+  </span>
+  <span class="absValue">
+    (223/232)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.sql.RowCursor;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.vm.Vm;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.vm.api.MemoryMA;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.vm.api.MemoryMARW;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">35</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;import java.io.Closeable;
+<i class="no-highlight">38</i>&nbsp;
+<b class="fc"><i class="no-highlight">39</i>&nbsp;public class BitmapIndexWriter implements Closeable, Mutable {</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);</b>
+<b class="fc"><i class="no-highlight">41</i>&nbsp;    private final Cursor cursor = new Cursor();</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    private final MemoryMARW keyMem = Vm.getMARWInstance();</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private final MemoryMARW valueMem = Vm.getMARWInstance();</b>
+<i class="no-highlight">44</i>&nbsp;    private int blockCapacity;
+<i class="no-highlight">45</i>&nbsp;    private int blockValueCountMod;
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    private int keyCount = -1;</b>
+<i class="no-highlight">47</i>&nbsp;    private long seekValueBlockOffset;
+<i class="no-highlight">48</i>&nbsp;    private long seekValueCount;
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    private long valueMemSize = -1;</b>
+<i class="no-highlight">51</i>&nbsp;
+<b class="fc"><i class="no-highlight">52</i>&nbsp;    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        of(</b>
+<i class="no-highlight">54</i>&nbsp;                configuration,
+<i class="no-highlight">55</i>&nbsp;                path,
+<i class="no-highlight">56</i>&nbsp;                name,
+<i class="no-highlight">57</i>&nbsp;                columnNameTxn,
+<b class="fc"><i class="no-highlight">58</i>&nbsp;                configuration.getDataIndexKeyAppendPageSize(),</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;                configuration.getDataIndexValueAppendPageSize()</b>
+<i class="no-highlight">60</i>&nbsp;        );
+<i class="no-highlight">61</i>&nbsp;    }
+<i class="no-highlight">62</i>&nbsp;
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        of(configuration, path, name, columnNameTxn, keyAppendPageSize, valueAppendPageSize);</b>
+<i class="no-highlight">65</i>&nbsp;    }
+<i class="no-highlight">66</i>&nbsp;
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    public BitmapIndexWriter() {</b>
+<i class="no-highlight">68</i>&nbsp;    }
+<i class="no-highlight">69</i>&nbsp;
+<i class="no-highlight">70</i>&nbsp;    public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
+<i class="no-highlight">71</i>&nbsp;
+<i class="no-highlight">72</i>&nbsp;        // block value count must be power of 2
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        assert blockValueCount == Numbers.ceilPow2(blockValueCount);</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        keyMem.toTop();</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        keyMem.putByte(BitmapIndexUtils.SIGNATURE);</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        keyMem.putLong(1); // SEQUENCE</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        keyMem.putLong(0); // VALUE MEM SIZE</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        keyMem.putInt(blockValueCount); // BLOCK VALUE COUNT</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;        keyMem.putLong(0); // KEY COUNT</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        keyMem.putLong(1); // SEQUENCE CHECK</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        keyMem.putLong(0); // maxRow</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());</b>
+<i class="no-highlight">85</i>&nbsp;    }
+<i class="no-highlight">86</i>&nbsp;
+<i class="no-highlight">87</i>&nbsp;    /**
+<i class="no-highlight">88</i>&nbsp;     * Adds key-value pair to index. If key already exists, value is appended to end of list of existing values. Otherwise,
+<i class="no-highlight">89</i>&nbsp;     * new value list is associated with the key.
+<i class="no-highlight">90</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">91</i>&nbsp;     * Index is updated atomically as far as concurrent reading is concerned. Please refer to notes on classes that
+<i class="no-highlight">92</i>&nbsp;     * are responsible for reading bitmap indexes, such as {@link BitmapIndexBwdReader}.
+<i class="no-highlight">93</i>&nbsp;     *
+<i class="no-highlight">94</i>&nbsp;     * @param key   int key
+<i class="no-highlight">95</i>&nbsp;     * @param value long value
+<i class="no-highlight">96</i>&nbsp;     */
+<i class="no-highlight">97</i>&nbsp;    public void add(int key, long value) {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        assert key &gt; -1 : &quot;key must be positive integer: &quot; + key;</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        final long offset = BitmapIndexUtils.getKeyEntryOffset(key);</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        if (key &lt; keyCount) {</b>
+<i class="no-highlight">101</i>&nbsp;            // when key exists we have possible outcomes in regard to the values
+<i class="no-highlight">102</i>&nbsp;            // 1. last value block has space if value cell index is not the last in block
+<i class="no-highlight">103</i>&nbsp;            // 2. value block is full, and we have to allocate a new one
+<i class="no-highlight">104</i>&nbsp;            // 3. value count is 0. This means key was created as byproduct of adding sparse key value
+<i class="no-highlight">105</i>&nbsp;            // second option is supposed to be less likely because we attempt to
+<i class="no-highlight">106</i>&nbsp;            // configure block capacity to accommodate as many values as possible
+<b class="fc"><i class="no-highlight">107</i>&nbsp;            long valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;            long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;            int valueCellIndex = (int) (valueCount &amp; blockValueCountMod);</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;            if (valueCellIndex &gt; 0) {</b>
+<i class="no-highlight">111</i>&nbsp;                // this is scenario #1: key exists and there is space in last block to add value
+<i class="no-highlight">112</i>&nbsp;                // we don&#39;t need to allocate new block, just add value and update value count on key
+<b class="fc"><i class="no-highlight">113</i>&nbsp;                assert valueBlockOffset + blockCapacity &lt;= valueMemSize;</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                appendValue(offset, valueBlockOffset, valueCount, valueCellIndex, value);</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;            } else if (valueCount == 0) {</b>
+<i class="no-highlight">116</i>&nbsp;                // this is scenario #3: we are effectively adding a new key and creating new block
+<b class="fc"><i class="no-highlight">117</i>&nbsp;                initValueBlockAndStoreValue(offset, value);</b>
+<i class="no-highlight">118</i>&nbsp;            } else {
+<i class="no-highlight">119</i>&nbsp;                // this is scenario #2: key exists but last block is full. We need to create new block and add value there
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                assert valueBlockOffset + blockCapacity &lt;= valueMemSize;</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;                addValueBlockAndStoreValue(offset, valueBlockOffset, valueCount, value);</b>
+<i class="no-highlight">122</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        } else {</b>
+<i class="no-highlight">124</i>&nbsp;            // This is a new key. Because index can have sparse keys whenever we think &quot;key exists&quot; we must deal
+<i class="no-highlight">125</i>&nbsp;            // with holes left by this branch, which allocates new key. All key entries that have been
+<i class="no-highlight">126</i>&nbsp;            // skipped during creation of new key will have been initialized with zeroes. This includes counts and
+<i class="no-highlight">127</i>&nbsp;            // block offsets.
+<b class="fc"><i class="no-highlight">128</i>&nbsp;            initValueBlockAndStoreValue(offset, value);</b>
+<i class="no-highlight">129</i>&nbsp;            // here we also need to update key count
+<i class="no-highlight">130</i>&nbsp;            // we don&#39;t just increment key count, in case this addition creates sparse key set
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            updateKeyCount(key);</b>
+<i class="no-highlight">132</i>&nbsp;        }
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    @Override
+<i class="no-highlight">136</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        close();</b>
+<i class="no-highlight">138</i>&nbsp;    }
+<i class="no-highlight">139</i>&nbsp;
+<i class="no-highlight">140</i>&nbsp;    @Override
+<i class="no-highlight">141</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        if (keyMem.isOpen() &amp;&amp; keyCount &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;            keyMem.setSize(keyMemSize());</b>
+<i class="no-highlight">144</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        Misc.free(keyMem);</b>
+<i class="no-highlight">146</i>&nbsp;
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        if (valueMem.isOpen() &amp;&amp; valueMemSize &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;            valueMem.setSize(valueMemSize);</b>
+<i class="no-highlight">149</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        Misc.free(valueMem);</b>
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    public RowCursor getCursor(int key) {
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        if (key &lt; keyCount) {</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;            cursor.of(key);</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;            return cursor;</b>
+<i class="no-highlight">157</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return EmptyRowCursor.INSTANCE;</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    public int getKeyCount() {
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        return keyCount;</b>
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    public long getMaxValue() {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        return keyMem.getLong(38L);</b>
+<i class="no-highlight">167</i>&nbsp;    }
+<i class="no-highlight">168</i>&nbsp;
+<i class="no-highlight">169</i>&nbsp;    public boolean isOpen() {
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        return keyMem.isOpen();</b>
+<i class="no-highlight">171</i>&nbsp;    }
+<i class="no-highlight">172</i>&nbsp;
+<i class="no-highlight">173</i>&nbsp;    public final void of(CairoConfiguration configuration, int keyFd, int valueFd, boolean init, int indexBlockCapacity) {
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        close();</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        final FilesFacade ff = configuration.getFilesFacade();</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        boolean kFdUnassigned = true;</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        boolean vFdUnassigned = true;</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();</b>
+<i class="no-highlight">180</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            if (init) {</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;                if (ff.truncate(keyFd, 0)) {</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;                    kFdUnassigned = false;</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;                    this.keyMem.of(ff, keyFd, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;                    initKeyMemory(this.keyMem, indexBlockCapacity);</b>
+<i class="no-highlight">186</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">187</i>&nbsp;                    throw CairoException.critical(ff.errno()).put(&quot;Could not truncate [fd=&quot;).put(keyFd).put(&#39;]&#39;);</b>
+<i class="no-highlight">188</i>&nbsp;                }
+<i class="no-highlight">189</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">190</i>&nbsp;                kFdUnassigned = false;</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;                this.keyMem.of(ff, keyFd, null, ff.length(keyFd), MemoryTag.MMAP_INDEX_WRITER);</b>
+<i class="no-highlight">192</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            long keyMemSize = this.keyMem.getAppendOffset();</b>
+<i class="no-highlight">194</i>&nbsp;            // check if key file header is present
+<b class="fc"><i class="no-highlight">195</i>&nbsp;            if (keyMemSize &lt; BitmapIndexUtils.KEY_FILE_RESERVED) {</b>
+<b class="nc"><i class="no-highlight">196</i>&nbsp;                LOG.error().$(&quot;file too short [corrupt] [fd=&quot;).$(keyFd).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">197</i>&nbsp;                throw CairoException.critical(0).put(&quot;Index file too short (w): [fd=&quot;).put(keyFd).put(&#39;]&#39;);</b>
+<i class="no-highlight">198</i>&nbsp;            }
+<i class="no-highlight">199</i>&nbsp;
+<i class="no-highlight">200</i>&nbsp;            // verify header signature
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {</b>
+<b class="nc"><i class="no-highlight">202</i>&nbsp;                LOG.error().$(&quot;unknown format [corrupt] [fd=&quot;).$(keyFd).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">203</i>&nbsp;                throw CairoException.critical(0).put(&quot;Unknown format: [fd=&quot;).put(keyFd).put(&#39;]&#39;);</b>
+<i class="no-highlight">204</i>&nbsp;            }
+<i class="no-highlight">205</i>&nbsp;
+<i class="no-highlight">206</i>&nbsp;            // verify key count
+<b class="fc"><i class="no-highlight">207</i>&nbsp;            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;            if (keyMemSize &lt; keyMemSize()) {</b>
+<b class="nc"><i class="no-highlight">209</i>&nbsp;                LOG.error().$(&quot;key count does not match file length [corrupt] [fd=&quot;).$(keyFd).$(&quot;, keyCount=&quot;).$(this.keyCount).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">210</i>&nbsp;                throw CairoException.critical(0).put(&quot;Key count does not match file length [fd=&quot;).put(keyFd).put(&#39;]&#39;);</b>
+<i class="no-highlight">211</i>&nbsp;            }
+<i class="no-highlight">212</i>&nbsp;
+<i class="no-highlight">213</i>&nbsp;            // check if sequence is intact
+<b class="fc"><i class="no-highlight">214</i>&nbsp;            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {</b>
+<b class="nc"><i class="no-highlight">215</i>&nbsp;                LOG.error().$(&quot;sequence mismatch [corrupt] at [fd=&quot;).$(keyFd).$(&#39;]&#39;).$();</b>
+<b class="nc"><i class="no-highlight">216</i>&nbsp;                throw CairoException.critical(0).put(&quot;Sequence mismatch [fd=&quot;).put(keyFd).put(&#39;]&#39;);</b>
+<i class="no-highlight">217</i>&nbsp;            }
+<i class="no-highlight">218</i>&nbsp;
+<b class="fc"><i class="no-highlight">219</i>&nbsp;            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);</b>
+<i class="no-highlight">220</i>&nbsp;
+<b class="fc"><i class="no-highlight">221</i>&nbsp;            if (init) {</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                if (ff.truncate(valueFd, 0)) {</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                    vFdUnassigned = false;</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;                    this.valueMem.of(ff, valueFd, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;                    this.valueMem.jumpTo(0);</b>
+<i class="no-highlight">226</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">227</i>&nbsp;                    throw CairoException.critical(ff.errno()).put(&quot;Could not truncate [fd=&quot;).put(valueFd).put(&#39;]&#39;);</b>
+<i class="no-highlight">228</i>&nbsp;                }
+<i class="no-highlight">229</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">230</i>&nbsp;                vFdUnassigned = false;</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;                this.valueMem.of(ff, valueFd, null, valueAppendPageSize, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);</b>
+<i class="no-highlight">232</i>&nbsp;            }
+<i class="no-highlight">233</i>&nbsp;
+<i class="no-highlight">234</i>&nbsp;            // block value count is always a power of two
+<i class="no-highlight">235</i>&nbsp;            // to calculate remainder we use faster &#39;x &amp; (count-1)&#39;, which is equivalent to (x % count)
+<b class="fc"><i class="no-highlight">236</i>&nbsp;            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            assert blockValueCountMod &gt; 0;</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;            this.close();</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;            if (kFdUnassigned) {</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;                ff.close(keyFd);</b>
+<i class="no-highlight">243</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">244</i>&nbsp;            if (vFdUnassigned) {</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;                ff.close(valueFd);</b>
+<i class="no-highlight">246</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">247</i>&nbsp;            throw e;</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        }</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    public final void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        close();</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        final int plen = path.length();</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;        final FilesFacade ff = configuration.getFilesFacade();</b>
+<i class="no-highlight">255</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;            boolean exists = ff.exists(BitmapIndexUtils.keyFileName(path, name, columnNameTxn));</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;            this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            if (!exists) {</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                LOG.error().$(path).$(&quot; not found&quot;).$();</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                throw CairoException.critical(0).put(&quot;Index does not exist: &quot;).put(path);</b>
+<i class="no-highlight">261</i>&nbsp;            }
+<i class="no-highlight">262</i>&nbsp;
+<b class="fc"><i class="no-highlight">263</i>&nbsp;            long keyMemSize = this.keyMem.getAppendOffset();</b>
+<i class="no-highlight">264</i>&nbsp;            // check if key file header is present
+<b class="fc"><i class="no-highlight">265</i>&nbsp;            if (keyMemSize &lt; BitmapIndexUtils.KEY_FILE_RESERVED) {</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;                LOG.error().$(&quot;file too short [corrupt] &quot;).$(path).$();</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                throw CairoException.critical(0).put(&quot;Index file too short (w): &quot;).put(path);</b>
+<i class="no-highlight">268</i>&nbsp;            }
+<i class="no-highlight">269</i>&nbsp;
+<i class="no-highlight">270</i>&nbsp;            // verify header signature
+<b class="fc"><i class="no-highlight">271</i>&nbsp;            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;                LOG.error().$(&quot;unknown format [corrupt] &quot;).$(path).$();</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;                throw CairoException.critical(0).put(&quot;Unknown format: &quot;).put(path);</b>
+<i class="no-highlight">274</i>&nbsp;            }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;            // verify key count
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;            if (keyMemSize &lt; keyMemSize()) {</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;                LOG.error().$(&quot;key count does not match file length [corrupt] of &quot;).$(path).$(&quot; [keyCount=&quot;).$(this.keyCount).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;                throw CairoException.critical(0).put(&quot;Key count does not match file length of &quot;).put(path);</b>
+<i class="no-highlight">281</i>&nbsp;            }
+<i class="no-highlight">282</i>&nbsp;
+<i class="no-highlight">283</i>&nbsp;            // check if sequence is intact
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;                LOG.error().$(&quot;sequence mismatch [corrupt] at &quot;).$(path).$();</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;                throw CairoException.critical(0).put(&quot;Sequence mismatch on &quot;).put(path);</b>
+<i class="no-highlight">287</i>&nbsp;            }
+<i class="no-highlight">288</i>&nbsp;
+<b class="fc"><i class="no-highlight">289</i>&nbsp;            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            this.valueMem.of(</b>
+<i class="no-highlight">291</i>&nbsp;                    ff,
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),</b>
+<i class="no-highlight">293</i>&nbsp;                    valueAppendPageSize,
+<i class="no-highlight">294</i>&nbsp;                    this.valueMemSize,
+<i class="no-highlight">295</i>&nbsp;                    MemoryTag.MMAP_INDEX_WRITER
+<i class="no-highlight">296</i>&nbsp;            );
+<i class="no-highlight">297</i>&nbsp;
+<i class="no-highlight">298</i>&nbsp;            // block value count is always a power of two
+<i class="no-highlight">299</i>&nbsp;            // to calculate remainder we use faster &#39;x &amp; (count-1)&#39;, which is equivalent to (x % count)
+<b class="fc"><i class="no-highlight">300</i>&nbsp;            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;            if (blockValueCountMod &lt; 1) {</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;                LOG.error()</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;                        .$(&quot;corrupt file [name=&quot;).$(path)</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;                        .$(&quot;, valueMemSize=&quot;).$(this.valueMemSize)</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;                        .$(&quot;, blockValueCountMod=&quot;).$(this.blockValueCountMod)</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;                        .I$();</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                throw CairoException.critical(0).put(&quot;corrupt file &quot;).put(path);</b>
+<i class="no-highlight">308</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">309</i>&nbsp;            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;        } catch (Throwable e) {</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            this.close();</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;            throw e;</b>
+<i class="no-highlight">313</i>&nbsp;        } finally {
+<b class="fc"><i class="no-highlight">314</i>&nbsp;            path.trimTo(plen);</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;        }</b>
+<i class="no-highlight">316</i>&nbsp;    }
+<i class="no-highlight">317</i>&nbsp;
+<i class="no-highlight">318</i>&nbsp;    /**
+<i class="no-highlight">319</i>&nbsp;     * Rolls values back. Remove values that are strictly greater than given maximum. Empty value blocks
+<i class="no-highlight">320</i>&nbsp;     * will also be removed as well as blank space at end of value memory.
+<i class="no-highlight">321</i>&nbsp;     *
+<i class="no-highlight">322</i>&nbsp;     * @param maxValue maximum value allowed in index.
+<i class="no-highlight">323</i>&nbsp;     */
+<i class="no-highlight">324</i>&nbsp;    public void rollbackValues(long maxValue) {
+<i class="no-highlight">325</i>&nbsp;
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        long maxValueBlockOffset = 0;</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        for (int k = 0; k &lt; keyCount; k++) {</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;            long offset = BitmapIndexUtils.getKeyEntryOffset(k);</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;            long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);</b>
+<i class="no-highlight">330</i>&nbsp;
+<i class="no-highlight">331</i>&nbsp;            // do we have anything for the key?
+<b class="fc"><i class="no-highlight">332</i>&nbsp;            if (valueCount &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                long blockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);</b>
+<i class="no-highlight">335</i>&nbsp;
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                if (valueCount != seekValueCount || blockOffset != seekValueBlockOffset) {</b>
+<i class="no-highlight">337</i>&nbsp;                    // set new value count
+<b class="fc"><i class="no-highlight">338</i>&nbsp;                    keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, seekValueCount);</b>
+<i class="no-highlight">339</i>&nbsp;
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                    if (blockOffset != seekValueBlockOffset) {</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;                        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;                        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT + 16, seekValueBlockOffset);</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;                        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">344</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">345</i>&nbsp;                    keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);</b>
+<i class="no-highlight">346</i>&nbsp;                }
+<i class="no-highlight">347</i>&nbsp;
+<b class="fc"><i class="no-highlight">348</i>&nbsp;                if (seekValueBlockOffset &gt; maxValueBlockOffset) {</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                    maxValueBlockOffset = seekValueBlockOffset;</b>
+<i class="no-highlight">350</i>&nbsp;                }
+<i class="no-highlight">351</i>&nbsp;            }
+<i class="no-highlight">352</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">353</i>&nbsp;        valueMemSize = maxValueBlockOffset + blockCapacity;</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;        updateValueMemSize();</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;        setMaxValue(maxValue);</b>
+<i class="no-highlight">356</i>&nbsp;    }
+<i class="no-highlight">357</i>&nbsp;
+<i class="no-highlight">358</i>&nbsp;    public void setMaxValue(long maxValue) {
+<b class="fc"><i class="no-highlight">359</i>&nbsp;        keyMem.putLong(38L, maxValue);</b>
+<i class="no-highlight">360</i>&nbsp;    }
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;    private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        long newValueBlockOffset = allocateValueBlockAndStore(value);</b>
+<i class="no-highlight">364</i>&nbsp;
+<i class="no-highlight">365</i>&nbsp;        // update block linkage before we increase count
+<i class="no-highlight">366</i>&nbsp;        // this is important to index readers, which will act on value count they read
+<i class="no-highlight">367</i>&nbsp;
+<i class="no-highlight">368</i>&nbsp;        // we subtract 8 because we have just written long value
+<i class="no-highlight">369</i>&nbsp;        // update this block reference to previous block
+<b class="fc"><i class="no-highlight">370</i>&nbsp;        valueMem.putLong(valueMemSize - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED, valueBlockOffset);</b>
+<i class="no-highlight">371</i>&nbsp;
+<i class="no-highlight">372</i>&nbsp;        // update previous block&#39; &quot;next&quot; block reference to this block
+<b class="fc"><i class="no-highlight">373</i>&nbsp;        valueMem.putLong(valueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8, newValueBlockOffset);</b>
+<i class="no-highlight">374</i>&nbsp;
+<i class="no-highlight">375</i>&nbsp;        // update count and last value block offset for the key
+<i class="no-highlight">376</i>&nbsp;        // in atomic fashion
+<i class="no-highlight">377</i>&nbsp;        // we make sure count is always written _after_ new value block is added
+<b class="fc"><i class="no-highlight">378</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        keyMem.putLong(offset, valueCount + 1);</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">381</i>&nbsp;
+<i class="no-highlight">382</i>&nbsp;        // don&#39;t set first block offset here
+<i class="no-highlight">383</i>&nbsp;        // it would have been done when this key was first created
+<i class="no-highlight">384</i>&nbsp;
+<i class="no-highlight">385</i>&nbsp;        // write last block offset because it changed in this scenario
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">388</i>&nbsp;
+<i class="no-highlight">389</i>&nbsp;        // write count check
+<b class="fc"><i class="no-highlight">390</i>&nbsp;        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, valueCount + 1);</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">392</i>&nbsp;
+<i class="no-highlight">393</i>&nbsp;        // we are done adding value to new block of values
+<i class="no-highlight">394</i>&nbsp;    }
+<i class="no-highlight">395</i>&nbsp;
+<i class="no-highlight">396</i>&nbsp;    private long allocateValueBlockAndStore(long value) {
+<b class="fc"><i class="no-highlight">397</i>&nbsp;        long newValueBlockOffset = valueMemSize;</b>
+<i class="no-highlight">398</i>&nbsp;
+<i class="no-highlight">399</i>&nbsp;        // store our value
+<b class="fc"><i class="no-highlight">400</i>&nbsp;        valueMem.putLong(newValueBlockOffset, value);</b>
+<i class="no-highlight">401</i>&nbsp;
+<i class="no-highlight">402</i>&nbsp;        // reserve memory for value block
+<b class="fc"><i class="no-highlight">403</i>&nbsp;        valueMem.skip(blockCapacity);</b>
+<i class="no-highlight">404</i>&nbsp;
+<i class="no-highlight">405</i>&nbsp;        // make sure we change value memory size after jump was successful
+<b class="fc"><i class="no-highlight">406</i>&nbsp;        valueMemSize += blockCapacity;</b>
+<i class="no-highlight">407</i>&nbsp;
+<i class="no-highlight">408</i>&nbsp;        // must update value mem size in key memory header
+<i class="no-highlight">409</i>&nbsp;        // so that index can be opened correctly next time it loads
+<b class="fc"><i class="no-highlight">410</i>&nbsp;        updateValueMemSize();</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;        return newValueBlockOffset;</b>
+<i class="no-highlight">412</i>&nbsp;    }
+<i class="no-highlight">413</i>&nbsp;
+<i class="no-highlight">414</i>&nbsp;    private void appendValue(long offset, long valueBlockOffset, long valueCount, int valueCellIndex, long value) {
+<i class="no-highlight">415</i>&nbsp;        // first set value
+<b class="fc"><i class="no-highlight">416</i>&nbsp;        valueMem.putLong(valueBlockOffset + valueCellIndex * 8L, value);</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">418</i>&nbsp;        // update count and last value block offset for the key
+<i class="no-highlight">419</i>&nbsp;        // in atomic fashion
+<b class="fc"><i class="no-highlight">420</i>&nbsp;        keyMem.putLong(offset, valueCount + 1);</b>
+<i class="no-highlight">421</i>&nbsp;        // write count check
+<b class="fc"><i class="no-highlight">422</i>&nbsp;        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, valueCount + 1);</b>
+<i class="no-highlight">423</i>&nbsp;    }
+<i class="no-highlight">424</i>&nbsp;
+<i class="no-highlight">425</i>&nbsp;    private void initValueBlockAndStoreValue(long offset, long value) {
+<b class="fc"><i class="no-highlight">426</i>&nbsp;        long newValueBlockOffset = allocateValueBlockAndStore(value);</b>
+<i class="no-highlight">427</i>&nbsp;
+<i class="no-highlight">428</i>&nbsp;        // don&#39;t need to update linkage, value count is less than block size
+<i class="no-highlight">429</i>&nbsp;        // index readers must not access linkage information in this case
+<i class="no-highlight">430</i>&nbsp;
+<i class="no-highlight">431</i>&nbsp;        // now update key entry in atomic fashion
+<i class="no-highlight">432</i>&nbsp;        // update count and last value block offset for the key
+<i class="no-highlight">433</i>&nbsp;        // in atomic fashion
+<b class="fc"><i class="no-highlight">434</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        keyMem.putLong(offset, 1);</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">437</i>&nbsp;
+<i class="no-highlight">438</i>&nbsp;        // first and last blocks are the same
+<b class="fc"><i class="no-highlight">439</i>&nbsp;        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET, newValueBlockOffset);</b>
+<b class="fc"><i class="no-highlight">440</i>&nbsp;        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);</b>
+<b class="fc"><i class="no-highlight">441</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">442</i>&nbsp;
+<i class="no-highlight">443</i>&nbsp;        // write count check
+<b class="fc"><i class="no-highlight">444</i>&nbsp;        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<i class="no-highlight">446</i>&nbsp;    }
+<i class="no-highlight">447</i>&nbsp;
+<i class="no-highlight">448</i>&nbsp;    private long keyMemSize() {
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        return this.keyCount * BitmapIndexUtils.KEY_ENTRY_SIZE + BitmapIndexUtils.KEY_FILE_RESERVED;</b>
+<i class="no-highlight">450</i>&nbsp;    }
+<i class="no-highlight">451</i>&nbsp;
+<i class="no-highlight">452</i>&nbsp;    private void seek(long count, long offset) {
+<b class="fc"><i class="no-highlight">453</i>&nbsp;        this.seekValueCount = count;</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        this.seekValueBlockOffset = offset;</b>
+<i class="no-highlight">455</i>&nbsp;    }
+<i class="no-highlight">456</i>&nbsp;
+<i class="no-highlight">457</i>&nbsp;    private void updateValueMemSize() {
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);</b>
+<i class="no-highlight">464</i>&nbsp;    }
+<i class="no-highlight">465</i>&nbsp;
+<i class="no-highlight">466</i>&nbsp;    @TestOnly
+<i class="no-highlight">467</i>&nbsp;    long getValueMemSize() {
+<b class="fc"><i class="no-highlight">468</i>&nbsp;        return valueMemSize;</b>
+<i class="no-highlight">469</i>&nbsp;    }
+<i class="no-highlight">470</i>&nbsp;
+<i class="no-highlight">471</i>&nbsp;    void rollbackConditionally(long row) {
+<i class="no-highlight">472</i>&nbsp;        final long currentMaxRow;
+<b class="fc"><i class="no-highlight">473</i>&nbsp;        if (row &gt; 0 &amp;&amp; ((currentMaxRow = getMaxValue()) &lt; 1 || currentMaxRow &gt; row)) {</b>
+<b class="fc"><i class="no-highlight">474</i>&nbsp;            rollbackValues(row - 1);</b>
+<i class="no-highlight">475</i>&nbsp;        }
+<i class="no-highlight">476</i>&nbsp;    }
+<i class="no-highlight">477</i>&nbsp;
+<i class="no-highlight">478</i>&nbsp;    void truncate() {
+<b class="fc"><i class="no-highlight">479</i>&nbsp;        keyMem.truncate();</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;        valueMem.truncate();</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;        initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;        keyCount = 0;</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;        valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;</b>
+<i class="no-highlight">484</i>&nbsp;    }
+<i class="no-highlight">485</i>&nbsp;
+<i class="no-highlight">486</i>&nbsp;    void updateKeyCount(int key) {
+<b class="fc"><i class="no-highlight">487</i>&nbsp;        keyCount = key + 1;</b>
+<i class="no-highlight">488</i>&nbsp;
+<i class="no-highlight">489</i>&nbsp;        // also write key count to header of key memory
+<b class="fc"><i class="no-highlight">490</i>&nbsp;        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        keyMem.putInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);</b>
+<i class="no-highlight">496</i>&nbsp;    }
+<i class="no-highlight">497</i>&nbsp;
+<b class="fc"><i class="no-highlight">498</i>&nbsp;    private class Cursor implements RowCursor {</b>
+<i class="no-highlight">499</i>&nbsp;        private long valueBlockOffset;
+<i class="no-highlight">500</i>&nbsp;        private long valueCount;
+<i class="no-highlight">501</i>&nbsp;
+<i class="no-highlight">502</i>&nbsp;        @Override
+<i class="no-highlight">503</i>&nbsp;        public boolean hasNext() {
+<b class="fc"><i class="no-highlight">504</i>&nbsp;            return valueCount &gt; 0;</b>
+<i class="no-highlight">505</i>&nbsp;        }
+<i class="no-highlight">506</i>&nbsp;
+<i class="no-highlight">507</i>&nbsp;        @Override
+<i class="no-highlight">508</i>&nbsp;        public long next() {
+<b class="fc"><i class="no-highlight">509</i>&nbsp;            long cellIndex = getValueCellIndex(--valueCount);</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;            long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);</b>
+<b class="fc"><i class="no-highlight">511</i>&nbsp;            if (cellIndex == 0 &amp;&amp; valueCount &gt; 0) {</b>
+<i class="no-highlight">512</i>&nbsp;                // we are at edge of block right now, next value will be in previous block
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                jumpToPreviousValueBlock();</b>
+<i class="no-highlight">514</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">515</i>&nbsp;            return result;</b>
+<i class="no-highlight">516</i>&nbsp;        }
+<i class="no-highlight">517</i>&nbsp;
+<i class="no-highlight">518</i>&nbsp;        private long getPreviousBlock(long currentValueBlockOffset) {
+<b class="fc"><i class="no-highlight">519</i>&nbsp;            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);</b>
+<i class="no-highlight">520</i>&nbsp;        }
+<i class="no-highlight">521</i>&nbsp;
+<i class="no-highlight">522</i>&nbsp;        private long getValueCellIndex(long absoluteValueIndex) {
+<b class="fc"><i class="no-highlight">523</i>&nbsp;            return absoluteValueIndex &amp; blockValueCountMod;</b>
+<i class="no-highlight">524</i>&nbsp;        }
+<i class="no-highlight">525</i>&nbsp;
+<i class="no-highlight">526</i>&nbsp;        private void jumpToPreviousValueBlock() {
+<b class="fc"><i class="no-highlight">527</i>&nbsp;            valueBlockOffset = getPreviousBlock(valueBlockOffset);</b>
+<i class="no-highlight">528</i>&nbsp;        }
+<i class="no-highlight">529</i>&nbsp;
+<i class="no-highlight">530</i>&nbsp;        void of(int key) {
+<b class="fc"><i class="no-highlight">531</i>&nbsp;            assert key &gt; -1 : &quot;key must be positive integer: &quot; + key;</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;            long offset = BitmapIndexUtils.getKeyEntryOffset(key);</b>
+<b class="fc"><i class="no-highlight">533</i>&nbsp;            this.valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;            assert valueCount &gt; -1;</b>
+<b class="fc"><i class="no-highlight">535</i>&nbsp;            this.valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);</b>
+<i class="no-highlight">536</i>&nbsp;        }
+<i class="no-highlight">537</i>&nbsp;    }
+<i class="no-highlight">538</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

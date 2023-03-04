@@ -1,0 +1,178 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > MetadataService</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo.wal</a>
+</div>
+
+<h1>Coverage Summary for Class: MetadataService (io.questdb.cairo.wal)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+</tr>
+<tr>
+  <td class="name">MetadataService</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo.wal;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.AttachDetachStatus;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.TableToken;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.UpdateOperator;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.TableRecordMetadata;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;public interface MetadataService {
+<i class="no-highlight">34</i>&nbsp;    /**
+<i class="no-highlight">35</i>&nbsp;     * Adds new column to table, which can be either empty or can have data already. When existing columns
+<i class="no-highlight">36</i>&nbsp;     * already have data this function will create &quot;.top&quot; file in addition to column files. &quot;.top&quot; file contains
+<i class="no-highlight">37</i>&nbsp;     * size of partition at the moment of column creation. It must be used to accurately position inside new
+<i class="no-highlight">38</i>&nbsp;     * column when either appending or reading.
+<i class="no-highlight">39</i>&nbsp;     *
+<i class="no-highlight">40</i>&nbsp;     * &lt;b&gt;Failures&lt;/b&gt;
+<i class="no-highlight">41</i>&nbsp;     * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
+<i class="no-highlight">42</i>&nbsp;     * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
+<i class="no-highlight">43</i>&nbsp;     * Calling code must close TableWriter instance and open another when problems are rectified. Those problems would be
+<i class="no-highlight">44</i>&nbsp;     * either with disk or memory or both.
+<i class="no-highlight">45</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">46</i>&nbsp;     * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
+<i class="no-highlight">47</i>&nbsp;     * add columns again.
+<i class="no-highlight">48</i>&nbsp;     *
+<i class="no-highlight">49</i>&nbsp;     * &lt;b&gt;Transactions&lt;/b&gt;
+<i class="no-highlight">50</i>&nbsp;     * &lt;p&gt;
+<i class="no-highlight">51</i>&nbsp;     * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
+<i class="no-highlight">52</i>&nbsp;     * still have committed transaction.
+<i class="no-highlight">53</i>&nbsp;     *
+<i class="no-highlight">54</i>&nbsp;     * @param name                    of column either ASCII or UTF8 encoded.
+<i class="no-highlight">55</i>&nbsp;     * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
+<i class="no-highlight">56</i>&nbsp;     *                                It should be equal to number of unique symbol values stored in the table and getting this
+<i class="no-highlight">57</i>&nbsp;     *                                value badly wrong will cause performance degradation. Must be power of 2
+<i class="no-highlight">58</i>&nbsp;     * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
+<i class="no-highlight">59</i>&nbsp;     * @param type                    {@link ColumnType}
+<i class="no-highlight">60</i>&nbsp;     * @param isIndexed               configures column to be indexed or not
+<i class="no-highlight">61</i>&nbsp;     * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
+<i class="no-highlight">62</i>&nbsp;     * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
+<i class="no-highlight">63</i>&nbsp;     */
+<i class="no-highlight">64</i>&nbsp;    void addColumn(
+<i class="no-highlight">65</i>&nbsp;            CharSequence name,
+<i class="no-highlight">66</i>&nbsp;            int type,
+<i class="no-highlight">67</i>&nbsp;            int symbolCapacity,
+<i class="no-highlight">68</i>&nbsp;            boolean symbolCacheFlag,
+<i class="no-highlight">69</i>&nbsp;            boolean isIndexed,
+<i class="no-highlight">70</i>&nbsp;            int indexValueBlockCapacity,
+<i class="no-highlight">71</i>&nbsp;            boolean isSequential
+<i class="no-highlight">72</i>&nbsp;    );
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    void addIndex(CharSequence columnName, int indexValueBlockSize);
+<i class="no-highlight">75</i>&nbsp;
+<i class="no-highlight">76</i>&nbsp;    AttachDetachStatus attachPartition(long partitionTimestamp);
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    void changeCacheFlag(int columnIndex, boolean isCacheOn);
+<i class="no-highlight">79</i>&nbsp;
+<i class="no-highlight">80</i>&nbsp;    AttachDetachStatus detachPartition(long partitionTimestamp);
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    void dropIndex(CharSequence columnName);
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;    long getCommitInterval();
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;    long getMetaMaxUncommittedRows();
+<i class="no-highlight">87</i>&nbsp;
+<i class="no-highlight">88</i>&nbsp;    TableRecordMetadata getMetadata();
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;    int getPartitionBy();
+<i class="no-highlight">91</i>&nbsp;
+<i class="no-highlight">92</i>&nbsp;    TableToken getTableToken();
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;    UpdateOperator getUpdateOperator();
+<i class="no-highlight">95</i>&nbsp;
+<i class="no-highlight">96</i>&nbsp;    void removeColumn(CharSequence columnName);
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    boolean removePartition(long partitionTimestamp);
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;    void renameColumn(CharSequence columnName, CharSequence newName);
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    void setMetaMaxUncommittedRows(int maxUncommittedRows);
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    void setMetaO3MaxLag(long o3MaxLagUs);
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;    void tick();
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;    void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault);
+<i class="no-highlight">109</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

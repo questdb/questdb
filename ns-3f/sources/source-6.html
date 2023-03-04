@@ -1,0 +1,1301 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > LogFactory</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.log</a>
+</div>
+
+<h1>Coverage Summary for Class: LogFactory (io.questdb.log)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">LogFactory</td>
+<td class="coverageStat">
+  <span class="percent">
+    80%
+  </span>
+  <span class="absValue">
+    (28/35)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.5%
+  </span>
+  <span class="absValue">
+    (248/297)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">LogFactory$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (4/4)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">LogFactory$DeferredLogger</td>
+<td class="coverageStat">
+  <span class="percent">
+    90%
+  </span>
+  <span class="absValue">
+    (18/20)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    89.1%
+  </span>
+  <span class="absValue">
+    (49/55)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">LogFactory$Holder</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">LogFactory$LengthDescendingComparator</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    66.7%
+  </span>
+  <span class="absValue">
+    (4/6)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">LogFactory$NoOpLogRecord</td>
+<td class="coverageStat">
+  <span class="percent">
+    12.5%
+  </span>
+  <span class="absValue">
+    (3/24)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    12.5%
+  </span>
+  <span class="absValue">
+    (3/24)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">LogFactory$ScopeConfiguration</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    97.8%
+  </span>
+  <span class="absValue">
+    (44/45)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    67.4%
+  </span>
+  <span class="absValue">
+    (62/92)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    81.9%
+  </span>
+  <span class="absValue">
+    (357/436)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.log;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.Metrics;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.mp.*;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.datetime.microtime.MicrosecondClock;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.str.CharSinkBase;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">34</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">35</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">36</i>&nbsp;
+<i class="no-highlight">37</i>&nbsp;import java.io.*;
+<i class="no-highlight">38</i>&nbsp;import java.lang.reflect.Constructor;
+<i class="no-highlight">39</i>&nbsp;import java.lang.reflect.Field;
+<i class="no-highlight">40</i>&nbsp;import java.nio.file.Paths;
+<i class="no-highlight">41</i>&nbsp;import java.util.Comparator;
+<i class="no-highlight">42</i>&nbsp;import java.util.Properties;
+<i class="no-highlight">43</i>&nbsp;import java.util.concurrent.atomic.AtomicBoolean;
+<i class="no-highlight">44</i>&nbsp;
+<b class="fc"><i class="no-highlight">45</i>&nbsp;public class LogFactory implements Closeable {</b>
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;    public static final String CONFIG_SYSTEM_PROPERTY = &quot;out&quot;;
+<i class="no-highlight">48</i>&nbsp;    public static final String DEBUG_TRIGGER = &quot;ebug&quot;;
+<i class="no-highlight">49</i>&nbsp;    public static final String DEBUG_TRIGGER_ENV = &quot;QDB_DEBUG&quot;;
+<i class="no-highlight">50</i>&nbsp;    public static final String DEFAULT_CONFIG_NAME = &quot;log.conf&quot;;
+<i class="no-highlight">51</i>&nbsp;    // placeholder that can be used in log.conf to point to $root/log/ dir
+<i class="no-highlight">52</i>&nbsp;    public static final String LOG_DIR_VAR = &quot;${log.dir}&quot;;
+<i class="no-highlight">53</i>&nbsp;    // name of default logging configuration file (in jar and in $root/conf/ dir)
+<i class="no-highlight">54</i>&nbsp;    private static final String DEFAULT_CONFIG = &quot;/io/questdb/site/conf/&quot; + DEFAULT_CONFIG_NAME;
+<i class="no-highlight">55</i>&nbsp;    private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
+<i class="no-highlight">56</i>&nbsp;    private static final int DEFAULT_MSG_SIZE = 4 * 1024;
+<i class="no-highlight">57</i>&nbsp;    private static final int DEFAULT_QUEUE_DEPTH = 1024;
+<i class="no-highlight">58</i>&nbsp;    private static final String EMPTY_STR = &quot;&quot;;
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    private static final LengthDescendingComparator LDC = new LengthDescendingComparator();</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;    private static final CharSequenceHashSet reserved = new CharSequenceHashSet();</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    static boolean envEnabled = true;</b>
+<i class="no-highlight">62</i>&nbsp;    private static LogFactory INSTANCE;
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    private static boolean overwriteWithSyncLogging = false;</b>
+<i class="no-highlight">64</i>&nbsp;    private static String rootDir;
+<i class="no-highlight">65</i>&nbsp;    private final MicrosecondClock clock;
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    private final AtomicBoolean closed = new AtomicBoolean();</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    private final ObjList&lt;DeferredLogger&gt; deferredLoggers = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    private final ObjHashSet&lt;LogWriter&gt; jobs = new ObjHashSet&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    private final AtomicBoolean running = new AtomicBoolean();</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;    private final CharSequenceObjHashMap&lt;ScopeConfiguration&gt; scopeConfigMap = new CharSequenceObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;    private final ObjList&lt;ScopeConfiguration&gt; scopeConfigs = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;    private final StringSink sink = new StringSink();</b>
+<i class="no-highlight">73</i>&nbsp;    private final WorkerPool workerPool;
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    private boolean configured = false;</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;    private int queueDepth = DEFAULT_QUEUE_DEPTH;</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;    private int recordLength = DEFAULT_MSG_SIZE;</b>
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    public LogFactory() {
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        this(MicrosecondClockImpl.INSTANCE);</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<b class="fc"><i class="no-highlight">82</i>&nbsp;    private LogFactory(MicrosecondClock clock) {</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.clock = clock;</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;        workerPool = new WorkerPool(new WorkerPoolConfiguration() {</b>
+<i class="no-highlight">85</i>&nbsp;            @Override
+<i class="no-highlight">86</i>&nbsp;            public String getPoolName() {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;                return &quot;logging&quot;;</b>
+<i class="no-highlight">88</i>&nbsp;            }
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;            @Override
+<i class="no-highlight">91</i>&nbsp;            public int getWorkerCount() {
+<b class="fc"><i class="no-highlight">92</i>&nbsp;                return 1;</b>
+<i class="no-highlight">93</i>&nbsp;            }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;            @Override
+<i class="no-highlight">96</i>&nbsp;            public boolean isDaemonPool() {
+<b class="fc"><i class="no-highlight">97</i>&nbsp;                return true;</b>
+<i class="no-highlight">98</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        }, Metrics.disabled().health());</b>
+<i class="no-highlight">100</i>&nbsp;    }
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    public static synchronized void closeInstance() {
+<b class="nc"><i class="no-highlight">103</i>&nbsp;        LogFactory logFactory = INSTANCE;</b>
+<b class="nc"><i class="no-highlight">104</i>&nbsp;        if (logFactory != null) {</b>
+<b class="nc"><i class="no-highlight">105</i>&nbsp;            logFactory.close(true);</b>
+<b class="nc"><i class="no-highlight">106</i>&nbsp;            INSTANCE = null;</b>
+<i class="no-highlight">107</i>&nbsp;        }
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    public static void configureAsync() {
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        overwriteWithSyncLogging = false;</b>
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;    public static void configureRootDir(String rootDir) {
+<b class="nc"><i class="no-highlight">115</i>&nbsp;        LogFactory.rootDir = rootDir;</b>
+<i class="no-highlight">116</i>&nbsp;    }
+<i class="no-highlight">117</i>&nbsp;
+<i class="no-highlight">118</i>&nbsp;    public static void configureSync() {
+<b class="nc"><i class="no-highlight">119</i>&nbsp;        overwriteWithSyncLogging = true;</b>
+<i class="no-highlight">120</i>&nbsp;    }
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;    public static synchronized LogFactory getInstance() {
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        LogFactory logFactory = INSTANCE;</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        if (logFactory == null) {</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;            logFactory = new LogFactory();</b>
+<i class="no-highlight">126</i>&nbsp;            // Some log writers created in the later init() call may do some logging,
+<i class="no-highlight">127</i>&nbsp;            // so we store the instance before the factory was fully initialized.
+<i class="no-highlight">128</i>&nbsp;            // Any logging calls done on a non-initialized log factory and its loggers
+<i class="no-highlight">129</i>&nbsp;            // are no-op. Once the factory is fully configured, it replaces no-op
+<i class="no-highlight">130</i>&nbsp;            // loggers with the end ones.
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            INSTANCE = logFactory;</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;            logFactory.init(rootDir);</b>
+<i class="no-highlight">133</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        return logFactory;</b>
+<i class="no-highlight">135</i>&nbsp;    }
+<i class="no-highlight">136</i>&nbsp;
+<i class="no-highlight">137</i>&nbsp;    public static Log getLog(Class&lt;?&gt; clazz) {
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        return getLog(clazz.getName());</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    public static Log getLog(String key) {
+<b class="fc"><i class="no-highlight">142</i>&nbsp;        return getInstance().create(key);</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    public static synchronized void haltInstance() {
+<b class="nc"><i class="no-highlight">146</i>&nbsp;        LogFactory logFactory = INSTANCE;</b>
+<b class="nc"><i class="no-highlight">147</i>&nbsp;        if (logFactory != null) {</b>
+<b class="nc"><i class="no-highlight">148</i>&nbsp;            logFactory.haltThread();</b>
+<i class="no-highlight">149</i>&nbsp;        }
+<i class="no-highlight">150</i>&nbsp;    }
+<i class="no-highlight">151</i>&nbsp;
+<i class="no-highlight">152</i>&nbsp;    public synchronized void add(final LogWriterConfig config) {
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        assert !configured;</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        final int index = scopeConfigMap.keyIndex(config.getScope());</b>
+<i class="no-highlight">155</i>&nbsp;        ScopeConfiguration scopeConf;
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        if (index &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;            scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(LogLevel.MAX));</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;            scopeConfigs.add(scopeConf);</b>
+<i class="no-highlight">159</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;            scopeConf = scopeConfigMap.valueAtQuick(index);</b>
+<i class="no-highlight">161</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        scopeConf.add(config);</b>
+<i class="no-highlight">163</i>&nbsp;    }
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    public synchronized void bind() {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        if (configured) {</b>
+<i class="no-highlight">167</i>&nbsp;            return;
+<i class="no-highlight">168</i>&nbsp;        }
+<i class="no-highlight">169</i>&nbsp;
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        configured = true;</b>
+<i class="no-highlight">171</i>&nbsp;
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        for (int i = 0, n = scopeConfigs.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;            ScopeConfiguration conf = scopeConfigs.get(i);</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            conf.bind(jobs, queueDepth, recordLength);</b>
+<i class="no-highlight">175</i>&nbsp;        }
+<i class="no-highlight">176</i>&nbsp;
+<b class="fc"><i class="no-highlight">177</i>&nbsp;        scopeConfigMap.sortKeys(LDC);</b>
+<i class="no-highlight">178</i>&nbsp;
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        for (int i = 0, n = jobs.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;            LogWriter job = jobs.get(i);</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;            job.bindProperties(this);</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;            workerPool.assign(job);</b>
+<i class="no-highlight">183</i>&nbsp;        }
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    @Override
+<i class="no-highlight">187</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        close(false);</b>
+<i class="no-highlight">189</i>&nbsp;    }
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;    public void close(boolean flush) {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        if (closed.compareAndSet(false, true)) {</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;            haltThread();</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;            for (int i = 0, n = jobs.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;                LogWriter job = jobs.get(i);</b>
+<i class="no-highlight">196</i>&nbsp;                try {
+<b class="fc"><i class="no-highlight">197</i>&nbsp;                    if (job != null &amp;&amp; flush) {</b>
+<i class="no-highlight">198</i>&nbsp;                        try {
+<i class="no-highlight">199</i>&nbsp;                            // noinspection StatementWithEmptyBody
+<b class="fc"><i class="no-highlight">200</i>&nbsp;                            while (job.run(0, Job.TERMINATING_STATUS)) {</b>
+<i class="no-highlight">201</i>&nbsp;                                // Keep running the job until it returns false to log all the buffered messages
+<i class="no-highlight">202</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">203</i>&nbsp;                        } catch (Exception th) {</b>
+<i class="no-highlight">204</i>&nbsp;                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+<i class="no-highlight">205</i>&nbsp;                            // Switch to the next job.
+<b class="fc"><i class="no-highlight">206</i>&nbsp;                        }</b>
+<i class="no-highlight">207</i>&nbsp;                    }
+<i class="no-highlight">208</i>&nbsp;                } finally {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;                    Misc.freeIfCloseable(job);</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;                }</b>
+<i class="no-highlight">211</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">212</i>&nbsp;            for (int i = 0, n = scopeConfigs.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;                Misc.free(scopeConfigs.getQuick(i));</b>
+<i class="no-highlight">214</i>&nbsp;            }
+<i class="no-highlight">215</i>&nbsp;        }
+<i class="no-highlight">216</i>&nbsp;    }
+<i class="no-highlight">217</i>&nbsp;
+<i class="no-highlight">218</i>&nbsp;    public Log create(Class&lt;?&gt; clazz) {
+<b class="nc"><i class="no-highlight">219</i>&nbsp;        return create(clazz.getName());</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    public synchronized Log create(String key) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        if (!configured) {</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;            DeferredLogger log = new DeferredLogger(key);</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;            deferredLoggers.add(log);</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;            return log;</b>
+<i class="no-highlight">227</i>&nbsp;        }
+<i class="no-highlight">228</i>&nbsp;
+<b class="fc"><i class="no-highlight">229</i>&nbsp;        ScopeConfiguration scopeConfiguration = find(key);</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;        if (scopeConfiguration == null) {</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;            return new Logger(</b>
+<i class="no-highlight">232</i>&nbsp;                    clock,
+<b class="fc"><i class="no-highlight">233</i>&nbsp;                    compressScope(key, sink),</b>
+<i class="no-highlight">234</i>&nbsp;                    null,
+<i class="no-highlight">235</i>&nbsp;                    null,
+<i class="no-highlight">236</i>&nbsp;                    null,
+<i class="no-highlight">237</i>&nbsp;                    null,
+<i class="no-highlight">238</i>&nbsp;                    null,
+<i class="no-highlight">239</i>&nbsp;                    null,
+<i class="no-highlight">240</i>&nbsp;                    null,
+<i class="no-highlight">241</i>&nbsp;                    null,
+<i class="no-highlight">242</i>&nbsp;                    null,
+<i class="no-highlight">243</i>&nbsp;                    null
+<i class="no-highlight">244</i>&nbsp;            );
+<i class="no-highlight">245</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.INFO));</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        final Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.DEBUG));</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        final Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ERROR));</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        if (!overwriteWithSyncLogging) {</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;            return new Logger(</b>
+<i class="no-highlight">253</i>&nbsp;                    clock,
+<b class="fc"><i class="no-highlight">254</i>&nbsp;                    compressScope(key, sink),</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                    dbg == null ? null : dbg.ring,</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;                    dbg == null ? null : dbg.lSeq,</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;                    inf == null ? null : inf.ring,</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;                    inf == null ? null : inf.lSeq,</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;                    err == null ? null : err.ring,</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;                    err == null ? null : err.lSeq,</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                    cri == null ? null : cri.ring,</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                    cri == null ? null : cri.lSeq,</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                    adv == null ? null : adv.ring,</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;                    adv == null ? null : adv.lSeq</b>
+<i class="no-highlight">265</i>&nbsp;            );
+<i class="no-highlight">266</i>&nbsp;        }
+<i class="no-highlight">267</i>&nbsp;
+<b class="nc"><i class="no-highlight">268</i>&nbsp;        return new SyncLogger(</b>
+<i class="no-highlight">269</i>&nbsp;                clock,
+<b class="nc"><i class="no-highlight">270</i>&nbsp;                compressScope(key, sink),</b>
+<b class="nc"><i class="no-highlight">271</i>&nbsp;                dbg == null ? null : dbg.ring,</b>
+<b class="nc"><i class="no-highlight">272</i>&nbsp;                dbg == null ? null : dbg.lSeq,</b>
+<b class="nc"><i class="no-highlight">273</i>&nbsp;                inf == null ? null : inf.ring,</b>
+<b class="nc"><i class="no-highlight">274</i>&nbsp;                inf == null ? null : inf.lSeq,</b>
+<b class="nc"><i class="no-highlight">275</i>&nbsp;                err == null ? null : err.ring,</b>
+<b class="nc"><i class="no-highlight">276</i>&nbsp;                err == null ? null : err.lSeq,</b>
+<b class="nc"><i class="no-highlight">277</i>&nbsp;                cri == null ? null : cri.ring,</b>
+<b class="nc"><i class="no-highlight">278</i>&nbsp;                cri == null ? null : cri.lSeq,</b>
+<b class="nc"><i class="no-highlight">279</i>&nbsp;                adv == null ? null : adv.ring,</b>
+<b class="nc"><i class="no-highlight">280</i>&nbsp;                adv == null ? null : adv.lSeq</b>
+<i class="no-highlight">281</i>&nbsp;        );
+<i class="no-highlight">282</i>&nbsp;    }
+<i class="no-highlight">283</i>&nbsp;
+<i class="no-highlight">284</i>&nbsp;    @TestOnly
+<i class="no-highlight">285</i>&nbsp;    public void flushJobs() {
+<b class="nc"><i class="no-highlight">286</i>&nbsp;        pauseThread();</b>
+<b class="nc"><i class="no-highlight">287</i>&nbsp;        for (int i = 0, n = jobs.size(); i &lt; n; i++) {</b>
+<b class="nc"><i class="no-highlight">288</i>&nbsp;            LogWriter job = jobs.get(i);</b>
+<b class="nc"><i class="no-highlight">289</i>&nbsp;            if (job != null) {</b>
+<i class="no-highlight">290</i>&nbsp;                try {
+<b class="nc"><i class="no-highlight">291</i>&nbsp;                    job.drain(0);</b>
+<b class="nc"><i class="no-highlight">292</i>&nbsp;                } catch (Exception th) {</b>
+<i class="no-highlight">293</i>&nbsp;                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+<i class="no-highlight">294</i>&nbsp;                    // Switch to the next job.
+<b class="nc"><i class="no-highlight">295</i>&nbsp;                }</b>
+<i class="no-highlight">296</i>&nbsp;            }
+<i class="no-highlight">297</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">298</i>&nbsp;        startThread();</b>
+<i class="no-highlight">299</i>&nbsp;    }
+<i class="no-highlight">300</i>&nbsp;
+<i class="no-highlight">301</i>&nbsp;    public int getQueueDepth() {
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        return queueDepth;</b>
+<i class="no-highlight">303</i>&nbsp;    }
+<i class="no-highlight">304</i>&nbsp;
+<i class="no-highlight">305</i>&nbsp;    public int getRecordLength() {
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        return recordLength;</b>
+<i class="no-highlight">307</i>&nbsp;    }
+<i class="no-highlight">308</i>&nbsp;
+<i class="no-highlight">309</i>&nbsp;    public synchronized void init(@Nullable String rootDir) {
+<b class="fc"><i class="no-highlight">310</i>&nbsp;        if (configured) {</b>
+<i class="no-highlight">311</i>&nbsp;            return;
+<i class="no-highlight">312</i>&nbsp;        }
+<i class="no-highlight">313</i>&nbsp;
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;        if (conf == null) {</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;            conf = DEFAULT_CONFIG;</b>
+<i class="no-highlight">317</i>&nbsp;        }
+<i class="no-highlight">318</i>&nbsp;
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        boolean initialized = false;</b>
+<i class="no-highlight">320</i>&nbsp;        // prevent creating blank log dir from unit tests
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        String logDir = &quot;.&quot;;</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        if (rootDir != null &amp;&amp; DEFAULT_CONFIG.equals(conf)) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            logDir = Paths.get(rootDir, &quot;log&quot;).toString();</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;            File logDirFile = new File(logDir);</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;            if (!logDirFile.exists() &amp;&amp; logDirFile.mkdir()) {</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;                System.err.printf(&quot;Created log directory: %s%n&quot;, logDir);</b>
+<i class="no-highlight">327</i>&nbsp;            }
+<i class="no-highlight">328</i>&nbsp;
+<b class="fc"><i class="no-highlight">329</i>&nbsp;            String logPath = Paths.get(rootDir, &quot;conf&quot;, DEFAULT_CONFIG_NAME).toString();</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;            File f = new File(logPath);</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;            if (f.isFile() &amp;&amp; f.canRead()) {</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;                System.err.printf(&quot;Reading log configuration from %s%n&quot;, logPath);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;                try (FileInputStream fis = new FileInputStream(logPath)) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;                    Properties properties = new Properties();</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;                    properties.load(fis);</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;                    configureFromProperties(properties, logDir);</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;                    initialized = true;</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;                } catch (IOException e) {</b>
+<b class="nc"><i class="no-highlight">339</i>&nbsp;                    throw new LogError(&quot;Cannot read &quot; + logPath, e);</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;                }</b>
+<i class="no-highlight">341</i>&nbsp;            }
+<i class="no-highlight">342</i>&nbsp;        }
+<i class="no-highlight">343</i>&nbsp;
+<b class="fc"><i class="no-highlight">344</i>&nbsp;        if (!initialized) {</b>
+<i class="no-highlight">345</i>&nbsp;            // in this order of initialization specifying -Dout might end up using internal jar resources ...
+<b class="fc"><i class="no-highlight">346</i>&nbsp;            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;                if (is != null) {</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;                    Properties properties = new Properties();</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;                    properties.load(is);</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;                    configureFromProperties(properties, logDir);</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;                    System.err.println(&quot;Log configuration loaded from default internal file.&quot;);</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;                } else {</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;                    File f = new File(conf);</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;                    if (f.canRead()) {</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;                        try (FileInputStream fis = new FileInputStream(f)) {</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;                            Properties properties = new Properties();</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;                            properties.load(fis);</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;                            configureFromProperties(properties, logDir);</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;                            System.err.printf(&quot;Log configuration loaded from: %s%n&quot;, conf);</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;                        }</b>
+<i class="no-highlight">361</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">362</i>&nbsp;                        configureDefaultWriter();</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;                        System.err.println(&quot;Log configuration loaded using factory defaults.&quot;);</b>
+<i class="no-highlight">364</i>&nbsp;                    }
+<i class="no-highlight">365</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">366</i>&nbsp;            } catch (IOException e) {</b>
+<b class="nc"><i class="no-highlight">367</i>&nbsp;                if (!DEFAULT_CONFIG.equals(conf)) {</b>
+<b class="nc"><i class="no-highlight">368</i>&nbsp;                    throw new LogError(&quot;Cannot read &quot; + conf, e);</b>
+<i class="no-highlight">369</i>&nbsp;                } else {
+<b class="nc"><i class="no-highlight">370</i>&nbsp;                    configureDefaultWriter();</b>
+<i class="no-highlight">371</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">372</i>&nbsp;            }</b>
+<i class="no-highlight">373</i>&nbsp;        }
+<i class="no-highlight">374</i>&nbsp;
+<i class="no-highlight">375</i>&nbsp;        // swap no-op loggers created by the configured log writers with the real ones
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        for (int i = 0, n = deferredLoggers.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            deferredLoggers.get(i).init(this);</b>
+<i class="no-highlight">378</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">379</i>&nbsp;        deferredLoggers.clear();</b>
+<i class="no-highlight">380</i>&nbsp;
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        startThread();</b>
+<i class="no-highlight">382</i>&nbsp;    }
+<i class="no-highlight">383</i>&nbsp;
+<i class="no-highlight">384</i>&nbsp;    public void startThread() {
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        assert !closed.get();</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        if (running.compareAndSet(false, true)) {</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;            for (int i = 0, n = jobs.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;                workerPool.assign(jobs.get(i));</b>
+<i class="no-highlight">389</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">390</i>&nbsp;            workerPool.start();</b>
+<i class="no-highlight">391</i>&nbsp;        }
+<i class="no-highlight">392</i>&nbsp;    }
+<i class="no-highlight">393</i>&nbsp;
+<i class="no-highlight">394</i>&nbsp;    /**
+<i class="no-highlight">395</i>&nbsp;     * Converts fully qualified class name into an abbreviated form:
+<i class="no-highlight">396</i>&nbsp;     * com.questdb.mp.Sequence -&gt; c.n.m.Sequence
+<i class="no-highlight">397</i>&nbsp;     *
+<i class="no-highlight">398</i>&nbsp;     * @param key     typically class name
+<i class="no-highlight">399</i>&nbsp;     * @param builder used for producing the resulting form
+<i class="no-highlight">400</i>&nbsp;     * @return abbreviated form of key
+<i class="no-highlight">401</i>&nbsp;     */
+<i class="no-highlight">402</i>&nbsp;    private static CharSequence compressScope(CharSequence key, StringSink builder) {
+<b class="fc"><i class="no-highlight">403</i>&nbsp;        builder.clear();</b>
+<b class="fc"><i class="no-highlight">404</i>&nbsp;        char c = 0;</b>
+<b class="fc"><i class="no-highlight">405</i>&nbsp;        boolean pick = true;</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;        int z = 0;</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;        for (int i = 0, n = key.length(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;            char a = key.charAt(i);</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;            if (a == &#39;.&#39;) {</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;                if (!pick) {</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;                    builder.put(c).put(&#39;.&#39;);</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;                    pick = true;</b>
+<i class="no-highlight">413</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">414</i>&nbsp;            } else if (pick) {</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;                c = a;</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;                z = i;</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;                pick = false;</b>
+<i class="no-highlight">418</i>&nbsp;            }
+<i class="no-highlight">419</i>&nbsp;        }
+<i class="no-highlight">420</i>&nbsp;
+<b class="fc"><i class="no-highlight">421</i>&nbsp;        for (; z &lt; key.length(); z++) {</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;            builder.put(key.charAt(z));</b>
+<i class="no-highlight">423</i>&nbsp;        }
+<i class="no-highlight">424</i>&nbsp;
+<b class="fc"><i class="no-highlight">425</i>&nbsp;        builder.put(&#39; &#39;);</b>
+<i class="no-highlight">426</i>&nbsp;
+<b class="fc"><i class="no-highlight">427</i>&nbsp;        return builder.toString();</b>
+<i class="no-highlight">428</i>&nbsp;    }
+<i class="no-highlight">429</i>&nbsp;
+<i class="no-highlight">430</i>&nbsp;    @SuppressWarnings(&quot;rawtypes&quot;)
+<i class="no-highlight">431</i>&nbsp;    private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
+<b class="fc"><i class="no-highlight">432</i>&nbsp;        final String writer = &quot;w.&quot; + writerName + &#39;.&#39;;</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;        final String clazz = getProperty(properties, writer + &quot;class&quot;);</b>
+<b class="fc"><i class="no-highlight">434</i>&nbsp;        final String levelStr = getProperty(properties, writer + &quot;level&quot;);</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        final String scope = getProperty(properties, writer + &quot;scope&quot;);</b>
+<i class="no-highlight">436</i>&nbsp;
+<b class="fc"><i class="no-highlight">437</i>&nbsp;        if (clazz == null) {</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;            return null;</b>
+<i class="no-highlight">439</i>&nbsp;        }
+<i class="no-highlight">440</i>&nbsp;
+<i class="no-highlight">441</i>&nbsp;        final Class&lt;?&gt; cl;
+<i class="no-highlight">442</i>&nbsp;        final Constructor constructor;
+<i class="no-highlight">443</i>&nbsp;        try {
+<b class="fc"><i class="no-highlight">444</i>&nbsp;            cl = Class.forName(clazz);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;            constructor = cl.getDeclaredConstructor(RingQueue.class, SCSequence.class, int.class);</b>
+<b class="fc"><i class="no-highlight">446</i>&nbsp;        } catch (ClassNotFoundException e) {</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;            throw new LogError(&quot;Class not found &quot; + clazz, e);</b>
+<b class="nc"><i class="no-highlight">448</i>&nbsp;        } catch (NoSuchMethodException e) {</b>
+<b class="nc"><i class="no-highlight">449</i>&nbsp;            throw new LogError(&quot;Constructor(RingQueue, Sequence, int) expected: &quot; + clazz, e);</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        }</b>
+<i class="no-highlight">451</i>&nbsp;
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        int level = 0;</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;        if (levelStr != null) {</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;            for (String s : levelStr.split(&quot;,&quot;)) {</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;                switch (s.toUpperCase()) {</b>
+<i class="no-highlight">456</i>&nbsp;                    case &quot;DEBUG&quot;:
+<b class="fc"><i class="no-highlight">457</i>&nbsp;                        level |= LogLevel.DEBUG;</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;                        break;</b>
+<i class="no-highlight">459</i>&nbsp;                    case &quot;INFO&quot;:
+<b class="fc"><i class="no-highlight">460</i>&nbsp;                        level |= LogLevel.INFO;</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;                        break;</b>
+<i class="no-highlight">462</i>&nbsp;                    case &quot;ERROR&quot;:
+<b class="fc"><i class="no-highlight">463</i>&nbsp;                        level |= LogLevel.ERROR;</b>
+<b class="fc"><i class="no-highlight">464</i>&nbsp;                        break;</b>
+<i class="no-highlight">465</i>&nbsp;                    case &quot;CRITICAL&quot;:
+<b class="nc"><i class="no-highlight">466</i>&nbsp;                        level |= LogLevel.CRITICAL;</b>
+<b class="nc"><i class="no-highlight">467</i>&nbsp;                        break;</b>
+<i class="no-highlight">468</i>&nbsp;                    case &quot;ADVISORY&quot;:
+<b class="nc"><i class="no-highlight">469</i>&nbsp;                        level |= LogLevel.ADVISORY;</b>
+<b class="nc"><i class="no-highlight">470</i>&nbsp;                        break;</b>
+<i class="no-highlight">471</i>&nbsp;                    default:
+<b class="nc"><i class="no-highlight">472</i>&nbsp;                        throw new LogError(&quot;Unknown level: &quot; + s);</b>
+<i class="no-highlight">473</i>&nbsp;                }
+<i class="no-highlight">474</i>&nbsp;            }
+<i class="no-highlight">475</i>&nbsp;        }
+<i class="no-highlight">476</i>&nbsp;
+<b class="fc"><i class="no-highlight">477</i>&nbsp;        if (isForcedDebug()) {</b>
+<b class="nc"><i class="no-highlight">478</i>&nbsp;            level = level | LogLevel.DEBUG;</b>
+<i class="no-highlight">479</i>&nbsp;        }
+<i class="no-highlight">480</i>&nbsp;
+<i class="no-highlight">481</i>&nbsp;        // enable all LOG levels above the minimum set one
+<i class="no-highlight">482</i>&nbsp;        // ((-1 &gt;&gt;&gt; (msb-1)) &lt;&lt; msb) | level
+<b class="fc"><i class="no-highlight">483</i>&nbsp;        final int msb = Numbers.msb(level);</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;        level = (((-1 &gt;&gt;&gt; (msb - 1)) &lt;&lt; msb) | level) &amp; LogLevel.MASK;</b>
+<i class="no-highlight">485</i>&nbsp;
+<b class="fc"><i class="no-highlight">486</i>&nbsp;        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -&gt; {</b>
+<i class="no-highlight">487</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">488</i>&nbsp;                LogWriter w1 = (LogWriter) constructor.newInstance(ring, seq, level1);</b>
+<i class="no-highlight">489</i>&nbsp;
+<b class="fc"><i class="no-highlight">490</i>&nbsp;                for (String n : properties.stringPropertyNames()) {</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;                    if (n.startsWith(writer)) {</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;                        String p = n.substring(writer.length());</b>
+<i class="no-highlight">493</i>&nbsp;
+<b class="fc"><i class="no-highlight">494</i>&nbsp;                        if (reserved.contains(p)) {</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;                            continue;</b>
+<i class="no-highlight">496</i>&nbsp;                        }
+<i class="no-highlight">497</i>&nbsp;
+<i class="no-highlight">498</i>&nbsp;                        try {
+<b class="fc"><i class="no-highlight">499</i>&nbsp;                            Field f = cl.getDeclaredField(p);</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;                            if (f.getType() == String.class) {</b>
+<i class="no-highlight">501</i>&nbsp;
+<b class="fc"><i class="no-highlight">502</i>&nbsp;                                String value = getProperty(properties, n);</b>
+<b class="fc"><i class="no-highlight">503</i>&nbsp;                                if (logDir != null &amp;&amp; value.contains(LOG_DIR_VAR)) {</b>
+<b class="fc"><i class="no-highlight">504</i>&nbsp;                                    value = value.replace(LOG_DIR_VAR, logDir);</b>
+<i class="no-highlight">505</i>&nbsp;                                }
+<i class="no-highlight">506</i>&nbsp;
+<b class="fc"><i class="no-highlight">507</i>&nbsp;                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), value);</b>
+<i class="no-highlight">508</i>&nbsp;                            }
+<b class="fc"><i class="no-highlight">509</i>&nbsp;                        } catch (Exception e) {</b>
+<b class="fc"><i class="no-highlight">510</i>&nbsp;                            throw new LogError(&quot;Unknown property: &quot; + n, e);</b>
+<b class="fc"><i class="no-highlight">511</i>&nbsp;                        }</b>
+<i class="no-highlight">512</i>&nbsp;                    }
+<b class="fc"><i class="no-highlight">513</i>&nbsp;                }</b>
+<b class="fc"><i class="no-highlight">514</i>&nbsp;                return w1;</b>
+<b class="nc"><i class="no-highlight">515</i>&nbsp;            } catch (Exception e) {</b>
+<b class="nc"><i class="no-highlight">516</i>&nbsp;                throw new LogError(&quot;Error creating log writer&quot;, e);</b>
+<i class="no-highlight">517</i>&nbsp;            }
+<i class="no-highlight">518</i>&nbsp;        });
+<i class="no-highlight">519</i>&nbsp;    }
+<i class="no-highlight">520</i>&nbsp;
+<i class="no-highlight">521</i>&nbsp;    private static String getProperty(final Properties properties, String key) {
+<b class="fc"><i class="no-highlight">522</i>&nbsp;        if (envEnabled) {</b>
+<b class="fc"><i class="no-highlight">523</i>&nbsp;            final String envKey = &quot;QDB_LOG_&quot; + key.replace(&#39;.&#39;, &#39;_&#39;).toUpperCase();</b>
+<b class="fc"><i class="no-highlight">524</i>&nbsp;            final String envValue = System.getenv(envKey);</b>
+<b class="fc"><i class="no-highlight">525</i>&nbsp;            if (envValue == null) {</b>
+<b class="fc"><i class="no-highlight">526</i>&nbsp;                return properties.getProperty(key);</b>
+<i class="no-highlight">527</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">528</i>&nbsp;            System.err.println(&quot;    Using env: &quot; + envKey + &quot;=&quot; + envValue);</b>
+<b class="nc"><i class="no-highlight">529</i>&nbsp;            return envValue;</b>
+<i class="no-highlight">530</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">531</i>&nbsp;        return properties.getProperty(key);</b>
+<i class="no-highlight">532</i>&nbsp;    }
+<i class="no-highlight">533</i>&nbsp;
+<i class="no-highlight">534</i>&nbsp;    private static boolean isForcedDebug() {
+<b class="fc"><i class="no-highlight">535</i>&nbsp;        return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);</b>
+<i class="no-highlight">536</i>&nbsp;    }
+<i class="no-highlight">537</i>&nbsp;
+<i class="no-highlight">538</i>&nbsp;    private void configureDefaultWriter() {
+<b class="fc"><i class="no-highlight">539</i>&nbsp;        int level = DEFAULT_LOG_LEVEL;</b>
+<b class="fc"><i class="no-highlight">540</i>&nbsp;        if (isForcedDebug()) {</b>
+<b class="nc"><i class="no-highlight">541</i>&nbsp;            level = level | LogLevel.DEBUG;</b>
+<i class="no-highlight">542</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">543</i>&nbsp;        add(new LogWriterConfig(level, LogConsoleWriter::new));</b>
+<b class="fc"><i class="no-highlight">544</i>&nbsp;        bind();</b>
+<i class="no-highlight">545</i>&nbsp;    }
+<i class="no-highlight">546</i>&nbsp;
+<i class="no-highlight">547</i>&nbsp;    private void configureFromProperties(Properties properties, String logDir) {
+<b class="fc"><i class="no-highlight">548</i>&nbsp;        String writers = getProperty(properties, &quot;writers&quot;);</b>
+<i class="no-highlight">549</i>&nbsp;
+<b class="fc"><i class="no-highlight">550</i>&nbsp;        if (writers == null) {</b>
+<b class="fc"><i class="no-highlight">551</i>&nbsp;            configured = true;</b>
+<i class="no-highlight">552</i>&nbsp;            return;
+<i class="no-highlight">553</i>&nbsp;        }
+<i class="no-highlight">554</i>&nbsp;
+<b class="fc"><i class="no-highlight">555</i>&nbsp;        String s = getProperty(properties, &quot;queueDepth&quot;);</b>
+<b class="fc"><i class="no-highlight">556</i>&nbsp;        if (s != null &amp;&amp; s.length() &gt; 0) {</b>
+<i class="no-highlight">557</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">558</i>&nbsp;                setQueueDepth(Numbers.parseInt(s));</b>
+<b class="fc"><i class="no-highlight">559</i>&nbsp;            } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">560</i>&nbsp;                throw new LogError(&quot;Invalid value for queueDepth&quot;);</b>
+<b class="fc"><i class="no-highlight">561</i>&nbsp;            }</b>
+<i class="no-highlight">562</i>&nbsp;        }
+<i class="no-highlight">563</i>&nbsp;
+<b class="fc"><i class="no-highlight">564</i>&nbsp;        s = getProperty(properties, &quot;recordLength&quot;);</b>
+<b class="fc"><i class="no-highlight">565</i>&nbsp;        if (s != null &amp;&amp; s.length() &gt; 0) {</b>
+<i class="no-highlight">566</i>&nbsp;            try {
+<b class="fc"><i class="no-highlight">567</i>&nbsp;                setRecordLength(Numbers.parseInt(s));</b>
+<b class="fc"><i class="no-highlight">568</i>&nbsp;            } catch (NumericException e) {</b>
+<b class="fc"><i class="no-highlight">569</i>&nbsp;                throw new LogError(&quot;Invalid value for recordLength&quot;);</b>
+<b class="fc"><i class="no-highlight">570</i>&nbsp;            }</b>
+<i class="no-highlight">571</i>&nbsp;        }
+<i class="no-highlight">572</i>&nbsp;
+<b class="fc"><i class="no-highlight">573</i>&nbsp;        for (String w : writers.split(&quot;,&quot;)) {</b>
+<b class="fc"><i class="no-highlight">574</i>&nbsp;            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);</b>
+<b class="fc"><i class="no-highlight">575</i>&nbsp;            if (conf != null) {</b>
+<b class="fc"><i class="no-highlight">576</i>&nbsp;                add(conf);</b>
+<i class="no-highlight">577</i>&nbsp;            }
+<i class="no-highlight">578</i>&nbsp;        }
+<i class="no-highlight">579</i>&nbsp;
+<b class="fc"><i class="no-highlight">580</i>&nbsp;        bind();</b>
+<i class="no-highlight">581</i>&nbsp;    }
+<i class="no-highlight">582</i>&nbsp;
+<i class="no-highlight">583</i>&nbsp;    private ScopeConfiguration find(CharSequence key) {
+<b class="fc"><i class="no-highlight">584</i>&nbsp;        ObjList&lt;CharSequence&gt; keys = scopeConfigMap.keys();</b>
+<b class="fc"><i class="no-highlight">585</i>&nbsp;        CharSequence k = null;</b>
+<i class="no-highlight">586</i>&nbsp;
+<b class="fc"><i class="no-highlight">587</i>&nbsp;        for (int i = 0, n = keys.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">588</i>&nbsp;            CharSequence s = keys.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">589</i>&nbsp;            if (Chars.startsWith(key, s)) {</b>
+<b class="fc"><i class="no-highlight">590</i>&nbsp;                k = s;</b>
+<b class="fc"><i class="no-highlight">591</i>&nbsp;                break;</b>
+<i class="no-highlight">592</i>&nbsp;            }
+<i class="no-highlight">593</i>&nbsp;        }
+<i class="no-highlight">594</i>&nbsp;
+<b class="fc"><i class="no-highlight">595</i>&nbsp;        if (k == null) {</b>
+<b class="fc"><i class="no-highlight">596</i>&nbsp;            return null;</b>
+<i class="no-highlight">597</i>&nbsp;        }
+<i class="no-highlight">598</i>&nbsp;
+<b class="fc"><i class="no-highlight">599</i>&nbsp;        return scopeConfigMap.get(k);</b>
+<i class="no-highlight">600</i>&nbsp;    }
+<i class="no-highlight">601</i>&nbsp;
+<i class="no-highlight">602</i>&nbsp;    private void haltThread() {
+<b class="fc"><i class="no-highlight">603</i>&nbsp;        if (running.compareAndSet(true, false)) {</b>
+<b class="fc"><i class="no-highlight">604</i>&nbsp;            workerPool.halt();</b>
+<i class="no-highlight">605</i>&nbsp;        }
+<i class="no-highlight">606</i>&nbsp;    }
+<i class="no-highlight">607</i>&nbsp;
+<i class="no-highlight">608</i>&nbsp;    @TestOnly
+<i class="no-highlight">609</i>&nbsp;    private void pauseThread() {
+<b class="nc"><i class="no-highlight">610</i>&nbsp;        if (running.compareAndSet(true, false)) {</b>
+<b class="nc"><i class="no-highlight">611</i>&nbsp;            workerPool.pause();</b>
+<i class="no-highlight">612</i>&nbsp;        }
+<i class="no-highlight">613</i>&nbsp;    }
+<i class="no-highlight">614</i>&nbsp;
+<i class="no-highlight">615</i>&nbsp;    private void setQueueDepth(int queueDepth) {
+<b class="fc"><i class="no-highlight">616</i>&nbsp;        this.queueDepth = queueDepth;</b>
+<i class="no-highlight">617</i>&nbsp;    }
+<i class="no-highlight">618</i>&nbsp;
+<i class="no-highlight">619</i>&nbsp;    private void setRecordLength(int recordLength) {
+<b class="fc"><i class="no-highlight">620</i>&nbsp;        this.recordLength = recordLength;</b>
+<i class="no-highlight">621</i>&nbsp;    }
+<i class="no-highlight">622</i>&nbsp;
+<i class="no-highlight">623</i>&nbsp;    @TestOnly
+<i class="no-highlight">624</i>&nbsp;    ObjHashSet&lt;LogWriter&gt; getJobs() {
+<b class="fc"><i class="no-highlight">625</i>&nbsp;        return jobs;</b>
+<i class="no-highlight">626</i>&nbsp;    }
+<i class="no-highlight">627</i>&nbsp;
+<i class="no-highlight">628</i>&nbsp;    private static class DeferredLogger implements Log {
+<i class="no-highlight">629</i>&nbsp;
+<b class="fc"><i class="no-highlight">630</i>&nbsp;        private static final NoOpLogRecord noOpRecord = new NoOpLogRecord();</b>
+<i class="no-highlight">631</i>&nbsp;
+<i class="no-highlight">632</i>&nbsp;        private final String key;
+<i class="no-highlight">633</i>&nbsp;        private Log delegate;
+<i class="no-highlight">634</i>&nbsp;
+<b class="fc"><i class="no-highlight">635</i>&nbsp;        public DeferredLogger(String key) {</b>
+<b class="fc"><i class="no-highlight">636</i>&nbsp;            this.key = key;</b>
+<i class="no-highlight">637</i>&nbsp;        }
+<i class="no-highlight">638</i>&nbsp;
+<i class="no-highlight">639</i>&nbsp;        @Override
+<i class="no-highlight">640</i>&nbsp;        public LogRecord advisory() {
+<b class="fc"><i class="no-highlight">641</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">642</i>&nbsp;                return delegate.advisory();</b>
+<i class="no-highlight">643</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">644</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">645</i>&nbsp;        }
+<i class="no-highlight">646</i>&nbsp;
+<i class="no-highlight">647</i>&nbsp;        @Override
+<i class="no-highlight">648</i>&nbsp;        public LogRecord advisoryW() {
+<b class="fc"><i class="no-highlight">649</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">650</i>&nbsp;                return delegate.advisoryW();</b>
+<i class="no-highlight">651</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">652</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">653</i>&nbsp;        }
+<i class="no-highlight">654</i>&nbsp;
+<i class="no-highlight">655</i>&nbsp;        @Override
+<i class="no-highlight">656</i>&nbsp;        public LogRecord critical() {
+<b class="fc"><i class="no-highlight">657</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">658</i>&nbsp;                return delegate.critical();</b>
+<i class="no-highlight">659</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">660</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">661</i>&nbsp;        }
+<i class="no-highlight">662</i>&nbsp;
+<i class="no-highlight">663</i>&nbsp;        @Override
+<i class="no-highlight">664</i>&nbsp;        public LogRecord criticalW() {
+<b class="fc"><i class="no-highlight">665</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">666</i>&nbsp;                return delegate.criticalW();</b>
+<i class="no-highlight">667</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">668</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">669</i>&nbsp;        }
+<i class="no-highlight">670</i>&nbsp;
+<i class="no-highlight">671</i>&nbsp;        @Override
+<i class="no-highlight">672</i>&nbsp;        public LogRecord debug() {
+<b class="fc"><i class="no-highlight">673</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">674</i>&nbsp;                return delegate.debug();</b>
+<i class="no-highlight">675</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">676</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">677</i>&nbsp;        }
+<i class="no-highlight">678</i>&nbsp;
+<i class="no-highlight">679</i>&nbsp;        @Override
+<i class="no-highlight">680</i>&nbsp;        public LogRecord debugW() {
+<b class="fc"><i class="no-highlight">681</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">682</i>&nbsp;                return delegate.debugW();</b>
+<i class="no-highlight">683</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">684</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">685</i>&nbsp;        }
+<i class="no-highlight">686</i>&nbsp;
+<i class="no-highlight">687</i>&nbsp;        @Override
+<i class="no-highlight">688</i>&nbsp;        public LogRecord error() {
+<b class="fc"><i class="no-highlight">689</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">690</i>&nbsp;                return delegate.error();</b>
+<i class="no-highlight">691</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">692</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">693</i>&nbsp;        }
+<i class="no-highlight">694</i>&nbsp;
+<i class="no-highlight">695</i>&nbsp;        @Override
+<i class="no-highlight">696</i>&nbsp;        public LogRecord errorW() {
+<b class="fc"><i class="no-highlight">697</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">698</i>&nbsp;                return delegate.errorW();</b>
+<i class="no-highlight">699</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">700</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">701</i>&nbsp;        }
+<i class="no-highlight">702</i>&nbsp;
+<i class="no-highlight">703</i>&nbsp;        @Override
+<i class="no-highlight">704</i>&nbsp;        public LogRecord info() {
+<b class="fc"><i class="no-highlight">705</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">706</i>&nbsp;                return delegate.info();</b>
+<i class="no-highlight">707</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">708</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">709</i>&nbsp;        }
+<i class="no-highlight">710</i>&nbsp;
+<i class="no-highlight">711</i>&nbsp;        @Override
+<i class="no-highlight">712</i>&nbsp;        public LogRecord infoW() {
+<b class="fc"><i class="no-highlight">713</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">714</i>&nbsp;                return delegate.infoW();</b>
+<i class="no-highlight">715</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">716</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">717</i>&nbsp;        }
+<i class="no-highlight">718</i>&nbsp;
+<i class="no-highlight">719</i>&nbsp;        public void init(LogFactory logFactory) {
+<b class="fc"><i class="no-highlight">720</i>&nbsp;            this.delegate = logFactory.create(key);</b>
+<i class="no-highlight">721</i>&nbsp;        }
+<i class="no-highlight">722</i>&nbsp;
+<i class="no-highlight">723</i>&nbsp;        @Override
+<i class="no-highlight">724</i>&nbsp;        public LogRecord xDebugW() {
+<b class="nc"><i class="no-highlight">725</i>&nbsp;            if (delegate != null) {</b>
+<b class="nc"><i class="no-highlight">726</i>&nbsp;                return delegate.xDebugW();</b>
+<i class="no-highlight">727</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">728</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">729</i>&nbsp;        }
+<i class="no-highlight">730</i>&nbsp;
+<i class="no-highlight">731</i>&nbsp;        @Override
+<i class="no-highlight">732</i>&nbsp;        public LogRecord xInfoW() {
+<b class="nc"><i class="no-highlight">733</i>&nbsp;            if (delegate != null) {</b>
+<b class="nc"><i class="no-highlight">734</i>&nbsp;                return delegate.xInfoW();</b>
+<i class="no-highlight">735</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">736</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">737</i>&nbsp;        }
+<i class="no-highlight">738</i>&nbsp;
+<i class="no-highlight">739</i>&nbsp;        @Override
+<i class="no-highlight">740</i>&nbsp;        public LogRecord xadvisory() {
+<b class="fc"><i class="no-highlight">741</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">742</i>&nbsp;                return delegate.xadvisory();</b>
+<i class="no-highlight">743</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">744</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">745</i>&nbsp;        }
+<i class="no-highlight">746</i>&nbsp;
+<i class="no-highlight">747</i>&nbsp;        @Override
+<i class="no-highlight">748</i>&nbsp;        public LogRecord xcritical() {
+<b class="fc"><i class="no-highlight">749</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">750</i>&nbsp;                return delegate.xcritical();</b>
+<i class="no-highlight">751</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">752</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">753</i>&nbsp;        }
+<i class="no-highlight">754</i>&nbsp;
+<i class="no-highlight">755</i>&nbsp;        @Override
+<i class="no-highlight">756</i>&nbsp;        public LogRecord xdebug() {
+<b class="fc"><i class="no-highlight">757</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">758</i>&nbsp;                return delegate.xdebug();</b>
+<i class="no-highlight">759</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">760</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">761</i>&nbsp;        }
+<i class="no-highlight">762</i>&nbsp;
+<i class="no-highlight">763</i>&nbsp;        @Override
+<i class="no-highlight">764</i>&nbsp;        public LogRecord xerror() {
+<b class="fc"><i class="no-highlight">765</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">766</i>&nbsp;                return delegate.xerror();</b>
+<i class="no-highlight">767</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">768</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">769</i>&nbsp;        }
+<i class="no-highlight">770</i>&nbsp;
+<i class="no-highlight">771</i>&nbsp;        @Override
+<i class="no-highlight">772</i>&nbsp;        public LogRecord xinfo() {
+<b class="fc"><i class="no-highlight">773</i>&nbsp;            if (delegate != null) {</b>
+<b class="fc"><i class="no-highlight">774</i>&nbsp;                return delegate.xinfo();</b>
+<i class="no-highlight">775</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">776</i>&nbsp;            return noOpRecord;</b>
+<i class="no-highlight">777</i>&nbsp;        }
+<i class="no-highlight">778</i>&nbsp;    }
+<i class="no-highlight">779</i>&nbsp;
+<i class="no-highlight">780</i>&nbsp;    private static class Holder implements Closeable {
+<i class="no-highlight">781</i>&nbsp;        private final Sequence lSeq;
+<i class="no-highlight">782</i>&nbsp;        private final RingQueue&lt;LogRecordSink&gt; ring;
+<i class="no-highlight">783</i>&nbsp;        private FanOut fanOut;
+<i class="no-highlight">784</i>&nbsp;        private SCSequence wSeq;
+<i class="no-highlight">785</i>&nbsp;
+<b class="fc"><i class="no-highlight">786</i>&nbsp;        public Holder(int queueDepth, final int recordLength) {</b>
+<b class="fc"><i class="no-highlight">787</i>&nbsp;            this.ring = new RingQueue&lt;&gt;(</b>
+<i class="no-highlight">788</i>&nbsp;                    LogRecordSink::new,
+<b class="fc"><i class="no-highlight">789</i>&nbsp;                    Numbers.ceilPow2(recordLength),</b>
+<i class="no-highlight">790</i>&nbsp;                    queueDepth,
+<i class="no-highlight">791</i>&nbsp;                    MemoryTag.NATIVE_LOGGER
+<i class="no-highlight">792</i>&nbsp;            );
+<b class="fc"><i class="no-highlight">793</i>&nbsp;            this.lSeq = new MPSequence(queueDepth);</b>
+<i class="no-highlight">794</i>&nbsp;        }
+<i class="no-highlight">795</i>&nbsp;
+<i class="no-highlight">796</i>&nbsp;        @Override
+<i class="no-highlight">797</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">798</i>&nbsp;            Misc.free(ring);</b>
+<i class="no-highlight">799</i>&nbsp;        }
+<i class="no-highlight">800</i>&nbsp;    }
+<i class="no-highlight">801</i>&nbsp;
+<b class="fc"><i class="no-highlight">802</i>&nbsp;    private static class LengthDescendingComparator implements Comparator&lt;CharSequence&gt;, Serializable {</b>
+<i class="no-highlight">803</i>&nbsp;        @Override
+<i class="no-highlight">804</i>&nbsp;        public int compare(CharSequence o1, CharSequence o2) {
+<i class="no-highlight">805</i>&nbsp;            int l1, l2;
+<b class="fc"><i class="no-highlight">806</i>&nbsp;            if ((l1 = o1.length()) &lt; (l2 = o2.length())) {</b>
+<b class="nc"><i class="no-highlight">807</i>&nbsp;                return 1;</b>
+<i class="no-highlight">808</i>&nbsp;            }
+<i class="no-highlight">809</i>&nbsp;
+<b class="fc"><i class="no-highlight">810</i>&nbsp;            if (l1 &gt; l2) {</b>
+<b class="fc"><i class="no-highlight">811</i>&nbsp;                return -11;</b>
+<i class="no-highlight">812</i>&nbsp;            }
+<i class="no-highlight">813</i>&nbsp;
+<b class="nc"><i class="no-highlight">814</i>&nbsp;            return 0;</b>
+<i class="no-highlight">815</i>&nbsp;        }
+<i class="no-highlight">816</i>&nbsp;    }
+<i class="no-highlight">817</i>&nbsp;
+<b class="fc"><i class="no-highlight">818</i>&nbsp;    private static class NoOpLogRecord implements LogRecord {</b>
+<i class="no-highlight">819</i>&nbsp;
+<i class="no-highlight">820</i>&nbsp;        @Override
+<i class="no-highlight">821</i>&nbsp;        public void $() {
+<b class="fc"><i class="no-highlight">822</i>&nbsp;        }</b>
+<i class="no-highlight">823</i>&nbsp;
+<i class="no-highlight">824</i>&nbsp;        @Override
+<i class="no-highlight">825</i>&nbsp;        public LogRecord $(CharSequence sequence) {
+<b class="nc"><i class="no-highlight">826</i>&nbsp;            return this;</b>
+<i class="no-highlight">827</i>&nbsp;        }
+<i class="no-highlight">828</i>&nbsp;
+<i class="no-highlight">829</i>&nbsp;        @Override
+<i class="no-highlight">830</i>&nbsp;        public LogRecord $(CharSequence sequence, int lo, int hi) {
+<b class="nc"><i class="no-highlight">831</i>&nbsp;            return this;</b>
+<i class="no-highlight">832</i>&nbsp;        }
+<i class="no-highlight">833</i>&nbsp;
+<i class="no-highlight">834</i>&nbsp;        @Override
+<i class="no-highlight">835</i>&nbsp;        public LogRecord $(int x) {
+<b class="nc"><i class="no-highlight">836</i>&nbsp;            return this;</b>
+<i class="no-highlight">837</i>&nbsp;        }
+<i class="no-highlight">838</i>&nbsp;
+<i class="no-highlight">839</i>&nbsp;        @Override
+<i class="no-highlight">840</i>&nbsp;        public LogRecord $(double x) {
+<b class="nc"><i class="no-highlight">841</i>&nbsp;            return this;</b>
+<i class="no-highlight">842</i>&nbsp;        }
+<i class="no-highlight">843</i>&nbsp;
+<i class="no-highlight">844</i>&nbsp;        @Override
+<i class="no-highlight">845</i>&nbsp;        public LogRecord $(long l) {
+<b class="nc"><i class="no-highlight">846</i>&nbsp;            return this;</b>
+<i class="no-highlight">847</i>&nbsp;        }
+<i class="no-highlight">848</i>&nbsp;
+<i class="no-highlight">849</i>&nbsp;        @Override
+<i class="no-highlight">850</i>&nbsp;        public LogRecord $(boolean x) {
+<b class="nc"><i class="no-highlight">851</i>&nbsp;            return this;</b>
+<i class="no-highlight">852</i>&nbsp;        }
+<i class="no-highlight">853</i>&nbsp;
+<i class="no-highlight">854</i>&nbsp;        @Override
+<i class="no-highlight">855</i>&nbsp;        public LogRecord $(char c) {
+<b class="nc"><i class="no-highlight">856</i>&nbsp;            return this;</b>
+<i class="no-highlight">857</i>&nbsp;        }
+<i class="no-highlight">858</i>&nbsp;
+<i class="no-highlight">859</i>&nbsp;        @Override
+<i class="no-highlight">860</i>&nbsp;        public LogRecord $(Throwable e) {
+<b class="nc"><i class="no-highlight">861</i>&nbsp;            return this;</b>
+<i class="no-highlight">862</i>&nbsp;        }
+<i class="no-highlight">863</i>&nbsp;
+<i class="no-highlight">864</i>&nbsp;        @Override
+<i class="no-highlight">865</i>&nbsp;        public LogRecord $(File x) {
+<b class="nc"><i class="no-highlight">866</i>&nbsp;            return this;</b>
+<i class="no-highlight">867</i>&nbsp;        }
+<i class="no-highlight">868</i>&nbsp;
+<i class="no-highlight">869</i>&nbsp;        @Override
+<i class="no-highlight">870</i>&nbsp;        public LogRecord $(Object x) {
+<b class="nc"><i class="no-highlight">871</i>&nbsp;            return this;</b>
+<i class="no-highlight">872</i>&nbsp;        }
+<i class="no-highlight">873</i>&nbsp;
+<i class="no-highlight">874</i>&nbsp;        @Override
+<i class="no-highlight">875</i>&nbsp;        public LogRecord $(Sinkable x) {
+<b class="nc"><i class="no-highlight">876</i>&nbsp;            return this;</b>
+<i class="no-highlight">877</i>&nbsp;        }
+<i class="no-highlight">878</i>&nbsp;
+<i class="no-highlight">879</i>&nbsp;        @Override
+<i class="no-highlight">880</i>&nbsp;        public LogRecord $256(long a, long b, long c, long d) {
+<b class="nc"><i class="no-highlight">881</i>&nbsp;            return this;</b>
+<i class="no-highlight">882</i>&nbsp;        }
+<i class="no-highlight">883</i>&nbsp;
+<i class="no-highlight">884</i>&nbsp;        @Override
+<i class="no-highlight">885</i>&nbsp;        public LogRecord $hex(long value) {
+<b class="nc"><i class="no-highlight">886</i>&nbsp;            return this;</b>
+<i class="no-highlight">887</i>&nbsp;        }
+<i class="no-highlight">888</i>&nbsp;
+<i class="no-highlight">889</i>&nbsp;        @Override
+<i class="no-highlight">890</i>&nbsp;        public LogRecord $hexPadded(long value) {
+<b class="nc"><i class="no-highlight">891</i>&nbsp;            return this;</b>
+<i class="no-highlight">892</i>&nbsp;        }
+<i class="no-highlight">893</i>&nbsp;
+<i class="no-highlight">894</i>&nbsp;        @Override
+<i class="no-highlight">895</i>&nbsp;        public LogRecord $ip(long ip) {
+<b class="nc"><i class="no-highlight">896</i>&nbsp;            return this;</b>
+<i class="no-highlight">897</i>&nbsp;        }
+<i class="no-highlight">898</i>&nbsp;
+<i class="no-highlight">899</i>&nbsp;        @Override
+<i class="no-highlight">900</i>&nbsp;        public LogRecord $ts(long x) {
+<b class="nc"><i class="no-highlight">901</i>&nbsp;            return this;</b>
+<i class="no-highlight">902</i>&nbsp;        }
+<i class="no-highlight">903</i>&nbsp;
+<i class="no-highlight">904</i>&nbsp;        @Override
+<i class="no-highlight">905</i>&nbsp;        public LogRecord $utf8(long lo, long hi) {
+<b class="nc"><i class="no-highlight">906</i>&nbsp;            return this;</b>
+<i class="no-highlight">907</i>&nbsp;        }
+<i class="no-highlight">908</i>&nbsp;
+<i class="no-highlight">909</i>&nbsp;        @Override
+<i class="no-highlight">910</i>&nbsp;        public boolean isEnabled() {
+<b class="fc"><i class="no-highlight">911</i>&nbsp;            return false;</b>
+<i class="no-highlight">912</i>&nbsp;        }
+<i class="no-highlight">913</i>&nbsp;
+<i class="no-highlight">914</i>&nbsp;        @Override
+<i class="no-highlight">915</i>&nbsp;        public LogRecord microTime(long x) {
+<b class="nc"><i class="no-highlight">916</i>&nbsp;            return this;</b>
+<i class="no-highlight">917</i>&nbsp;        }
+<i class="no-highlight">918</i>&nbsp;
+<i class="no-highlight">919</i>&nbsp;        @Override
+<i class="no-highlight">920</i>&nbsp;        public CharSinkBase put(char c) {
+<b class="nc"><i class="no-highlight">921</i>&nbsp;            return this;</b>
+<i class="no-highlight">922</i>&nbsp;        }
+<i class="no-highlight">923</i>&nbsp;
+<i class="no-highlight">924</i>&nbsp;        @Override
+<i class="no-highlight">925</i>&nbsp;        public LogRecord ts() {
+<b class="nc"><i class="no-highlight">926</i>&nbsp;            return this;</b>
+<i class="no-highlight">927</i>&nbsp;        }
+<i class="no-highlight">928</i>&nbsp;
+<i class="no-highlight">929</i>&nbsp;        @Override
+<i class="no-highlight">930</i>&nbsp;        public LogRecord utf8(CharSequence sequence) {
+<b class="nc"><i class="no-highlight">931</i>&nbsp;            return this;</b>
+<i class="no-highlight">932</i>&nbsp;        }
+<i class="no-highlight">933</i>&nbsp;    }
+<i class="no-highlight">934</i>&nbsp;
+<i class="no-highlight">935</i>&nbsp;    private static class ScopeConfiguration implements Closeable {
+<i class="no-highlight">936</i>&nbsp;        private final int[] channels;
+<b class="fc"><i class="no-highlight">937</i>&nbsp;        private final ObjList&lt;Holder&gt; holderList = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">938</i>&nbsp;        private final IntObjHashMap&lt;Holder&gt; holderMap = new IntObjHashMap&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">939</i>&nbsp;        private final ObjList&lt;LogWriterConfig&gt; writerConfigs = new ObjList&lt;&gt;();</b>
+<b class="fc"><i class="no-highlight">940</i>&nbsp;        private int ci = 0;</b>
+<i class="no-highlight">941</i>&nbsp;
+<b class="fc"><i class="no-highlight">942</i>&nbsp;        public ScopeConfiguration(int levels) {</b>
+<b class="fc"><i class="no-highlight">943</i>&nbsp;            this.channels = new int[levels];</b>
+<i class="no-highlight">944</i>&nbsp;        }
+<i class="no-highlight">945</i>&nbsp;
+<i class="no-highlight">946</i>&nbsp;        public void bind(ObjHashSet&lt;LogWriter&gt; jobs, int queueDepth, int recordLength) {
+<i class="no-highlight">947</i>&nbsp;            // create queues for processed channels
+<b class="fc"><i class="no-highlight">948</i>&nbsp;            for (int index : channels) {</b>
+<b class="fc"><i class="no-highlight">949</i>&nbsp;                if (index &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">950</i>&nbsp;                    int keyIndex = holderMap.keyIndex(index);</b>
+<b class="fc"><i class="no-highlight">951</i>&nbsp;                    if (keyIndex &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">952</i>&nbsp;                        Holder h = new Holder(queueDepth, recordLength);</b>
+<b class="fc"><i class="no-highlight">953</i>&nbsp;                        holderMap.putAt(keyIndex, index, h);</b>
+<b class="fc"><i class="no-highlight">954</i>&nbsp;                        holderList.add(h);</b>
+<i class="no-highlight">955</i>&nbsp;                    }
+<i class="no-highlight">956</i>&nbsp;                }
+<i class="no-highlight">957</i>&nbsp;            }
+<i class="no-highlight">958</i>&nbsp;
+<b class="fc"><i class="no-highlight">959</i>&nbsp;            for (int i = 0, n = writerConfigs.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">960</i>&nbsp;                LogWriterConfig c = writerConfigs.getQuick(i);</b>
+<i class="no-highlight">961</i>&nbsp;                // the channels array has a guarantee that
+<i class="no-highlight">962</i>&nbsp;                // all bits in level mask will point to the same queue,
+<i class="no-highlight">963</i>&nbsp;                // so we just get most significant bit number
+<i class="no-highlight">964</i>&nbsp;                // and dereference queue on its index
+<b class="fc"><i class="no-highlight">965</i>&nbsp;                Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);</b>
+<i class="no-highlight">966</i>&nbsp;                // check if this queue was used by another writer
+<b class="fc"><i class="no-highlight">967</i>&nbsp;                if (h.wSeq != null) {</b>
+<i class="no-highlight">968</i>&nbsp;                    // yes, it was
+<b class="fc"><i class="no-highlight">969</i>&nbsp;                    if (h.fanOut == null) {</b>
+<b class="fc"><i class="no-highlight">970</i>&nbsp;                        h.fanOut = FanOut.to(h.wSeq).and(h.wSeq = new SCSequence());</b>
+<i class="no-highlight">971</i>&nbsp;                    } else {
+<b class="nc"><i class="no-highlight">972</i>&nbsp;                        h.fanOut.and(h.wSeq = new SCSequence());</b>
+<i class="no-highlight">973</i>&nbsp;                    }
+<i class="no-highlight">974</i>&nbsp;                } else {
+<i class="no-highlight">975</i>&nbsp;                    // we are here first!
+<b class="fc"><i class="no-highlight">976</i>&nbsp;                    h.wSeq = new SCSequence();</b>
+<i class="no-highlight">977</i>&nbsp;                }
+<i class="no-highlight">978</i>&nbsp;                // now h.wSeq contains out writer&#39;s sequence
+<b class="fc"><i class="no-highlight">979</i>&nbsp;                jobs.add(c.getFactory().createLogWriter(h.ring, h.wSeq, c.getLevel()));</b>
+<i class="no-highlight">980</i>&nbsp;            }
+<i class="no-highlight">981</i>&nbsp;
+<i class="no-highlight">982</i>&nbsp;            // and the last step is to link dependent sequences
+<b class="fc"><i class="no-highlight">983</i>&nbsp;            for (int i = 0, n = holderList.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">984</i>&nbsp;                Holder h = holderList.getQuick(i);</b>
+<b class="fc"><i class="no-highlight">985</i>&nbsp;                if (h.fanOut != null) {</b>
+<b class="fc"><i class="no-highlight">986</i>&nbsp;                    h.lSeq.then(h.fanOut).then(h.lSeq);</b>
+<i class="no-highlight">987</i>&nbsp;                } else {
+<b class="fc"><i class="no-highlight">988</i>&nbsp;                    h.lSeq.then(h.wSeq).then(h.lSeq);</b>
+<i class="no-highlight">989</i>&nbsp;                }
+<i class="no-highlight">990</i>&nbsp;            }
+<i class="no-highlight">991</i>&nbsp;        }
+<i class="no-highlight">992</i>&nbsp;
+<i class="no-highlight">993</i>&nbsp;        @Override
+<i class="no-highlight">994</i>&nbsp;        public void close() {
+<b class="fc"><i class="no-highlight">995</i>&nbsp;            for (int i = 0, n = holderList.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">996</i>&nbsp;                Misc.free(holderList.getQuick(i));</b>
+<i class="no-highlight">997</i>&nbsp;            }
+<i class="no-highlight">998</i>&nbsp;        }
+<i class="no-highlight">999</i>&nbsp;
+<i class="no-highlight">1000</i>&nbsp;        /**
+<i class="no-highlight">1001</i>&nbsp;         * Aggregates channels into set of queues. Consumer interest is represented by
+<i class="no-highlight">1002</i>&nbsp;         * level, where consumer sets bits corresponding to channel indexes is it interested in.
+<i class="no-highlight">1003</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1004</i>&nbsp;         * Consumer 1 requires channels D &amp; E. So its interest looks like {1,0,1}
+<i class="no-highlight">1005</i>&nbsp;         * Consumer 2 requires channel I, so its interest is {0,1,0}
+<i class="no-highlight">1006</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1007</i>&nbsp;         * This method combines these interests as follows:
+<i class="no-highlight">1008</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1009</i>&nbsp;         * channels = {1,2,1}
+<i class="no-highlight">1010</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1011</i>&nbsp;         * which means that there will be need to 2 queues (1 and 2) and that Consumer 1
+<i class="no-highlight">1012</i>&nbsp;         * will be using queue 1 and consumer 2 will be using queue 2.
+<i class="no-highlight">1013</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1014</i>&nbsp;         * More complex scenario where consumer interests overlap, for example:
+<i class="no-highlight">1015</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1016</i>&nbsp;         * consumer 1 {1,1,0}
+<i class="no-highlight">1017</i>&nbsp;         * consumer 2 {0,1,1}
+<i class="no-highlight">1018</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1019</i>&nbsp;         * these interests will be combined as follows:
+<i class="no-highlight">1020</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1021</i>&nbsp;         * channels = {1,1,1}
+<i class="no-highlight">1022</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1023</i>&nbsp;         * which means that both consumers will be sharing same queue and they will have to
+<i class="no-highlight">1024</i>&nbsp;         * filter applicable messages as they get them.
+<i class="no-highlight">1025</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1026</i>&nbsp;         * Algorithm iterates over set of bits in &quot;level&quot; twice. First pass is to establish
+<i class="no-highlight">1027</i>&nbsp;         * minimum number of channel[] element out of those entries where bit in level is set.
+<i class="no-highlight">1028</i>&nbsp;         * Additionally, this pass will set channel[] elements to current consumer index where
+<i class="no-highlight">1029</i>&nbsp;         * channel[] element is zero.
+<i class="no-highlight">1030</i>&nbsp;         * &lt;p&gt;
+<i class="no-highlight">1031</i>&nbsp;         * Second pass sets channel[] element to min value found on first pass.
+<i class="no-highlight">1032</i>&nbsp;         *
+<i class="no-highlight">1033</i>&nbsp;         * @param conf LogWriterConfig
+<i class="no-highlight">1034</i>&nbsp;         */
+<i class="no-highlight">1035</i>&nbsp;        private void add(LogWriterConfig conf) {
+<b class="fc"><i class="no-highlight">1036</i>&nbsp;            int mask = conf.getLevel();</b>
+<b class="fc"><i class="no-highlight">1037</i>&nbsp;            int min = Integer.MAX_VALUE;</b>
+<b class="fc"><i class="no-highlight">1038</i>&nbsp;            int q = ++ci;</b>
+<i class="no-highlight">1039</i>&nbsp;
+<b class="fc"><i class="no-highlight">1040</i>&nbsp;            for (int i = 0, n = channels.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1041</i>&nbsp;                if (((mask &gt;&gt; i) &amp; 1) == 1) {</b>
+<b class="fc"><i class="no-highlight">1042</i>&nbsp;                    int that = channels[i];</b>
+<b class="fc"><i class="no-highlight">1043</i>&nbsp;                    if (that == 0) {</b>
+<b class="fc"><i class="no-highlight">1044</i>&nbsp;                        channels[i] = q;</b>
+<i class="no-highlight">1045</i>&nbsp;                    }
+<i class="no-highlight">1046</i>&nbsp;
+<b class="fc"><i class="no-highlight">1047</i>&nbsp;                    if (that &gt; 0 &amp;&amp; that &lt; min) {</b>
+<b class="fc"><i class="no-highlight">1048</i>&nbsp;                        min = that;</b>
+<i class="no-highlight">1049</i>&nbsp;                    }
+<i class="no-highlight">1050</i>&nbsp;                }
+<i class="no-highlight">1051</i>&nbsp;            }
+<i class="no-highlight">1052</i>&nbsp;
+<b class="fc"><i class="no-highlight">1053</i>&nbsp;            if (mask &gt; 1 &amp;&amp; min &lt; Integer.MAX_VALUE) {</b>
+<b class="fc"><i class="no-highlight">1054</i>&nbsp;                for (int i = 0, n = channels.length; i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">1055</i>&nbsp;                    if (((mask &gt;&gt; i) &amp; 1) == 1) {</b>
+<b class="fc"><i class="no-highlight">1056</i>&nbsp;                        channels[i] = min;</b>
+<i class="no-highlight">1057</i>&nbsp;                    }
+<i class="no-highlight">1058</i>&nbsp;                }
+<i class="no-highlight">1059</i>&nbsp;            }
+<i class="no-highlight">1060</i>&nbsp;
+<b class="fc"><i class="no-highlight">1061</i>&nbsp;            writerConfigs.add(conf);</b>
+<i class="no-highlight">1062</i>&nbsp;        }
+<i class="no-highlight">1063</i>&nbsp;
+<i class="no-highlight">1064</i>&nbsp;        private Holder getHolder(int index) {
+<b class="fc"><i class="no-highlight">1065</i>&nbsp;            return holderMap.get(channels[index]);</b>
+<i class="no-highlight">1066</i>&nbsp;        }
+<i class="no-highlight">1067</i>&nbsp;    }
+<i class="no-highlight">1068</i>&nbsp;
+<i class="no-highlight">1069</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">1070</i>&nbsp;        reserved.add(&quot;scope&quot;);</b>
+<b class="fc"><i class="no-highlight">1071</i>&nbsp;        reserved.add(&quot;class&quot;);</b>
+<b class="fc"><i class="no-highlight">1072</i>&nbsp;        reserved.add(&quot;level&quot;);</b>
+<b class="fc"><i class="no-highlight">1073</i>&nbsp;        Os.init();</b>
+<i class="no-highlight">1074</i>&nbsp;    }
+<i class="no-highlight">1075</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

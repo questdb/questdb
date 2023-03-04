@@ -1,0 +1,607 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > ColumnType</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cairo</a>
+</div>
+
+<h1>Coverage Summary for Class: ColumnType (io.questdb.cairo)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">ColumnType</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (37/37)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    99.5%
+  </span>
+  <span class="absValue">
+    (193/194)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cairo;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.IntObjHashMap;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.Long256;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.Numbers;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;// ColumnType layout - 32bit
+<i class="no-highlight">34</i>&nbsp;//
+<i class="no-highlight">35</i>&nbsp;// | PGWire format | Extra type information | Type discriminant (tag) |
+<i class="no-highlight">36</i>&nbsp;// +---------------+------------------------+-------------------------+
+<i class="no-highlight">37</i>&nbsp;// |    1 bit      |        23 bits         |         8 bits          |
+<i class="no-highlight">38</i>&nbsp;// +---------------+------------------------+-------------------------+
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;/**
+<i class="no-highlight">41</i>&nbsp; * Column types as numeric (integer) values
+<i class="no-highlight">42</i>&nbsp; */
+<b class="fc"><i class="no-highlight">43</i>&nbsp;public final class ColumnType {</b>
+<i class="no-highlight">44</i>&nbsp;    public static final short ARRAY_STRING = 27;
+<i class="no-highlight">45</i>&nbsp;    public static final short BINARY = 18;
+<i class="no-highlight">46</i>&nbsp;    public static final short BOOLEAN = 1;
+<i class="no-highlight">47</i>&nbsp;    public static final short BYTE = 2;
+<i class="no-highlight">48</i>&nbsp;    public static final short CHAR = 4;
+<i class="no-highlight">49</i>&nbsp;    public static final short CURSOR = 20;
+<i class="no-highlight">50</i>&nbsp;    public static final short DATE = 7;
+<i class="no-highlight">51</i>&nbsp;    public static final short DOUBLE = 10;
+<i class="no-highlight">52</i>&nbsp;    public static final short FLOAT = 9;
+<i class="no-highlight">53</i>&nbsp;    public static final short GEOBYTE = 14;
+<i class="no-highlight">54</i>&nbsp;    public static final int GEOBYTE_MAX_BITS = 7;
+<i class="no-highlight">55</i>&nbsp;    //geohash bits &lt;-&gt; backing primitive types bit boundaries
+<i class="no-highlight">56</i>&nbsp;    public static final int GEOBYTE_MIN_BITS = 1;
+<i class="no-highlight">57</i>&nbsp;    // This type is not stored, it is used on function arguments to resolve overloads.
+<i class="no-highlight">58</i>&nbsp;    // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
+<i class="no-highlight">59</i>&nbsp;    // inside the MAX type value.
+<i class="no-highlight">60</i>&nbsp;    public static final short GEOHASH = 23;
+<i class="no-highlight">61</i>&nbsp;    public static final short GEOINT = 16;
+<i class="no-highlight">62</i>&nbsp;    public static final int GEOINT_MAX_BITS = 31;
+<i class="no-highlight">63</i>&nbsp;    public static final int GEOINT_MIN_BITS = 16;
+<i class="no-highlight">64</i>&nbsp;    public static final short GEOLONG = 17;
+<i class="no-highlight">65</i>&nbsp;    public static final int GEOLONG_MIN_BITS = 32;
+<i class="no-highlight">66</i>&nbsp;    public static final short GEOSHORT = 15;
+<i class="no-highlight">67</i>&nbsp;    public static final int GEOSHORT_MAX_BITS = 15;
+<i class="no-highlight">68</i>&nbsp;    public static final int GEOSHORT_MIN_BITS = 8;
+<i class="no-highlight">69</i>&nbsp;    public static final int GEO_HASH_MAX_BITS_LENGTH = 60;
+<i class="no-highlight">70</i>&nbsp;    public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
+<i class="no-highlight">71</i>&nbsp;    public static final short INT = 5;
+<i class="no-highlight">72</i>&nbsp;    public static final short LONG = 6;
+<i class="no-highlight">73</i>&nbsp;    public static final short LONG128 = 24; // Limited support, few tests only
+<i class="no-highlight">74</i>&nbsp;    public static final short LONG256 = 13;
+<i class="no-highlight">75</i>&nbsp;    public static final int NO_OVERLOAD = 10000;
+<i class="no-highlight">76</i>&nbsp;    public static final short NULL = 29;
+<i class="no-highlight">77</i>&nbsp;    // Overload matrix algo depends on the fact that MAX == NULL
+<i class="no-highlight">78</i>&nbsp;    public static final short MAX = NULL;
+<i class="no-highlight">79</i>&nbsp;    public static final short TYPES_SIZE = MAX + 1;
+<b class="fc"><i class="no-highlight">80</i>&nbsp;    private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;    private static final int[] TYPE_SIZE = new int[TYPES_SIZE];</b>
+<i class="no-highlight">82</i>&nbsp;    public static final short PARAMETER = 28;
+<i class="no-highlight">83</i>&nbsp;    public static final short RECORD = 22;
+<i class="no-highlight">84</i>&nbsp;    // PG specific types to work with 3rd party software with canned catalogue queries
+<i class="no-highlight">85</i>&nbsp;    public static final short REGCLASS = 25;
+<i class="no-highlight">86</i>&nbsp;    public static final short REGPROCEDURE = 26;
+<i class="no-highlight">87</i>&nbsp;    public static final short SHORT = 3;
+<i class="no-highlight">88</i>&nbsp;    public static final short STRING = 11;
+<i class="no-highlight">89</i>&nbsp;    public static final short SYMBOL = 12;
+<i class="no-highlight">90</i>&nbsp;    public static final short TIMESTAMP = 8;
+<i class="no-highlight">91</i>&nbsp;    public static final short UNDEFINED = 0;
+<i class="no-highlight">92</i>&nbsp;    public static final short UUID = 19;
+<i class="no-highlight">93</i>&nbsp;    public static final short VAR_ARG = 21;
+<i class="no-highlight">94</i>&nbsp;    // column type version as written to the metadata file
+<i class="no-highlight">95</i>&nbsp;    public static final int VERSION = 426;
+<i class="no-highlight">96</i>&nbsp;    static final int[] GEO_TYPE_SIZE_POW2;
+<i class="no-highlight">97</i>&nbsp;    private static final int BITS_OFFSET = 8;
+<i class="no-highlight">98</i>&nbsp;    // this value has to be larger than MAX type and be power of 2
+<i class="no-highlight">99</i>&nbsp;    private static final int OVERLOAD_MATRIX_SIZE = 32;
+<i class="no-highlight">100</i>&nbsp;    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 &lt;&lt; 17);
+<i class="no-highlight">101</i>&nbsp;    private static final int TYPE_FLAG_GEO_HASH = (1 &lt;&lt; 16);
+<b class="fc"><i class="no-highlight">102</i>&nbsp;    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();</b>
+<i class="no-highlight">103</i>&nbsp;    // For function overload the priority is taken from left to right
+<b class="fc"><i class="no-highlight">104</i>&nbsp;    private static final short[][] overloadPriority = {</b>
+<i class="no-highlight">105</i>&nbsp;            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+<i class="no-highlight">106</i>&nbsp;            /* 1  BOOLEAN   */, {BOOLEAN}
+<i class="no-highlight">107</i>&nbsp;            /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+<i class="no-highlight">108</i>&nbsp;            /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+<i class="no-highlight">109</i>&nbsp;            /* 4  CHAR      */, {CHAR, STRING}
+<i class="no-highlight">110</i>&nbsp;            /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+<i class="no-highlight">111</i>&nbsp;            /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+<i class="no-highlight">112</i>&nbsp;            /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
+<i class="no-highlight">113</i>&nbsp;            /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
+<i class="no-highlight">114</i>&nbsp;            /* 9  FLOAT     */, {FLOAT, DOUBLE}
+<i class="no-highlight">115</i>&nbsp;            /* 10 DOUBLE    */, {DOUBLE}
+<i class="no-highlight">116</i>&nbsp;            /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
+<i class="no-highlight">117</i>&nbsp;            /* 12 SYMBOL    */, {SYMBOL, STRING}
+<i class="no-highlight">118</i>&nbsp;            /* 13 LONG256   */, {LONG256}
+<i class="no-highlight">119</i>&nbsp;            /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+<i class="no-highlight">120</i>&nbsp;            /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+<i class="no-highlight">121</i>&nbsp;            /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
+<i class="no-highlight">122</i>&nbsp;            /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
+<i class="no-highlight">123</i>&nbsp;            /* 18 BINARY    */, {BINARY}
+<i class="no-highlight">124</i>&nbsp;            /* 19 UUID      */, {UUID, STRING}
+<i class="no-highlight">125</i>&nbsp;    };
+<i class="no-highlight">126</i>&nbsp;    private static final int[] overloadPriorityMatrix;
+<b class="fc"><i class="no-highlight">127</i>&nbsp;    private static final IntObjHashMap&lt;String&gt; typeNameMap = new IntObjHashMap&lt;&gt;();</b>
+<i class="no-highlight">128</i>&nbsp;
+<i class="no-highlight">129</i>&nbsp;    private ColumnType() {
+<i class="no-highlight">130</i>&nbsp;    }
+<i class="no-highlight">131</i>&nbsp;
+<i class="no-highlight">132</i>&nbsp;    public static int getGeoHashBits(int type) {
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        return (byte) ((type &gt;&gt; BITS_OFFSET) &amp; 0xFF);</b>
+<i class="no-highlight">134</i>&nbsp;    }
+<i class="no-highlight">135</i>&nbsp;
+<i class="no-highlight">136</i>&nbsp;    public static int getGeoHashTypeWithBits(int bits) {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        assert bits &gt; 0 &amp;&amp; bits &lt;= GEO_HASH_MAX_BITS_LENGTH;</b>
+<i class="no-highlight">138</i>&nbsp;        // this logic relies on GeoHash type value to be clustered together
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));</b>
+<i class="no-highlight">140</i>&nbsp;    }
+<i class="no-highlight">141</i>&nbsp;
+<i class="no-highlight">142</i>&nbsp;    public static boolean isAssignableFrom(int fromType, int toType) {
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);</b>
+<i class="no-highlight">144</i>&nbsp;    }
+<i class="no-highlight">145</i>&nbsp;
+<i class="no-highlight">146</i>&nbsp;    public static boolean isBinary(int columnType) {
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        return columnType == BINARY;</b>
+<i class="no-highlight">148</i>&nbsp;    }
+<i class="no-highlight">149</i>&nbsp;
+<i class="no-highlight">150</i>&nbsp;    public static boolean isBoolean(int columnType) {
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        return columnType == ColumnType.BOOLEAN;</b>
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    public static boolean isBuiltInWideningCast(int fromType, int toType) {
+<i class="no-highlight">155</i>&nbsp;        // This method returns true when a cast is not needed from type to type
+<i class="no-highlight">156</i>&nbsp;        // because of the way typed functions are implemented.
+<i class="no-highlight">157</i>&nbsp;        // For example IntFunction has getDouble() method implemented and does not need
+<i class="no-highlight">158</i>&nbsp;        // additional wrap function to CAST to double.
+<i class="no-highlight">159</i>&nbsp;        // This is usually case for widening conversions.
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        return (fromType &gt;= BYTE</b>
+<i class="no-highlight">161</i>&nbsp;                &amp;&amp; toType &gt;= BYTE
+<i class="no-highlight">162</i>&nbsp;                &amp;&amp; toType &lt;= DOUBLE
+<i class="no-highlight">163</i>&nbsp;                &amp;&amp; fromType &lt; toType)
+<i class="no-highlight">164</i>&nbsp;                || fromType == NULL
+<i class="no-highlight">165</i>&nbsp;                // char can be short and short can be char for symmetry
+<i class="no-highlight">166</i>&nbsp;                || (fromType == CHAR &amp;&amp; toType == SHORT)
+<i class="no-highlight">167</i>&nbsp;                || (fromType == TIMESTAMP &amp;&amp; toType == LONG)
+<i class="no-highlight">168</i>&nbsp;                ;
+<i class="no-highlight">169</i>&nbsp;    }
+<i class="no-highlight">170</i>&nbsp;
+<i class="no-highlight">171</i>&nbsp;    public static boolean isChar(int columnType) {
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        return columnType == CHAR;</b>
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    public static boolean isCursor(int columnType) {
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        return columnType == CURSOR;</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    public static boolean isDesignatedTimestamp(int type) {
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        return (type &amp; TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;</b>
+<i class="no-highlight">181</i>&nbsp;    }
+<i class="no-highlight">182</i>&nbsp;
+<i class="no-highlight">183</i>&nbsp;    public static boolean isDouble(int columnType) {
+<b class="fc"><i class="no-highlight">184</i>&nbsp;        return columnType == DOUBLE;</b>
+<i class="no-highlight">185</i>&nbsp;    }
+<i class="no-highlight">186</i>&nbsp;
+<i class="no-highlight">187</i>&nbsp;    public static boolean isGeoHash(int columnType) {
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        return (columnType &amp; TYPE_FLAG_GEO_HASH) != 0;</b>
+<i class="no-highlight">189</i>&nbsp;    }
+<i class="no-highlight">190</i>&nbsp;
+<i class="no-highlight">191</i>&nbsp;    public static boolean isInt(int columnType) {
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        return columnType == ColumnType.INT;</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    public static boolean isNull(int columnType) {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        return columnType == NULL;</b>
+<i class="no-highlight">197</i>&nbsp;    }
+<i class="no-highlight">198</i>&nbsp;
+<i class="no-highlight">199</i>&nbsp;    public static boolean isString(int columnType) {
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        return columnType == STRING;</b>
+<i class="no-highlight">201</i>&nbsp;    }
+<i class="no-highlight">202</i>&nbsp;
+<i class="no-highlight">203</i>&nbsp;    public static boolean isSymbol(int columnType) {
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        return columnType == SYMBOL;</b>
+<i class="no-highlight">205</i>&nbsp;    }
+<i class="no-highlight">206</i>&nbsp;
+<i class="no-highlight">207</i>&nbsp;    public static boolean isSymbolOrString(int columnType) {
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        return columnType == SYMBOL || columnType == STRING;</b>
+<i class="no-highlight">209</i>&nbsp;    }
+<i class="no-highlight">210</i>&nbsp;
+<i class="no-highlight">211</i>&nbsp;    public static boolean isTimestamp(int columnType) {
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        return columnType == TIMESTAMP;</b>
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    public static boolean isToSameOrWider(int fromType, int toType) {
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) &amp;&amp;</b>
+<i class="no-highlight">217</i>&nbsp;                (
+<b class="fc"><i class="no-highlight">218</i>&nbsp;                        getGeoHashBits(fromType) &gt;= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0</b>
+<i class="no-highlight">219</i>&nbsp;                ))
+<b class="fc"><i class="no-highlight">220</i>&nbsp;                || isBuiltInWideningCast(fromType, toType)</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;                || isStringCast(fromType, toType)</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;                || isGeoHashWideningCast(fromType, toType)</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;                || isImplicitParsingCast(fromType, toType);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    public static boolean isUndefined(int columnType) {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        return columnType == UNDEFINED;</b>
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    public static boolean isVariableLength(int columnType) {
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        return columnType == STRING || columnType == BINARY;</b>
+<i class="no-highlight">232</i>&nbsp;    }
+<i class="no-highlight">233</i>&nbsp;
+<i class="no-highlight">234</i>&nbsp;    public static String nameOf(int columnType) {
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        final int index = typeNameMap.keyIndex(columnType);</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        if (index &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;            return &quot;unknown&quot;;</b>
+<i class="no-highlight">238</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        return typeNameMap.valueAtQuick(index);</b>
+<i class="no-highlight">240</i>&nbsp;    }
+<i class="no-highlight">241</i>&nbsp;
+<i class="no-highlight">242</i>&nbsp;    public static int overloadDistance(short from, short to) {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        final int fromTag = tagOf(from);</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        final int toTag = tagOf(to);</b>
+<i class="no-highlight">245</i>&nbsp;        // Functions cannot accept UNDEFINED type (signature is not supported)
+<i class="no-highlight">246</i>&nbsp;        // this check is just in case
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        assert toTag &gt; UNDEFINED : &quot;Undefined not supported in overloads&quot;;</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;        return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * fromTag + toTag];</b>
+<i class="no-highlight">249</i>&nbsp;    }
+<i class="no-highlight">250</i>&nbsp;
+<i class="no-highlight">251</i>&nbsp;    public static int pow2SizeOf(int columnType) {
+<b class="fc"><i class="no-highlight">252</i>&nbsp;        return TYPE_SIZE_POW2[tagOf(columnType)];</b>
+<i class="no-highlight">253</i>&nbsp;    }
+<i class="no-highlight">254</i>&nbsp;
+<i class="no-highlight">255</i>&nbsp;    public static int pow2SizeOfBits(int bits) {
+<b class="fc"><i class="no-highlight">256</i>&nbsp;        assert bits &lt;= GEO_HASH_MAX_BITS_LENGTH;</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        return GEO_TYPE_SIZE_POW2[bits];</b>
+<i class="no-highlight">258</i>&nbsp;    }
+<i class="no-highlight">259</i>&nbsp;
+<i class="no-highlight">260</i>&nbsp;    public static int setDesignatedTimestampBit(int tsType, boolean designated) {
+<b class="fc"><i class="no-highlight">261</i>&nbsp;        if (designated) {</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;            return tsType | TYPE_FLAG_DESIGNATED_TIMESTAMP;</b>
+<i class="no-highlight">263</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">264</i>&nbsp;            return tsType &amp; ~(TYPE_FLAG_DESIGNATED_TIMESTAMP);</b>
+<i class="no-highlight">265</i>&nbsp;        }
+<i class="no-highlight">266</i>&nbsp;    }
+<i class="no-highlight">267</i>&nbsp;
+<i class="no-highlight">268</i>&nbsp;    public static int sizeOf(int columnType) {
+<b class="fc"><i class="no-highlight">269</i>&nbsp;        short tag = tagOf(columnType); // tagOf</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;        if (tag &lt; TYPES_SIZE) {</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;            return TYPE_SIZE[tag];</b>
+<i class="no-highlight">272</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">273</i>&nbsp;        return -1;</b>
+<i class="no-highlight">274</i>&nbsp;    }
+<i class="no-highlight">275</i>&nbsp;
+<i class="no-highlight">276</i>&nbsp;    public static short tagOf(int type) {
+<b class="fc"><i class="no-highlight">277</i>&nbsp;        return (short) (type &amp; 0xFF);</b>
+<i class="no-highlight">278</i>&nbsp;    }
+<i class="no-highlight">279</i>&nbsp;
+<i class="no-highlight">280</i>&nbsp;    public static short tagOf(CharSequence name) {
+<b class="fc"><i class="no-highlight">281</i>&nbsp;        return (short) nameTypeMap.get(name);</b>
+<i class="no-highlight">282</i>&nbsp;    }
+<i class="no-highlight">283</i>&nbsp;
+<i class="no-highlight">284</i>&nbsp;    public static int typeOf(CharSequence name) {
+<b class="fc"><i class="no-highlight">285</i>&nbsp;        return nameTypeMap.get(name);</b>
+<i class="no-highlight">286</i>&nbsp;    }
+<i class="no-highlight">287</i>&nbsp;
+<i class="no-highlight">288</i>&nbsp;    public static int variableColumnLengthBytes(int columnType) {
+<b class="fc"><i class="no-highlight">289</i>&nbsp;        if (columnType == ColumnType.STRING) {</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;            return Integer.BYTES;</b>
+<i class="no-highlight">291</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        assert columnType == ColumnType.BINARY;</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;        return Long.BYTES;</b>
+<i class="no-highlight">294</i>&nbsp;    }
+<i class="no-highlight">295</i>&nbsp;
+<i class="no-highlight">296</i>&nbsp;    private static short indexOf(short[] list, short value) {
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        for (short i = 0; i &lt; list.length; i++) {</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;            if (list[i] == value) {</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;                return i;</b>
+<i class="no-highlight">300</i>&nbsp;            }
+<i class="no-highlight">301</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        return -1;</b>
+<i class="no-highlight">303</i>&nbsp;    }
+<i class="no-highlight">304</i>&nbsp;
+<i class="no-highlight">305</i>&nbsp;    private static boolean isGeoHashWideningCast(int fromType, int toType) {
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        final int toTag = tagOf(toType);</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;        final int fromTag = tagOf(fromType);</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;        return (fromTag == GEOLONG &amp;&amp; toTag == GEOINT)</b>
+<i class="no-highlight">309</i>&nbsp;                || (fromTag == GEOLONG &amp;&amp; toTag == GEOSHORT)
+<i class="no-highlight">310</i>&nbsp;                || (fromTag == GEOLONG &amp;&amp; toTag == GEOBYTE)
+<i class="no-highlight">311</i>&nbsp;                || (fromTag == GEOINT &amp;&amp; toTag == GEOSHORT)
+<i class="no-highlight">312</i>&nbsp;                || (fromTag == GEOINT &amp;&amp; toTag == GEOBYTE)
+<i class="no-highlight">313</i>&nbsp;                || (fromTag == GEOSHORT &amp;&amp; toTag == GEOBYTE);
+<i class="no-highlight">314</i>&nbsp;    }
+<i class="no-highlight">315</i>&nbsp;
+<i class="no-highlight">316</i>&nbsp;    private static boolean isImplicitParsingCast(int fromType, int toType) {
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        final int toTag = tagOf(toType);</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;        return (fromType == CHAR &amp;&amp; toTag == GEOBYTE &amp;&amp; getGeoHashBits(toType) &lt; 6)</b>
+<i class="no-highlight">319</i>&nbsp;                || (fromType == STRING &amp;&amp; toTag == GEOBYTE)
+<i class="no-highlight">320</i>&nbsp;                || (fromType == STRING &amp;&amp; toTag == GEOSHORT)
+<i class="no-highlight">321</i>&nbsp;                || (fromType == STRING &amp;&amp; toTag == GEOINT)
+<i class="no-highlight">322</i>&nbsp;                || (fromType == STRING &amp;&amp; toTag == GEOLONG)
+<i class="no-highlight">323</i>&nbsp;                || (fromType == STRING &amp;&amp; toTag == TIMESTAMP)
+<i class="no-highlight">324</i>&nbsp;                || (fromType == SYMBOL &amp;&amp; toTag == TIMESTAMP)
+<i class="no-highlight">325</i>&nbsp;                ;
+<i class="no-highlight">326</i>&nbsp;    }
+<i class="no-highlight">327</i>&nbsp;
+<i class="no-highlight">328</i>&nbsp;    private static boolean isNarrowingCast(int fromType, int toType) {
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        return (fromType == DOUBLE &amp;&amp; (toType == FLOAT || (toType &gt;= BYTE &amp;&amp; toType &lt;= LONG)))</b>
+<i class="no-highlight">330</i>&nbsp;                || (fromType == FLOAT &amp;&amp; toType &gt;= BYTE &amp;&amp; toType &lt;= LONG)
+<i class="no-highlight">331</i>&nbsp;                || (fromType == LONG &amp;&amp; toType &gt;= BYTE &amp;&amp; toType &lt;= INT)
+<i class="no-highlight">332</i>&nbsp;                || (fromType == INT &amp;&amp; toType &gt;= BYTE &amp;&amp; toType &lt;= SHORT)
+<i class="no-highlight">333</i>&nbsp;                || (fromType == SHORT &amp;&amp; toType == BYTE)
+<i class="no-highlight">334</i>&nbsp;                || (fromType == CHAR &amp;&amp; toType == BYTE)
+<i class="no-highlight">335</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == BYTE)
+<i class="no-highlight">336</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == SHORT)
+<i class="no-highlight">337</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == INT)
+<i class="no-highlight">338</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == LONG)
+<i class="no-highlight">339</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == DATE)
+<i class="no-highlight">340</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == TIMESTAMP)
+<i class="no-highlight">341</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == FLOAT)
+<i class="no-highlight">342</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == DOUBLE)
+<i class="no-highlight">343</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == CHAR)
+<i class="no-highlight">344</i>&nbsp;                || (fromType == STRING &amp;&amp; toType == UUID)
+<i class="no-highlight">345</i>&nbsp;                ;
+<i class="no-highlight">346</i>&nbsp;    }
+<i class="no-highlight">347</i>&nbsp;
+<i class="no-highlight">348</i>&nbsp;    private static boolean isStringCast(int fromType, int toType) {
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        return (fromType == STRING &amp;&amp; toType == SYMBOL)</b>
+<i class="no-highlight">350</i>&nbsp;                || (fromType == SYMBOL &amp;&amp; toType == STRING)
+<i class="no-highlight">351</i>&nbsp;                || (fromType == CHAR &amp;&amp; toType == SYMBOL)
+<i class="no-highlight">352</i>&nbsp;                || (fromType == CHAR &amp;&amp; toType == STRING)
+<i class="no-highlight">353</i>&nbsp;                || (fromType == UUID &amp;&amp; toType == STRING);
+<i class="no-highlight">354</i>&nbsp;    }
+<i class="no-highlight">355</i>&nbsp;
+<i class="no-highlight">356</i>&nbsp;    private static int mkGeoHashType(int bits, short baseType) {
+<b class="fc"><i class="no-highlight">357</i>&nbsp;        return (baseType &amp; ~(0xFF &lt;&lt; BITS_OFFSET)) | (bits &lt;&lt; BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag</b>
+<i class="no-highlight">358</i>&nbsp;    }
+<i class="no-highlight">359</i>&nbsp;
+<i class="no-highlight">360</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">361</i>&nbsp;        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;        for (short i = UNDEFINED; i &lt; MAX; i++) {</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;            for (short j = BOOLEAN; j &lt;= MAX; j++) {</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;                if (i &lt; overloadPriority.length) {</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;                    int index = indexOf(overloadPriority[i], j);</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;                } else {</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;</b>
+<i class="no-highlight">369</i>&nbsp;                }
+<i class="no-highlight">370</i>&nbsp;            }
+<i class="no-highlight">371</i>&nbsp;        }
+<i class="no-highlight">372</i>&nbsp;    }
+<i class="no-highlight">373</i>&nbsp;
+<i class="no-highlight">374</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">375</i>&nbsp;        GEO_TYPE_SIZE_POW2 = new int[GEO_HASH_MAX_BITS_LENGTH + 1];</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;        for (int bits = 1; bits &lt;= GEO_HASH_MAX_BITS_LENGTH; bits++) {</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) &amp; -Byte.SIZE)) &gt;&gt; 3);</b>
+<i class="no-highlight">378</i>&nbsp;        }
+<i class="no-highlight">379</i>&nbsp;
+<b class="fc"><i class="no-highlight">380</i>&nbsp;        typeNameMap.put(BOOLEAN, &quot;BOOLEAN&quot;);</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;        typeNameMap.put(BYTE, &quot;BYTE&quot;);</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;        typeNameMap.put(DOUBLE, &quot;DOUBLE&quot;);</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;        typeNameMap.put(FLOAT, &quot;FLOAT&quot;);</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;        typeNameMap.put(INT, &quot;INT&quot;);</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;        typeNameMap.put(LONG, &quot;LONG&quot;);</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;        typeNameMap.put(SHORT, &quot;SHORT&quot;);</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;        typeNameMap.put(CHAR, &quot;CHAR&quot;);</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;        typeNameMap.put(STRING, &quot;STRING&quot;);</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;        typeNameMap.put(SYMBOL, &quot;SYMBOL&quot;);</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;        typeNameMap.put(BINARY, &quot;BINARY&quot;);</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;        typeNameMap.put(DATE, &quot;DATE&quot;);</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;        typeNameMap.put(PARAMETER, &quot;PARAMETER&quot;);</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;        typeNameMap.put(TIMESTAMP, &quot;TIMESTAMP&quot;);</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;        typeNameMap.put(LONG256, &quot;LONG256&quot;);</b>
+<b class="fc"><i class="no-highlight">395</i>&nbsp;        typeNameMap.put(UUID, &quot;UUID&quot;);</b>
+<b class="fc"><i class="no-highlight">396</i>&nbsp;        typeNameMap.put(LONG128, &quot;LONG128&quot;);</b>
+<b class="fc"><i class="no-highlight">397</i>&nbsp;        typeNameMap.put(CURSOR, &quot;CURSOR&quot;);</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;        typeNameMap.put(RECORD, &quot;RECORD&quot;);</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;        typeNameMap.put(VAR_ARG, &quot;VARARG&quot;);</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;        typeNameMap.put(GEOHASH, &quot;GEOHASH&quot;);</b>
+<b class="fc"><i class="no-highlight">401</i>&nbsp;        typeNameMap.put(REGCLASS, &quot;regclass&quot;);</b>
+<b class="fc"><i class="no-highlight">402</i>&nbsp;        typeNameMap.put(REGPROCEDURE, &quot;regprocedure&quot;);</b>
+<b class="fc"><i class="no-highlight">403</i>&nbsp;        typeNameMap.put(ARRAY_STRING, &quot;text[]&quot;);</b>
+<i class="no-highlight">404</i>&nbsp;
+<b class="fc"><i class="no-highlight">405</i>&nbsp;        nameTypeMap.put(&quot;boolean&quot;, BOOLEAN);</b>
+<b class="fc"><i class="no-highlight">406</i>&nbsp;        nameTypeMap.put(&quot;byte&quot;, BYTE);</b>
+<b class="fc"><i class="no-highlight">407</i>&nbsp;        nameTypeMap.put(&quot;double&quot;, DOUBLE);</b>
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        nameTypeMap.put(&quot;float&quot;, FLOAT);</b>
+<b class="fc"><i class="no-highlight">409</i>&nbsp;        nameTypeMap.put(&quot;int&quot;, INT);</b>
+<b class="fc"><i class="no-highlight">410</i>&nbsp;        nameTypeMap.put(&quot;long&quot;, LONG);</b>
+<b class="fc"><i class="no-highlight">411</i>&nbsp;        nameTypeMap.put(&quot;short&quot;, SHORT);</b>
+<b class="fc"><i class="no-highlight">412</i>&nbsp;        nameTypeMap.put(&quot;char&quot;, CHAR);</b>
+<b class="fc"><i class="no-highlight">413</i>&nbsp;        nameTypeMap.put(&quot;string&quot;, STRING);</b>
+<b class="fc"><i class="no-highlight">414</i>&nbsp;        nameTypeMap.put(&quot;symbol&quot;, SYMBOL);</b>
+<b class="fc"><i class="no-highlight">415</i>&nbsp;        nameTypeMap.put(&quot;binary&quot;, BINARY);</b>
+<b class="fc"><i class="no-highlight">416</i>&nbsp;        nameTypeMap.put(&quot;date&quot;, DATE);</b>
+<b class="fc"><i class="no-highlight">417</i>&nbsp;        nameTypeMap.put(&quot;parameter&quot;, PARAMETER);</b>
+<b class="fc"><i class="no-highlight">418</i>&nbsp;        nameTypeMap.put(&quot;timestamp&quot;, TIMESTAMP);</b>
+<b class="fc"><i class="no-highlight">419</i>&nbsp;        nameTypeMap.put(&quot;cursor&quot;, CURSOR);</b>
+<b class="fc"><i class="no-highlight">420</i>&nbsp;        nameTypeMap.put(&quot;long256&quot;, LONG256);</b>
+<b class="fc"><i class="no-highlight">421</i>&nbsp;        nameTypeMap.put(&quot;uuid&quot;, UUID);</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;        nameTypeMap.put(&quot;long128&quot;, LONG128);</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;        nameTypeMap.put(&quot;geohash&quot;, GEOHASH);</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;        nameTypeMap.put(&quot;text&quot;, STRING);</b>
+<b class="fc"><i class="no-highlight">425</i>&nbsp;        nameTypeMap.put(&quot;smallint&quot;, SHORT);</b>
+<b class="fc"><i class="no-highlight">426</i>&nbsp;        nameTypeMap.put(&quot;bigint&quot;, LONG);</b>
+<b class="fc"><i class="no-highlight">427</i>&nbsp;        nameTypeMap.put(&quot;real&quot;, FLOAT);</b>
+<b class="fc"><i class="no-highlight">428</i>&nbsp;        nameTypeMap.put(&quot;bytea&quot;, STRING);</b>
+<b class="fc"><i class="no-highlight">429</i>&nbsp;        nameTypeMap.put(&quot;varchar&quot;, STRING);</b>
+<b class="fc"><i class="no-highlight">430</i>&nbsp;        nameTypeMap.put(&quot;regclass&quot;, REGCLASS);</b>
+<b class="fc"><i class="no-highlight">431</i>&nbsp;        nameTypeMap.put(&quot;regprocedure&quot;, REGPROCEDURE);</b>
+<b class="fc"><i class="no-highlight">432</i>&nbsp;        nameTypeMap.put(&quot;text[]&quot;, ARRAY_STRING);</b>
+<i class="no-highlight">433</i>&nbsp;
+<b class="fc"><i class="no-highlight">434</i>&nbsp;        StringSink sink = new StringSink();</b>
+<b class="fc"><i class="no-highlight">435</i>&nbsp;        for (int b = 1; b &lt;= GEO_HASH_MAX_BITS_LENGTH; b++) {</b>
+<b class="fc"><i class="no-highlight">436</i>&nbsp;            sink.clear();</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;            if (b % 5 != 0) {</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                sink.put(&quot;GEOHASH(&quot;).put(b).put(&quot;b)&quot;);</b>
+<i class="no-highlight">439</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">440</i>&nbsp;                sink.put(&quot;GEOHASH(&quot;).put(b / 5).put(&quot;c)&quot;);</b>
+<i class="no-highlight">441</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            String name = sink.toString();</b>
+<b class="fc"><i class="no-highlight">443</i>&nbsp;            int type = getGeoHashTypeWithBits(b);</b>
+<b class="fc"><i class="no-highlight">444</i>&nbsp;            typeNameMap.put(type, name);</b>
+<b class="fc"><i class="no-highlight">445</i>&nbsp;            nameTypeMap.put(name, type);</b>
+<i class="no-highlight">446</i>&nbsp;        }
+<i class="no-highlight">447</i>&nbsp;
+<b class="fc"><i class="no-highlight">448</i>&nbsp;        TYPE_SIZE_POW2[UNDEFINED] = -1;</b>
+<b class="fc"><i class="no-highlight">449</i>&nbsp;        TYPE_SIZE_POW2[BOOLEAN] = 0;</b>
+<b class="fc"><i class="no-highlight">450</i>&nbsp;        TYPE_SIZE_POW2[BYTE] = 0;</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;        TYPE_SIZE_POW2[SHORT] = 1;</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;        TYPE_SIZE_POW2[CHAR] = 1;</b>
+<b class="fc"><i class="no-highlight">453</i>&nbsp;        TYPE_SIZE_POW2[FLOAT] = 2;</b>
+<b class="fc"><i class="no-highlight">454</i>&nbsp;        TYPE_SIZE_POW2[INT] = 2;</b>
+<b class="fc"><i class="no-highlight">455</i>&nbsp;        TYPE_SIZE_POW2[SYMBOL] = 2;</b>
+<b class="fc"><i class="no-highlight">456</i>&nbsp;        TYPE_SIZE_POW2[DOUBLE] = 3;</b>
+<b class="fc"><i class="no-highlight">457</i>&nbsp;        TYPE_SIZE_POW2[STRING] = -1;</b>
+<b class="fc"><i class="no-highlight">458</i>&nbsp;        TYPE_SIZE_POW2[LONG] = 3;</b>
+<b class="fc"><i class="no-highlight">459</i>&nbsp;        TYPE_SIZE_POW2[DATE] = 3;</b>
+<b class="fc"><i class="no-highlight">460</i>&nbsp;        TYPE_SIZE_POW2[TIMESTAMP] = 3;</b>
+<b class="fc"><i class="no-highlight">461</i>&nbsp;        TYPE_SIZE_POW2[LONG256] = 5;</b>
+<b class="fc"><i class="no-highlight">462</i>&nbsp;        TYPE_SIZE_POW2[GEOBYTE] = 0;</b>
+<b class="fc"><i class="no-highlight">463</i>&nbsp;        TYPE_SIZE_POW2[GEOSHORT] = 1;</b>
+<b class="fc"><i class="no-highlight">464</i>&nbsp;        TYPE_SIZE_POW2[GEOINT] = 2;</b>
+<b class="fc"><i class="no-highlight">465</i>&nbsp;        TYPE_SIZE_POW2[GEOLONG] = 3;</b>
+<b class="fc"><i class="no-highlight">466</i>&nbsp;        TYPE_SIZE_POW2[BINARY] = 2;</b>
+<b class="fc"><i class="no-highlight">467</i>&nbsp;        TYPE_SIZE_POW2[PARAMETER] = -1;</b>
+<b class="fc"><i class="no-highlight">468</i>&nbsp;        TYPE_SIZE_POW2[CURSOR] = -1;</b>
+<b class="fc"><i class="no-highlight">469</i>&nbsp;        TYPE_SIZE_POW2[VAR_ARG] = -1;</b>
+<b class="fc"><i class="no-highlight">470</i>&nbsp;        TYPE_SIZE_POW2[RECORD] = -1;</b>
+<b class="fc"><i class="no-highlight">471</i>&nbsp;        TYPE_SIZE_POW2[NULL] = -1;</b>
+<b class="fc"><i class="no-highlight">472</i>&nbsp;        TYPE_SIZE_POW2[LONG128] = 4;</b>
+<b class="fc"><i class="no-highlight">473</i>&nbsp;        TYPE_SIZE_POW2[UUID] = 4;</b>
+<i class="no-highlight">474</i>&nbsp;
+<b class="fc"><i class="no-highlight">475</i>&nbsp;        TYPE_SIZE[UNDEFINED] = -1;</b>
+<b class="fc"><i class="no-highlight">476</i>&nbsp;        TYPE_SIZE[BOOLEAN] = Byte.BYTES;</b>
+<b class="fc"><i class="no-highlight">477</i>&nbsp;        TYPE_SIZE[BYTE] = Byte.BYTES;</b>
+<b class="fc"><i class="no-highlight">478</i>&nbsp;        TYPE_SIZE[SHORT] = Short.BYTES;</b>
+<b class="fc"><i class="no-highlight">479</i>&nbsp;        TYPE_SIZE[CHAR] = Character.BYTES;</b>
+<b class="fc"><i class="no-highlight">480</i>&nbsp;        TYPE_SIZE[FLOAT] = Float.BYTES;</b>
+<b class="fc"><i class="no-highlight">481</i>&nbsp;        TYPE_SIZE[INT] = Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">482</i>&nbsp;        TYPE_SIZE[SYMBOL] = Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">483</i>&nbsp;        TYPE_SIZE[STRING] = 0;</b>
+<b class="fc"><i class="no-highlight">484</i>&nbsp;        TYPE_SIZE[DOUBLE] = Double.BYTES;</b>
+<b class="fc"><i class="no-highlight">485</i>&nbsp;        TYPE_SIZE[LONG] = Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">486</i>&nbsp;        TYPE_SIZE[DATE] = Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">487</i>&nbsp;        TYPE_SIZE[TIMESTAMP] = Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">488</i>&nbsp;        TYPE_SIZE[LONG256] = Long256.BYTES;</b>
+<b class="fc"><i class="no-highlight">489</i>&nbsp;        TYPE_SIZE[GEOBYTE] = Byte.BYTES;</b>
+<b class="fc"><i class="no-highlight">490</i>&nbsp;        TYPE_SIZE[GEOSHORT] = Short.BYTES;</b>
+<b class="fc"><i class="no-highlight">491</i>&nbsp;        TYPE_SIZE[GEOINT] = Integer.BYTES;</b>
+<b class="fc"><i class="no-highlight">492</i>&nbsp;        TYPE_SIZE[GEOLONG] = Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">493</i>&nbsp;        TYPE_SIZE[BINARY] = 0;</b>
+<b class="fc"><i class="no-highlight">494</i>&nbsp;        TYPE_SIZE[PARAMETER] = -1;</b>
+<b class="fc"><i class="no-highlight">495</i>&nbsp;        TYPE_SIZE[CURSOR] = -1;</b>
+<b class="fc"><i class="no-highlight">496</i>&nbsp;        TYPE_SIZE[VAR_ARG] = -1;</b>
+<b class="fc"><i class="no-highlight">497</i>&nbsp;        TYPE_SIZE[RECORD] = -1;</b>
+<b class="fc"><i class="no-highlight">498</i>&nbsp;        TYPE_SIZE[UUID] = 2 * Long.BYTES;</b>
+<b class="fc"><i class="no-highlight">499</i>&nbsp;        TYPE_SIZE[NULL] = 0;</b>
+<b class="fc"><i class="no-highlight">500</i>&nbsp;        TYPE_SIZE[LONG128] = 2 * Long.BYTES;</b>
+<i class="no-highlight">501</i>&nbsp;    }
+<i class="no-highlight">502</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

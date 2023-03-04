@@ -1,0 +1,435 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > CompiledQueryImpl</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.griffin</a>
+</div>
+
+<h1>Coverage Summary for Class: CompiledQueryImpl (io.questdb.griffin)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">CompiledQueryImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.3%
+  </span>
+  <span class="absValue">
+    (41/43)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.9%
+  </span>
+  <span class="absValue">
+    (71/74)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">CompiledQueryImpl$1</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+  <tr>
+    <td class="name">CompiledQueryImpl$2</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    95.7%
+  </span>
+  <span class="absValue">
+    (45/47)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.2%
+  </span>
+  <span class="absValue">
+    (75/78)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.griffin;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoEngine;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.TableWriterAPI;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cairo.sql.InsertOperation;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.cairo.sql.OperationFuture;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.cairo.sql.RecordCursorFactory;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.cutlass.text.TextLoader;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.griffin.engine.ops.AlterOperation;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.griffin.engine.ops.DoneOperationFuture;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.griffin.engine.ops.OperationDispatcher;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.griffin.engine.ops.UpdateOperation;
+<i class="no-highlight">37</i>&nbsp;import io.questdb.mp.SCSequence;
+<i class="no-highlight">38</i>&nbsp;import io.questdb.std.Chars;
+<i class="no-highlight">39</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">40</i>&nbsp;
+<i class="no-highlight">41</i>&nbsp;public class CompiledQueryImpl implements CompiledQuery {
+<i class="no-highlight">42</i>&nbsp;    private final OperationDispatcher&lt;AlterOperation&gt; alterOperationDispatcher;
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    private final DoneOperationFuture doneFuture = new DoneOperationFuture();</b>
+<i class="no-highlight">44</i>&nbsp;    private final OperationDispatcher&lt;UpdateOperation&gt; updateOperationDispatcher;
+<i class="no-highlight">45</i>&nbsp;    // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
+<i class="no-highlight">46</i>&nbsp;    private long affectedRowsCount;
+<i class="no-highlight">47</i>&nbsp;    private AlterOperation alterOp;
+<i class="no-highlight">48</i>&nbsp;    private InsertOperation insertOp;
+<i class="no-highlight">49</i>&nbsp;    private RecordCursorFactory recordCursorFactory;
+<i class="no-highlight">50</i>&nbsp;    private SqlExecutionContext sqlExecutionContext;
+<i class="no-highlight">51</i>&nbsp;    private String sqlStatement;
+<i class="no-highlight">52</i>&nbsp;    // prepared statement name for DEALLOCATE operation
+<i class="no-highlight">53</i>&nbsp;    private CharSequence statementName;
+<i class="no-highlight">54</i>&nbsp;    private TextLoader textLoader;
+<i class="no-highlight">55</i>&nbsp;    private short type;
+<i class="no-highlight">56</i>&nbsp;    private UpdateOperation updateOp;
+<i class="no-highlight">57</i>&nbsp;
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    public CompiledQueryImpl(CairoEngine engine) {</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;        updateOperationDispatcher = new OperationDispatcher&lt;UpdateOperation&gt;(engine, &quot;sync &#39;UPDATE&#39; execution&quot;) {</b>
+<i class="no-highlight">60</i>&nbsp;            @Override
+<i class="no-highlight">61</i>&nbsp;            protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
+<b class="fc"><i class="no-highlight">62</i>&nbsp;                return writerAPI.apply(operation);</b>
+<i class="no-highlight">63</i>&nbsp;            }
+<i class="no-highlight">64</i>&nbsp;        };
+<i class="no-highlight">65</i>&nbsp;
+<b class="fc"><i class="no-highlight">66</i>&nbsp;        alterOperationDispatcher = new OperationDispatcher&lt;AlterOperation&gt;(engine, &quot;Alter table execute&quot;) {</b>
+<i class="no-highlight">67</i>&nbsp;            @Override
+<i class="no-highlight">68</i>&nbsp;            protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
+<b class="fc"><i class="no-highlight">69</i>&nbsp;                return writerAPI.apply(operation, true);</b>
+<i class="no-highlight">70</i>&nbsp;            }
+<i class="no-highlight">71</i>&nbsp;        };
+<i class="no-highlight">72</i>&nbsp;    }
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    @Override
+<i class="no-highlight">75</i>&nbsp;    public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        return execute(sqlExecutionContext, eventSubSeq, true);</b>
+<i class="no-highlight">77</i>&nbsp;    }
+<i class="no-highlight">78</i>&nbsp;
+<i class="no-highlight">79</i>&nbsp;    @Override
+<i class="no-highlight">80</i>&nbsp;    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        switch (type) {</b>
+<i class="no-highlight">82</i>&nbsp;            case INSERT:
+<b class="fc"><i class="no-highlight">83</i>&nbsp;                return insertOp.execute(sqlExecutionContext);</b>
+<i class="no-highlight">84</i>&nbsp;            case UPDATE:
+<b class="fc"><i class="no-highlight">85</i>&nbsp;                updateOp.withSqlStatement(sqlStatement);</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;                return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);</b>
+<i class="no-highlight">87</i>&nbsp;            case ALTER:
+<b class="fc"><i class="no-highlight">88</i>&nbsp;                alterOp.withSqlStatement(sqlStatement);</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;                return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);</b>
+<i class="no-highlight">90</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">91</i>&nbsp;                return doneFuture.of(0);</b>
+<i class="no-highlight">92</i>&nbsp;        }
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    @Override
+<i class="no-highlight">96</i>&nbsp;    public long getAffectedRowsCount() {
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        return affectedRowsCount;</b>
+<i class="no-highlight">98</i>&nbsp;    }
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;    @Override
+<i class="no-highlight">101</i>&nbsp;    public AlterOperation getAlterOperation() {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        return alterOp;</b>
+<i class="no-highlight">103</i>&nbsp;    }
+<i class="no-highlight">104</i>&nbsp;
+<i class="no-highlight">105</i>&nbsp;    @Override
+<i class="no-highlight">106</i>&nbsp;    public InsertOperation getInsertOperation() {
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        return insertOp;</b>
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    @Override
+<i class="no-highlight">111</i>&nbsp;    public RecordCursorFactory getRecordCursorFactory() {
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        return recordCursorFactory;</b>
+<i class="no-highlight">113</i>&nbsp;    }
+<i class="no-highlight">114</i>&nbsp;
+<i class="no-highlight">115</i>&nbsp;    @Override
+<i class="no-highlight">116</i>&nbsp;    public String getSqlStatement() {
+<b class="fc"><i class="no-highlight">117</i>&nbsp;        return sqlStatement;</b>
+<i class="no-highlight">118</i>&nbsp;    }
+<i class="no-highlight">119</i>&nbsp;
+<i class="no-highlight">120</i>&nbsp;    @Override
+<i class="no-highlight">121</i>&nbsp;    public CharSequence getStatementName() {
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        return statementName;</b>
+<i class="no-highlight">123</i>&nbsp;    }
+<i class="no-highlight">124</i>&nbsp;
+<i class="no-highlight">125</i>&nbsp;    @Override
+<i class="no-highlight">126</i>&nbsp;    public TextLoader getTextLoader() {
+<b class="nc"><i class="no-highlight">127</i>&nbsp;        return textLoader;</b>
+<i class="no-highlight">128</i>&nbsp;    }
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;    @Override
+<i class="no-highlight">131</i>&nbsp;    public short getType() {
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        return type;</b>
+<i class="no-highlight">133</i>&nbsp;    }
+<i class="no-highlight">134</i>&nbsp;
+<i class="no-highlight">135</i>&nbsp;    @Override
+<i class="no-highlight">136</i>&nbsp;    public UpdateOperation getUpdateOperation() {
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        return updateOp;</b>
+<i class="no-highlight">138</i>&nbsp;    }
+<i class="no-highlight">139</i>&nbsp;
+<i class="no-highlight">140</i>&nbsp;    public CompiledQuery of(short type) {
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        return of(type, null);</b>
+<i class="no-highlight">142</i>&nbsp;    }
+<i class="no-highlight">143</i>&nbsp;
+<i class="no-highlight">144</i>&nbsp;    public CompiledQuery ofLock() {
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        type = LOCK;</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        return this;</b>
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    public CompiledQuery ofTableResume() {
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        type = TABLE_RESUME;</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        return this;</b>
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    public CompiledQuery ofTableSetType() {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        type = TABLE_SET_TYPE;</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        return this;</b>
+<i class="no-highlight">157</i>&nbsp;    }
+<i class="no-highlight">158</i>&nbsp;
+<i class="no-highlight">159</i>&nbsp;    public CompiledQuery ofUnlock() {
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        type = UNLOCK;</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        return this;</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        this.updateOp = updateOperation;</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        this.type = UPDATE;</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        return this;</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        this.sqlExecutionContext = sqlExecutionContext;</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        return this;</b>
+<i class="no-highlight">173</i>&nbsp;    }
+<i class="no-highlight">174</i>&nbsp;
+<i class="no-highlight">175</i>&nbsp;    public void withSqlStatement(String sqlStatement) {
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        this.sqlStatement = sqlStatement;</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;
+<i class="no-highlight">179</i>&nbsp;    private CompiledQuery of(short type, RecordCursorFactory factory) {
+<b class="fc"><i class="no-highlight">180</i>&nbsp;        this.type = type;</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        this.recordCursorFactory = factory;</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;        this.affectedRowsCount = -1;</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        return this;</b>
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    CompiledQuery of(RecordCursorFactory recordCursorFactory) {
+<b class="fc"><i class="no-highlight">187</i>&nbsp;        return of(SELECT, recordCursorFactory);</b>
+<i class="no-highlight">188</i>&nbsp;    }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;    CompiledQuery ofAlter(AlterOperation statement) {
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        of(ALTER);</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        alterOp = statement;</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;        return this;</b>
+<i class="no-highlight">194</i>&nbsp;    }
+<i class="no-highlight">195</i>&nbsp;
+<i class="no-highlight">196</i>&nbsp;    CompiledQuery ofBackupTable() {
+<b class="fc"><i class="no-highlight">197</i>&nbsp;        return of(BACKUP_TABLE);</b>
+<i class="no-highlight">198</i>&nbsp;    }
+<i class="no-highlight">199</i>&nbsp;
+<i class="no-highlight">200</i>&nbsp;    CompiledQuery ofBegin() {
+<b class="fc"><i class="no-highlight">201</i>&nbsp;        return of(BEGIN);</b>
+<i class="no-highlight">202</i>&nbsp;    }
+<i class="no-highlight">203</i>&nbsp;
+<i class="no-highlight">204</i>&nbsp;    CompiledQuery ofCommit() {
+<b class="fc"><i class="no-highlight">205</i>&nbsp;        return of(COMMIT);</b>
+<i class="no-highlight">206</i>&nbsp;    }
+<i class="no-highlight">207</i>&nbsp;
+<i class="no-highlight">208</i>&nbsp;    CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        this.type = COPY_LOCAL;</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        this.recordCursorFactory = factory;</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        this.affectedRowsCount = -1;</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;        return this;</b>
+<i class="no-highlight">213</i>&nbsp;    }
+<i class="no-highlight">214</i>&nbsp;
+<i class="no-highlight">215</i>&nbsp;    CompiledQuery ofCopyRemote(TextLoader textLoader) {
+<b class="nc"><i class="no-highlight">216</i>&nbsp;        this.textLoader = textLoader;</b>
+<b class="nc"><i class="no-highlight">217</i>&nbsp;        return of(COPY_REMOTE);</b>
+<i class="no-highlight">218</i>&nbsp;    }
+<i class="no-highlight">219</i>&nbsp;
+<i class="no-highlight">220</i>&nbsp;    CompiledQuery ofCreateTable() {
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        return of(CREATE_TABLE);</b>
+<i class="no-highlight">222</i>&nbsp;    }
+<i class="no-highlight">223</i>&nbsp;
+<i class="no-highlight">224</i>&nbsp;    CompiledQuery ofCreateTableAsSelect(long affectedRowsCount) {
+<b class="fc"><i class="no-highlight">225</i>&nbsp;        of(CREATE_TABLE_AS_SELECT);</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;        this.affectedRowsCount = affectedRowsCount;</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        return this;</b>
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    CompiledQuery ofDeallocate(CharSequence statementName) {
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        this.statementName = Chars.toString(statementName);</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;        return of(DEALLOCATE);</b>
+<i class="no-highlight">233</i>&nbsp;    }
+<i class="no-highlight">234</i>&nbsp;
+<i class="no-highlight">235</i>&nbsp;    CompiledQuery ofDrop() {
+<b class="fc"><i class="no-highlight">236</i>&nbsp;        return of(DROP);</b>
+<i class="no-highlight">237</i>&nbsp;    }
+<i class="no-highlight">238</i>&nbsp;
+<i class="no-highlight">239</i>&nbsp;    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
+<b class="fc"><i class="no-highlight">240</i>&nbsp;        return of(EXPLAIN, recordCursorFactory);</b>
+<i class="no-highlight">241</i>&nbsp;    }
+<i class="no-highlight">242</i>&nbsp;
+<i class="no-highlight">243</i>&nbsp;    CompiledQuery ofInsert(InsertOperation insertOperation) {
+<b class="fc"><i class="no-highlight">244</i>&nbsp;        this.insertOp = insertOperation;</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;        return of(INSERT);</b>
+<i class="no-highlight">246</i>&nbsp;    }
+<i class="no-highlight">247</i>&nbsp;
+<i class="no-highlight">248</i>&nbsp;    CompiledQuery ofInsertAsSelect(long affectedRowsCount) {
+<b class="fc"><i class="no-highlight">249</i>&nbsp;        of(INSERT_AS_SELECT);</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;        this.affectedRowsCount = affectedRowsCount;</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;        return this;</b>
+<i class="no-highlight">252</i>&nbsp;    }
+<i class="no-highlight">253</i>&nbsp;
+<i class="no-highlight">254</i>&nbsp;    CompiledQuery ofRenameTable() {
+<b class="fc"><i class="no-highlight">255</i>&nbsp;        return of(RENAME_TABLE);</b>
+<i class="no-highlight">256</i>&nbsp;    }
+<i class="no-highlight">257</i>&nbsp;
+<i class="no-highlight">258</i>&nbsp;    CompiledQuery ofRepair() {
+<b class="fc"><i class="no-highlight">259</i>&nbsp;        return of(REPAIR);</b>
+<i class="no-highlight">260</i>&nbsp;    }
+<i class="no-highlight">261</i>&nbsp;
+<i class="no-highlight">262</i>&nbsp;    CompiledQuery ofRollback() {
+<b class="fc"><i class="no-highlight">263</i>&nbsp;        return of(ROLLBACK);</b>
+<i class="no-highlight">264</i>&nbsp;    }
+<i class="no-highlight">265</i>&nbsp;
+<i class="no-highlight">266</i>&nbsp;    CompiledQuery ofSet() {
+<b class="fc"><i class="no-highlight">267</i>&nbsp;        return of(SET);</b>
+<i class="no-highlight">268</i>&nbsp;    }
+<i class="no-highlight">269</i>&nbsp;
+<i class="no-highlight">270</i>&nbsp;    CompiledQuery ofSnapshotComplete() {
+<b class="fc"><i class="no-highlight">271</i>&nbsp;        return of(SNAPSHOT_DB_COMPLETE);</b>
+<i class="no-highlight">272</i>&nbsp;    }
+<i class="no-highlight">273</i>&nbsp;
+<i class="no-highlight">274</i>&nbsp;    CompiledQuery ofSnapshotPrepare() {
+<b class="fc"><i class="no-highlight">275</i>&nbsp;        return of(SNAPSHOT_DB_PREPARE);</b>
+<i class="no-highlight">276</i>&nbsp;    }
+<i class="no-highlight">277</i>&nbsp;
+<i class="no-highlight">278</i>&nbsp;    CompiledQuery ofTruncate() {
+<b class="fc"><i class="no-highlight">279</i>&nbsp;        return of(TRUNCATE);</b>
+<i class="no-highlight">280</i>&nbsp;    }
+<i class="no-highlight">281</i>&nbsp;
+<i class="no-highlight">282</i>&nbsp;    CompiledQuery ofVacuum() {
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        return of(VACUUM);</b>
+<i class="no-highlight">284</i>&nbsp;    }
+<i class="no-highlight">285</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

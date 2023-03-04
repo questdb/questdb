@@ -1,0 +1,282 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > TypeManager</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.text.types</a>
+</div>
+
+<h1>Coverage Summary for Class: TypeManager (io.questdb.cutlass.text.types)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TypeManager</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (11/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    96.9%
+  </span>
+  <span class="absValue">
+    (63/65)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.text.types;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.cutlass.text.TextConfiguration;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.IntList;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.Mutable;
+<i class="no-highlight">32</i>&nbsp;import io.questdb.std.ObjList;
+<i class="no-highlight">33</i>&nbsp;import io.questdb.std.ObjectPool;
+<i class="no-highlight">34</i>&nbsp;import io.questdb.std.datetime.DateFormat;
+<i class="no-highlight">35</i>&nbsp;import io.questdb.std.datetime.DateLocale;
+<i class="no-highlight">36</i>&nbsp;import io.questdb.std.str.DirectCharSink;
+<i class="no-highlight">37</i>&nbsp;
+<i class="no-highlight">38</i>&nbsp;public class TypeManager implements Mutable {
+<i class="no-highlight">39</i>&nbsp;    private final ObjectPool&lt;DateUtf8Adapter&gt; dateAdapterPool;
+<i class="no-highlight">40</i>&nbsp;    private final SymbolAdapter indexedSymbolAdapter;
+<i class="no-highlight">41</i>&nbsp;    private final InputFormatConfiguration inputFormatConfiguration;
+<i class="no-highlight">42</i>&nbsp;    private final SymbolAdapter notIndexedSymbolAdapter;
+<i class="no-highlight">43</i>&nbsp;    private final int probeCount;
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    private final ObjList&lt;TypeAdapter&gt; probes = new ObjList&lt;&gt;();</b>
+<i class="no-highlight">45</i>&nbsp;    private final StringAdapter stringAdapter;
+<i class="no-highlight">46</i>&nbsp;    private final ObjectPool&lt;TimestampAdapter&gt; timestampAdapterPool;
+<i class="no-highlight">47</i>&nbsp;    private final ObjectPool&lt;TimestampUtf8Adapter&gt; timestampUtf8AdapterPool;
+<i class="no-highlight">48</i>&nbsp;
+<i class="no-highlight">49</i>&nbsp;    public TypeManager(
+<i class="no-highlight">50</i>&nbsp;            TextConfiguration configuration,
+<i class="no-highlight">51</i>&nbsp;            DirectCharSink utf8Sink
+<b class="fc"><i class="no-highlight">52</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;        this.dateAdapterPool = new ObjectPool&lt;&gt;(() -&gt; new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;        this.timestampUtf8AdapterPool = new ObjectPool&lt;&gt;(() -&gt; new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        this.timestampAdapterPool = new ObjectPool&lt;&gt;(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        this.inputFormatConfiguration = configuration.getInputFormatConfiguration();</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        this.stringAdapter = new StringAdapter(utf8Sink);</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        this.indexedSymbolAdapter = new SymbolAdapter(utf8Sink, true);</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;        this.notIndexedSymbolAdapter = new SymbolAdapter(utf8Sink, false);</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;        addDefaultProbes();</b>
+<i class="no-highlight">61</i>&nbsp;
+<b class="fc"><i class="no-highlight">62</i>&nbsp;        final ObjList&lt;DateFormat&gt; dateFormats = inputFormatConfiguration.getDateFormats();</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;        final ObjList&lt;DateLocale&gt; dateLocales = inputFormatConfiguration.getDateLocales();</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;        final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;        for (int i = 0, n = dateFormats.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;            if (dateUtf8Flags.getQuick(i) == 1) {</b>
+<b class="nc"><i class="no-highlight">67</i>&nbsp;                probes.add(new DateUtf8Adapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));</b>
+<i class="no-highlight">68</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">69</i>&nbsp;                probes.add(new DateAdapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));</b>
+<i class="no-highlight">70</i>&nbsp;            }
+<i class="no-highlight">71</i>&nbsp;        }
+<i class="no-highlight">72</i>&nbsp;
+<b class="fc"><i class="no-highlight">73</i>&nbsp;        final ObjList&lt;DateFormat&gt; timestampFormats = inputFormatConfiguration.getTimestampFormats();</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;        final ObjList&lt;DateLocale&gt; timestampLocales = inputFormatConfiguration.getTimestampLocales();</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        for (int i = 0, n = timestampFormats.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;            if (timestampUtf8Flags.getQuick(i) == 1) {</b>
+<b class="nc"><i class="no-highlight">78</i>&nbsp;                probes.add(new TimestampUtf8Adapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));</b>
+<i class="no-highlight">79</i>&nbsp;            } else {
+<b class="fc"><i class="no-highlight">80</i>&nbsp;                probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));</b>
+<i class="no-highlight">81</i>&nbsp;            }
+<i class="no-highlight">82</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.probeCount = probes.size();</b>
+<i class="no-highlight">84</i>&nbsp;    }
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;    @Override
+<i class="no-highlight">87</i>&nbsp;    public void clear() {
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        dateAdapterPool.clear();</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        timestampUtf8AdapterPool.clear();</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        timestampAdapterPool.clear();</b>
+<i class="no-highlight">91</i>&nbsp;    }
+<i class="no-highlight">92</i>&nbsp;
+<i class="no-highlight">93</i>&nbsp;    public InputFormatConfiguration getInputFormatConfiguration() {
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        return inputFormatConfiguration;</b>
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;
+<i class="no-highlight">97</i>&nbsp;    public TypeAdapter getProbe(int index) {
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        return probes.getQuick(index);</b>
+<i class="no-highlight">99</i>&nbsp;    }
+<i class="no-highlight">100</i>&nbsp;
+<i class="no-highlight">101</i>&nbsp;    public int getProbeCount() {
+<b class="fc"><i class="no-highlight">102</i>&nbsp;        return probeCount;</b>
+<i class="no-highlight">103</i>&nbsp;    }
+<i class="no-highlight">104</i>&nbsp;
+<i class="no-highlight">105</i>&nbsp;    public TypeAdapter getTypeAdapter(int columnType) {
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        switch (ColumnType.tagOf(columnType)) {</b>
+<i class="no-highlight">107</i>&nbsp;            case ColumnType.BYTE:
+<b class="fc"><i class="no-highlight">108</i>&nbsp;                return ByteAdapter.INSTANCE;</b>
+<i class="no-highlight">109</i>&nbsp;            case ColumnType.SHORT:
+<b class="fc"><i class="no-highlight">110</i>&nbsp;                return ShortAdapter.INSTANCE;</b>
+<i class="no-highlight">111</i>&nbsp;            case ColumnType.CHAR:
+<b class="fc"><i class="no-highlight">112</i>&nbsp;                return CharAdapter.INSTANCE;</b>
+<i class="no-highlight">113</i>&nbsp;            case ColumnType.INT:
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                return IntAdapter.INSTANCE;</b>
+<i class="no-highlight">115</i>&nbsp;            case ColumnType.LONG:
+<b class="fc"><i class="no-highlight">116</i>&nbsp;                return LongAdapter.INSTANCE;</b>
+<i class="no-highlight">117</i>&nbsp;            case ColumnType.BOOLEAN:
+<b class="fc"><i class="no-highlight">118</i>&nbsp;                return BooleanAdapter.INSTANCE;</b>
+<i class="no-highlight">119</i>&nbsp;            case ColumnType.FLOAT:
+<b class="fc"><i class="no-highlight">120</i>&nbsp;                return FloatAdapter.INSTANCE;</b>
+<i class="no-highlight">121</i>&nbsp;            case ColumnType.DOUBLE:
+<b class="fc"><i class="no-highlight">122</i>&nbsp;                return DoubleAdapter.INSTANCE;</b>
+<i class="no-highlight">123</i>&nbsp;            case ColumnType.STRING:
+<b class="fc"><i class="no-highlight">124</i>&nbsp;                return stringAdapter;</b>
+<i class="no-highlight">125</i>&nbsp;            case ColumnType.SYMBOL:
+<b class="fc"><i class="no-highlight">126</i>&nbsp;                return nextSymbolAdapter(false);</b>
+<i class="no-highlight">127</i>&nbsp;            case ColumnType.LONG256:
+<b class="fc"><i class="no-highlight">128</i>&nbsp;                return Long256Adapter.INSTANCE;</b>
+<i class="no-highlight">129</i>&nbsp;            case ColumnType.GEOBYTE:
+<i class="no-highlight">130</i>&nbsp;            case ColumnType.GEOSHORT:
+<i class="no-highlight">131</i>&nbsp;            case ColumnType.GEOINT:
+<i class="no-highlight">132</i>&nbsp;            case ColumnType.GEOLONG:
+<b class="fc"><i class="no-highlight">133</i>&nbsp;                GeoHashAdapter adapter = GeoHashAdapter.getInstance(columnType);</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;                if (adapter != null) {</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;                    return adapter;</b>
+<i class="no-highlight">136</i>&nbsp;                }
+<i class="no-highlight">137</i>&nbsp;            case ColumnType.UUID:
+<b class="fc"><i class="no-highlight">138</i>&nbsp;                return UuidAdapter.INSTANCE;</b>
+<i class="no-highlight">139</i>&nbsp;            default:
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                throw CairoException.nonCritical().put(&quot;no adapter for type [id=&quot;).put(columnType).put(&quot;, name=&quot;).put(ColumnType.nameOf(columnType)).put(&#39;]&#39;);</b>
+<i class="no-highlight">141</i>&nbsp;        }
+<i class="no-highlight">142</i>&nbsp;    }
+<i class="no-highlight">143</i>&nbsp;
+<i class="no-highlight">144</i>&nbsp;    public DateUtf8Adapter nextDateAdapter() {
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        return dateAdapterPool.next();</b>
+<i class="no-highlight">146</i>&nbsp;    }
+<i class="no-highlight">147</i>&nbsp;
+<i class="no-highlight">148</i>&nbsp;    public TypeAdapter nextSymbolAdapter(boolean indexed) {
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;</b>
+<i class="no-highlight">150</i>&nbsp;    }
+<i class="no-highlight">151</i>&nbsp;
+<i class="no-highlight">152</i>&nbsp;    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale) {
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        if (decodeUtf8) {</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;            TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;            adapter.of(format, locale);</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;            return adapter;</b>
+<i class="no-highlight">157</i>&nbsp;        }
+<i class="no-highlight">158</i>&nbsp;
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        TimestampAdapter adapter = timestampAdapterPool.next();</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        adapter.of(format, locale);</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        return adapter;</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    private void addDefaultProbes() {
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.CHAR));</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.INT));</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.LONG));</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.DOUBLE));</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.BOOLEAN));</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.LONG256));</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        probes.add(getTypeAdapter(ColumnType.UUID));</b>
+<i class="no-highlight">172</i>&nbsp;    }
+<i class="no-highlight">173</i>&nbsp;
+<i class="no-highlight">174</i>&nbsp;    ObjList&lt;TypeAdapter&gt; getAllAdapters() {
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        return probes;</b>
+<i class="no-highlight">176</i>&nbsp;    }
+<i class="no-highlight">177</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

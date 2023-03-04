@@ -1,0 +1,444 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > O3OpenColumnTask</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.tasks</a>
+</div>
+
+<h1>Coverage Summary for Class: O3OpenColumnTask (io.questdb.tasks)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">O3OpenColumnTask</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (45/45)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (87/87)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.tasks;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.BitmapIndexWriter;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.cairo.TableWriter;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">30</i>&nbsp;
+<i class="no-highlight">31</i>&nbsp;import java.util.concurrent.atomic.AtomicInteger;
+<i class="no-highlight">32</i>&nbsp;
+<b class="fc"><i class="no-highlight">33</i>&nbsp;public class O3OpenColumnTask {</b>
+<i class="no-highlight">34</i>&nbsp;    private int activeFixFd;
+<i class="no-highlight">35</i>&nbsp;    private int activeVarFd;
+<i class="no-highlight">36</i>&nbsp;    private long colTopSinkAddr;
+<i class="no-highlight">37</i>&nbsp;    private AtomicInteger columnCounter;
+<i class="no-highlight">38</i>&nbsp;    private int columnIndex;
+<i class="no-highlight">39</i>&nbsp;    private CharSequence columnName;
+<i class="no-highlight">40</i>&nbsp;    private long columnNameTxn;
+<i class="no-highlight">41</i>&nbsp;    private int columnType;
+<i class="no-highlight">42</i>&nbsp;    private int indexBlockCapacity;
+<i class="no-highlight">43</i>&nbsp;    private BitmapIndexWriter indexWriter;
+<i class="no-highlight">44</i>&nbsp;    private long mergeDataHi;
+<i class="no-highlight">45</i>&nbsp;    private long mergeDataLo;
+<i class="no-highlight">46</i>&nbsp;    private long mergeOOOHi;
+<i class="no-highlight">47</i>&nbsp;    private long mergeOOOLo;
+<i class="no-highlight">48</i>&nbsp;    private int mergeType;
+<i class="no-highlight">49</i>&nbsp;    private long oooTimestampLo;
+<i class="no-highlight">50</i>&nbsp;    private int openColumnMode;
+<i class="no-highlight">51</i>&nbsp;    private AtomicInteger partCounter;
+<i class="no-highlight">52</i>&nbsp;    private long partitionTimestamp;
+<i class="no-highlight">53</i>&nbsp;    private Path pathToTable;
+<i class="no-highlight">54</i>&nbsp;    private long prefixHi;
+<i class="no-highlight">55</i>&nbsp;    private long prefixLo;
+<i class="no-highlight">56</i>&nbsp;    private int prefixType;
+<i class="no-highlight">57</i>&nbsp;    private long srcDataMax;
+<i class="no-highlight">58</i>&nbsp;    private long srcDataTop;
+<i class="no-highlight">59</i>&nbsp;    private long srcDataTxn;
+<i class="no-highlight">60</i>&nbsp;    private long srcOooFixAddr;
+<i class="no-highlight">61</i>&nbsp;    private long srcOooHi;
+<i class="no-highlight">62</i>&nbsp;    private long srcOooLo;
+<i class="no-highlight">63</i>&nbsp;    private long srcOooMax;
+<i class="no-highlight">64</i>&nbsp;    private long srcOooVarAddr;
+<i class="no-highlight">65</i>&nbsp;    private long srcTimestampAddr;
+<i class="no-highlight">66</i>&nbsp;    private int srcTimestampFd;
+<i class="no-highlight">67</i>&nbsp;    private long srcTimestampSize;
+<i class="no-highlight">68</i>&nbsp;    private long suffixHi;
+<i class="no-highlight">69</i>&nbsp;    private long suffixLo;
+<i class="no-highlight">70</i>&nbsp;    private int suffixType;
+<i class="no-highlight">71</i>&nbsp;    private TableWriter tableWriter;
+<i class="no-highlight">72</i>&nbsp;    private long timestampMax;
+<i class="no-highlight">73</i>&nbsp;    private long timestampMergeIndexAddr;
+<i class="no-highlight">74</i>&nbsp;    private long timestampMergeIndexSize;
+<i class="no-highlight">75</i>&nbsp;    private long timestampMin;
+<i class="no-highlight">76</i>&nbsp;    private long txn;
+<i class="no-highlight">77</i>&nbsp;
+<i class="no-highlight">78</i>&nbsp;    public int getActiveFixFd() {
+<b class="fc"><i class="no-highlight">79</i>&nbsp;        return activeFixFd;</b>
+<i class="no-highlight">80</i>&nbsp;    }
+<i class="no-highlight">81</i>&nbsp;
+<i class="no-highlight">82</i>&nbsp;    public int getActiveVarFd() {
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        return activeVarFd;</b>
+<i class="no-highlight">84</i>&nbsp;    }
+<i class="no-highlight">85</i>&nbsp;
+<i class="no-highlight">86</i>&nbsp;    public long getColTopSinkAddr() {
+<b class="fc"><i class="no-highlight">87</i>&nbsp;        return colTopSinkAddr;</b>
+<i class="no-highlight">88</i>&nbsp;    }
+<i class="no-highlight">89</i>&nbsp;
+<i class="no-highlight">90</i>&nbsp;    public AtomicInteger getColumnCounter() {
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        return columnCounter;</b>
+<i class="no-highlight">92</i>&nbsp;    }
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;    public int getColumnIndex() {
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        return columnIndex;</b>
+<i class="no-highlight">96</i>&nbsp;    }
+<i class="no-highlight">97</i>&nbsp;
+<i class="no-highlight">98</i>&nbsp;    public CharSequence getColumnName() {
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        return columnName;</b>
+<i class="no-highlight">100</i>&nbsp;    }
+<i class="no-highlight">101</i>&nbsp;
+<i class="no-highlight">102</i>&nbsp;    public long getColumnNameTxn() {
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        return columnNameTxn;</b>
+<i class="no-highlight">104</i>&nbsp;    }
+<i class="no-highlight">105</i>&nbsp;
+<i class="no-highlight">106</i>&nbsp;    public int getColumnType() {
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        return columnType;</b>
+<i class="no-highlight">108</i>&nbsp;    }
+<i class="no-highlight">109</i>&nbsp;
+<i class="no-highlight">110</i>&nbsp;    public int getIndexBlockCapacity() {
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        return indexBlockCapacity;</b>
+<i class="no-highlight">112</i>&nbsp;    }
+<i class="no-highlight">113</i>&nbsp;
+<i class="no-highlight">114</i>&nbsp;    public BitmapIndexWriter getIndexWriter() {
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        return indexWriter;</b>
+<i class="no-highlight">116</i>&nbsp;    }
+<i class="no-highlight">117</i>&nbsp;
+<i class="no-highlight">118</i>&nbsp;    public long getMergeDataHi() {
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        return mergeDataHi;</b>
+<i class="no-highlight">120</i>&nbsp;    }
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;    public long getMergeDataLo() {
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        return mergeDataLo;</b>
+<i class="no-highlight">124</i>&nbsp;    }
+<i class="no-highlight">125</i>&nbsp;
+<i class="no-highlight">126</i>&nbsp;    public long getMergeOOOHi() {
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        return mergeOOOHi;</b>
+<i class="no-highlight">128</i>&nbsp;    }
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;    public long getMergeOOOLo() {
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        return mergeOOOLo;</b>
+<i class="no-highlight">132</i>&nbsp;    }
+<i class="no-highlight">133</i>&nbsp;
+<i class="no-highlight">134</i>&nbsp;    public int getMergeType() {
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        return mergeType;</b>
+<i class="no-highlight">136</i>&nbsp;    }
+<i class="no-highlight">137</i>&nbsp;
+<i class="no-highlight">138</i>&nbsp;    public long getOooTimestampLo() {
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        return oooTimestampLo;</b>
+<i class="no-highlight">140</i>&nbsp;    }
+<i class="no-highlight">141</i>&nbsp;
+<i class="no-highlight">142</i>&nbsp;    public int getOpenColumnMode() {
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        return openColumnMode;</b>
+<i class="no-highlight">144</i>&nbsp;    }
+<i class="no-highlight">145</i>&nbsp;
+<i class="no-highlight">146</i>&nbsp;    public AtomicInteger getPartCounter() {
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        return partCounter;</b>
+<i class="no-highlight">148</i>&nbsp;    }
+<i class="no-highlight">149</i>&nbsp;
+<i class="no-highlight">150</i>&nbsp;    public long getPartitionTimestamp() {
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        return partitionTimestamp;</b>
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    public Path getPathToTable() {
+<b class="fc"><i class="no-highlight">155</i>&nbsp;        return pathToTable;</b>
+<i class="no-highlight">156</i>&nbsp;    }
+<i class="no-highlight">157</i>&nbsp;
+<i class="no-highlight">158</i>&nbsp;    public long getPrefixHi() {
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        return prefixHi;</b>
+<i class="no-highlight">160</i>&nbsp;    }
+<i class="no-highlight">161</i>&nbsp;
+<i class="no-highlight">162</i>&nbsp;    public long getPrefixLo() {
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        return prefixLo;</b>
+<i class="no-highlight">164</i>&nbsp;    }
+<i class="no-highlight">165</i>&nbsp;
+<i class="no-highlight">166</i>&nbsp;    public int getPrefixType() {
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        return prefixType;</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    public long getSrcDataMax() {
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        return srcDataMax;</b>
+<i class="no-highlight">172</i>&nbsp;    }
+<i class="no-highlight">173</i>&nbsp;
+<i class="no-highlight">174</i>&nbsp;    public long getSrcDataTop() {
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        return srcDataTop;</b>
+<i class="no-highlight">176</i>&nbsp;    }
+<i class="no-highlight">177</i>&nbsp;
+<i class="no-highlight">178</i>&nbsp;    public long getSrcDataTxn() {
+<b class="fc"><i class="no-highlight">179</i>&nbsp;        return srcDataTxn;</b>
+<i class="no-highlight">180</i>&nbsp;    }
+<i class="no-highlight">181</i>&nbsp;
+<i class="no-highlight">182</i>&nbsp;    public long getSrcOooFixAddr() {
+<b class="fc"><i class="no-highlight">183</i>&nbsp;        return srcOooFixAddr;</b>
+<i class="no-highlight">184</i>&nbsp;    }
+<i class="no-highlight">185</i>&nbsp;
+<i class="no-highlight">186</i>&nbsp;    public long getSrcOooHi() {
+<b class="fc"><i class="no-highlight">187</i>&nbsp;        return srcOooHi;</b>
+<i class="no-highlight">188</i>&nbsp;    }
+<i class="no-highlight">189</i>&nbsp;
+<i class="no-highlight">190</i>&nbsp;    public long getSrcOooLo() {
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        return srcOooLo;</b>
+<i class="no-highlight">192</i>&nbsp;    }
+<i class="no-highlight">193</i>&nbsp;
+<i class="no-highlight">194</i>&nbsp;    public long getSrcOooMax() {
+<b class="fc"><i class="no-highlight">195</i>&nbsp;        return srcOooMax;</b>
+<i class="no-highlight">196</i>&nbsp;    }
+<i class="no-highlight">197</i>&nbsp;
+<i class="no-highlight">198</i>&nbsp;    public long getSrcOooVarAddr() {
+<b class="fc"><i class="no-highlight">199</i>&nbsp;        return srcOooVarAddr;</b>
+<i class="no-highlight">200</i>&nbsp;    }
+<i class="no-highlight">201</i>&nbsp;
+<i class="no-highlight">202</i>&nbsp;    public long getSrcTimestampAddr() {
+<b class="fc"><i class="no-highlight">203</i>&nbsp;        return srcTimestampAddr;</b>
+<i class="no-highlight">204</i>&nbsp;    }
+<i class="no-highlight">205</i>&nbsp;
+<i class="no-highlight">206</i>&nbsp;    public int getSrcTimestampFd() {
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        return srcTimestampFd;</b>
+<i class="no-highlight">208</i>&nbsp;    }
+<i class="no-highlight">209</i>&nbsp;
+<i class="no-highlight">210</i>&nbsp;    public long getSrcTimestampSize() {
+<b class="fc"><i class="no-highlight">211</i>&nbsp;        return srcTimestampSize;</b>
+<i class="no-highlight">212</i>&nbsp;    }
+<i class="no-highlight">213</i>&nbsp;
+<i class="no-highlight">214</i>&nbsp;    public long getSuffixHi() {
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        return suffixHi;</b>
+<i class="no-highlight">216</i>&nbsp;    }
+<i class="no-highlight">217</i>&nbsp;
+<i class="no-highlight">218</i>&nbsp;    public long getSuffixLo() {
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        return suffixLo;</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    public int getSuffixType() {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        return suffixType;</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    public TableWriter getTableWriter() {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        return tableWriter;</b>
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    public long getTimestampMax() {
+<b class="fc"><i class="no-highlight">231</i>&nbsp;        return timestampMax;</b>
+<i class="no-highlight">232</i>&nbsp;    }
+<i class="no-highlight">233</i>&nbsp;
+<i class="no-highlight">234</i>&nbsp;    public long getTimestampMergeIndexAddr() {
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        return timestampMergeIndexAddr;</b>
+<i class="no-highlight">236</i>&nbsp;    }
+<i class="no-highlight">237</i>&nbsp;
+<i class="no-highlight">238</i>&nbsp;    public long getTimestampMergeIndexSize() {
+<b class="fc"><i class="no-highlight">239</i>&nbsp;        return timestampMergeIndexSize;</b>
+<i class="no-highlight">240</i>&nbsp;    }
+<i class="no-highlight">241</i>&nbsp;
+<i class="no-highlight">242</i>&nbsp;    public long getTimestampMin() {
+<b class="fc"><i class="no-highlight">243</i>&nbsp;        return timestampMin;</b>
+<i class="no-highlight">244</i>&nbsp;    }
+<i class="no-highlight">245</i>&nbsp;
+<i class="no-highlight">246</i>&nbsp;    public long getTxn() {
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        return txn;</b>
+<i class="no-highlight">248</i>&nbsp;    }
+<i class="no-highlight">249</i>&nbsp;
+<i class="no-highlight">250</i>&nbsp;    public void of(
+<i class="no-highlight">251</i>&nbsp;            int openColumnMode,
+<i class="no-highlight">252</i>&nbsp;            Path pathToTable,
+<i class="no-highlight">253</i>&nbsp;            CharSequence columnName,
+<i class="no-highlight">254</i>&nbsp;            AtomicInteger columnCounter,
+<i class="no-highlight">255</i>&nbsp;            AtomicInteger partCounter,
+<i class="no-highlight">256</i>&nbsp;            int columnType,
+<i class="no-highlight">257</i>&nbsp;            long timestampMergeIndexAddr,
+<i class="no-highlight">258</i>&nbsp;            long timestampMergeIndexSize,
+<i class="no-highlight">259</i>&nbsp;            long srcOooFixAddr,
+<i class="no-highlight">260</i>&nbsp;            long srcOooVarAddr,
+<i class="no-highlight">261</i>&nbsp;            long srcOooLo,
+<i class="no-highlight">262</i>&nbsp;            long srcOooHi,
+<i class="no-highlight">263</i>&nbsp;            long srcOooMax,
+<i class="no-highlight">264</i>&nbsp;            long timestampMin,
+<i class="no-highlight">265</i>&nbsp;            long timestampMax,
+<i class="no-highlight">266</i>&nbsp;            long oooTimestampLo,
+<i class="no-highlight">267</i>&nbsp;            long oooTimestampHi,
+<i class="no-highlight">268</i>&nbsp;            long srcDataTop,
+<i class="no-highlight">269</i>&nbsp;            long srcDataMax,
+<i class="no-highlight">270</i>&nbsp;            long srcDataTxn,
+<i class="no-highlight">271</i>&nbsp;            long txn,
+<i class="no-highlight">272</i>&nbsp;            int prefixType,
+<i class="no-highlight">273</i>&nbsp;            long prefixLo,
+<i class="no-highlight">274</i>&nbsp;            long prefixHi,
+<i class="no-highlight">275</i>&nbsp;            int mergeType,
+<i class="no-highlight">276</i>&nbsp;            long mergeDataLo,
+<i class="no-highlight">277</i>&nbsp;            long mergeDataHi,
+<i class="no-highlight">278</i>&nbsp;            long mergeOOOLo,
+<i class="no-highlight">279</i>&nbsp;            long mergeOOOHi,
+<i class="no-highlight">280</i>&nbsp;            int suffixType,
+<i class="no-highlight">281</i>&nbsp;            long suffixLo,
+<i class="no-highlight">282</i>&nbsp;            long suffixHi,
+<i class="no-highlight">283</i>&nbsp;            int srcTimestampFd,
+<i class="no-highlight">284</i>&nbsp;            long srcTimestampAddr,
+<i class="no-highlight">285</i>&nbsp;            long srcTimestampSize,
+<i class="no-highlight">286</i>&nbsp;            int indexBlockCapacity,
+<i class="no-highlight">287</i>&nbsp;            int activeFixFd,
+<i class="no-highlight">288</i>&nbsp;            int activeVarFd,
+<i class="no-highlight">289</i>&nbsp;            TableWriter tableWriter,
+<i class="no-highlight">290</i>&nbsp;            BitmapIndexWriter indexWriter,
+<i class="no-highlight">291</i>&nbsp;            long colTopSinkAddr,
+<i class="no-highlight">292</i>&nbsp;            int columnIndex,
+<i class="no-highlight">293</i>&nbsp;            long columnNameTxn
+<i class="no-highlight">294</i>&nbsp;    ) {
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        this.openColumnMode = openColumnMode;</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;        this.pathToTable = pathToTable;</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;        this.columnCounter = columnCounter;</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;        this.partCounter = partCounter;</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;        this.columnName = columnName;</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;        this.columnType = columnType;</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        this.timestampMergeIndexAddr = timestampMergeIndexAddr;</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;        this.timestampMergeIndexSize = timestampMergeIndexSize;</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;        this.srcOooFixAddr = srcOooFixAddr;</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;        this.srcOooVarAddr = srcOooVarAddr;</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        this.srcOooLo = srcOooLo;</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        this.srcOooHi = srcOooHi;</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;        this.srcOooMax = srcOooMax;</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;        this.timestampMin = timestampMin;</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        this.timestampMax = timestampMax;</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;        this.oooTimestampLo = oooTimestampLo;</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;        this.partitionTimestamp = oooTimestampHi;</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        this.srcDataTop = srcDataTop;</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;        this.srcDataMax = srcDataMax;</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;        this.srcDataTxn = srcDataTxn;</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;        this.txn = txn;</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;        this.prefixType = prefixType;</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        this.prefixLo = prefixLo;</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;        this.prefixHi = prefixHi;</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;        this.mergeType = mergeType;</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;        this.mergeDataLo = mergeDataLo;</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;        this.mergeDataHi = mergeDataHi;</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        this.mergeOOOLo = mergeOOOLo;</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;        this.mergeOOOHi = mergeOOOHi;</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;        this.suffixType = suffixType;</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;        this.suffixLo = suffixLo;</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        this.suffixHi = suffixHi;</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        this.srcTimestampFd = srcTimestampFd;</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;        this.srcTimestampAddr = srcTimestampAddr;</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;        this.srcTimestampSize = srcTimestampSize;</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;        this.indexBlockCapacity = indexBlockCapacity;</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        this.activeFixFd = activeFixFd;</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        this.activeVarFd = activeVarFd;</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        this.tableWriter = tableWriter;</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;        this.indexWriter = indexWriter;</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;        this.colTopSinkAddr = colTopSinkAddr;</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;        this.columnIndex = columnIndex;</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;        this.columnNameTxn = columnNameTxn;</b>
+<i class="no-highlight">338</i>&nbsp;    }
+<i class="no-highlight">339</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,190 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > WeakObjectPoolBase</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: WeakObjectPoolBase (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">WeakObjectPoolBase</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (7/7)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (18/18)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import java.util.ArrayDeque;
+<i class="no-highlight">28</i>&nbsp;
+<i class="no-highlight">29</i>&nbsp;/**
+<i class="no-highlight">30</i>&nbsp; * Weak object pool can be used in multithreaded environment. While
+<i class="no-highlight">31</i>&nbsp; * weak object pool is a factory of new instances, when object is popped
+<i class="no-highlight">32</i>&nbsp; * out of pool there is no reference to tie this object back to pool.
+<i class="no-highlight">33</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">34</i>&nbsp; * In multithreaded environment weak pools must be local to thread and
+<i class="no-highlight">35</i>&nbsp; * objects they create can travel between pools, e.g. one thread gets
+<i class="no-highlight">36</i>&nbsp; * object from pool and last thread to finish with this object then
+<i class="no-highlight">37</i>&nbsp; * returns it to its own local pool.
+<i class="no-highlight">38</i>&nbsp; * &lt;p&gt;
+<i class="no-highlight">39</i>&nbsp; * In an extreme situation this object migration could keep feeding some
+<i class="no-highlight">40</i>&nbsp; * pools until we run out of memory. Hence, we limit the maximum number of
+<i class="no-highlight">41</i>&nbsp; * objects a pool can hold.
+<i class="no-highlight">42</i>&nbsp; */
+<b class="fc"><i class="no-highlight">43</i>&nbsp;abstract class WeakObjectPoolBase&lt;T&gt; {</b>
+<i class="no-highlight">44</i>&nbsp;    // package private for testing
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    final ArrayDeque&lt;T&gt; cache = new ArrayDeque&lt;&gt;();</b>
+<i class="no-highlight">46</i>&nbsp;
+<i class="no-highlight">47</i>&nbsp;    private final int initSize;
+<i class="no-highlight">48</i>&nbsp;    private final int maxSize;
+<i class="no-highlight">49</i>&nbsp;
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    public WeakObjectPoolBase(int initSize) {</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;        this.initSize = initSize;</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;        this.maxSize = 2 * initSize;</b>
+<i class="no-highlight">53</i>&nbsp;    }
+<i class="no-highlight">54</i>&nbsp;
+<i class="no-highlight">55</i>&nbsp;    public T pop() {
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        final T obj = cache.poll();</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        return obj == null ? newInstance() : obj;</b>
+<i class="no-highlight">58</i>&nbsp;    }
+<i class="no-highlight">59</i>&nbsp;
+<i class="no-highlight">60</i>&nbsp;    void clear(T obj) {
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    }</b>
+<i class="no-highlight">62</i>&nbsp;
+<i class="no-highlight">63</i>&nbsp;    void close(T obj) {
+<b class="fc"><i class="no-highlight">64</i>&nbsp;    }</b>
+<i class="no-highlight">65</i>&nbsp;
+<i class="no-highlight">66</i>&nbsp;    final void fill() {
+<b class="fc"><i class="no-highlight">67</i>&nbsp;        for (int i = 0; i &lt; initSize; i++) {</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;            cache.add(newInstance());</b>
+<i class="no-highlight">69</i>&nbsp;        }
+<i class="no-highlight">70</i>&nbsp;    }
+<i class="no-highlight">71</i>&nbsp;
+<i class="no-highlight">72</i>&nbsp;    abstract T newInstance();
+<i class="no-highlight">73</i>&nbsp;
+<i class="no-highlight">74</i>&nbsp;    boolean push(T obj) {
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        assert obj != null;</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;        if (cache.size() &lt; maxSize) {</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;            clear(obj);</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;            cache.push(obj);</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;            return true;</b>
+<i class="no-highlight">80</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">81</i>&nbsp;            close(obj);</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;            return false;</b>
+<i class="no-highlight">83</i>&nbsp;        }
+<i class="no-highlight">84</i>&nbsp;    }
+<i class="no-highlight">85</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

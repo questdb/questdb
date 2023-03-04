@@ -1,0 +1,465 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > AbstractIODispatcher</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.network</a>
+</div>
+
+<h1>Coverage Summary for Class: AbstractIODispatcher (io.questdb.network)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">AbstractIODispatcher</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (18/18)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    95.6%
+  </span>
+  <span class="absValue">
+    (151/158)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.network;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.log.Log;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.log.LogFactory;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.mp.*;
+<i class="no-highlight">30</i>&nbsp;import io.questdb.std.*;
+<i class="no-highlight">31</i>&nbsp;import io.questdb.std.datetime.millitime.MillisecondClock;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;import java.util.concurrent.atomic.AtomicInteger;
+<i class="no-highlight">34</i>&nbsp;
+<b class="fc"><i class="no-highlight">35</i>&nbsp;public abstract class AbstractIODispatcher&lt;C extends IOContext&gt; extends SynchronizedJob implements IODispatcher&lt;C&gt;, EagerThreadSetup {</b>
+<i class="no-highlight">36</i>&nbsp;    protected static final int DISCONNECT_SRC_IDLE = 1;
+<i class="no-highlight">37</i>&nbsp;    protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
+<i class="no-highlight">38</i>&nbsp;    protected static final int DISCONNECT_SRC_QUEUE = 0;
+<i class="no-highlight">39</i>&nbsp;    protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+<i class="no-highlight">40</i>&nbsp;    // OPM_XYZ = 3 is defined in the child classes
+<i class="no-highlight">41</i>&nbsp;    protected static final int OPM_FD = 1;
+<i class="no-highlight">42</i>&nbsp;    protected static final int OPM_OPERATION = 2;
+<i class="no-highlight">43</i>&nbsp;    protected static final int OPM_TIMESTAMP = 0;
+<i class="no-highlight">44</i>&nbsp;    private final static String[] DISCONNECT_SOURCES;
+<i class="no-highlight">45</i>&nbsp;    protected final Log LOG;
+<i class="no-highlight">46</i>&nbsp;    protected final int activeConnectionLimit;
+<i class="no-highlight">47</i>&nbsp;    protected final MillisecondClock clock;
+<i class="no-highlight">48</i>&nbsp;    protected final MPSequence disconnectPubSeq;
+<i class="no-highlight">49</i>&nbsp;    protected final RingQueue&lt;IOEvent&lt;C&gt;&gt; disconnectQueue;
+<i class="no-highlight">50</i>&nbsp;    protected final SCSequence disconnectSubSeq;
+<i class="no-highlight">51</i>&nbsp;    protected final long idleConnectionTimeout;
+<i class="no-highlight">52</i>&nbsp;    protected final int initialBias;
+<i class="no-highlight">53</i>&nbsp;    protected final MPSequence interestPubSeq;
+<i class="no-highlight">54</i>&nbsp;    protected final RingQueue&lt;IOEvent&lt;C&gt;&gt; interestQueue;
+<i class="no-highlight">55</i>&nbsp;    protected final SCSequence interestSubSeq;
+<i class="no-highlight">56</i>&nbsp;    protected final IOContextFactory&lt;C&gt; ioContextFactory;
+<i class="no-highlight">57</i>&nbsp;    protected final SPSequence ioEventPubSeq;
+<i class="no-highlight">58</i>&nbsp;    protected final RingQueue&lt;IOEvent&lt;C&gt;&gt; ioEventQueue;
+<i class="no-highlight">59</i>&nbsp;    protected final MCSequence ioEventSubSeq;
+<i class="no-highlight">60</i>&nbsp;    protected final NetworkFacade nf;
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    protected final ObjLongMatrix&lt;C&gt; pending = new ObjLongMatrix&lt;&gt;(4);</b>
+<i class="no-highlight">62</i>&nbsp;    private final IODispatcherConfiguration configuration;
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    private final AtomicInteger connectionCount = new AtomicInteger();</b>
+<i class="no-highlight">64</i>&nbsp;    private final boolean peerNoLinger;
+<i class="no-highlight">65</i>&nbsp;    private final long queuedConnectionTimeoutMs;
+<i class="no-highlight">66</i>&nbsp;    private final int rcvBufSize;
+<i class="no-highlight">67</i>&nbsp;    private final int sndBufSize;
+<i class="no-highlight">68</i>&nbsp;    private final int testConnectionBufSize;
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    protected boolean closed = false;</b>
+<i class="no-highlight">70</i>&nbsp;    protected int serverFd;
+<i class="no-highlight">71</i>&nbsp;    private long closeListenFdEpochMs;
+<i class="no-highlight">72</i>&nbsp;    private volatile boolean listening;
+<i class="no-highlight">73</i>&nbsp;    private int port;
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    protected final QueueConsumer&lt;IOEvent&lt;C&gt;&gt; disconnectContextRef = this::disconnectContext;</b>
+<i class="no-highlight">75</i>&nbsp;    private long testConnectionBuf;
+<i class="no-highlight">76</i>&nbsp;
+<i class="no-highlight">77</i>&nbsp;    public AbstractIODispatcher(
+<i class="no-highlight">78</i>&nbsp;            IODispatcherConfiguration configuration,
+<i class="no-highlight">79</i>&nbsp;            IOContextFactory&lt;C&gt; ioContextFactory
+<b class="fc"><i class="no-highlight">80</i>&nbsp;    ) {</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;        this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        this.configuration = configuration;</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;        this.nf = configuration.getNetworkFacade();</b>
+<i class="no-highlight">84</i>&nbsp;
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        this.testConnectionBufSize = configuration.getTestConnectionBufferSize();</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;        this.testConnectionBuf = Unsafe.malloc(this.testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);</b>
+<i class="no-highlight">87</i>&nbsp;
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        this.interestQueue = new RingQueue&lt;&gt;(IOEvent::new, configuration.getInterestQueueCapacity());</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;        this.interestPubSeq = new MPSequence(interestQueue.getCycle());</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;        this.interestSubSeq = new SCSequence();</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);</b>
+<i class="no-highlight">92</i>&nbsp;
+<b class="fc"><i class="no-highlight">93</i>&nbsp;        this.ioEventQueue = new RingQueue&lt;&gt;(IOEvent::new, configuration.getIOQueueCapacity());</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;        this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;        this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);</b>
+<i class="no-highlight">97</i>&nbsp;
+<b class="fc"><i class="no-highlight">98</i>&nbsp;        this.disconnectQueue = new RingQueue&lt;&gt;(IOEvent::new, configuration.getIOQueueCapacity());</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;        this.disconnectPubSeq = new MPSequence(disconnectQueue.getCycle());</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;        this.disconnectSubSeq = new SCSequence();</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        this.disconnectPubSeq.then(this.disconnectSubSeq).then(this.disconnectPubSeq);</b>
+<i class="no-highlight">102</i>&nbsp;
+<b class="fc"><i class="no-highlight">103</i>&nbsp;        this.clock = configuration.getClock();</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;        this.activeConnectionLimit = configuration.getLimit();</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        this.ioContextFactory = ioContextFactory;</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;        this.initialBias = configuration.getInitialBias();</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;        this.idleConnectionTimeout = configuration.getTimeout() &gt; 0 ? configuration.getTimeout() : Long.MIN_VALUE;</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;        this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() &gt; 0 ? configuration.getQueueTimeout() : 0;</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;        this.sndBufSize = configuration.getSndBufSize();</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        this.rcvBufSize = configuration.getRcvBufSize();</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;        this.peerNoLinger = configuration.getPeerNoLinger();</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;        this.port = 0;</b>
+<i class="no-highlight">113</i>&nbsp;
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        createListenFd();</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;        listening = true;</b>
+<i class="no-highlight">116</i>&nbsp;    }
+<i class="no-highlight">117</i>&nbsp;
+<i class="no-highlight">118</i>&nbsp;    @Override
+<i class="no-highlight">119</i>&nbsp;    public void close() {
+<b class="fc"><i class="no-highlight">120</i>&nbsp;        closed = true;</b>
+<i class="no-highlight">121</i>&nbsp;
+<b class="fc"><i class="no-highlight">122</i>&nbsp;        processDisconnects(Long.MAX_VALUE);</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        for (int i = 0, n = pending.size(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;            doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);</b>
+<i class="no-highlight">125</i>&nbsp;        }
+<i class="no-highlight">126</i>&nbsp;
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        if (serverFd &gt; 0) {</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;            nf.close(serverFd, LOG);</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;            serverFd = -1;</b>
+<i class="no-highlight">132</i>&nbsp;        }
+<i class="no-highlight">133</i>&nbsp;
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        testConnectionBuf = Unsafe.free(testConnectionBuf, testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);</b>
+<i class="no-highlight">135</i>&nbsp;    }
+<i class="no-highlight">136</i>&nbsp;
+<i class="no-highlight">137</i>&nbsp;    @Override
+<i class="no-highlight">138</i>&nbsp;    public void disconnect(C context, int reason) {
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        LOG.info()</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;                .$(&quot;scheduling disconnect [fd=&quot;).$(context.getFd())</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;                .$(&quot;, reason=&quot;).$(reason)</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;                .I$();</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        final long cursor = disconnectPubSeq.nextBully();</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        assert cursor &gt; -1;</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        disconnectQueue.get(cursor).context = context;</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        disconnectPubSeq.done(cursor);</b>
+<i class="no-highlight">147</i>&nbsp;    }
+<i class="no-highlight">148</i>&nbsp;
+<i class="no-highlight">149</i>&nbsp;    @Override
+<i class="no-highlight">150</i>&nbsp;    public int getConnectionCount() {
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        return connectionCount.get();</b>
+<i class="no-highlight">152</i>&nbsp;    }
+<i class="no-highlight">153</i>&nbsp;
+<i class="no-highlight">154</i>&nbsp;    @Override
+<i class="no-highlight">155</i>&nbsp;    public int getPort() {
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        return port;</b>
+<i class="no-highlight">157</i>&nbsp;    }
+<i class="no-highlight">158</i>&nbsp;
+<i class="no-highlight">159</i>&nbsp;    @Override
+<i class="no-highlight">160</i>&nbsp;    public boolean isListening() {
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        return listening;</b>
+<i class="no-highlight">162</i>&nbsp;    }
+<i class="no-highlight">163</i>&nbsp;
+<i class="no-highlight">164</i>&nbsp;    @Override
+<i class="no-highlight">165</i>&nbsp;    public boolean processIOQueue(IORequestProcessor&lt;C&gt; processor) {
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        long cursor = ioEventSubSeq.next();</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        while (cursor == -2) {</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;            Os.pause();</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;            cursor = ioEventSubSeq.next();</b>
+<i class="no-highlight">170</i>&nbsp;        }
+<i class="no-highlight">171</i>&nbsp;
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        boolean useful = false;</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        if (cursor &gt; -1) {</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;            IOEvent&lt;C&gt; event = ioEventQueue.get(cursor);</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;            C connectionContext = event.context;</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;            final int operation = event.operation;</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;            ioEventSubSeq.done(cursor);</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;            useful = processor.onRequest(operation, connectionContext);</b>
+<i class="no-highlight">179</i>&nbsp;        }
+<i class="no-highlight">180</i>&nbsp;
+<b class="fc"><i class="no-highlight">181</i>&nbsp;        return useful;</b>
+<i class="no-highlight">182</i>&nbsp;    }
+<i class="no-highlight">183</i>&nbsp;
+<i class="no-highlight">184</i>&nbsp;    @Override
+<i class="no-highlight">185</i>&nbsp;    public void registerChannel(C context, int operation) {
+<b class="fc"><i class="no-highlight">186</i>&nbsp;        long cursor = interestPubSeq.nextBully();</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;        IOEvent&lt;C&gt; evt = interestQueue.get(cursor);</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;        evt.context = context;</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;        evt.operation = operation;</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;        LOG.debug().$(&quot;queuing [fd=&quot;).$(context.getFd()).$(&quot;, op=&quot;).$(operation).I$();</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        interestPubSeq.done(cursor);</b>
+<i class="no-highlight">192</i>&nbsp;    }
+<i class="no-highlight">193</i>&nbsp;
+<i class="no-highlight">194</i>&nbsp;    @Override
+<i class="no-highlight">195</i>&nbsp;    public void setup() {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        if (ioContextFactory instanceof EagerThreadSetup) {</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;            ((EagerThreadSetup) ioContextFactory).setup();</b>
+<i class="no-highlight">198</i>&nbsp;        }
+<i class="no-highlight">199</i>&nbsp;    }
+<i class="no-highlight">200</i>&nbsp;
+<i class="no-highlight">201</i>&nbsp;    private void addPending(int fd, long timestamp) {
+<i class="no-highlight">202</i>&nbsp;        // append pending connection
+<i class="no-highlight">203</i>&nbsp;        // all rows below watermark will be registered with epoll (or similar)
+<b class="fc"><i class="no-highlight">204</i>&nbsp;        int r = pending.addRow();</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;        LOG.debug().$(&quot;pending [row=&quot;).$(r).$(&quot;, fd=&quot;).$(fd).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;        pending.set(r, OPM_TIMESTAMP, timestamp);</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        pending.set(r, OPM_FD, fd);</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;        pending.set(r, OPM_OPERATION, -1);</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;        pending.set(r, ioContextFactory.newInstance(fd, this));</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;        pendingAdded(r);</b>
+<i class="no-highlight">211</i>&nbsp;    }
+<i class="no-highlight">212</i>&nbsp;
+<i class="no-highlight">213</i>&nbsp;    private void createListenFd() throws NetworkError {
+<b class="fc"><i class="no-highlight">214</i>&nbsp;        this.serverFd = nf.socketTcp(false);</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        final int backlog = configuration.getListenBacklog();</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;        if (this.port == 0) {</b>
+<i class="no-highlight">217</i>&nbsp;            // Note that `configuration.getBindPort()` might also be 0.
+<i class="no-highlight">218</i>&nbsp;            // In such case, we will bind to an ephemeral port.
+<b class="fc"><i class="no-highlight">219</i>&nbsp;            this.port = configuration.getBindPort();</b>
+<i class="no-highlight">220</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">221</i>&nbsp;        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;            if (this.port == 0) {</b>
+<i class="no-highlight">223</i>&nbsp;                // We resolve port 0 only once. In case we close and re-open the
+<i class="no-highlight">224</i>&nbsp;                // listening socket, we will reuse the previously resolved
+<i class="no-highlight">225</i>&nbsp;                // ephemeral port.
+<b class="fc"><i class="no-highlight">226</i>&nbsp;                this.port = nf.resolvePort(this.serverFd);</b>
+<i class="no-highlight">227</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">228</i>&nbsp;            nf.listen(this.serverFd, backlog);</b>
+<i class="no-highlight">229</i>&nbsp;        } else {
+<b class="nc"><i class="no-highlight">230</i>&nbsp;            throw NetworkError.instance(nf.errno()).couldNotBindSocket(</b>
+<b class="nc"><i class="no-highlight">231</i>&nbsp;                    configuration.getDispatcherLogName(),</b>
+<b class="nc"><i class="no-highlight">232</i>&nbsp;                    configuration.getBindIPv4Address(),</b>
+<i class="no-highlight">233</i>&nbsp;                    this.port);
+<i class="no-highlight">234</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">235</i>&nbsp;        LOG.advisory().$(&quot;listening on &quot;).$ip(configuration.getBindIPv4Address()).$(&#39;:&#39;).$(configuration.getBindPort())</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;                .$(&quot; [fd=&quot;).$(serverFd)</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;                .$(&quot; backlog=&quot;).$(backlog)</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;                .I$();</b>
+<i class="no-highlight">239</i>&nbsp;    }
+<i class="no-highlight">240</i>&nbsp;
+<i class="no-highlight">241</i>&nbsp;    private void disconnectContext(IOEvent&lt;C&gt; event) {
+<b class="fc"><i class="no-highlight">242</i>&nbsp;        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);</b>
+<i class="no-highlight">243</i>&nbsp;    }
+<i class="no-highlight">244</i>&nbsp;
+<i class="no-highlight">245</i>&nbsp;    protected void accept(long timestamp) {
+<b class="fc"><i class="no-highlight">246</i>&nbsp;        int tlConCount = this.connectionCount.get();</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;        while (tlConCount &lt; activeConnectionLimit) {</b>
+<i class="no-highlight">248</i>&nbsp;            // this &#39;accept&#39; is greedy, rather than to rely on epoll (or similar) to
+<i class="no-highlight">249</i>&nbsp;            // fire accept requests at us one at a time we will be actively accepting
+<i class="no-highlight">250</i>&nbsp;            // until nothing left.
+<i class="no-highlight">251</i>&nbsp;
+<b class="fc"><i class="no-highlight">252</i>&nbsp;            int fd = nf.accept(serverFd);</b>
+<i class="no-highlight">253</i>&nbsp;
+<b class="fc"><i class="no-highlight">254</i>&nbsp;            if (fd &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;                if (nf.errno() != Net.EWOULDBLOCK) {</b>
+<b class="nc"><i class="no-highlight">256</i>&nbsp;                    LOG.error().$(&quot;could not accept [ret=&quot;).$(fd).$(&quot;, errno=&quot;).$(nf.errno()).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">257</i>&nbsp;                }
+<i class="no-highlight">258</i>&nbsp;                break;
+<i class="no-highlight">259</i>&nbsp;            }
+<i class="no-highlight">260</i>&nbsp;
+<b class="fc"><i class="no-highlight">261</i>&nbsp;            if (nf.configureNonBlocking(fd) &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;                LOG.error().$(&quot;could not configure non-blocking [fd=&quot;).$(fd).$(&quot;, errno=&quot;).$(nf.errno()).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;                nf.close(fd, LOG);</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;                break;</b>
+<i class="no-highlight">265</i>&nbsp;            }
+<i class="no-highlight">266</i>&nbsp;
+<b class="fc"><i class="no-highlight">267</i>&nbsp;            if (nf.setTcpNoDelay(fd, true) &lt; 0) {</b>
+<i class="no-highlight">268</i>&nbsp;                // Randomly on OS X, if a client connects and the peer TCP socket has SO_LINGER set to false, then setting the TCP_NODELAY
+<i class="no-highlight">269</i>&nbsp;                // option fails!
+<b class="nc"><i class="no-highlight">270</i>&nbsp;                LOG.info().$(&quot;could not turn off Nagle&#39;s algorithm [fd=&quot;).$(fd).$(&quot;, errno=&quot;).$(nf.errno()).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">271</i>&nbsp;            }
+<i class="no-highlight">272</i>&nbsp;
+<b class="fc"><i class="no-highlight">273</i>&nbsp;            if (peerNoLinger) {</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;                nf.configureNoLinger(fd);</b>
+<i class="no-highlight">275</i>&nbsp;            }
+<i class="no-highlight">276</i>&nbsp;
+<b class="fc"><i class="no-highlight">277</i>&nbsp;            if (sndBufSize &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">278</i>&nbsp;                nf.setSndBuf(fd, sndBufSize);</b>
+<i class="no-highlight">279</i>&nbsp;            }
+<i class="no-highlight">280</i>&nbsp;
+<b class="fc"><i class="no-highlight">281</i>&nbsp;            if (rcvBufSize &gt; 0) {</b>
+<b class="nc"><i class="no-highlight">282</i>&nbsp;                nf.setRcvBuf(fd, rcvBufSize);</b>
+<i class="no-highlight">283</i>&nbsp;            }
+<i class="no-highlight">284</i>&nbsp;
+<b class="fc"><i class="no-highlight">285</i>&nbsp;            LOG.info().$(&quot;connected [ip=&quot;).$ip(nf.getPeerIP(fd)).$(&quot;, fd=&quot;).$(fd).$(&#39;]&#39;).$();</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;            tlConCount = connectionCount.incrementAndGet();</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;            addPending(fd, timestamp);</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;        }</b>
+<i class="no-highlight">289</i>&nbsp;
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        if (tlConCount &gt;= activeConnectionLimit) {</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;            if (connectionCount.get() &gt;= activeConnectionLimit) {</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;                unregisterListenerFd();</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;                listening = false;</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;                closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;                LOG.info().$(&quot;max connection limit reached, unregistered listener [serverFd=&quot;).$(serverFd).I$();</b>
+<i class="no-highlight">296</i>&nbsp;            }
+<i class="no-highlight">297</i>&nbsp;        }
+<i class="no-highlight">298</i>&nbsp;    }
+<i class="no-highlight">299</i>&nbsp;
+<i class="no-highlight">300</i>&nbsp;    protected void doDisconnect(C context, int src) {
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        if (context == null || context.invalid()) {</b>
+<i class="no-highlight">302</i>&nbsp;            return;
+<i class="no-highlight">303</i>&nbsp;        }
+<i class="no-highlight">304</i>&nbsp;
+<b class="fc"><i class="no-highlight">305</i>&nbsp;        final int fd = context.getFd();</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;        LOG.info()</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;                .$(&quot;disconnected [ip=&quot;).$ip(nf.getPeerIP(fd))</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;                .$(&quot;, fd=&quot;).$(fd)</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;                .$(&quot;, src=&quot;).$(DISCONNECT_SOURCES[src])</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;                .I$();</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;        nf.close(fd, LOG);</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;        if (closed) {</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;            Misc.free(context);</b>
+<i class="no-highlight">314</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">315</i>&nbsp;            ioContextFactory.done(context);</b>
+<i class="no-highlight">316</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">317</i>&nbsp;        if (connectionCount.getAndDecrement() &gt;= activeConnectionLimit) {</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;            if (connectionCount.get() &lt; activeConnectionLimit) {</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;                if (serverFd &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;                    createListenFd();</b>
+<i class="no-highlight">321</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">322</i>&nbsp;                registerListenerFd();</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;                listening = true;</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;                LOG.info().$(&quot;below maximum connection limit, registered listener [serverFd=&quot;).$(serverFd).I$();</b>
+<i class="no-highlight">325</i>&nbsp;            }
+<i class="no-highlight">326</i>&nbsp;        }
+<i class="no-highlight">327</i>&nbsp;    }
+<i class="no-highlight">328</i>&nbsp;
+<i class="no-highlight">329</i>&nbsp;    protected abstract void pendingAdded(int index);
+<i class="no-highlight">330</i>&nbsp;
+<i class="no-highlight">331</i>&nbsp;    protected void processDisconnects(long epochMs) {
+<b class="fc"><i class="no-highlight">332</i>&nbsp;        disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;        if (!listening &amp;&amp; serverFd &gt;= 0 &amp;&amp; epochMs &gt;= closeListenFdEpochMs) {</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;            LOG.error().$(&quot;been unable to accept connections for &quot;).$(queuedConnectionTimeoutMs).$(&quot;ms, closing listener [serverFd=&quot;).$(serverFd).I$();</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;            nf.close(serverFd);</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;            serverFd = -1;</b>
+<i class="no-highlight">337</i>&nbsp;        }
+<i class="no-highlight">338</i>&nbsp;    }
+<i class="no-highlight">339</i>&nbsp;
+<i class="no-highlight">340</i>&nbsp;    protected void publishOperation(int operation, C context) {
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        long cursor = ioEventPubSeq.nextBully();</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;        IOEvent&lt;C&gt; evt = ioEventQueue.get(cursor);</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;        evt.context = context;</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;        evt.operation = operation;</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        ioEventPubSeq.done(cursor);</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;        LOG.debug().$(&quot;fired [fd=&quot;).$(context.getFd()).$(&quot;, op=&quot;).$(operation).$(&quot;, pos=&quot;).$(cursor).$(&#39;]&#39;).$();</b>
+<i class="no-highlight">347</i>&nbsp;    }
+<i class="no-highlight">348</i>&nbsp;
+<i class="no-highlight">349</i>&nbsp;    protected abstract void registerListenerFd();
+<i class="no-highlight">350</i>&nbsp;
+<i class="no-highlight">351</i>&nbsp;    protected boolean testConnection(int fd) {
+<b class="fc"><i class="no-highlight">352</i>&nbsp;        return nf.testConnection(fd, testConnectionBuf, testConnectionBufSize);</b>
+<i class="no-highlight">353</i>&nbsp;    }
+<i class="no-highlight">354</i>&nbsp;
+<i class="no-highlight">355</i>&nbsp;    protected abstract void unregisterListenerFd();
+<i class="no-highlight">356</i>&nbsp;
+<i class="no-highlight">357</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">358</i>&nbsp;        DISCONNECT_SOURCES = new String[]{&quot;queue&quot;, &quot;idle&quot;, &quot;shutdown&quot;, &quot;peer&quot;};</b>
+<i class="no-highlight">359</i>&nbsp;    }
+<i class="no-highlight">360</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

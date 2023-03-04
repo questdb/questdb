@@ -1,0 +1,651 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > Files</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: Files (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">Files</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.1%
+  </span>
+  <span class="absValue">
+    (41/45)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    82.6%
+  </span>
+  <span class="absValue">
+    (133/161)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.std.str.LPSZ;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.str.Path;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.str.StringSink;
+<i class="no-highlight">30</i>&nbsp;import org.jetbrains.annotations.NotNull;
+<i class="no-highlight">31</i>&nbsp;import org.jetbrains.annotations.Nullable;
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;import java.io.File;
+<i class="no-highlight">34</i>&nbsp;import java.nio.charset.Charset;
+<i class="no-highlight">35</i>&nbsp;import java.nio.charset.StandardCharsets;
+<i class="no-highlight">36</i>&nbsp;import java.util.concurrent.atomic.AtomicInteger;
+<i class="no-highlight">37</i>&nbsp;
+<b class="fc"><i class="no-highlight">38</i>&nbsp;public final class Files {</b>
+<i class="no-highlight">39</i>&nbsp;
+<i class="no-highlight">40</i>&nbsp;    public static final int DT_DIR = 4;
+<i class="no-highlight">41</i>&nbsp;    public static final int DT_FILE = 8;
+<i class="no-highlight">42</i>&nbsp;    public static final int DT_LNK = 10; // soft link
+<i class="no-highlight">43</i>&nbsp;    public static final int DT_UNKNOWN = 0;
+<i class="no-highlight">44</i>&nbsp;    public static final int FILES_RENAME_ERR_EXDEV = 1;
+<i class="no-highlight">45</i>&nbsp;    public static final int FILES_RENAME_ERR_OTHER = 2;
+<i class="no-highlight">46</i>&nbsp;    public static final int FILES_RENAME_OK = 0;
+<i class="no-highlight">47</i>&nbsp;    public static final int MAP_RO = 1;
+<i class="no-highlight">48</i>&nbsp;    public static final int MAP_RW = 2;
+<i class="no-highlight">49</i>&nbsp;    public static final long PAGE_SIZE;
+<i class="no-highlight">50</i>&nbsp;    public static final int POSIX_FADV_RANDOM;
+<i class="no-highlight">51</i>&nbsp;    public static final int POSIX_FADV_SEQUENTIAL;
+<i class="no-highlight">52</i>&nbsp;    // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
+<i class="no-highlight">53</i>&nbsp;    // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
+<i class="no-highlight">54</i>&nbsp;    // wasted disk read ops.
+<i class="no-highlight">55</i>&nbsp;    public static final int POSIX_MADV_RANDOM;
+<i class="no-highlight">56</i>&nbsp;    public static final int POSIX_MADV_SEQUENTIAL;
+<i class="no-highlight">57</i>&nbsp;    public static final char SEPARATOR;
+<i class="no-highlight">58</i>&nbsp;    public static final Charset UTF_8;
+<i class="no-highlight">59</i>&nbsp;    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
+<b class="fc"><i class="no-highlight">60</i>&nbsp;    private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();</b>
+<i class="no-highlight">61</i>&nbsp;    static IntHashSet openFds;
+<i class="no-highlight">62</i>&nbsp;
+<i class="no-highlight">63</i>&nbsp;    private Files() {
+<i class="no-highlight">64</i>&nbsp;        // Prevent construction.
+<i class="no-highlight">65</i>&nbsp;    }
+<i class="no-highlight">66</i>&nbsp;
+<i class="no-highlight">67</i>&nbsp;    public native static boolean allocate(int fd, long size);
+<i class="no-highlight">68</i>&nbsp;
+<i class="no-highlight">69</i>&nbsp;    public native static long append(int fd, long address, long len);
+<i class="no-highlight">70</i>&nbsp;
+<i class="no-highlight">71</i>&nbsp;    public static synchronized boolean auditClose(int fd) {
+<b class="fc"><i class="no-highlight">72</i>&nbsp;        if (fd &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">73</i>&nbsp;            throw new IllegalStateException(&quot;Invalid fd &quot; + fd);</b>
+<i class="no-highlight">74</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">75</i>&nbsp;        if (openFds.remove(fd) == -1) {</b>
+<b class="nc"><i class="no-highlight">76</i>&nbsp;            throw new IllegalStateException(&quot;fd &quot; + fd + &quot; is already closed!&quot;);</b>
+<i class="no-highlight">77</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">78</i>&nbsp;        return true;</b>
+<i class="no-highlight">79</i>&nbsp;    }
+<i class="no-highlight">80</i>&nbsp;
+<i class="no-highlight">81</i>&nbsp;    public static synchronized boolean auditOpen(int fd) {
+<b class="fc"><i class="no-highlight">82</i>&nbsp;        if (openFds == null) {</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;            openFds = new IntHashSet();</b>
+<i class="no-highlight">84</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">85</i>&nbsp;        if (fd &lt; 0) {</b>
+<b class="nc"><i class="no-highlight">86</i>&nbsp;            throw new IllegalStateException(&quot;Invalid fd &quot; + fd);</b>
+<i class="no-highlight">87</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">88</i>&nbsp;        if (openFds.contains(fd)) {</b>
+<b class="nc"><i class="no-highlight">89</i>&nbsp;            throw new IllegalStateException(&quot;fd &quot; + fd + &quot; is already open&quot;);</b>
+<i class="no-highlight">90</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">91</i>&nbsp;        openFds.add(fd);</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;        return true;</b>
+<i class="no-highlight">93</i>&nbsp;    }
+<i class="no-highlight">94</i>&nbsp;
+<i class="no-highlight">95</i>&nbsp;    public static int bumpFileCount(int fd) {
+<b class="fc"><i class="no-highlight">96</i>&nbsp;        if (fd != -1) {</b>
+<i class="no-highlight">97</i>&nbsp;            //noinspection AssertWithSideEffects
+<b class="fc"><i class="no-highlight">98</i>&nbsp;            assert auditOpen(fd);</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;            OPEN_FILE_COUNT.incrementAndGet();</b>
+<i class="no-highlight">100</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        return fd;</b>
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    public static long ceilPageSize(long size) {
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;</b>
+<i class="no-highlight">106</i>&nbsp;    }
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;    public static int close(int fd) {
+<i class="no-highlight">109</i>&nbsp;        // do not close `stdin` and `stdout`
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        if (fd &gt; 1) {</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;            assert auditClose(fd);</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;            int res = close0(fd);</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;            if (res == 0) {</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;                OPEN_FILE_COUNT.decrementAndGet();</b>
+<i class="no-highlight">115</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">116</i>&nbsp;            return res;</b>
+<i class="no-highlight">117</i>&nbsp;        }
+<i class="no-highlight">118</i>&nbsp;        // failed to close
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        return -1;</b>
+<i class="no-highlight">120</i>&nbsp;    }
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;    public static native int copy(long from, long to);
+<i class="no-highlight">123</i>&nbsp;
+<i class="no-highlight">124</i>&nbsp;    public static int copy(LPSZ from, LPSZ to) {
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        return copy(from.address(), to.address());</b>
+<i class="no-highlight">126</i>&nbsp;    }
+<i class="no-highlight">127</i>&nbsp;
+<i class="no-highlight">128</i>&nbsp;    public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
+<i class="no-highlight">129</i>&nbsp;
+<i class="no-highlight">130</i>&nbsp;    /**
+<i class="no-highlight">131</i>&nbsp;     * close(fd) should be used instead of this method in most cases
+<i class="no-highlight">132</i>&nbsp;     * unless you don&#39;t need close sys call to happen.
+<i class="no-highlight">133</i>&nbsp;     *
+<i class="no-highlight">134</i>&nbsp;     * @param fd file descriptor
+<i class="no-highlight">135</i>&nbsp;     */
+<i class="no-highlight">136</i>&nbsp;    public static void decrementFileCount(int fd) {
+<b class="nc"><i class="no-highlight">137</i>&nbsp;        assert auditClose(fd);</b>
+<b class="nc"><i class="no-highlight">138</i>&nbsp;        OPEN_FILE_COUNT.decrementAndGet();</b>
+<i class="no-highlight">139</i>&nbsp;    }
+<i class="no-highlight">140</i>&nbsp;
+<i class="no-highlight">141</i>&nbsp;    public static native boolean exists(int fd);
+<i class="no-highlight">142</i>&nbsp;
+<i class="no-highlight">143</i>&nbsp;    public static boolean exists(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        return lpsz != null &amp;&amp; exists0(lpsz.address());</b>
+<i class="no-highlight">145</i>&nbsp;    }
+<i class="no-highlight">146</i>&nbsp;
+<i class="no-highlight">147</i>&nbsp;    public static void fadvise(int fd, long offset, long len, int advise) {
+<b class="nc"><i class="no-highlight">148</i>&nbsp;        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {</b>
+<b class="nc"><i class="no-highlight">149</i>&nbsp;            fadvise0(fd, offset, len, advise);</b>
+<i class="no-highlight">150</i>&nbsp;        }
+<i class="no-highlight">151</i>&nbsp;    }
+<i class="no-highlight">152</i>&nbsp;
+<i class="no-highlight">153</i>&nbsp;    public static native void fadvise0(int fd, long offset, long len, int advise);
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    public native static void findClose(long findPtr);
+<i class="no-highlight">156</i>&nbsp;
+<i class="no-highlight">157</i>&nbsp;    public static long findFirst(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        return findFirst(lpsz.address());</b>
+<i class="no-highlight">159</i>&nbsp;    }
+<i class="no-highlight">160</i>&nbsp;
+<i class="no-highlight">161</i>&nbsp;    public native static long findName(long findPtr);
+<i class="no-highlight">162</i>&nbsp;
+<i class="no-highlight">163</i>&nbsp;    public native static int findNext(long findPtr);
+<i class="no-highlight">164</i>&nbsp;
+<i class="no-highlight">165</i>&nbsp;    public native static int findType(long findPtr);
+<i class="no-highlight">166</i>&nbsp;
+<i class="no-highlight">167</i>&nbsp;    public static long floorPageSize(long size) {
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        return size - size % PAGE_SIZE;</b>
+<i class="no-highlight">169</i>&nbsp;    }
+<i class="no-highlight">170</i>&nbsp;
+<i class="no-highlight">171</i>&nbsp;    public static native int fsync(int fd);
+<i class="no-highlight">172</i>&nbsp;
+<i class="no-highlight">173</i>&nbsp;    public static long getDiskSize(LPSZ path) {
+<b class="nc"><i class="no-highlight">174</i>&nbsp;        if (path != null) {</b>
+<b class="nc"><i class="no-highlight">175</i>&nbsp;            return getDiskSize(path.address());</b>
+<i class="no-highlight">176</i>&nbsp;        }
+<i class="no-highlight">177</i>&nbsp;        // current directory
+<b class="nc"><i class="no-highlight">178</i>&nbsp;        return getDiskSize(0);</b>
+<i class="no-highlight">179</i>&nbsp;    }
+<i class="no-highlight">180</i>&nbsp;
+<i class="no-highlight">181</i>&nbsp;    /**
+<i class="no-highlight">182</i>&nbsp;     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
+<i class="no-highlight">183</i>&nbsp;     * can be presented to user even if file system is not supported.
+<i class="no-highlight">184</i>&nbsp;     *
+<i class="no-highlight">185</i>&nbsp;     * @param lpszName existing path on the file system. The name of the filesystem is written to this
+<i class="no-highlight">186</i>&nbsp;     *                 address, therefore name should have at least 128 byte capacity
+<i class="no-highlight">187</i>&nbsp;     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
+<i class="no-highlight">188</i>&nbsp;     * positive number is magic that is not supported.
+<i class="no-highlight">189</i>&nbsp;     */
+<i class="no-highlight">190</i>&nbsp;    public static int getFileSystemStatus(LPSZ lpszName) {
+<b class="fc"><i class="no-highlight">191</i>&nbsp;        assert lpszName.capacity() &gt; 127;</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;        return getFileSystemStatus(lpszName.address());</b>
+<i class="no-highlight">193</i>&nbsp;    }
+<i class="no-highlight">194</i>&nbsp;
+<i class="no-highlight">195</i>&nbsp;    public static long getLastModified(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">196</i>&nbsp;        return getLastModified(lpsz.address());</b>
+<i class="no-highlight">197</i>&nbsp;    }
+<i class="no-highlight">198</i>&nbsp;
+<i class="no-highlight">199</i>&nbsp;    public static String getOpenFdDebugInfo() {
+<b class="fc"><i class="no-highlight">200</i>&nbsp;        if (openFds != null) {</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;            return openFds.toString();</b>
+<i class="no-highlight">202</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">203</i>&nbsp;        return null;</b>
+<i class="no-highlight">204</i>&nbsp;    }
+<i class="no-highlight">205</i>&nbsp;
+<i class="no-highlight">206</i>&nbsp;    public static long getOpenFileCount() {
+<b class="fc"><i class="no-highlight">207</i>&nbsp;        return OPEN_FILE_COUNT.get();</b>
+<i class="no-highlight">208</i>&nbsp;    }
+<i class="no-highlight">209</i>&nbsp;
+<i class="no-highlight">210</i>&nbsp;    public native static int getStdOutFd();
+<i class="no-highlight">211</i>&nbsp;
+<i class="no-highlight">212</i>&nbsp;    public static native int hardLink(long lpszSrc, long lpszHardLink);
+<i class="no-highlight">213</i>&nbsp;
+<i class="no-highlight">214</i>&nbsp;    public static int hardLink(LPSZ src, LPSZ hardLink) {
+<b class="fc"><i class="no-highlight">215</i>&nbsp;        return hardLink(src.address(), hardLink.address());</b>
+<i class="no-highlight">216</i>&nbsp;    }
+<i class="no-highlight">217</i>&nbsp;
+<i class="no-highlight">218</i>&nbsp;    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+<b class="fc"><i class="no-highlight">219</i>&nbsp;        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);</b>
+<i class="no-highlight">220</i>&nbsp;    }
+<i class="no-highlight">221</i>&nbsp;
+<i class="no-highlight">222</i>&nbsp;    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull StringSink nameSink) {
+<b class="fc"><i class="no-highlight">223</i>&nbsp;        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);</b>
+<i class="no-highlight">224</i>&nbsp;    }
+<i class="no-highlight">225</i>&nbsp;
+<i class="no-highlight">226</i>&nbsp;    public static boolean isDots(CharSequence name) {
+<b class="fc"><i class="no-highlight">227</i>&nbsp;        return Chars.equals(name, &#39;.&#39;) || Chars.equals(name, &quot;..&quot;);</b>
+<i class="no-highlight">228</i>&nbsp;    }
+<i class="no-highlight">229</i>&nbsp;
+<i class="no-highlight">230</i>&nbsp;    public native static boolean isSoftLink(long lpszPath);
+<i class="no-highlight">231</i>&nbsp;
+<i class="no-highlight">232</i>&nbsp;    public static boolean isSoftLink(LPSZ path) {
+<b class="fc"><i class="no-highlight">233</i>&nbsp;        return isSoftLink(path.address());</b>
+<i class="no-highlight">234</i>&nbsp;    }
+<i class="no-highlight">235</i>&nbsp;
+<i class="no-highlight">236</i>&nbsp;    public static long length(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">237</i>&nbsp;        return length0(lpsz.address());</b>
+<i class="no-highlight">238</i>&nbsp;    }
+<i class="no-highlight">239</i>&nbsp;
+<i class="no-highlight">240</i>&nbsp;    public native static long length(int fd);
+<i class="no-highlight">241</i>&nbsp;
+<i class="no-highlight">242</i>&nbsp;    public static native int lock(int fd);
+<i class="no-highlight">243</i>&nbsp;
+<i class="no-highlight">244</i>&nbsp;    public static void madvise(long address, long len, int advise) {
+<b class="nc"><i class="no-highlight">245</i>&nbsp;        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {</b>
+<b class="nc"><i class="no-highlight">246</i>&nbsp;            madvise0(address, len, advise);</b>
+<i class="no-highlight">247</i>&nbsp;        }
+<i class="no-highlight">248</i>&nbsp;    }
+<i class="no-highlight">249</i>&nbsp;
+<i class="no-highlight">250</i>&nbsp;    public static native void madvise0(long address, long len, int advise);
+<i class="no-highlight">251</i>&nbsp;
+<i class="no-highlight">252</i>&nbsp;    public static int mkdir(Path path, int mode) {
+<b class="fc"><i class="no-highlight">253</i>&nbsp;        return mkdir(path.address(), mode);</b>
+<i class="no-highlight">254</i>&nbsp;    }
+<i class="no-highlight">255</i>&nbsp;
+<i class="no-highlight">256</i>&nbsp;    public static int mkdirs(Path path, int mode) {
+<b class="fc"><i class="no-highlight">257</i>&nbsp;        for (int i = 0, n = path.length(); i &lt; n; i++) {</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;            char c = path.charAt(i);</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;            if (c == Files.SEPARATOR) {</b>
+<i class="no-highlight">260</i>&nbsp;                // do not attempt to create &#39;/&#39; on linux or &#39;C:\&#39; on Windows
+<b class="fc"><i class="no-highlight">261</i>&nbsp;                if ((i == 0 &amp;&amp; Os.isPosix()) || (i == 2 &amp;&amp; Os.isWindows() &amp;&amp; path.charAt(1) == &#39;:&#39;)) {</b>
+<b class="nc"><i class="no-highlight">262</i>&nbsp;                    continue;</b>
+<i class="no-highlight">263</i>&nbsp;                }
+<i class="no-highlight">264</i>&nbsp;
+<i class="no-highlight">265</i>&nbsp;                // replace separator we just found with \0
+<i class="no-highlight">266</i>&nbsp;                // temporarily truncate path to the directory we need to create
+<b class="fc"><i class="no-highlight">267</i>&nbsp;                path.$at(i);</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;                if (path.length() &gt; 0 &amp;&amp; !Files.exists(path)) {</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;                    int r = Files.mkdir(path, mode);</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;                    if (r != 0) {</b>
+<b class="nc"><i class="no-highlight">271</i>&nbsp;                        path.put(i, Files.SEPARATOR);</b>
+<b class="nc"><i class="no-highlight">272</i>&nbsp;                        return r;</b>
+<i class="no-highlight">273</i>&nbsp;                    }
+<i class="no-highlight">274</i>&nbsp;                }
+<b class="fc"><i class="no-highlight">275</i>&nbsp;                path.put(i, Files.SEPARATOR);</b>
+<i class="no-highlight">276</i>&nbsp;            }
+<i class="no-highlight">277</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">278</i>&nbsp;        return 0;</b>
+<i class="no-highlight">279</i>&nbsp;    }
+<i class="no-highlight">280</i>&nbsp;
+<i class="no-highlight">281</i>&nbsp;    public static long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+<b class="fc"><i class="no-highlight">282</i>&nbsp;        long address = mmap0(fd, len, offset, flags, 0);</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;        if (address != -1) {</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;            Unsafe.recordMemAlloc(len, memoryTag);</b>
+<i class="no-highlight">285</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">286</i>&nbsp;        return address;</b>
+<i class="no-highlight">287</i>&nbsp;    }
+<i class="no-highlight">288</i>&nbsp;
+<i class="no-highlight">289</i>&nbsp;    public static long mremap(int fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+<b class="fc"><i class="no-highlight">290</i>&nbsp;        Unsafe.recordMemAlloc(-previousSize, memoryTag);</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;        address = mremap0(fd, address, previousSize, newSize, offset, flags);</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;        if (address != -1) {</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;            Unsafe.recordMemAlloc(newSize, memoryTag);</b>
+<i class="no-highlight">294</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">295</i>&nbsp;        return address;</b>
+<i class="no-highlight">296</i>&nbsp;    }
+<i class="no-highlight">297</i>&nbsp;
+<i class="no-highlight">298</i>&nbsp;    public static native int msync(long addr, long len, boolean async);
+<i class="no-highlight">299</i>&nbsp;
+<i class="no-highlight">300</i>&nbsp;    public static void munmap(long address, long len, int memoryTag) {
+<b class="fc"><i class="no-highlight">301</i>&nbsp;        if (address != 0 &amp;&amp; munmap0(address, len) != -1) {</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;            Unsafe.recordMemAlloc(-len, memoryTag);</b>
+<i class="no-highlight">303</i>&nbsp;        }
+<i class="no-highlight">304</i>&nbsp;    }
+<i class="no-highlight">305</i>&nbsp;
+<i class="no-highlight">306</i>&nbsp;    public static native long noop();
+<i class="no-highlight">307</i>&nbsp;
+<i class="no-highlight">308</i>&nbsp;    public static boolean notDots(CharSequence value) {
+<b class="fc"><i class="no-highlight">309</i>&nbsp;        final int len = value.length();</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;        if (len &gt; 2) {</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;            return true;</b>
+<i class="no-highlight">312</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">313</i>&nbsp;        if (value.charAt(0) != &#39;.&#39;) {</b>
+<b class="nc"><i class="no-highlight">314</i>&nbsp;            return true;</b>
+<i class="no-highlight">315</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">316</i>&nbsp;        return len == 2 &amp;&amp; value.charAt(1) != &#39;.&#39;;</b>
+<i class="no-highlight">317</i>&nbsp;    }
+<i class="no-highlight">318</i>&nbsp;
+<i class="no-highlight">319</i>&nbsp;    public static boolean notDots(long pUtf8NameZ) {
+<b class="fc"><i class="no-highlight">320</i>&nbsp;        final byte b0 = Unsafe.getUnsafe().getByte(pUtf8NameZ);</b>
+<i class="no-highlight">321</i>&nbsp;
+<b class="fc"><i class="no-highlight">322</i>&nbsp;        if (b0 != &#39;.&#39;) {</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;            return true;</b>
+<i class="no-highlight">324</i>&nbsp;        }
+<i class="no-highlight">325</i>&nbsp;
+<b class="fc"><i class="no-highlight">326</i>&nbsp;        final byte b1 = Unsafe.getUnsafe().getByte(pUtf8NameZ + 1);</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;        return b1 != 0 &amp;&amp; (b1 != &#39;.&#39; || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);</b>
+<i class="no-highlight">328</i>&nbsp;    }
+<i class="no-highlight">329</i>&nbsp;
+<i class="no-highlight">330</i>&nbsp;    public static int openAppend(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">331</i>&nbsp;        return bumpFileCount(openAppend(lpsz.address()));</b>
+<i class="no-highlight">332</i>&nbsp;    }
+<i class="no-highlight">333</i>&nbsp;
+<i class="no-highlight">334</i>&nbsp;    public static int openCleanRW(LPSZ lpsz, long size) {
+<b class="fc"><i class="no-highlight">335</i>&nbsp;        return bumpFileCount(openCleanRW(lpsz.address(), size));</b>
+<i class="no-highlight">336</i>&nbsp;    }
+<i class="no-highlight">337</i>&nbsp;
+<i class="no-highlight">338</i>&nbsp;    public native static int openCleanRW(long lpszName, long size);
+<i class="no-highlight">339</i>&nbsp;
+<i class="no-highlight">340</i>&nbsp;    public static int openRO(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">341</i>&nbsp;        return bumpFileCount(openRO(lpsz.address()));</b>
+<i class="no-highlight">342</i>&nbsp;    }
+<i class="no-highlight">343</i>&nbsp;
+<i class="no-highlight">344</i>&nbsp;    public static int openRW(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">345</i>&nbsp;        return bumpFileCount(openRW(lpsz.address()));</b>
+<i class="no-highlight">346</i>&nbsp;    }
+<i class="no-highlight">347</i>&nbsp;
+<i class="no-highlight">348</i>&nbsp;    public static int openRW(LPSZ lpsz, long opts) {
+<b class="fc"><i class="no-highlight">349</i>&nbsp;        return bumpFileCount(openRWOpts(lpsz.address(), opts));</b>
+<i class="no-highlight">350</i>&nbsp;    }
+<i class="no-highlight">351</i>&nbsp;
+<i class="no-highlight">352</i>&nbsp;    public native static long read(int fd, long address, long len, long offset);
+<i class="no-highlight">353</i>&nbsp;
+<i class="no-highlight">354</i>&nbsp;    public native static byte readNonNegativeByte(int fd, long offset);
+<i class="no-highlight">355</i>&nbsp;
+<i class="no-highlight">356</i>&nbsp;    public native static int readNonNegativeInt(int fd, long offset);
+<i class="no-highlight">357</i>&nbsp;
+<i class="no-highlight">358</i>&nbsp;    public native static long readNonNegativeLong(int fd, long offset);
+<i class="no-highlight">359</i>&nbsp;
+<i class="no-highlight">360</i>&nbsp;    public native static short readNonNegativeShort(int fd, long offset);
+<i class="no-highlight">361</i>&nbsp;
+<i class="no-highlight">362</i>&nbsp;    public static boolean remove(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">363</i>&nbsp;        return remove(lpsz.address());</b>
+<i class="no-highlight">364</i>&nbsp;    }
+<i class="no-highlight">365</i>&nbsp;
+<i class="no-highlight">366</i>&nbsp;    public static int rename(LPSZ oldName, LPSZ newName) {
+<b class="fc"><i class="no-highlight">367</i>&nbsp;        return rename(oldName.address(), newName.address());</b>
+<i class="no-highlight">368</i>&nbsp;    }
+<i class="no-highlight">369</i>&nbsp;
+<i class="no-highlight">370</i>&nbsp;    public static int rmdir(Path path) {
+<b class="fc"><i class="no-highlight">371</i>&nbsp;        long p = findFirst(path.address());</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;        int len = path.length();</b>
+<b class="fc"><i class="no-highlight">373</i>&nbsp;        int errno = -1;</b>
+<b class="fc"><i class="no-highlight">374</i>&nbsp;        if (p &gt; 0) {</b>
+<i class="no-highlight">375</i>&nbsp;            try {
+<i class="no-highlight">376</i>&nbsp;                do {
+<b class="fc"><i class="no-highlight">377</i>&nbsp;                    long lpszName = findName(p);</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;                    path.trimTo(len).concat(lpszName).$();</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;                    if (findType(p) == DT_DIR) {</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;                        if (strcmp(lpszName, &quot;..&quot;) || strcmp(lpszName, &quot;.&quot;)) {</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;                            continue;</b>
+<i class="no-highlight">382</i>&nbsp;                        }
+<i class="no-highlight">383</i>&nbsp;
+<b class="fc"><i class="no-highlight">384</i>&nbsp;                        if ((errno = rmdir(path)) == 0) {</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;                            continue;</b>
+<i class="no-highlight">386</i>&nbsp;                        }
+<i class="no-highlight">387</i>&nbsp;
+<i class="no-highlight">388</i>&nbsp;                    } else {
+<b class="fc"><i class="no-highlight">389</i>&nbsp;                        if ((remove(path.address()))) {</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;                            continue;</b>
+<i class="no-highlight">391</i>&nbsp;                        }
+<b class="nc"><i class="no-highlight">392</i>&nbsp;                        errno = Os.errno();</b>
+<i class="no-highlight">393</i>&nbsp;                    }
+<b class="nc"><i class="no-highlight">394</i>&nbsp;                    return errno;</b>
+<b class="fc"><i class="no-highlight">395</i>&nbsp;                } while (findNext(p) &gt; 0);</b>
+<i class="no-highlight">396</i>&nbsp;            } finally {
+<b class="fc"><i class="no-highlight">397</i>&nbsp;                findClose(p);</b>
+<b class="fc"><i class="no-highlight">398</i>&nbsp;            }</b>
+<b class="fc"><i class="no-highlight">399</i>&nbsp;            if (rmdir(path.trimTo(len).$().address())) {</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;                return 0;</b>
+<i class="no-highlight">401</i>&nbsp;            }
+<b class="nc"><i class="no-highlight">402</i>&nbsp;            return Os.errno();</b>
+<i class="no-highlight">403</i>&nbsp;        }
+<i class="no-highlight">404</i>&nbsp;
+<b class="nc"><i class="no-highlight">405</i>&nbsp;        return errno;</b>
+<i class="no-highlight">406</i>&nbsp;    }
+<i class="no-highlight">407</i>&nbsp;
+<i class="no-highlight">408</i>&nbsp;    public static boolean setLastModified(LPSZ lpsz, long millis) {
+<b class="fc"><i class="no-highlight">409</i>&nbsp;        return setLastModified(lpsz.address(), millis);</b>
+<i class="no-highlight">410</i>&nbsp;    }
+<i class="no-highlight">411</i>&nbsp;
+<i class="no-highlight">412</i>&nbsp;    public static native int softLink(long lpszSrc, long lpszSoftLink);
+<i class="no-highlight">413</i>&nbsp;
+<i class="no-highlight">414</i>&nbsp;    public static int softLink(LPSZ src, LPSZ softLink) {
+<b class="fc"><i class="no-highlight">415</i>&nbsp;        return softLink(src.address(), softLink.address());</b>
+<i class="no-highlight">416</i>&nbsp;    }
+<i class="no-highlight">417</i>&nbsp;
+<i class="no-highlight">418</i>&nbsp;    public static native int sync();
+<i class="no-highlight">419</i>&nbsp;
+<i class="no-highlight">420</i>&nbsp;    public static boolean touch(LPSZ lpsz) {
+<b class="fc"><i class="no-highlight">421</i>&nbsp;        int fd = openRW(lpsz);</b>
+<b class="fc"><i class="no-highlight">422</i>&nbsp;        boolean result = fd &gt; 0;</b>
+<b class="fc"><i class="no-highlight">423</i>&nbsp;        if (result) {</b>
+<b class="fc"><i class="no-highlight">424</i>&nbsp;            close(fd);</b>
+<i class="no-highlight">425</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">426</i>&nbsp;        return result;</b>
+<i class="no-highlight">427</i>&nbsp;    }
+<i class="no-highlight">428</i>&nbsp;
+<i class="no-highlight">429</i>&nbsp;    public native static boolean truncate(int fd, long size);
+<i class="no-highlight">430</i>&nbsp;
+<i class="no-highlight">431</i>&nbsp;    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+<b class="fc"><i class="no-highlight">432</i>&nbsp;        if (!notDots(pUtf8NameZ)) {</b>
+<b class="fc"><i class="no-highlight">433</i>&nbsp;            return DT_UNKNOWN;</b>
+<i class="no-highlight">434</i>&nbsp;        }
+<i class="no-highlight">435</i>&nbsp;
+<b class="fc"><i class="no-highlight">436</i>&nbsp;        if (type == DT_DIR) {</b>
+<b class="fc"><i class="no-highlight">437</i>&nbsp;            if (nameSink != null) {</b>
+<b class="fc"><i class="no-highlight">438</i>&nbsp;                nameSink.clear();</b>
+<b class="fc"><i class="no-highlight">439</i>&nbsp;                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);</b>
+<i class="no-highlight">440</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">441</i>&nbsp;            path.trimTo(rootLen).concat(pUtf8NameZ).$();</b>
+<b class="fc"><i class="no-highlight">442</i>&nbsp;            return DT_DIR;</b>
+<i class="no-highlight">443</i>&nbsp;        }
+<i class="no-highlight">444</i>&nbsp;
+<b class="fc"><i class="no-highlight">445</i>&nbsp;        if (type == DT_LNK) {</b>
+<b class="fc"><i class="no-highlight">446</i>&nbsp;            if (nameSink != null) {</b>
+<b class="fc"><i class="no-highlight">447</i>&nbsp;                nameSink.clear();</b>
+<b class="fc"><i class="no-highlight">448</i>&nbsp;                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);</b>
+<i class="no-highlight">449</i>&nbsp;            }
+<b class="fc"><i class="no-highlight">450</i>&nbsp;            path.trimTo(rootLen).concat(pUtf8NameZ).$();</b>
+<b class="fc"><i class="no-highlight">451</i>&nbsp;            if (isDir(path.address())) {</b>
+<b class="fc"><i class="no-highlight">452</i>&nbsp;                return DT_LNK;</b>
+<i class="no-highlight">453</i>&nbsp;            }
+<i class="no-highlight">454</i>&nbsp;        }
+<i class="no-highlight">455</i>&nbsp;
+<b class="fc"><i class="no-highlight">456</i>&nbsp;        return DT_UNKNOWN;</b>
+<i class="no-highlight">457</i>&nbsp;    }
+<i class="no-highlight">458</i>&nbsp;
+<i class="no-highlight">459</i>&nbsp;    public native static int unlink(long lpszSoftLink);
+<i class="no-highlight">460</i>&nbsp;
+<i class="no-highlight">461</i>&nbsp;    public static int unlink(LPSZ softLink) {
+<b class="fc"><i class="no-highlight">462</i>&nbsp;        return unlink(softLink.address());</b>
+<i class="no-highlight">463</i>&nbsp;    }
+<i class="no-highlight">464</i>&nbsp;
+<i class="no-highlight">465</i>&nbsp;    public native static long write(int fd, long address, long len, long offset);
+<i class="no-highlight">466</i>&nbsp;
+<i class="no-highlight">467</i>&nbsp;    private native static int close0(int fd);
+<i class="no-highlight">468</i>&nbsp;
+<i class="no-highlight">469</i>&nbsp;    private static native boolean exists0(long lpsz);
+<i class="no-highlight">470</i>&nbsp;
+<i class="no-highlight">471</i>&nbsp;    private static native long getDiskSize(long lpszPath);
+<i class="no-highlight">472</i>&nbsp;
+<i class="no-highlight">473</i>&nbsp;    private static native int getFileSystemStatus(long lpszName);
+<i class="no-highlight">474</i>&nbsp;
+<i class="no-highlight">475</i>&nbsp;    private native static long getLastModified(long lpszName);
+<i class="no-highlight">476</i>&nbsp;
+<i class="no-highlight">477</i>&nbsp;    private native static long getPageSize();
+<i class="no-highlight">478</i>&nbsp;
+<i class="no-highlight">479</i>&nbsp;    private native static int getPosixFadvRandom();
+<i class="no-highlight">480</i>&nbsp;
+<i class="no-highlight">481</i>&nbsp;    private native static int getPosixFadvSequential();
+<i class="no-highlight">482</i>&nbsp;
+<i class="no-highlight">483</i>&nbsp;    private native static int getPosixMadvRandom();
+<i class="no-highlight">484</i>&nbsp;
+<i class="no-highlight">485</i>&nbsp;    private native static int getPosixMadvSequential();
+<i class="no-highlight">486</i>&nbsp;
+<i class="no-highlight">487</i>&nbsp;    private native static boolean isDir(long pUtf8PathZ);
+<i class="no-highlight">488</i>&nbsp;
+<i class="no-highlight">489</i>&nbsp;    private native static long length0(long lpszName);
+<i class="no-highlight">490</i>&nbsp;
+<i class="no-highlight">491</i>&nbsp;    private native static int mkdir(long lpszPath, int mode);
+<i class="no-highlight">492</i>&nbsp;
+<i class="no-highlight">493</i>&nbsp;    private static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
+<i class="no-highlight">494</i>&nbsp;
+<i class="no-highlight">495</i>&nbsp;    private static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
+<i class="no-highlight">496</i>&nbsp;
+<i class="no-highlight">497</i>&nbsp;    private static native int munmap0(long address, long len);
+<i class="no-highlight">498</i>&nbsp;
+<i class="no-highlight">499</i>&nbsp;    private native static int openAppend(long lpszName);
+<i class="no-highlight">500</i>&nbsp;
+<i class="no-highlight">501</i>&nbsp;    private native static int openRO(long lpszName);
+<i class="no-highlight">502</i>&nbsp;
+<i class="no-highlight">503</i>&nbsp;    private native static int openRW(long lpszName);
+<i class="no-highlight">504</i>&nbsp;
+<i class="no-highlight">505</i>&nbsp;    private native static int openRWOpts(long lpszName, long opts);
+<i class="no-highlight">506</i>&nbsp;
+<i class="no-highlight">507</i>&nbsp;    private native static boolean remove(long lpsz);
+<i class="no-highlight">508</i>&nbsp;
+<i class="no-highlight">509</i>&nbsp;    private static native int rename(long lpszOld, long lpszNew);
+<i class="no-highlight">510</i>&nbsp;
+<i class="no-highlight">511</i>&nbsp;    private native static boolean rmdir(long lpsz);
+<i class="no-highlight">512</i>&nbsp;
+<i class="no-highlight">513</i>&nbsp;    private native static boolean setLastModified(long lpszName, long millis);
+<i class="no-highlight">514</i>&nbsp;
+<i class="no-highlight">515</i>&nbsp;    //caller must call findClose to free allocated struct
+<i class="no-highlight">516</i>&nbsp;    native static long findFirst(long lpszName);
+<i class="no-highlight">517</i>&nbsp;
+<i class="no-highlight">518</i>&nbsp;    static boolean strcmp(long lpsz, CharSequence s) {
+<b class="fc"><i class="no-highlight">519</i>&nbsp;        int len = s.length();</b>
+<b class="fc"><i class="no-highlight">520</i>&nbsp;        for (int i = 0; i &lt; len; i++) {</b>
+<b class="fc"><i class="no-highlight">521</i>&nbsp;            byte b = Unsafe.getUnsafe().getByte(lpsz + i);</b>
+<b class="fc"><i class="no-highlight">522</i>&nbsp;            if (b == 0 || b != (byte) s.charAt(i)) {</b>
+<b class="fc"><i class="no-highlight">523</i>&nbsp;                return false;</b>
+<i class="no-highlight">524</i>&nbsp;            }
+<i class="no-highlight">525</i>&nbsp;        }
+<b class="fc"><i class="no-highlight">526</i>&nbsp;        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;</b>
+<i class="no-highlight">527</i>&nbsp;    }
+<i class="no-highlight">528</i>&nbsp;
+<i class="no-highlight">529</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">530</i>&nbsp;        Os.init();</b>
+<b class="fc"><i class="no-highlight">531</i>&nbsp;        UTF_8 = StandardCharsets.UTF_8;</b>
+<b class="fc"><i class="no-highlight">532</i>&nbsp;        PAGE_SIZE = getPageSize();</b>
+<b class="fc"><i class="no-highlight">533</i>&nbsp;        SEPARATOR = File.separatorChar;</b>
+<b class="fc"><i class="no-highlight">534</i>&nbsp;        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {</b>
+<b class="nc"><i class="no-highlight">535</i>&nbsp;            POSIX_FADV_RANDOM = getPosixFadvRandom();</b>
+<b class="nc"><i class="no-highlight">536</i>&nbsp;            POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();</b>
+<b class="nc"><i class="no-highlight">537</i>&nbsp;            POSIX_MADV_RANDOM = getPosixMadvRandom();</b>
+<b class="nc"><i class="no-highlight">538</i>&nbsp;            POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();</b>
+<i class="no-highlight">539</i>&nbsp;        } else {
+<b class="fc"><i class="no-highlight">540</i>&nbsp;            POSIX_FADV_SEQUENTIAL = -1;</b>
+<b class="fc"><i class="no-highlight">541</i>&nbsp;            POSIX_FADV_RANDOM = -1;</b>
+<b class="fc"><i class="no-highlight">542</i>&nbsp;            POSIX_MADV_SEQUENTIAL = -1;</b>
+<b class="fc"><i class="no-highlight">543</i>&nbsp;            POSIX_MADV_RANDOM = -1;</b>
+<i class="no-highlight">544</i>&nbsp;        }
+<i class="no-highlight">545</i>&nbsp;    }
+<i class="no-highlight">546</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

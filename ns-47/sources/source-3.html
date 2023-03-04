@@ -1,0 +1,201 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > KerberosException</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std.ex</a>
+</div>
+
+<h1>Coverage Summary for Class: KerberosException (io.questdb.std.ex)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">KerberosException</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/30)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std.ex;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;public class KerberosException extends Exception {
+<i class="no-highlight">28</i>&nbsp;    private final int code;
+<i class="no-highlight">29</i>&nbsp;
+<i class="no-highlight">30</i>&nbsp;    public KerberosException(int status) {
+<b class="nc"><i class="no-highlight">31</i>&nbsp;        super(toText(status));</b>
+<b class="nc"><i class="no-highlight">32</i>&nbsp;        this.code = status;</b>
+<i class="no-highlight">33</i>&nbsp;    }
+<i class="no-highlight">34</i>&nbsp;
+<i class="no-highlight">35</i>&nbsp;    public int getCode() {
+<b class="nc"><i class="no-highlight">36</i>&nbsp;        return code;</b>
+<i class="no-highlight">37</i>&nbsp;    }
+<i class="no-highlight">38</i>&nbsp;
+<i class="no-highlight">39</i>&nbsp;    private static String toText(int status) {
+<b class="nc"><i class="no-highlight">40</i>&nbsp;        switch (status) {</b>
+<i class="no-highlight">41</i>&nbsp;            case 0x80090300:
+<b class="nc"><i class="no-highlight">42</i>&nbsp;                return &quot;SEC_E_INSUFFICIENT_MEMORY&quot;;</b>
+<i class="no-highlight">43</i>&nbsp;            case 0x80090304:
+<b class="nc"><i class="no-highlight">44</i>&nbsp;                return &quot;SEC_E_INTERNAL_ERROR&quot;;</b>
+<i class="no-highlight">45</i>&nbsp;            case 0x80090301:
+<b class="nc"><i class="no-highlight">46</i>&nbsp;                return &quot;SEC_E_INVALID_HANDLE&quot;;</b>
+<i class="no-highlight">47</i>&nbsp;            case 0x80090308:
+<b class="nc"><i class="no-highlight">48</i>&nbsp;                return &quot;SEC_E_INVALID_TOKEN&quot;;</b>
+<i class="no-highlight">49</i>&nbsp;            case 0x8009030C:
+<b class="nc"><i class="no-highlight">50</i>&nbsp;                return &quot;SEC_E_LOGON_DENIED&quot;;</b>
+<i class="no-highlight">51</i>&nbsp;            case 0x80090311:
+<b class="nc"><i class="no-highlight">52</i>&nbsp;                return &quot;SEC_E_NO_AUTHENTICATING_AUTHORITY&quot;;</b>
+<i class="no-highlight">53</i>&nbsp;            case 0x8009030E:
+<b class="nc"><i class="no-highlight">54</i>&nbsp;                return &quot;SEC_E_NO_CREDENTIALS&quot;;</b>
+<i class="no-highlight">55</i>&nbsp;            case 0x80090303:
+<b class="nc"><i class="no-highlight">56</i>&nbsp;                return &quot;SEC_E_TARGET_UNKNOWN&quot;;</b>
+<i class="no-highlight">57</i>&nbsp;            case 0x80090302:
+<b class="nc"><i class="no-highlight">58</i>&nbsp;                return &quot;SEC_E_UNSUPPORTED_FUNCTION&quot;;</b>
+<i class="no-highlight">59</i>&nbsp;            case 0x80090322:
+<b class="nc"><i class="no-highlight">60</i>&nbsp;                return &quot;SEC_E_WRONG_PRINCIPAL&quot;;</b>
+<i class="no-highlight">61</i>&nbsp;            case 0x80090014:
+<b class="nc"><i class="no-highlight">62</i>&nbsp;                return &quot;SEC_I_COMPLETE_AND_CONTINUE&quot;;</b>
+<i class="no-highlight">63</i>&nbsp;            case 0x80090013:
+<b class="nc"><i class="no-highlight">64</i>&nbsp;                return &quot;SEC_I_COMPLETE_NEEDED&quot;;</b>
+<i class="no-highlight">65</i>&nbsp;            case 0x80090012:
+<b class="nc"><i class="no-highlight">66</i>&nbsp;                return &quot;SEC_I_CONTINUE_NEEDED&quot;;</b>
+<i class="no-highlight">67</i>&nbsp;            case 0x80090305:
+<b class="nc"><i class="no-highlight">68</i>&nbsp;                return &quot;SEC_E_SECPKG_NOT_FOUND&quot;;</b>
+<i class="no-highlight">69</i>&nbsp;            case 0x80090306:
+<b class="nc"><i class="no-highlight">70</i>&nbsp;                return &quot;SEC_E_NOT_OWNER&quot;;</b>
+<i class="no-highlight">71</i>&nbsp;            case 0x80090307:
+<b class="nc"><i class="no-highlight">72</i>&nbsp;                return &quot;SEC_E_CANNOT_INSTALL&quot;;</b>
+<i class="no-highlight">73</i>&nbsp;            case 0x80090309:
+<b class="nc"><i class="no-highlight">74</i>&nbsp;                return &quot;SEC_E_CANNOT_PACK&quot;;</b>
+<i class="no-highlight">75</i>&nbsp;            case 0x8009030B:
+<b class="nc"><i class="no-highlight">76</i>&nbsp;                return &quot;SEC_E_NO_IMPERSONATION&quot;;</b>
+<i class="no-highlight">77</i>&nbsp;            case 0x8009030D:
+<b class="nc"><i class="no-highlight">78</i>&nbsp;                return &quot;SEC_E_UNKNOWN_CREDENTIALS&quot;;</b>
+<i class="no-highlight">79</i>&nbsp;            case 0x8009030F:
+<b class="nc"><i class="no-highlight">80</i>&nbsp;                return &quot;SEC_E_MESSAGE_ALTERED&quot;;</b>
+<i class="no-highlight">81</i>&nbsp;            case 0x80090310:
+<b class="nc"><i class="no-highlight">82</i>&nbsp;                return &quot;SEC_E_OUT_OF_SEQUENCE&quot;;</b>
+<i class="no-highlight">83</i>&nbsp;            case 0x80090312:
+<b class="nc"><i class="no-highlight">84</i>&nbsp;                return &quot;SEC_E_CONTEXT_EXPIRED&quot;;</b>
+<i class="no-highlight">85</i>&nbsp;            case 0x80090313:
+<b class="nc"><i class="no-highlight">86</i>&nbsp;                return &quot;SEC_E_INCOMPLETE_MESSAGE&quot;;</b>
+<i class="no-highlight">87</i>&nbsp;            case 0x80090015:
+<b class="nc"><i class="no-highlight">88</i>&nbsp;                return &quot;SEC_I_LOCAL_LOGON&quot;;</b>
+<i class="no-highlight">89</i>&nbsp;            case 0x80090321:
+<b class="nc"><i class="no-highlight">90</i>&nbsp;                return &quot;SEC_E_BUFFER_TOO_SMALL&quot;;</b>
+<i class="no-highlight">91</i>&nbsp;            default:
+<b class="nc"><i class="no-highlight">92</i>&nbsp;                return Integer.toHexString(status);</b>
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;        }
+<i class="no-highlight">95</i>&nbsp;    }
+<i class="no-highlight">96</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

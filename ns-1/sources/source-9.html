@@ -1,0 +1,520 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > PropertyKey</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb</a>
+</div>
+
+<h1>Coverage Summary for Class: PropertyKey (io.questdb)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">PropertyKey</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (6/6)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (368/368)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import java.util.Arrays;
+<i class="no-highlight">28</i>&nbsp;import java.util.Map;
+<i class="no-highlight">29</i>&nbsp;import java.util.Optional;
+<i class="no-highlight">30</i>&nbsp;import java.util.stream.Collectors;
+<i class="no-highlight">31</i>&nbsp;
+<b class="fc"><i class="no-highlight">32</i>&nbsp;public enum PropertyKey {</b>
+<b class="fc"><i class="no-highlight">33</i>&nbsp;    BINARYDATA_ENCODING_MAXLENGTH(&quot;binarydata.encoding.maxlength&quot;),</b>
+<b class="fc"><i class="no-highlight">34</i>&nbsp;    CAIRO_ROOT(&quot;cairo.root&quot;),</b>
+<b class="fc"><i class="no-highlight">35</i>&nbsp;    CAIRO_SNAPSHOT_INSTANCE_ID(&quot;cairo.snapshot.instance.id&quot;),</b>
+<b class="fc"><i class="no-highlight">36</i>&nbsp;    CAIRO_SNAPSHOT_RECOVERY_ENABLED(&quot;cairo.snapshot.recovery.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">37</i>&nbsp;    CAIRO_MKDIR_MODE(&quot;cairo.mkdir.mode&quot;),</b>
+<b class="fc"><i class="no-highlight">38</i>&nbsp;    CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT(&quot;cairo.writer.alter.busy.wait.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">39</i>&nbsp;    CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT(&quot;cairo.writer.alter.max.wait.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">40</i>&nbsp;    CAIRO_WRITER_TICK_ROWS_COUNT(&quot;cairo.writer.tick.rows.count&quot;),</b>
+<b class="fc"><i class="no-highlight">41</i>&nbsp;    CAIRO_WRITER_COMMAND_QUEUE_CAPACITY(&quot;cairo.writer.command.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">42</i>&nbsp;    CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT(&quot;cairo.sql.backup.dir.datetime.format&quot;),</b>
+<b class="fc"><i class="no-highlight">43</i>&nbsp;    CAIRO_SQL_JIT_MODE(&quot;cairo.sql.jit.mode&quot;),</b>
+<b class="fc"><i class="no-highlight">44</i>&nbsp;    CAIRO_COMMIT_MODE(&quot;cairo.commit.mode&quot;),</b>
+<b class="fc"><i class="no-highlight">45</i>&nbsp;    CAIRO_CREATE_AS_SELECT_RETRY_COUNT(&quot;cairo.create.as.select.retry.count&quot;),</b>
+<b class="fc"><i class="no-highlight">46</i>&nbsp;    CAIRO_DEFAULT_MAP_TYPE(&quot;cairo.default.map.type&quot;),</b>
+<b class="fc"><i class="no-highlight">47</i>&nbsp;    CAIRO_DEFAULT_SYMBOL_CACHE_FLAG(&quot;cairo.default.symbol.cache.flag&quot;),</b>
+<b class="fc"><i class="no-highlight">48</i>&nbsp;    CAIRO_DEFAULT_SYMBOL_CAPACITY(&quot;cairo.default.symbol.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">49</i>&nbsp;    CAIRO_FILE_OPERATION_RETRY_COUNT(&quot;cairo.file.operation.retry.count&quot;),</b>
+<b class="fc"><i class="no-highlight">50</i>&nbsp;    CAIRO_IDLE_CHECK_INTERVAL(&quot;cairo.idle.check.interval&quot;),</b>
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    CAIRO_INACTIVE_READER_TTL(&quot;cairo.inactive.reader.ttl&quot;),</b>
+<b class="fc"><i class="no-highlight">52</i>&nbsp;    CAIRO_INACTIVE_WRITER_TTL(&quot;cairo.inactive.writer.ttl&quot;),</b>
+<b class="fc"><i class="no-highlight">53</i>&nbsp;    CAIRO_INDEX_VALUE_BLOCK_SIZE(&quot;cairo.index.value.block.size&quot;),</b>
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    CAIRO_MAX_SWAP_FILE_COUNT(&quot;cairo.max.swap.file.count&quot;),</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;    CAIRO_PARALLEL_INDEX_THRESHOLD(&quot;cairo.parallel.index.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;    CAIRO_READER_POOL_MAX_SEGMENTS(&quot;cairo.reader.pool.max.segments&quot;),</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;    CAIRO_SPIN_LOCK_TIMEOUT(&quot;cairo.spin.lock.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;    CAIRO_CHARACTER_STORE_CAPACITY(&quot;cairo.character.store.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;    CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY(&quot;cairo.character.store.sequence.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">60</i>&nbsp;    CAIRO_COLUMN_POOL_CAPACITY(&quot;cairo.column.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">61</i>&nbsp;    CAIRO_COMPACT_MAP_LOAD_FACTOR(&quot;cairo.compact.map.load.factor&quot;),</b>
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    CAIRO_EXPRESSION_POOL_CAPACITY(&quot;cairo.expression.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    CAIRO_FAST_MAP_LOAD_FACTOR(&quot;cairo.fast.map.load.factor&quot;),</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;    CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY(&quot;cairo.sql.join.context.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">65</i>&nbsp;    CAIRO_LEXER_POOL_CAPACITY(&quot;cairo.lexer.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">66</i>&nbsp;    CAIRO_SQL_MAP_KEY_CAPACITY(&quot;cairo.sql.map.key.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">67</i>&nbsp;    CAIRO_SQL_SMALL_MAP_KEY_CAPACITY(&quot;cairo.sql.small.map.key.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">68</i>&nbsp;    CAIRO_SQL_SMALL_MAP_PAGE_SIZE(&quot;cairo.sql.small.map.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">69</i>&nbsp;    CAIRO_SQL_MAP_PAGE_SIZE(&quot;cairo.sql.map.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">70</i>&nbsp;    CAIRO_SQL_MAP_MAX_PAGES(&quot;cairo.sql.map.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">71</i>&nbsp;    CAIRO_SQL_MAP_MAX_RESIZES(&quot;cairo.sql.map.max.resizes&quot;),</b>
+<b class="fc"><i class="no-highlight">72</i>&nbsp;    CAIRO_MODEL_POOL_CAPACITY(&quot;cairo.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">73</i>&nbsp;    CAIRO_SQL_MAX_NEGATIVE_LIMIT(&quot;cairo.sql.max.negative.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">74</i>&nbsp;    CAIRO_SQL_SORT_KEY_PAGE_SIZE(&quot;cairo.sql.sort.key.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">75</i>&nbsp;    CAIRO_SQL_SORT_KEY_MAX_PAGES(&quot;cairo.sql.sort.key.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">76</i>&nbsp;    CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE(&quot;cairo.sql.sort.light.value.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">77</i>&nbsp;    CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES(&quot;cairo.sql.sort.light.value.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">78</i>&nbsp;    CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE(&quot;cairo.sql.hash.join.value.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">79</i>&nbsp;    CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES(&quot;cairo.sql.hash.join.value.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">80</i>&nbsp;    CAIRO_SQL_LATEST_BY_ROW_COUNT(&quot;cairo.sql.latest.by.row.count&quot;),</b>
+<b class="fc"><i class="no-highlight">81</i>&nbsp;    CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE(&quot;cairo.sql.hash.join.light.value.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">82</i>&nbsp;    CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES(&quot;cairo.sql.hash.join.light.value.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">83</i>&nbsp;    CAIRO_SQL_SORT_VALUE_PAGE_SIZE(&quot;cairo.sql.sort.value.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">84</i>&nbsp;    CAIRO_SQL_SORT_VALUE_MAX_PAGES(&quot;cairo.sql.sort.value.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">85</i>&nbsp;    CAIRO_WORK_STEAL_TIMEOUT_NANOS(&quot;cairo.work.steal.timeout.nanos&quot;),</b>
+<b class="fc"><i class="no-highlight">86</i>&nbsp;    CAIRO_PARALLEL_INDEXING_ENABLED(&quot;cairo.parallel.indexing.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">87</i>&nbsp;    CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY(&quot;cairo.page.frame.reduce.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">88</i>&nbsp;    CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY(&quot;cairo.page.frame.rowid.list.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">89</i>&nbsp;    CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY(&quot;cairo.page.frame.column.list.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">90</i>&nbsp;    CAIRO_SQL_PARALLEL_FILTER_ENABLED(&quot;cairo.sql.parallel.filter.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">91</i>&nbsp;    CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED(&quot;cairo.sql.parallel.filter.pretouch.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">92</i>&nbsp;    CAIRO_PAGE_FRAME_SHARD_COUNT(&quot;cairo.page.frame.shard.count&quot;),</b>
+<b class="fc"><i class="no-highlight">93</i>&nbsp;    CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY(&quot;cairo.page.frame.task.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">94</i>&nbsp;    CAIRO_SQL_JOIN_METADATA_PAGE_SIZE(&quot;cairo.sql.join.metadata.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">95</i>&nbsp;    CAIRO_SQL_JOIN_METADATA_MAX_RESIZES(&quot;cairo.sql.join.metadata.max.resizes&quot;),</b>
+<b class="fc"><i class="no-highlight">96</i>&nbsp;    CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY(&quot;cairo.sql.analytic.column.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">97</i>&nbsp;    CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY(&quot;cairo.sql.create.table.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">98</i>&nbsp;    CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY(&quot;cairo.sql.column.cast.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">99</i>&nbsp;    CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY(&quot;cairo.sql.rename.table.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">100</i>&nbsp;    CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY(&quot;cairo.sql.with.clause.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">101</i>&nbsp;    CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY(&quot;cairo.sql.insert.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">102</i>&nbsp;    CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE(&quot;cairo.writer.data.index.key.append.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">103</i>&nbsp;    CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE(&quot;cairo.writer.data.index.value.append.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">104</i>&nbsp;    CAIRO_WRITER_DATA_APPEND_PAGE_SIZE(&quot;cairo.writer.data.append.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">105</i>&nbsp;    CAIRO_WRITER_MISC_APPEND_PAGE_SIZE(&quot;cairo.writer.misc.append.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">106</i>&nbsp;    CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE(&quot;cairo.writer.command.queue.slot.size&quot;),</b>
+<b class="fc"><i class="no-highlight">107</i>&nbsp;    CAIRO_SQL_SAMPLEBY_PAGE_SIZE(&quot;cairo.sql.sampleby.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">108</i>&nbsp;    CAIRO_SQL_DOUBLE_CAST_SCALE(&quot;cairo.sql.double.cast.scale&quot;),</b>
+<b class="fc"><i class="no-highlight">109</i>&nbsp;    CAIRO_SQL_FLOAT_CAST_SCALE(&quot;cairo.sql.float.cast.scale&quot;),</b>
+<b class="fc"><i class="no-highlight">110</i>&nbsp;    CAIRO_SQL_GROUPBY_MAP_CAPACITY(&quot;cairo.sql.groupby.map.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">111</i>&nbsp;    CAIRO_SQL_GROUPBY_POOL_CAPACITY(&quot;cairo.sql.groupby.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">112</i>&nbsp;    CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT(&quot;cairo.sql.max.symbol.not.equals.count&quot;),</b>
+<b class="fc"><i class="no-highlight">113</i>&nbsp;    CAIRO_SQL_BIND_VARIABLE_POOL_SIZE(&quot;cairo.sql.bind.variable.pool.size&quot;),</b>
+<b class="fc"><i class="no-highlight">114</i>&nbsp;    CAIRO_DATE_LOCALE(&quot;cairo.date.locale&quot;),</b>
+<b class="fc"><i class="no-highlight">115</i>&nbsp;    CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY(&quot;cairo.sql.distinct.timestamp.key.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">116</i>&nbsp;    CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR(&quot;cairo.sql.distinct.timestamp.load.factor&quot;),</b>
+<b class="fc"><i class="no-highlight">117</i>&nbsp;    CAIRO_SQL_PAGE_FRAME_MIN_ROWS(&quot;cairo.sql.page.frame.min.rows&quot;),</b>
+<b class="fc"><i class="no-highlight">118</i>&nbsp;    CAIRO_SQL_PAGE_FRAME_MAX_ROWS(&quot;cairo.sql.page.frame.max.rows&quot;),</b>
+<b class="fc"><i class="no-highlight">119</i>&nbsp;    CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE(&quot;cairo.sql.jit.ir.memory.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">120</i>&nbsp;    CAIRO_SQL_JIT_IR_MEMORY_MAX_PAGES(&quot;cairo.sql.jit.ir.memory.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">121</i>&nbsp;    CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE(&quot;cairo.sql.jit.bind.vars.memory.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">122</i>&nbsp;    CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES(&quot;cairo.sql.jit.bind.vars.memory.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">123</i>&nbsp;    CAIRO_SQL_JIT_ROWS_THRESHOLD(&quot;cairo.sql.jit.rows.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;    CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD(&quot;cairo.sql.jit.page.address.cache.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;    CAIRO_SQL_JIT_DEBUG_ENABLED(&quot;cairo.sql.jit.debug.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;    CAIRO_WRITER_FO_OPTS(&quot;cairo.writer.fo_opts&quot;),</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;    CAIRO_SQL_COPY_FORMATS_FILE(&quot;cairo.sql.copy.formats.file&quot;),</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;    CAIRO_SQL_COPY_MODEL_POOL_CAPACITY(&quot;cairo.sql.copy.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;    CAIRO_SQL_COPY_BUFFER_SIZE(&quot;cairo.sql.copy.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;    CAIRO_SQL_COPY_ROOT(&quot;cairo.sql.copy.root&quot;),</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;    CAIRO_SQL_COPY_WORK_ROOT(&quot;cairo.sql.copy.work.root&quot;),</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;    CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE(&quot;cairo.sql.copy.max.index.chunk.size&quot;),</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;    CAIRO_SQL_COPY_QUEUE_CAPACITY(&quot;cairo.sql.copy.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;    CAIRO_SQL_COPY_LOG_RETENTION_DAYS(&quot;cairo.sql.copy.log.retention.days&quot;),</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;    CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY(&quot;cairo.sql.explain.model.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;    CAIRO_O3_MIN_LAG(&quot;cairo.o3.min.lag&quot;),</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;    CAIRO_SQL_BACKUP_ROOT(&quot;cairo.sql.backup.root&quot;),</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;    CAIRO_ATTACH_PARTITION_SUFFIX(&quot;cairo.attach.partition.suffix&quot;),</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;    CAIRO_ATTACH_PARTITION_COPY(&quot;cairo.attach.partition.copy&quot;),</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;    CAIRO_SQL_BACKUP_DIR_TMP_NAME(&quot;cairo.sql.backup.dir.tmp.name&quot;),</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;    CAIRO_SQL_BACKUP_MKDIR_MODE(&quot;cairo.sql.backup.mkdir.mode&quot;),</b>
+<b class="fc"><i class="no-highlight">142</i>&nbsp;    CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY(&quot;cairo.column.indexer.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">143</i>&nbsp;    CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY(&quot;cairo.vector.aggregate.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;    CAIRO_O3_CALLBACK_QUEUE_CAPACITY(&quot;cairo.o3.callback.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;    CAIRO_O3_PARTITION_QUEUE_CAPACITY(&quot;cairo.o3.partition.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;    CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY(&quot;cairo.o3.open.column.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;    CAIRO_O3_COPY_QUEUE_CAPACITY(&quot;cairo.o3.copy.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;    CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY(&quot;cairo.o3.upd.partition.size.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;    CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY(&quot;cairo.o3.purge.discovery.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;    CAIRO_O3_COLUMN_MEMORY_SIZE(&quot;cairo.o3.column.memory.size&quot;),</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;    CAIRO_MAX_UNCOMMITTED_ROWS(&quot;cairo.max.uncommitted.rows&quot;),</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;    CAIRO_COMMIT_LAG(&quot;cairo.commit.lag&quot;),</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;    CAIRO_O3_MAX_LAG(&quot;cairo.o3.max.lag&quot;),</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;    CAIRO_O3_QUICKSORT_ENABLED(&quot;cairo.o3.quicksort.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">155</i>&nbsp;    CAIRO_RND_MEMORY_PAGE_SIZE(&quot;cairo.rnd.memory.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">156</i>&nbsp;    CAIRO_RND_MEMORY_MAX_PAGES(&quot;cairo.rnd.memory.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;    CAIRO_REPLACE_BUFFER_MAX_SIZE(&quot;cairo.replace.buffer.max.size&quot;),</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;    CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE(&quot;cairo.sql.string.function.buffer.max.size&quot;),</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;    CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE(&quot;cairo.sql.analytic.store.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;    CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES(&quot;cairo.sql.analytic.store.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;    CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE(&quot;cairo.sql.analytic.rowid.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;    CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES(&quot;cairo.sql.analytic.rowid.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;    CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE(&quot;cairo.sql.analytic.tree.page.size&quot;),</b>
+<b class="fc"><i class="no-highlight">164</i>&nbsp;    CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES(&quot;cairo.sql.analytic.tree.max.pages&quot;),</b>
+<b class="fc"><i class="no-highlight">165</i>&nbsp;    CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT(&quot;cairo.o3.txn.scoreboard.entry.count&quot;),</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;    CAIRO_LATESTBY_QUEUE_CAPACITY(&quot;cairo.latestby.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;    CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY(&quot;cairo.o3.partition.purge.list.initial.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;    CAIRO_O3_ENABLED(&quot;cairo.o3.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;    CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY(&quot;cairo.query.cache.event.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;    CAIRO_IO_URING_ENABLED(&quot;cairo.iouring.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;    CAIRO_MAX_CRASH_FILES(&quot;cairo.max.crash.files&quot;),</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;    CIRCUIT_BREAKER_THROTTLE(&quot;circuit.breaker.throttle&quot;),</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;    CIRCUIT_BREAKER_BUFFER_SIZE(&quot;circuit.breaker.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;    CONFIG_VALIDATION_STRICT(&quot;config.validation.strict&quot;),</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;    HTTP_MIN_ENABLED(&quot;http.min.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;    HTTP_MIN_WORKER_AFFINITY(&quot;http.min.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">177</i>&nbsp;    HTTP_MIN_WORKER_YIELD_THRESHOLD(&quot;http.min.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">178</i>&nbsp;    HTTP_MIN_WORKER_SLEEP_THRESHOLD(&quot;http.min.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">179</i>&nbsp;    HTTP_MIN_WORKER_SLEEP_TIMEOUT(&quot;http.min.worker.sleep.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">180</i>&nbsp;    HTTP_MIN_BIND_TO(&quot;http.min.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">181</i>&nbsp;    HTTP_MIN_NET_BIND_TO(&quot;http.min.net.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">182</i>&nbsp;    HTTP_MIN_WORKER_HALT_ON_ERROR(&quot;http.min.worker.haltOnError&quot;),</b>
+<b class="fc"><i class="no-highlight">183</i>&nbsp;    HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT(&quot;http.min.net.idle.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">184</i>&nbsp;    HTTP_MIN_NET_CONNECTION_TIMEOUT(&quot;http.min.net.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">185</i>&nbsp;    HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT(&quot;http.min.net.queued.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">186</i>&nbsp;    HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT(&quot;http.min.net.connection.queue.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">187</i>&nbsp;    HTTP_MIN_NET_SND_BUF_SIZE(&quot;http.min.net.snd.buf.size&quot;),</b>
+<b class="fc"><i class="no-highlight">188</i>&nbsp;    HTTP_MIN_NET_CONNECTION_SNDBUF(&quot;http.min.net.connection.sndbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">189</i>&nbsp;    HTTP_NET_RCV_BUF_SIZE(&quot;http.net.rcv.buf.size&quot;),</b>
+<b class="fc"><i class="no-highlight">190</i>&nbsp;    HTTP_MIN_NET_CONNECTION_RCVBUF(&quot;http.min.net.connection.rcvbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">191</i>&nbsp;    HTTP_MIN_NET_CONNECTION_HINT(&quot;http.min.net.connection.hint&quot;),</b>
+<b class="fc"><i class="no-highlight">192</i>&nbsp;    HTTP_ENABLED(&quot;http.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">193</i>&nbsp;    HTTP_MULTIPART_HEADER_BUFFER_SIZE(&quot;http.multipart.header.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">194</i>&nbsp;    HTTP_MULTIPART_IDLE_SPIN_COUNT(&quot;http.multipart.idle.spin.count&quot;),</b>
+<b class="fc"><i class="no-highlight">195</i>&nbsp;    HTTP_RECEIVE_BUFFER_SIZE(&quot;http.receive.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">196</i>&nbsp;    HTTP_REQUEST_HEADER_BUFFER_SIZE(&quot;http.request.header.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">197</i>&nbsp;    HTTP_WORKER_AFFINITY(&quot;http.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">198</i>&nbsp;    HTTP_WORKER_HALT_ON_ERROR(&quot;http.worker.haltOnError&quot;),</b>
+<b class="fc"><i class="no-highlight">199</i>&nbsp;    HTTP_WORKER_YIELD_THRESHOLD(&quot;http.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">200</i>&nbsp;    HTTP_WORKER_SLEEP_THRESHOLD(&quot;http.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">201</i>&nbsp;    HTTP_WORKER_SLEEP_TIMEOUT(&quot;http.worker.sleep.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">202</i>&nbsp;    HTTP_SEND_BUFFER_SIZE(&quot;http.send.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">203</i>&nbsp;    HTTP_STATIC_INDEX_FILE_NAME(&quot;http.static.index.file.name&quot;),</b>
+<b class="fc"><i class="no-highlight">204</i>&nbsp;    HTTP_FROZEN_CLOCK(&quot;http.frozen.clock&quot;),</b>
+<b class="fc"><i class="no-highlight">205</i>&nbsp;    HTTP_ALLOW_DEFLATE_BEFORE_SEND(&quot;http.allow.deflate.before.send&quot;),</b>
+<b class="fc"><i class="no-highlight">206</i>&nbsp;    HTTP_SERVER_KEEP_ALIVE(&quot;http.server.keep.alive&quot;),</b>
+<b class="fc"><i class="no-highlight">207</i>&nbsp;    HTTP_VERSION(&quot;http.version&quot;),</b>
+<b class="fc"><i class="no-highlight">208</i>&nbsp;    HTTP_STATIC_PUBLIC_DIRECTORY(&quot;http.static.public.directory&quot;),</b>
+<b class="fc"><i class="no-highlight">209</i>&nbsp;    HTTP_NET_CONNECTION_HINT(&quot;http.net.connection.hint&quot;),</b>
+<b class="fc"><i class="no-highlight">210</i>&nbsp;    HTTP_NET_IDLE_CONNECTION_TIMEOUT(&quot;http.net.idle.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">211</i>&nbsp;    HTTP_NET_CONNECTION_TIMEOUT(&quot;http.net.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">212</i>&nbsp;    HTTP_NET_QUEUED_CONNECTION_TIMEOUT(&quot;http.net.queued.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">213</i>&nbsp;    HTTP_NET_CONNECTION_QUEUE_TIMEOUT(&quot;http.net.connection.queue.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">214</i>&nbsp;    HTTP_NET_SND_BUF_SIZE(&quot;http.net.snd.buf.size&quot;),</b>
+<b class="fc"><i class="no-highlight">215</i>&nbsp;    HTTP_NET_CONNECTION_SNDBUF(&quot;http.net.connection.sndbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">216</i>&nbsp;    HTTP_NET_CONNECTION_RCVBUF(&quot;http.net.connection.rcvbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">217</i>&nbsp;    HTTP_TEXT_JSON_CACHE_LIMIT(&quot;http.text.json.cache.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">218</i>&nbsp;    HTTP_TEXT_JSON_CACHE_SIZE(&quot;http.text.json.cache.size&quot;),</b>
+<b class="fc"><i class="no-highlight">219</i>&nbsp;    HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV(&quot;http.text.max.required.delimiter.stddev&quot;),</b>
+<b class="fc"><i class="no-highlight">220</i>&nbsp;    HTTP_TEXT_MAX_REQUIRED_LINE_LENGTH_STDDEV(&quot;http.text.max.required.line.length.stddev&quot;),</b>
+<b class="fc"><i class="no-highlight">221</i>&nbsp;    HTTP_TEXT_ROLL_BUFFER_LIMIT(&quot;http.text.roll.buffer.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">222</i>&nbsp;    HTTP_TEXT_ROLL_BUFFER_SIZE(&quot;http.text.roll.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">223</i>&nbsp;    HTTP_TEXT_UTF8_SINK_SIZE(&quot;http.text.utf8.sink.size&quot;),</b>
+<b class="fc"><i class="no-highlight">224</i>&nbsp;    HTTP_SECURITY_READONLY(&quot;http.security.readonly&quot;),</b>
+<b class="fc"><i class="no-highlight">225</i>&nbsp;    HTTP_SECURITY_MAX_RESPONSE_ROWS(&quot;http.security.max.response.rows&quot;),</b>
+<b class="fc"><i class="no-highlight">226</i>&nbsp;    HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION(&quot;http.security.interrupt.on.closed.connection&quot;),</b>
+<b class="fc"><i class="no-highlight">227</i>&nbsp;    HTTP_BIND_TO(&quot;http.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">228</i>&nbsp;    HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY(&quot;http.busy.retry.maximum.wait.before.retry&quot;),</b>
+<b class="fc"><i class="no-highlight">229</i>&nbsp;    HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER(&quot;http.busy.retry.exponential.wait.multiplier&quot;),</b>
+<b class="fc"><i class="no-highlight">230</i>&nbsp;    HTTP_BUSY_RETRY_INITIAL_WAIT_QUEUE_SIZE(&quot;http.busy.retry.initialWaitQueueSize&quot;),</b>
+<b class="fc"><i class="no-highlight">231</i>&nbsp;    HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE(&quot;http.busy.retry.maxProcessingQueueSize&quot;),</b>
+<b class="fc"><i class="no-highlight">232</i>&nbsp;    HTTP_MIN_WORKER_COUNT(&quot;http.min.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">233</i>&nbsp;    HTTP_MIN_NET_CONNECTION_LIMIT(&quot;http.min.net.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">234</i>&nbsp;    HTTP_NET_BIND_TO(&quot;http.net.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">235</i>&nbsp;    HTTP_CONNECTION_POOL_INITIAL_CAPACITY(&quot;http.connection.pool.initial.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">236</i>&nbsp;    HTTP_CONNECTION_STRING_POOL_CAPACITY(&quot;http.connection.string.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">237</i>&nbsp;    HTTP_WORKER_COUNT(&quot;http.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">238</i>&nbsp;    HTTP_KEEP_ALIVE_TIMEOUT(&quot;http.keep-alive.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">239</i>&nbsp;    HTTP_KEEP_ALIVE_MAX(&quot;http.keep-alive.max&quot;),</b>
+<b class="fc"><i class="no-highlight">240</i>&nbsp;    HTTP_NET_ACTIVE_CONNECTION_LIMIT(&quot;http.net.active.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">241</i>&nbsp;    HTTP_NET_CONNECTION_LIMIT(&quot;http.net.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">242</i>&nbsp;    HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY(&quot;http.text.date.adapter.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">243</i>&nbsp;    HTTP_TEXT_METADATA_STRING_POOL_CAPACITY(&quot;http.text.metadata.string.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">244</i>&nbsp;    HTTP_TEXT_ANALYSIS_MAX_LINES(&quot;http.text.analysis.max.lines&quot;),</b>
+<b class="fc"><i class="no-highlight">245</i>&nbsp;    HTTP_TEXT_LEXER_STRING_POOL_CAPACITY(&quot;http.text.lexer.string.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">246</i>&nbsp;    HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY(&quot;http.text.timestamp.adapter.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">247</i>&nbsp;    HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY(&quot;http.json.query.connection.check.frequency&quot;),</b>
+<b class="fc"><i class="no-highlight">248</i>&nbsp;    HTTP_JSON_QUERY_FLOAT_SCALE(&quot;http.json.query.float.scale&quot;),</b>
+<b class="fc"><i class="no-highlight">249</i>&nbsp;    HTTP_JSON_QUERY_DOUBLE_SCALE(&quot;http.json.query.double.scale&quot;),</b>
+<b class="fc"><i class="no-highlight">250</i>&nbsp;    HTTP_TEXT_ADAPTER_SET_CONFIG(&quot;http.text.adapter.set.config&quot;),</b>
+<b class="fc"><i class="no-highlight">251</i>&nbsp;    HTTP_QUERY_CACHE_ENABLED(&quot;http.query.cache.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">252</i>&nbsp;    HTTP_QUERY_CACHE_BLOCK_COUNT(&quot;http.query.cache.block.count&quot;),</b>
+<b class="fc"><i class="no-highlight">253</i>&nbsp;    HTTP_QUERY_CACHE_ROW_COUNT(&quot;http.query.cache.row.count&quot;),</b>
+<b class="fc"><i class="no-highlight">254</i>&nbsp;    LINE_UDP_BIND_TO(&quot;line.udp.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">255</i>&nbsp;    LINE_UDP_HALT_ON_ERROR(&quot;line.udp.haltOnError&quot;),</b>
+<b class="fc"><i class="no-highlight">256</i>&nbsp;    LINE_UDP_JOIN(&quot;line.udp.join&quot;),</b>
+<b class="fc"><i class="no-highlight">257</i>&nbsp;    LINE_UDP_COMMIT_RATE(&quot;line.udp.commit.rate&quot;),</b>
+<b class="fc"><i class="no-highlight">258</i>&nbsp;    LINE_UDP_MSG_BUFFER_SIZE(&quot;line.udp.msg.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">259</i>&nbsp;    LINE_UDP_MSG_COUNT(&quot;line.udp.msg.count&quot;),</b>
+<b class="fc"><i class="no-highlight">260</i>&nbsp;    LINE_UDP_RECEIVE_BUFFER_SIZE(&quot;line.udp.receive.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">261</i>&nbsp;    LINE_UDP_ENABLED(&quot;line.udp.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">262</i>&nbsp;    LINE_UDP_OWN_THREAD_AFFINITY(&quot;line.udp.own.thread.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">263</i>&nbsp;    LINE_UDP_OWN_THREAD(&quot;line.udp.own.thread&quot;),</b>
+<b class="fc"><i class="no-highlight">264</i>&nbsp;    LINE_UDP_UNICAST(&quot;line.udp.unicast&quot;),</b>
+<b class="fc"><i class="no-highlight">265</i>&nbsp;    LINE_UDP_COMMIT_MODE(&quot;line.udp.commit.mode&quot;),</b>
+<b class="fc"><i class="no-highlight">266</i>&nbsp;    LINE_UDP_TIMESTAMP(&quot;line.udp.timestamp&quot;),</b>
+<b class="fc"><i class="no-highlight">267</i>&nbsp;    LINE_TCP_ENABLED(&quot;line.tcp.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">268</i>&nbsp;    LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT(&quot;line.tcp.net.active.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">269</i>&nbsp;    LINE_TCP_NET_CONNECTION_LIMIT(&quot;line.tcp.net.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">270</i>&nbsp;    LINE_TCP_NET_CONNECTION_HINT(&quot;line.tcp.net.connection.hint&quot;),</b>
+<b class="fc"><i class="no-highlight">271</i>&nbsp;    LINE_TCP_NET_BIND_TO(&quot;line.tcp.net.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">272</i>&nbsp;    LINE_TCP_NET_IDLE_TIMEOUT(&quot;line.tcp.net.idle.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">273</i>&nbsp;    LINE_TCP_NET_CONNECTION_TIMEOUT(&quot;line.tcp.net.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">274</i>&nbsp;    LINE_TCP_NET_QUEUED_TIMEOUT(&quot;line.tcp.net.queued.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">275</i>&nbsp;    LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT(&quot;line.tcp.net.connection.queue.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">276</i>&nbsp;    LINE_TCP_NET_RECV_BUF_SIZE(&quot;line.tcp.net.recv.buf.size&quot;),</b>
+<b class="fc"><i class="no-highlight">277</i>&nbsp;    LINE_TCP_NET_CONNECTION_RCVBUF(&quot;line.tcp.net.connection.rcvbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">278</i>&nbsp;    LINE_TCP_CONNECTION_POOL_CAPACITY(&quot;line.tcp.connection.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">279</i>&nbsp;    LINE_TCP_TIMESTAMP(&quot;line.tcp.timestamp&quot;),</b>
+<b class="fc"><i class="no-highlight">280</i>&nbsp;    LINE_TCP_MSG_BUFFER_SIZE(&quot;line.tcp.msg.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">281</i>&nbsp;    LINE_TCP_MAX_MEASUREMENT_SIZE(&quot;line.tcp.max.measurement.size&quot;),</b>
+<b class="fc"><i class="no-highlight">282</i>&nbsp;    LINE_TCP_WRITER_QUEUE_CAPACITY(&quot;line.tcp.writer.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">283</i>&nbsp;    LINE_TCP_WRITER_WORKER_COUNT(&quot;line.tcp.writer.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">284</i>&nbsp;    LINE_TCP_WRITER_WORKER_AFFINITY(&quot;line.tcp.writer.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">285</i>&nbsp;    LINE_TCP_WRITER_HALT_ON_ERROR(&quot;line.tcp.writer.halt.on.error&quot;),</b>
+<b class="fc"><i class="no-highlight">286</i>&nbsp;    LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD(&quot;line.tcp.writer.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">287</i>&nbsp;    LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD(&quot;line.tcp.writer.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">288</i>&nbsp;    LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD(&quot;line.tcp.symbol.cache.wait.us.before.reload&quot;),</b>
+<b class="fc"><i class="no-highlight">289</i>&nbsp;    LINE_TCP_IO_WORKER_COUNT(&quot;line.tcp.io.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">290</i>&nbsp;    LINE_TCP_IO_WORKER_AFFINITY(&quot;line.tcp.io.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">291</i>&nbsp;    LINE_TCP_IO_HALT_ON_ERROR(&quot;line.tcp.io.halt.on.error&quot;),</b>
+<b class="fc"><i class="no-highlight">292</i>&nbsp;    LINE_TCP_IO_WORKER_YIELD_THRESHOLD(&quot;line.tcp.io.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">293</i>&nbsp;    LINE_TCP_IO_WORKER_SLEEP_THRESHOLD(&quot;line.tcp.io.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">294</i>&nbsp;    LINE_TCP_MAINTENANCE_JOB_INTERVAL(&quot;line.tcp.maintenance.job.interval&quot;),</b>
+<b class="fc"><i class="no-highlight">295</i>&nbsp;    LINE_TCP_COMMIT_INTERVAL_FRACTION(&quot;line.tcp.commit.interval.fraction&quot;),</b>
+<b class="fc"><i class="no-highlight">296</i>&nbsp;    LINE_TCP_COMMIT_INTERVAL_DEFAULT(&quot;line.tcp.commit.interval.default&quot;),</b>
+<b class="fc"><i class="no-highlight">297</i>&nbsp;    LINE_TCP_AUTH_DB_PATH(&quot;line.tcp.auth.db.path&quot;),</b>
+<b class="fc"><i class="no-highlight">298</i>&nbsp;    LINE_TCP_DEFAULT_PARTITION_BY(&quot;line.tcp.default.partition.by&quot;),</b>
+<b class="fc"><i class="no-highlight">299</i>&nbsp;    LINE_DEFAULT_PARTITION_BY(&quot;line.default.partition.by&quot;),</b>
+<b class="fc"><i class="no-highlight">300</i>&nbsp;    LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE(&quot;line.tcp.min.idle.ms.before.writer.release&quot;),</b>
+<b class="fc"><i class="no-highlight">301</i>&nbsp;    LINE_TCP_DISCONNECT_ON_ERROR(&quot;line.tcp.disconnect.on.error&quot;),</b>
+<b class="fc"><i class="no-highlight">302</i>&nbsp;    LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED(&quot;line.tcp.undocumented.string.to.char.cast.allowed&quot;),</b>
+<b class="fc"><i class="no-highlight">303</i>&nbsp;    LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED(&quot;line.tcp.undocumented.symbol.as.field.supported&quot;),</b>
+<b class="fc"><i class="no-highlight">304</i>&nbsp;    LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED(&quot;line.tcp.undocumented.string.as.tag.supported&quot;),</b>
+<b class="fc"><i class="no-highlight">305</i>&nbsp;    LINE_FLOAT_DEFAULT_COLUMN_TYPE(&quot;line.float.default.column.type&quot;),</b>
+<b class="fc"><i class="no-highlight">306</i>&nbsp;    LINE_INTEGER_DEFAULT_COLUMN_TYPE(&quot;line.integer.default.column.type&quot;),</b>
+<b class="fc"><i class="no-highlight">307</i>&nbsp;    LINE_TCP_NET_IO_QUEUE_CAPACITY(&quot;line.tcp.net.io.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">308</i>&nbsp;    LINE_TCP_IO_AGGRESSIVE_RECV(&quot;line.tcp.io.aggressive.recv&quot;),</b>
+<b class="fc"><i class="no-highlight">309</i>&nbsp;    METRICS_ENABLED(&quot;metrics.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">310</i>&nbsp;    NET_TEST_CONNECTION_BUFFER_SIZE(&quot;net.test.connection.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">311</i>&nbsp;    PG_ENABLED(&quot;pg.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">312</i>&nbsp;    PG_NET_CONNECTION_HINT(&quot;pg.net.connection.hint&quot;),</b>
+<b class="fc"><i class="no-highlight">313</i>&nbsp;    PG_NET_BIND_TO(&quot;pg.net.bind.to&quot;),</b>
+<b class="fc"><i class="no-highlight">314</i>&nbsp;    PG_NET_IDLE_TIMEOUT(&quot;pg.net.idle.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">315</i>&nbsp;    PG_NET_CONNECTION_TIMEOUT(&quot;pg.net.connection.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">316</i>&nbsp;    PG_NET_CONNECTION_QUEUE_TIMEOUT(&quot;pg.net.connection.queue.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">317</i>&nbsp;    PG_NET_RECV_BUF_SIZE(&quot;pg.net.recv.buf.size&quot;),</b>
+<b class="fc"><i class="no-highlight">318</i>&nbsp;    PG_NET_CONNECTION_RCVBUF(&quot;pg.net.connection.rcvbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">319</i>&nbsp;    PG_NET_SEND_BUF_SIZE(&quot;pg.net.send.buf.size&quot;),</b>
+<b class="fc"><i class="no-highlight">320</i>&nbsp;    PG_PASSWORD(&quot;pg.password&quot;),</b>
+<b class="fc"><i class="no-highlight">321</i>&nbsp;    PG_USER(&quot;pg.user&quot;),</b>
+<b class="fc"><i class="no-highlight">322</i>&nbsp;    PG_RO_PASSWORD(&quot;pg.readonly.password&quot;),</b>
+<b class="fc"><i class="no-highlight">323</i>&nbsp;    PG_RO_USER(&quot;pg.readonly.user&quot;),</b>
+<b class="fc"><i class="no-highlight">324</i>&nbsp;    PG_RO_USER_ENABLED(&quot;pg.readonly.user.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">325</i>&nbsp;    PG_SECURITY_READONLY(&quot;pg.security.readonly&quot;),</b>
+<b class="fc"><i class="no-highlight">326</i>&nbsp;    PG_MAX_BLOB_SIZE_ON_QUERY(&quot;pg.max.blob.size.on.query&quot;),</b>
+<b class="fc"><i class="no-highlight">327</i>&nbsp;    PG_RECV_BUFFER_SIZE(&quot;pg.recv.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">328</i>&nbsp;    PG_SEND_BUFFER_SIZE(&quot;pg.send.buffer.size&quot;),</b>
+<b class="fc"><i class="no-highlight">329</i>&nbsp;    PG_DATE_LOCALE(&quot;pg.date.locale&quot;),</b>
+<b class="fc"><i class="no-highlight">330</i>&nbsp;    PG_WORKER_AFFINITY(&quot;pg.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">331</i>&nbsp;    PG_HALT_ON_ERROR(&quot;pg.halt.on.error&quot;),</b>
+<b class="fc"><i class="no-highlight">332</i>&nbsp;    PG_WORKER_YIELD_THRESHOLD(&quot;pg.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">333</i>&nbsp;    PG_WORKER_SLEEP_THRESHOLD(&quot;pg.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">334</i>&nbsp;    PG_DAEMON_POOL(&quot;pg.daemon.pool&quot;),</b>
+<b class="fc"><i class="no-highlight">335</i>&nbsp;    PG_SELECT_CACHE_ENABLED(&quot;pg.select.cache.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">336</i>&nbsp;    PG_NET_ACTIVE_CONNECTION_LIMIT(&quot;pg.net.active.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">337</i>&nbsp;    PG_NET_CONNECTION_LIMIT(&quot;pg.net.connection.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">338</i>&nbsp;    PG_CHARACTER_STORE_CAPACITY(&quot;pg.character.store.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">339</i>&nbsp;    PG_BINARY_PARAM_COUNT_CAPACITY(&quot;pg.binary.param.count.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">340</i>&nbsp;    PG_CHARACTER_STORE_POOL_CAPACITY(&quot;pg.character.store.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">341</i>&nbsp;    PG_CONNECTION_POOL_CAPACITY(&quot;pg.connection.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">342</i>&nbsp;    PG_WORKER_COUNT(&quot;pg.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">343</i>&nbsp;    PG_SELECT_CACHE_BLOCK_COUNT(&quot;pg.select.cache.block.count&quot;),</b>
+<b class="fc"><i class="no-highlight">344</i>&nbsp;    PG_SELECT_CACHE_ROW_COUNT(&quot;pg.select.cache.row.count&quot;),</b>
+<b class="fc"><i class="no-highlight">345</i>&nbsp;    PG_INSERT_CACHE_ENABLED(&quot;pg.insert.cache.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">346</i>&nbsp;    PG_INSERT_CACHE_BLOCK_COUNT(&quot;pg.insert.cache.block.count&quot;),</b>
+<b class="fc"><i class="no-highlight">347</i>&nbsp;    PG_INSERT_CACHE_ROW_COUNT(&quot;pg.insert.cache.row.count&quot;),</b>
+<b class="fc"><i class="no-highlight">348</i>&nbsp;    PG_INSERT_POOL_CAPACITY(&quot;pg.insert.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">349</i>&nbsp;    PG_NAMED_STATEMENT_CACHE_CAPACITY(&quot;pg.named.statement.cache.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">350</i>&nbsp;    PG_NAMED_STATEMENT_POOL_CAPACITY(&quot;pg.named.statement.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">351</i>&nbsp;    PG_PENDING_WRITERS_CACHE_CAPACITY(&quot;pg.pending.writers.cache.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">352</i>&nbsp;    PG_NET_CONNECTION_SNDBUF(&quot;pg.net.connection.sndbuf&quot;),</b>
+<b class="fc"><i class="no-highlight">353</i>&nbsp;    QUERY_TIMEOUT_SEC(&quot;query.timeout.sec&quot;),</b>
+<b class="fc"><i class="no-highlight">354</i>&nbsp;    SHARED_WORKER_COUNT(&quot;shared.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">355</i>&nbsp;    SHARED_WORKER_AFFINITY(&quot;shared.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">356</i>&nbsp;    SHARED_WORKER_HALT_ON_ERROR(&quot;shared.worker.haltOnError&quot;),</b>
+<b class="fc"><i class="no-highlight">357</i>&nbsp;    SHARED_WORKER_SLEEP_THRESHOLD(&quot;shared.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">358</i>&nbsp;    SHARED_WORKER_SLEEP_TIMEOUT(&quot;shared.worker.sleep.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">359</i>&nbsp;    SHARED_WORKER_YIELD_THRESHOLD(&quot;shared.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">360</i>&nbsp;    TELEMETRY_ENABLED(&quot;telemetry.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">361</i>&nbsp;    TELEMETRY_DISABLE_COMPLETELY(&quot;telemetry.disable.completely&quot;),</b>
+<b class="fc"><i class="no-highlight">362</i>&nbsp;    TELEMETRY_QUEUE_CAPACITY(&quot;telemetry.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">363</i>&nbsp;    TELEMETRY_HIDE_TABLES(&quot;telemetry.hide.tables&quot;),</b>
+<b class="fc"><i class="no-highlight">364</i>&nbsp;    PG_UPDATE_CACHE_ENABLED(&quot;pg.update.cache.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">365</i>&nbsp;    PG_UPDATE_CACHE_BLOCK_COUNT(&quot;pg.update.cache.block.count&quot;),</b>
+<b class="fc"><i class="no-highlight">366</i>&nbsp;    PG_UPDATE_CACHE_ROW_COUNT(&quot;pg.update.cache.row.count&quot;),</b>
+<b class="fc"><i class="no-highlight">367</i>&nbsp;    CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY(&quot;cairo.sql.column.purge.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">368</i>&nbsp;    CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY(&quot;cairo.sql.column.purge.task.pool.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">369</i>&nbsp;    CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT(&quot;cairo.sql.column.purge.retry.delay.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">370</i>&nbsp;    CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY(&quot;cairo.sql.column.purge.retry.delay&quot;),</b>
+<b class="fc"><i class="no-highlight">371</i>&nbsp;    CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER(&quot;cairo.sql.column.purge.retry.delay.multiplier&quot;),</b>
+<b class="fc"><i class="no-highlight">372</i>&nbsp;    CAIRO_SQL_SYSTEM_TABLE_PREFIX(&quot;cairo.system.table.prefix&quot;),</b>
+<b class="fc"><i class="no-highlight">373</i>&nbsp;    CAIRO_MAX_FILE_NAME_LENGTH(&quot;cairo.max.file.name.length&quot;),</b>
+<b class="fc"><i class="no-highlight">374</i>&nbsp;    LINE_AUTO_CREATE_NEW_COLUMNS(&quot;line.auto.create.new.columns&quot;),</b>
+<b class="fc"><i class="no-highlight">375</i>&nbsp;    LINE_AUTO_CREATE_NEW_TABLES(&quot;line.auto.create.new.tables&quot;),</b>
+<b class="fc"><i class="no-highlight">376</i>&nbsp;    CAIRO_SIMULATE_CRASH_ENABLED(&quot;cairo.enable.crash.simulation&quot;),</b>
+<b class="fc"><i class="no-highlight">377</i>&nbsp;    CAIRO_WAL_ENABLED_DEFAULT(&quot;cairo.wal.enabled.default&quot;),</b>
+<b class="fc"><i class="no-highlight">378</i>&nbsp;    CAIRO_WAL_PURGE_INTERVAL(&quot;cairo.wal.purge.interval&quot;),</b>
+<b class="fc"><i class="no-highlight">379</i>&nbsp;    CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT(&quot;cairo.wal.segment.rollover.row.count&quot;),</b>
+<b class="fc"><i class="no-highlight">380</i>&nbsp;    WAL_APPLY_WORKER_COUNT(&quot;wal.apply.worker.count&quot;),</b>
+<b class="fc"><i class="no-highlight">381</i>&nbsp;    WAL_APPLY_WORKER_AFFINITY(&quot;wal.apply.worker.affinity&quot;),</b>
+<b class="fc"><i class="no-highlight">382</i>&nbsp;    WAL_APPLY_WORKER_HALT_ON_ERROR(&quot;wal.apply.worker.haltOnError&quot;),</b>
+<b class="fc"><i class="no-highlight">383</i>&nbsp;    WAL_APPLY_WORKER_SLEEP_THRESHOLD(&quot;wal.apply.worker.sleep.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">384</i>&nbsp;    WAL_APPLY_WORKER_SLEEP_TIMEOUT(&quot;wal.apply.worker.sleep.timeout&quot;),</b>
+<b class="fc"><i class="no-highlight">385</i>&nbsp;    WAL_APPLY_WORKER_YIELD_THRESHOLD(&quot;wal.apply.worker.yield.threshold&quot;),</b>
+<b class="fc"><i class="no-highlight">386</i>&nbsp;    CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY(&quot;cairo.wal.txn.notification.queue.capacity&quot;),</b>
+<b class="fc"><i class="no-highlight">387</i>&nbsp;    CAIRO_WAL_SUPPORTED(&quot;cairo.wal.supported&quot;),</b>
+<b class="fc"><i class="no-highlight">388</i>&nbsp;    TABLE_TYPE_CONVERSION_ENABLED(&quot;table.type.conversion.enabled&quot;),</b>
+<b class="fc"><i class="no-highlight">389</i>&nbsp;    CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS(&quot;cairo.wal.recreate.distressed.sequencer.attempts&quot;),</b>
+<b class="fc"><i class="no-highlight">390</i>&nbsp;    CAIRO_WAL_INACTIVE_WRITER_TTL(&quot;cairo.wal.inactive.writer.ttl&quot;),</b>
+<b class="fc"><i class="no-highlight">391</i>&nbsp;    CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT(&quot;cairo.wal.commit.squash.row.limit&quot;),</b>
+<b class="fc"><i class="no-highlight">392</i>&nbsp;    CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT(&quot;cairo.wal.apply.look.ahead.txn.count&quot;),</b>
+<b class="fc"><i class="no-highlight">393</i>&nbsp;    READ_ONLY_INSTANCE(&quot;readonly&quot;),</b>
+<b class="fc"><i class="no-highlight">394</i>&nbsp;    CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY(&quot;cairo.table.registry.auto.reload.frequency&quot;);</b>
+<i class="no-highlight">395</i>&nbsp;
+<i class="no-highlight">396</i>&nbsp;    private static final Map&lt;String, PropertyKey&gt; nameMapping;
+<i class="no-highlight">397</i>&nbsp;    private final String propertyPath;
+<i class="no-highlight">398</i>&nbsp;
+<b class="fc"><i class="no-highlight">399</i>&nbsp;    PropertyKey(String propertyPath) {</b>
+<b class="fc"><i class="no-highlight">400</i>&nbsp;        this.propertyPath = propertyPath;</b>
+<i class="no-highlight">401</i>&nbsp;    }
+<i class="no-highlight">402</i>&nbsp;
+<i class="no-highlight">403</i>&nbsp;    public static Optional&lt;PropertyKey&gt; getByString(String name) {
+<b class="fc"><i class="no-highlight">404</i>&nbsp;        return Optional.ofNullable(nameMapping.get(name));</b>
+<i class="no-highlight">405</i>&nbsp;    }
+<i class="no-highlight">406</i>&nbsp;
+<i class="no-highlight">407</i>&nbsp;    public String getPropertyPath() {
+<b class="fc"><i class="no-highlight">408</i>&nbsp;        return propertyPath;</b>
+<i class="no-highlight">409</i>&nbsp;    }
+<i class="no-highlight">410</i>&nbsp;
+<i class="no-highlight">411</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">412</i>&nbsp;        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -&gt; k));</b>
+<i class="no-highlight">413</i>&nbsp;    }
+<i class="no-highlight">414</i>&nbsp;
+<i class="no-highlight">415</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

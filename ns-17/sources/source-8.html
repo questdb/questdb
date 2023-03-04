@@ -1,0 +1,283 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > PGOids</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.cutlass.pgwire</a>
+</div>
+
+<h1>Coverage Summary for Class: PGOids (io.questdb.cutlass.pgwire)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">PGOids</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    87.5%
+  </span>
+  <span class="absValue">
+    (7/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    98.4%
+  </span>
+  <span class="absValue">
+    (61/62)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.cutlass.pgwire;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.ColumnType;
+<i class="no-highlight">28</i>&nbsp;import io.questdb.std.IntIntHashMap;
+<i class="no-highlight">29</i>&nbsp;import io.questdb.std.IntList;
+<i class="no-highlight">30</i>&nbsp;
+<b class="nc"><i class="no-highlight">31</i>&nbsp;public class PGOids {</b>
+<i class="no-highlight">32</i>&nbsp;
+<i class="no-highlight">33</i>&nbsp;    public static final int BINARY_TYPE_BINARY = (1 &lt;&lt; 31) | ColumnType.BINARY;
+<i class="no-highlight">34</i>&nbsp;    public static final int BINARY_TYPE_BOOLEAN = (1 &lt;&lt; 31) | ColumnType.BOOLEAN;
+<i class="no-highlight">35</i>&nbsp;    public static final int BINARY_TYPE_BYTE = (1 &lt;&lt; 31) | ColumnType.BYTE;
+<i class="no-highlight">36</i>&nbsp;    public static final int BINARY_TYPE_CHAR = (1 &lt;&lt; 31) | ColumnType.CHAR;
+<i class="no-highlight">37</i>&nbsp;    public static final int BINARY_TYPE_DATE = (1 &lt;&lt; 31) | ColumnType.DATE;
+<i class="no-highlight">38</i>&nbsp;    public static final int BINARY_TYPE_DOUBLE = (1 &lt;&lt; 31) | ColumnType.DOUBLE;
+<i class="no-highlight">39</i>&nbsp;    public static final int BINARY_TYPE_FLOAT = (1 &lt;&lt; 31) | ColumnType.FLOAT;
+<i class="no-highlight">40</i>&nbsp;    public static final int BINARY_TYPE_INT = (1 &lt;&lt; 31) | ColumnType.INT;
+<i class="no-highlight">41</i>&nbsp;    public static final int BINARY_TYPE_LONG = (1 &lt;&lt; 31) | ColumnType.LONG;
+<i class="no-highlight">42</i>&nbsp;    public static final int BINARY_TYPE_LONG256 = (1 &lt;&lt; 31) | ColumnType.LONG256;
+<i class="no-highlight">43</i>&nbsp;    public static final int BINARY_TYPE_SHORT = (1 &lt;&lt; 31) | ColumnType.SHORT;
+<i class="no-highlight">44</i>&nbsp;    public static final int BINARY_TYPE_STRING = (1 &lt;&lt; 31) | ColumnType.STRING;
+<i class="no-highlight">45</i>&nbsp;    public static final int BINARY_TYPE_SYMBOL = (1 &lt;&lt; 31) | ColumnType.SYMBOL;
+<i class="no-highlight">46</i>&nbsp;    public static final int BINARY_TYPE_TIMESTAMP = (1 &lt;&lt; 31) | ColumnType.TIMESTAMP;
+<i class="no-highlight">47</i>&nbsp;    public static final int BINARY_TYPE_UUID = (1 &lt;&lt; 31) | ColumnType.UUID;
+<i class="no-highlight">48</i>&nbsp;    public static final int PG_BOOL = 16;
+<i class="no-highlight">49</i>&nbsp;    public static final int PG_BYTEA = 17;
+<i class="no-highlight">50</i>&nbsp;    public static final int PG_CATALOG_OID = 11;
+<i class="no-highlight">51</i>&nbsp;    public static final int PG_CHAR = 18;
+<i class="no-highlight">52</i>&nbsp;    public static final int PG_CLASS_OID = 1259;
+<i class="no-highlight">53</i>&nbsp;    public static final int PG_DATE = 1082;
+<i class="no-highlight">54</i>&nbsp;    public static final int PG_FLOAT4 = 700;
+<i class="no-highlight">55</i>&nbsp;    public static final int PG_FLOAT8 = 701;
+<i class="no-highlight">56</i>&nbsp;    public static final int PG_INT2 = 21;
+<i class="no-highlight">57</i>&nbsp;    public static final int PG_INT4 = 23;
+<i class="no-highlight">58</i>&nbsp;    public static final int PG_INT8 = 20;
+<i class="no-highlight">59</i>&nbsp;    public static final int PG_NAMESPACE_OID = 2615;
+<i class="no-highlight">60</i>&nbsp;    public static final int PG_PUBLIC_OID = 2200;
+<i class="no-highlight">61</i>&nbsp;    public static final int PG_TIMESTAMP = 1114;
+<b class="fc"><i class="no-highlight">62</i>&nbsp;    public static final IntList PG_TYPE_OIDS = new IntList();</b>
+<b class="fc"><i class="no-highlight">63</i>&nbsp;    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];</b>
+<b class="fc"><i class="no-highlight">64</i>&nbsp;    public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();</b>
+<i class="no-highlight">65</i>&nbsp;    public static final int PG_UUID = 2950;
+<i class="no-highlight">66</i>&nbsp;    public static final int PG_VARCHAR = 1043;
+<i class="no-highlight">67</i>&nbsp;    public static final int X_PG_BOOL = ((PG_BOOL &gt;&gt; 24) &amp; 0xff) | ((PG_BOOL &lt;&lt; 8) &amp; 0xff0000) | ((PG_BOOL &gt;&gt; 8) &amp; 0xff00) | ((PG_BOOL &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">68</i>&nbsp;    public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
+<i class="no-highlight">69</i>&nbsp;    public static final int X_PG_BYTEA = ((PG_BYTEA &gt;&gt; 24) &amp; 0xff) | ((PG_BYTEA &lt;&lt; 8) &amp; 0xff0000) | ((PG_BYTEA &gt;&gt; 8) &amp; 0xff00) | ((PG_BYTEA &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">70</i>&nbsp;    public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
+<i class="no-highlight">71</i>&nbsp;    public static final int X_PG_CHAR = ((PG_CHAR &gt;&gt; 24) &amp; 0xff) | ((PG_CHAR &lt;&lt; 8) &amp; 0xff0000) | ((PG_CHAR &gt;&gt; 8) &amp; 0xff00) | ((PG_CHAR &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">72</i>&nbsp;    public static final int X_B_PG_CHAR = 1 | X_PG_CHAR;
+<i class="no-highlight">73</i>&nbsp;    @SuppressWarnings(&quot;NumericOverflow&quot;)
+<i class="no-highlight">74</i>&nbsp;    public static final int X_PG_DATE = ((PG_DATE &gt;&gt; 24) &amp; 0xff) | ((PG_DATE &lt;&lt; 8) &amp; 0xff0000) | ((PG_DATE &gt;&gt; 8) &amp; 0xff00) | ((PG_DATE &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">75</i>&nbsp;    public static final int X_B_PG_DATE = 1 | X_PG_DATE;
+<i class="no-highlight">76</i>&nbsp;    @SuppressWarnings(&quot;NumericOverflow&quot;)
+<i class="no-highlight">77</i>&nbsp;    public static final int X_PG_FLOAT4 = ((PG_FLOAT4 &gt;&gt; 24) &amp; 0xff) | ((PG_FLOAT4 &lt;&lt; 8) &amp; 0xff0000) | ((PG_FLOAT4 &gt;&gt; 8) &amp; 0xff00) | ((PG_FLOAT4 &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">78</i>&nbsp;    public static final int X_B_PG_FLOAT4 = 1 | X_PG_FLOAT4;
+<i class="no-highlight">79</i>&nbsp;    @SuppressWarnings(&quot;NumericOverflow&quot;)
+<i class="no-highlight">80</i>&nbsp;    public static final int X_PG_FLOAT8 = ((PG_FLOAT8 &gt;&gt; 24) &amp; 0xff) | ((PG_FLOAT8 &lt;&lt; 8) &amp; 0xff0000) | ((PG_FLOAT8 &gt;&gt; 8) &amp; 0xff00) | ((PG_FLOAT8 &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">81</i>&nbsp;    public static final int X_B_PG_FLOAT8 = 1 | X_PG_FLOAT8;
+<i class="no-highlight">82</i>&nbsp;    public static final int X_PG_INT2 = ((PG_INT2 &gt;&gt; 24) &amp; 0xff) | ((PG_INT2 &lt;&lt; 8) &amp; 0xff0000) | ((PG_INT2 &gt;&gt; 8) &amp; 0xff00) | ((PG_INT2 &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">83</i>&nbsp;    public static final int X_B_PG_INT2 = 1 | X_PG_INT2;
+<i class="no-highlight">84</i>&nbsp;    public static final int X_PG_INT4 = ((PG_INT4 &gt;&gt; 24) &amp; 0xff) | ((PG_INT4 &lt;&lt; 8) &amp; 0xff0000) | ((PG_INT4 &gt;&gt; 8) &amp; 0xff00) | ((PG_INT4 &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">85</i>&nbsp;    public static final int X_B_PG_INT4 = 1 | X_PG_INT4;
+<i class="no-highlight">86</i>&nbsp;    public static final int X_PG_INT8 = ((PG_INT8 &gt;&gt; 24) &amp; 0xff) | ((PG_INT8 &lt;&lt; 8) &amp; 0xff0000) | ((PG_INT8 &gt;&gt; 8) &amp; 0xff00) | ((PG_INT8 &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">87</i>&nbsp;    public static final int X_B_PG_INT8 = 1 | X_PG_INT8;
+<i class="no-highlight">88</i>&nbsp;    @SuppressWarnings(&quot;NumericOverflow&quot;)
+<i class="no-highlight">89</i>&nbsp;    public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP &gt;&gt; 24) &amp; 0xff) | ((PG_TIMESTAMP &lt;&lt; 8) &amp; 0xff0000) | ((PG_TIMESTAMP &gt;&gt; 8) &amp; 0xff00) | ((PG_TIMESTAMP &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">90</i>&nbsp;    public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
+<i class="no-highlight">91</i>&nbsp;    @SuppressWarnings(&quot;NumericOverflow&quot;)
+<i class="no-highlight">92</i>&nbsp;    public static final int X_PG_UUID = ((PG_UUID &gt;&gt; 24) &amp; 0xff) | ((PG_UUID &lt;&lt; 8) &amp; 0xff0000) | ((PG_UUID &gt;&gt; 8) &amp; 0xff00) | ((PG_UUID &lt;&lt; 24) &amp; 0xff000000);
+<i class="no-highlight">93</i>&nbsp;    public static final int X_B_PG_UUID = 1 | X_PG_UUID;
+<b class="fc"><i class="no-highlight">94</i>&nbsp;    private static final IntList TYPE_OIDS = new IntList();</b>
+<i class="no-highlight">95</i>&nbsp;
+<i class="no-highlight">96</i>&nbsp;    public static int getTypeOid(int type) {
+<b class="fc"><i class="no-highlight">97</i>&nbsp;        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));</b>
+<i class="no-highlight">98</i>&nbsp;    }
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;    static short getColumnBinaryFlag(int type) {
+<b class="fc"><i class="no-highlight">101</i>&nbsp;        return (short) ((type &gt;&gt;&gt; 31) &amp; 0xff);</b>
+<i class="no-highlight">102</i>&nbsp;    }
+<i class="no-highlight">103</i>&nbsp;
+<i class="no-highlight">104</i>&nbsp;    static int toColumnBinaryType(short code, int type) {
+<b class="fc"><i class="no-highlight">105</i>&nbsp;        return (((int) code) &lt;&lt; 31) | type;</b>
+<i class="no-highlight">106</i>&nbsp;    }
+<i class="no-highlight">107</i>&nbsp;
+<i class="no-highlight">108</i>&nbsp;    static int toColumnType(int type) {
+<i class="no-highlight">109</i>&nbsp;        // clear format flag
+<b class="fc"><i class="no-highlight">110</i>&nbsp;        return type &amp; (~(1 &lt;&lt; 31));</b>
+<i class="no-highlight">111</i>&nbsp;    }
+<i class="no-highlight">112</i>&nbsp;
+<i class="no-highlight">113</i>&nbsp;    static int toParamBinaryType(short code, int type) {
+<b class="fc"><i class="no-highlight">114</i>&nbsp;        return code | type;</b>
+<i class="no-highlight">115</i>&nbsp;    }
+<i class="no-highlight">116</i>&nbsp;
+<i class="no-highlight">117</i>&nbsp;    static int toParamType(int type) {
+<i class="no-highlight">118</i>&nbsp;        // clear format flag
+<b class="fc"><i class="no-highlight">119</i>&nbsp;        return type &amp; (~1);</b>
+<i class="no-highlight">120</i>&nbsp;    }
+<i class="no-highlight">121</i>&nbsp;
+<i class="no-highlight">122</i>&nbsp;    static {
+<b class="fc"><i class="no-highlight">123</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR</b>
+<b class="fc"><i class="no-highlight">124</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP</b>
+<b class="fc"><i class="no-highlight">125</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8</b>
+<b class="fc"><i class="no-highlight">126</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4</b>
+<b class="fc"><i class="no-highlight">127</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.INT, PG_INT4); // INT4</b>
+<b class="fc"><i class="no-highlight">128</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2</b>
+<b class="fc"><i class="no-highlight">129</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.CHAR, PG_CHAR);</b>
+<b class="fc"><i class="no-highlight">130</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME</b>
+<b class="fc"><i class="no-highlight">131</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8</b>
+<b class="fc"><i class="no-highlight">132</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2</b>
+<b class="fc"><i class="no-highlight">133</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL</b>
+<b class="fc"><i class="no-highlight">134</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE</b>
+<b class="fc"><i class="no-highlight">135</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA</b>
+<b class="fc"><i class="no-highlight">136</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_VARCHAR); // VARCHAR</b>
+<b class="fc"><i class="no-highlight">137</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.GEOBYTE, PG_VARCHAR); // VARCHAR</b>
+<b class="fc"><i class="no-highlight">138</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR</b>
+<b class="fc"><i class="no-highlight">139</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR</b>
+<b class="fc"><i class="no-highlight">140</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR</b>
+<b class="fc"><i class="no-highlight">141</i>&nbsp;        TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // VARCHAR</b>
+<i class="no-highlight">142</i>&nbsp;
+<b class="fc"><i class="no-highlight">143</i>&nbsp;        PG_TYPE_OIDS.add(PG_VARCHAR);</b>
+<b class="fc"><i class="no-highlight">144</i>&nbsp;        PG_TYPE_OIDS.add(PG_TIMESTAMP);</b>
+<b class="fc"><i class="no-highlight">145</i>&nbsp;        PG_TYPE_OIDS.add(PG_FLOAT8);</b>
+<b class="fc"><i class="no-highlight">146</i>&nbsp;        PG_TYPE_OIDS.add(PG_FLOAT4);</b>
+<b class="fc"><i class="no-highlight">147</i>&nbsp;        PG_TYPE_OIDS.add(PG_INT4);</b>
+<b class="fc"><i class="no-highlight">148</i>&nbsp;        PG_TYPE_OIDS.add(PG_INT2);</b>
+<b class="fc"><i class="no-highlight">149</i>&nbsp;        PG_TYPE_OIDS.add(PG_CHAR);</b>
+<b class="fc"><i class="no-highlight">150</i>&nbsp;        PG_TYPE_OIDS.add(PG_INT8);</b>
+<b class="fc"><i class="no-highlight">151</i>&nbsp;        PG_TYPE_OIDS.add(PG_BOOL);</b>
+<b class="fc"><i class="no-highlight">152</i>&nbsp;        PG_TYPE_OIDS.add(PG_BYTEA);</b>
+<b class="fc"><i class="no-highlight">153</i>&nbsp;        PG_TYPE_OIDS.add(PG_DATE);</b>
+<b class="fc"><i class="no-highlight">154</i>&nbsp;        PG_TYPE_OIDS.add(PG_UUID);</b>
+<i class="no-highlight">155</i>&nbsp;
+<b class="fc"><i class="no-highlight">156</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);</b>
+<b class="fc"><i class="no-highlight">157</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);</b>
+<b class="fc"><i class="no-highlight">158</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_INT4, Integer.BYTES);</b>
+<b class="fc"><i class="no-highlight">159</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_INT2, Short.BYTES);</b>
+<b class="fc"><i class="no-highlight">160</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_CHAR, Character.BYTES);</b>
+<b class="fc"><i class="no-highlight">161</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Long.BYTES);</b>
+<b class="fc"><i class="no-highlight">162</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);</b>
+<b class="fc"><i class="no-highlight">163</i>&nbsp;        PG_TYPE_TO_SIZE_MAP.put(PG_UUID, Long.BYTES * 2);</b>
+<i class="no-highlight">164</i>&nbsp;
+<b class="fc"><i class="no-highlight">165</i>&nbsp;        PG_TYPE_TO_NAME[0] = &quot;varchar&quot;;</b>
+<b class="fc"><i class="no-highlight">166</i>&nbsp;        PG_TYPE_TO_NAME[1] = &quot;timestamp&quot;;</b>
+<b class="fc"><i class="no-highlight">167</i>&nbsp;        PG_TYPE_TO_NAME[2] = &quot;float8&quot;;</b>
+<b class="fc"><i class="no-highlight">168</i>&nbsp;        PG_TYPE_TO_NAME[3] = &quot;float4&quot;;</b>
+<b class="fc"><i class="no-highlight">169</i>&nbsp;        PG_TYPE_TO_NAME[4] = &quot;int4&quot;;</b>
+<b class="fc"><i class="no-highlight">170</i>&nbsp;        PG_TYPE_TO_NAME[5] = &quot;int2&quot;;</b>
+<b class="fc"><i class="no-highlight">171</i>&nbsp;        PG_TYPE_TO_NAME[6] = &quot;char&quot;;</b>
+<b class="fc"><i class="no-highlight">172</i>&nbsp;        PG_TYPE_TO_NAME[7] = &quot;int8&quot;;</b>
+<b class="fc"><i class="no-highlight">173</i>&nbsp;        PG_TYPE_TO_NAME[8] = &quot;bool&quot;;</b>
+<b class="fc"><i class="no-highlight">174</i>&nbsp;        PG_TYPE_TO_NAME[9] = &quot;binary&quot;;</b>
+<b class="fc"><i class="no-highlight">175</i>&nbsp;        PG_TYPE_TO_NAME[10] = &quot;date&quot;;</b>
+<b class="fc"><i class="no-highlight">176</i>&nbsp;        PG_TYPE_TO_NAME[11] = &quot;uuid&quot;;</b>
+<i class="no-highlight">177</i>&nbsp;    }
+<i class="no-highlight">178</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>

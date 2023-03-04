@@ -1,0 +1,289 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <title>Coverage Report > IOURingImpl</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/highlight-idea.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.pack.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.questdb.std</a>
+</div>
+
+<h1>Coverage Summary for Class: IOURingImpl (io.questdb.std)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">IOURingImpl</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    16.7%
+  </span>
+  <span class="absValue">
+    (2/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    10.8%
+  </span>
+  <span class="absValue">
+    (8/74)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<div class="sourceCode" id="sourceCode"><i class="no-highlight">1</i>&nbsp;/*******************************************************************************
+<i class="no-highlight">2</i>&nbsp; *     ___                  _   ____  ____
+<i class="no-highlight">3</i>&nbsp; *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+<i class="no-highlight">4</i>&nbsp; *   | | | | | | |/ _ \/ __| __| | | |  _ \
+<i class="no-highlight">5</i>&nbsp; *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+<i class="no-highlight">6</i>&nbsp; *    \__\_\\__,_|\___||___/\__|____/|____/
+<i class="no-highlight">7</i>&nbsp; *
+<i class="no-highlight">8</i>&nbsp; *  Copyright (c) 2014-2019 Appsicle
+<i class="no-highlight">9</i>&nbsp; *  Copyright (c) 2019-2022 QuestDB
+<i class="no-highlight">10</i>&nbsp; *
+<i class="no-highlight">11</i>&nbsp; *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+<i class="no-highlight">12</i>&nbsp; *  you may not use this file except in compliance with the License.
+<i class="no-highlight">13</i>&nbsp; *  You may obtain a copy of the License at
+<i class="no-highlight">14</i>&nbsp; *
+<i class="no-highlight">15</i>&nbsp; *  http://www.apache.org/licenses/LICENSE-2.0
+<i class="no-highlight">16</i>&nbsp; *
+<i class="no-highlight">17</i>&nbsp; *  Unless required by applicable law or agreed to in writing, software
+<i class="no-highlight">18</i>&nbsp; *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+<i class="no-highlight">19</i>&nbsp; *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+<i class="no-highlight">20</i>&nbsp; *  See the License for the specific language governing permissions and
+<i class="no-highlight">21</i>&nbsp; *  limitations under the License.
+<i class="no-highlight">22</i>&nbsp; *
+<i class="no-highlight">23</i>&nbsp; ******************************************************************************/
+<i class="no-highlight">24</i>&nbsp;
+<i class="no-highlight">25</i>&nbsp;package io.questdb.std;
+<i class="no-highlight">26</i>&nbsp;
+<i class="no-highlight">27</i>&nbsp;import io.questdb.cairo.CairoException;
+<i class="no-highlight">28</i>&nbsp;import org.jetbrains.annotations.TestOnly;
+<i class="no-highlight">29</i>&nbsp;
+<i class="no-highlight">30</i>&nbsp;import static io.questdb.std.IOUringAccessor.*;
+<i class="no-highlight">31</i>&nbsp;
+<b class="fc"><i class="no-highlight">32</i>&nbsp;public class IOURingImpl implements IOURing {</b>
+<i class="no-highlight">33</i>&nbsp;
+<i class="no-highlight">34</i>&nbsp;    // Holds &lt;id, res&gt; tuples for recently consumed cqes.
+<i class="no-highlight">35</i>&nbsp;    private final long[] cachedCqes;
+<i class="no-highlight">36</i>&nbsp;    private final long cqKheadAddr;
+<i class="no-highlight">37</i>&nbsp;    private final int cqKringMask;
+<i class="no-highlight">38</i>&nbsp;    private final long cqKtailAddr;
+<i class="no-highlight">39</i>&nbsp;    private final long cqesAddr;
+<i class="no-highlight">40</i>&nbsp;    private final IOURingFacade facade;
+<i class="no-highlight">41</i>&nbsp;    private final long ringAddr;
+<i class="no-highlight">42</i>&nbsp;    private final int ringFd;
+<i class="no-highlight">43</i>&nbsp;    private final long sqKheadAddr;
+<i class="no-highlight">44</i>&nbsp;    private final int sqKringEntries;
+<i class="no-highlight">45</i>&nbsp;    private final int sqKringMask;
+<i class="no-highlight">46</i>&nbsp;    private final long sqesAddr;
+<i class="no-highlight">47</i>&nbsp;    // Index of cached cqe tuple.
+<i class="no-highlight">48</i>&nbsp;    private int cachedIndex;
+<i class="no-highlight">49</i>&nbsp;    // Count of cached cqe tuples.
+<i class="no-highlight">50</i>&nbsp;    private int cachedSize;
+<b class="fc"><i class="no-highlight">51</i>&nbsp;    private boolean closed = false;</b>
+<i class="no-highlight">52</i>&nbsp;    private long idSeq;
+<i class="no-highlight">53</i>&nbsp;
+<b class="fc"><i class="no-highlight">54</i>&nbsp;    public IOURingImpl(IOURingFacade facade, int capacity) {</b>
+<b class="fc"><i class="no-highlight">55</i>&nbsp;        assert Numbers.isPow2(capacity);</b>
+<b class="fc"><i class="no-highlight">56</i>&nbsp;        this.facade = facade;</b>
+<b class="fc"><i class="no-highlight">57</i>&nbsp;        final long res = facade.create(capacity);</b>
+<b class="fc"><i class="no-highlight">58</i>&nbsp;        if (res &lt; 0) {</b>
+<b class="fc"><i class="no-highlight">59</i>&nbsp;            throw CairoException.critical((int) -res).put(&quot;Cannot create io_uring instance&quot;);</b>
+<i class="no-highlight">60</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">61</i>&nbsp;        this.ringAddr = res;</b>
+<i class="no-highlight">62</i>&nbsp;
+<b class="nc"><i class="no-highlight">63</i>&nbsp;        this.ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);</b>
+<i class="no-highlight">64</i>&nbsp;
+<b class="nc"><i class="no-highlight">65</i>&nbsp;        this.sqesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_SQES_OFFSET);</b>
+<b class="nc"><i class="no-highlight">66</i>&nbsp;        this.sqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KHEAD_OFFSET);</b>
+<b class="nc"><i class="no-highlight">67</i>&nbsp;        final long sqMaskAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KRING_MASK_OFFSET);</b>
+<b class="nc"><i class="no-highlight">68</i>&nbsp;        this.sqKringMask = Unsafe.getUnsafe().getInt(sqMaskAddr);</b>
+<b class="nc"><i class="no-highlight">69</i>&nbsp;        final long sqEntriesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KRING_ENTRIES_OFFSET);</b>
+<b class="nc"><i class="no-highlight">70</i>&nbsp;        this.sqKringEntries = Unsafe.getUnsafe().getInt(sqEntriesAddr);</b>
+<i class="no-highlight">71</i>&nbsp;
+<b class="nc"><i class="no-highlight">72</i>&nbsp;        this.cqesAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_CQES_OFFSET);</b>
+<b class="nc"><i class="no-highlight">73</i>&nbsp;        this.cqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KHEAD_OFFSET);</b>
+<b class="nc"><i class="no-highlight">74</i>&nbsp;        this.cqKtailAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KTAIL_OFFSET);</b>
+<b class="nc"><i class="no-highlight">75</i>&nbsp;        final long cqMaskAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KRING_MASK_OFFSET);</b>
+<b class="nc"><i class="no-highlight">76</i>&nbsp;        this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskAddr);</b>
+<b class="nc"><i class="no-highlight">77</i>&nbsp;        final long cqEntriesAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KRING_ENTRIES_OFFSET);</b>
+<b class="nc"><i class="no-highlight">78</i>&nbsp;        int cqKringEntries = Unsafe.getUnsafe().getInt(cqEntriesAddr);</b>
+<b class="nc"><i class="no-highlight">79</i>&nbsp;        cachedCqes = new long[2 * cqKringEntries];</b>
+<i class="no-highlight">80</i>&nbsp;
+<b class="nc"><i class="no-highlight">81</i>&nbsp;        Files.bumpFileCount(ringFd);</b>
+<i class="no-highlight">82</i>&nbsp;    }
+<i class="no-highlight">83</i>&nbsp;
+<i class="no-highlight">84</i>&nbsp;    @Override
+<i class="no-highlight">85</i>&nbsp;    public void close() {
+<b class="nc"><i class="no-highlight">86</i>&nbsp;        if (closed) {</b>
+<i class="no-highlight">87</i>&nbsp;            return;
+<i class="no-highlight">88</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">89</i>&nbsp;        Files.decrementFileCount(ringFd);</b>
+<b class="nc"><i class="no-highlight">90</i>&nbsp;        facade.close(ringAddr);</b>
+<b class="nc"><i class="no-highlight">91</i>&nbsp;        closed = true;</b>
+<i class="no-highlight">92</i>&nbsp;    }
+<i class="no-highlight">93</i>&nbsp;
+<i class="no-highlight">94</i>&nbsp;    @Override
+<i class="no-highlight">95</i>&nbsp;    @TestOnly
+<i class="no-highlight">96</i>&nbsp;    public long enqueueNop() {
+<b class="nc"><i class="no-highlight">97</i>&nbsp;        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);</b>
+<i class="no-highlight">98</i>&nbsp;    }
+<i class="no-highlight">99</i>&nbsp;
+<i class="no-highlight">100</i>&nbsp;    @Override
+<i class="no-highlight">101</i>&nbsp;    public long enqueueRead(int fd, long offset, long bufAddr, int len) {
+<b class="nc"><i class="no-highlight">102</i>&nbsp;        return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);</b>
+<i class="no-highlight">103</i>&nbsp;    }
+<i class="no-highlight">104</i>&nbsp;
+<i class="no-highlight">105</i>&nbsp;    @Override
+<i class="no-highlight">106</i>&nbsp;    public long getCqeId() {
+<b class="nc"><i class="no-highlight">107</i>&nbsp;        if (cachedIndex &lt; cachedSize) {</b>
+<b class="nc"><i class="no-highlight">108</i>&nbsp;            return cachedCqes[2 * cachedIndex];</b>
+<i class="no-highlight">109</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">110</i>&nbsp;        return -1;</b>
+<i class="no-highlight">111</i>&nbsp;    }
+<i class="no-highlight">112</i>&nbsp;
+<i class="no-highlight">113</i>&nbsp;    @Override
+<i class="no-highlight">114</i>&nbsp;    public int getCqeRes() {
+<b class="nc"><i class="no-highlight">115</i>&nbsp;        if (cachedIndex &lt; cachedSize) {</b>
+<b class="nc"><i class="no-highlight">116</i>&nbsp;            return (int) cachedCqes[2 * cachedIndex + 1];</b>
+<i class="no-highlight">117</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">118</i>&nbsp;        return -1;</b>
+<i class="no-highlight">119</i>&nbsp;    }
+<i class="no-highlight">120</i>&nbsp;
+<i class="no-highlight">121</i>&nbsp;    @Override
+<i class="no-highlight">122</i>&nbsp;    public boolean nextCqe() {
+<b class="nc"><i class="no-highlight">123</i>&nbsp;        if (++cachedIndex &lt; cachedSize) {</b>
+<b class="nc"><i class="no-highlight">124</i>&nbsp;            return true;</b>
+<i class="no-highlight">125</i>&nbsp;        }
+<i class="no-highlight">126</i>&nbsp;        // Consume all available cqes and store them in the cache.
+<b class="nc"><i class="no-highlight">127</i>&nbsp;        final int tail = Unsafe.getUnsafe().getInt(cqKtailAddr);</b>
+<b class="nc"><i class="no-highlight">128</i>&nbsp;        Unsafe.getUnsafe().loadFence();</b>
+<b class="nc"><i class="no-highlight">129</i>&nbsp;        final int head = Unsafe.getUnsafe().getInt(cqKheadAddr);</b>
+<b class="nc"><i class="no-highlight">130</i>&nbsp;        if (tail == head) {</b>
+<b class="nc"><i class="no-highlight">131</i>&nbsp;            return false;</b>
+<i class="no-highlight">132</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">133</i>&nbsp;        for (int i = head; i &lt; tail; i++) {</b>
+<b class="nc"><i class="no-highlight">134</i>&nbsp;            final long cqeAddr = cqesAddr + (long) (i &amp; cqKringMask) * SIZEOF_CQE;</b>
+<b class="nc"><i class="no-highlight">135</i>&nbsp;            cachedCqes[2 * (i - head)] = Unsafe.getUnsafe().getLong(cqeAddr + CQE_USER_DATA_OFFSET);</b>
+<b class="nc"><i class="no-highlight">136</i>&nbsp;            cachedCqes[2 * (i - head) + 1] = Unsafe.getUnsafe().getInt(cqeAddr + CQE_RES_OFFSET);</b>
+<i class="no-highlight">137</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">138</i>&nbsp;        cachedSize = tail - head;</b>
+<b class="nc"><i class="no-highlight">139</i>&nbsp;        cachedIndex = 0;</b>
+<b class="nc"><i class="no-highlight">140</i>&nbsp;        Unsafe.getUnsafe().putInt(cqKheadAddr, tail);</b>
+<b class="nc"><i class="no-highlight">141</i>&nbsp;        Unsafe.getUnsafe().storeFence();</b>
+<b class="nc"><i class="no-highlight">142</i>&nbsp;        return true;</b>
+<i class="no-highlight">143</i>&nbsp;    }
+<i class="no-highlight">144</i>&nbsp;
+<i class="no-highlight">145</i>&nbsp;    @Override
+<i class="no-highlight">146</i>&nbsp;    public int submit() {
+<b class="nc"><i class="no-highlight">147</i>&nbsp;        return facade.submit(ringAddr);</b>
+<i class="no-highlight">148</i>&nbsp;    }
+<i class="no-highlight">149</i>&nbsp;
+<i class="no-highlight">150</i>&nbsp;    @Override
+<i class="no-highlight">151</i>&nbsp;    public int submitAndWait() {
+<b class="nc"><i class="no-highlight">152</i>&nbsp;        return facade.submitAndWait(ringAddr, 1);</b>
+<i class="no-highlight">153</i>&nbsp;    }
+<i class="no-highlight">154</i>&nbsp;
+<i class="no-highlight">155</i>&nbsp;    private long enqueueSqe(byte op, int fd, long offset, long bufAddr, int len) {
+<b class="nc"><i class="no-highlight">156</i>&nbsp;        final long sqeAddr = nextSqe();</b>
+<b class="nc"><i class="no-highlight">157</i>&nbsp;        if (sqeAddr == 0) {</b>
+<b class="nc"><i class="no-highlight">158</i>&nbsp;            return -1;</b>
+<i class="no-highlight">159</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">160</i>&nbsp;        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);</b>
+<b class="nc"><i class="no-highlight">161</i>&nbsp;        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, fd);</b>
+<b class="nc"><i class="no-highlight">162</i>&nbsp;        Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);</b>
+<b class="nc"><i class="no-highlight">163</i>&nbsp;        Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);</b>
+<b class="nc"><i class="no-highlight">164</i>&nbsp;        Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);</b>
+<b class="nc"><i class="no-highlight">165</i>&nbsp;        final long id = idSeq++;</b>
+<b class="nc"><i class="no-highlight">166</i>&nbsp;        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);</b>
+<b class="nc"><i class="no-highlight">167</i>&nbsp;        return id;</b>
+<i class="no-highlight">168</i>&nbsp;    }
+<i class="no-highlight">169</i>&nbsp;
+<i class="no-highlight">170</i>&nbsp;    /**
+<i class="no-highlight">171</i>&nbsp;     * Returns a pointer to sqe to fill. If there are sqes no available, returns 0.
+<i class="no-highlight">172</i>&nbsp;     */
+<i class="no-highlight">173</i>&nbsp;    private long nextSqe() {
+<b class="nc"><i class="no-highlight">174</i>&nbsp;        final int head = Unsafe.getUnsafe().getInt(sqKheadAddr);</b>
+<b class="nc"><i class="no-highlight">175</i>&nbsp;        Unsafe.getUnsafe().loadFence();</b>
+<b class="nc"><i class="no-highlight">176</i>&nbsp;        final int tail = Unsafe.getUnsafe().getInt(ringAddr + SQ_SQE_TAIL_OFFSET);</b>
+<b class="nc"><i class="no-highlight">177</i>&nbsp;        if (tail - head &lt; sqKringEntries) {</b>
+<b class="nc"><i class="no-highlight">178</i>&nbsp;            final long addr = sqesAddr + (long) (tail &amp; sqKringMask) * SIZEOF_SQE;</b>
+<b class="nc"><i class="no-highlight">179</i>&nbsp;            Unsafe.getUnsafe().putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);</b>
+<b class="nc"><i class="no-highlight">180</i>&nbsp;            return addr;</b>
+<i class="no-highlight">181</i>&nbsp;        }
+<b class="nc"><i class="no-highlight">182</i>&nbsp;        return 0;</b>
+<i class="no-highlight">183</i>&nbsp;    }
+<i class="no-highlight">184</i>&nbsp;}
+</div>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+        var codeBlock = document.getElementById('sourceCode');
+
+        if (codeBlock) {
+            hljs.highlightBlock(codeBlock);
+        }
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2023-02-16 15:46</div>
+</div>
+</body>
+</html>
