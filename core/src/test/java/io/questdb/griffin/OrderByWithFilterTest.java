@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -116,7 +116,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
                         "6\tDEF\t2022-01-08T18:53:20.000000Z\n",
                 "select l, s, ts from trips where s = 'DEF' order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -142,7 +142,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -165,7 +165,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and test_match() order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -184,7 +184,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\tABC\t2022-01-04T03:46:40.000000Z\n" +
                         "1\tABC\t2022-01-03T00:00:00.000000Z\n",
                 "select l, s, ts from trips where s in (select 'DEF' union all select 'ABC' ) and length(s) = 3 order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -203,7 +203,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s in ('A2', 'A0') and length(s) = 2 order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -233,7 +233,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -303,7 +303,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "8\t2022-01-01T19:26:40.000000Z\tNaN\t\n" +
                         "7\t2022-01-01T16:40:00.000000Z\tNaN\t\n",
                 "select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -319,7 +319,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 1",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -336,7 +336,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 3, 5",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -355,7 +355,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < '2022-01-04T04' " +
                         "order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     @Test
@@ -403,28 +403,37 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderByTimestampWithNonJitFilter() throws Exception {
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                    "insert into trips " +
+                            "  select x," +
+                            "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                            "  from long_sequence(10);");
 
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
-                "insert into trips " +
-                        "  select x," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
-
-        assertQuery("l\tts\n" +
-                        "5\t2022-01-07T15:06:40.000000Z\n" +
-                        "4\t2022-01-06T11:20:00.000000Z\n" +
-                        "3\t2022-01-05T07:33:20.000000Z\n" +
-                        "2\t2022-01-04T03:46:40.000000Z\n" +
-                        "1\t2022-01-03T00:00:00.000000Z\n",
-                "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false, false);
+            assertQuery("l\tts\n" +
+                            "5\t2022-01-07T15:06:40.000000Z\n" +
+                            "4\t2022-01-06T11:20:00.000000Z\n" +
+                            "3\t2022-01-05T07:33:20.000000Z\n" +
+                            "2\t2022-01-04T03:46:40.000000Z\n" +
+                            "1\t2022-01-03T00:00:00.000000Z\n",
+                    "select l, ts from trips where l <=5 order by ts desc limit 5",
+                    null, "ts###DESC", true, false, false);
+        } finally {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
     }
 
     @Test
     public void testOrderByTimestampWithNonJitFilterDesc() throws Exception {
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testOrderByTimestampWithFilterDesc();
+        int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            testOrderByTimestampWithFilterDesc();
+        } finally {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
     }
 
     private void assertOrderByInOverClause(String expected, String direction) throws Exception {

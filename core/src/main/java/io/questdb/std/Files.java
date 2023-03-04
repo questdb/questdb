@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -213,6 +213,19 @@ public final class Files {
 
     public static int hardLink(LPSZ src, LPSZ hardLink) {
         return hardLink(src.address(), hardLink.address());
+    }
+
+    public static boolean isDirOrSoftLinkDir(LPSZ path) {
+        long ptr = findFirst(path);
+        if (ptr < 1L) {
+            return false;
+        }
+        try {
+            int type = findType(ptr);
+            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+        } finally {
+            findClose(ptr);
+        }
     }
 
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {

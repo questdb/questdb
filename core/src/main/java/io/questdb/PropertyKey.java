@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 public enum PropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
+    CAIRO_VOLUMES("cairo.volumes"),
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
@@ -271,6 +272,7 @@ public enum PropertyKey {
     LINE_TCP_NET_BIND_TO("line.tcp.net.bind.to"),
     LINE_TCP_NET_IDLE_TIMEOUT("line.tcp.net.idle.timeout"),
     LINE_TCP_NET_CONNECTION_TIMEOUT("line.tcp.net.connection.timeout"),
+    LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL("line.tcp.net.connection.heartbeat.interval"),
     LINE_TCP_NET_QUEUED_TIMEOUT("line.tcp.net.queued.timeout"),
     LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT("line.tcp.net.connection.queue.timeout"),
     LINE_TCP_NET_RECV_BUF_SIZE("line.tcp.net.recv.buf.size"),

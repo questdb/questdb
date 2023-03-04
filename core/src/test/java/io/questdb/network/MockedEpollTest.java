@@ -24,31 +24,35 @@
 
 package io.questdb.network;
 
-public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
-    protected IODispatcher<T> dispatcher;
-    protected int fd = -1;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
-    @Override
-    public void clear() {
-        this.fd = -1;
-        this.dispatcher = null;
+import static org.mockito.Mockito.*;
+
+public class MockedEpollTest {
+
+    private static Epoll epoll;
+    private static IODispatcherLinux ioDispatcherLinux;
+    private static IOContextFactory<HttpConnectionContext> ioContextFactory;
+    @BeforeClass
+    public static void setUp(){
+        epoll = mock(Epoll.class);
+        IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration();
+        ioContextFactory = mock(IOContextFactory.class);
+        ioDispatcherLinux = new IODispatcherLinux(configuration, ioContextFactory, epoll);
     }
 
-    @Override
-    public IODispatcher<T> getDispatcher() {
-        return dispatcher;
+    @Test
+    public void testRegister(){
+        verify(epoll, times(1)).listen(anyInt()); // once in constructor
+        ioDispatcherLinux.registerListenerFd();
+        verify(epoll, times(2)).listen(anyInt());
     }
 
-    @Override
-    public int getFd() {
-        return fd;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public T of(int fd, IODispatcher<T> dispatcher) {
-        this.fd = fd;
-        this.dispatcher = dispatcher;
-        return (T) this;
+    @Test
+    public void testUnregister(){
+        ioDispatcherLinux.unregisterListenerFd();
+        verify(epoll, times(1)).removeListen(anyInt());
     }
 }

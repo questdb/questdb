@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -278,6 +278,21 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
+        testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
+    }
+
+    @Test
+    public void testExplicitTimestampIsNotNecessaryWhenLtJoiningExplicitlyOrderedTables() throws Exception {
+        testExplicitTimestampIsNotNecessaryWhenJoining("lt join", "ts");
+    }
+
+    @Test
+    public void testExplicitTimestampIsNotNecessaryWhenSpliceJoiningExplicitlyOrderedTables() throws Exception {
+        testExplicitTimestampIsNotNecessaryWhenJoining("splice join", null);
+    }
+
+    @Test
     public void testLtJoin() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
@@ -373,16 +388,16 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
             executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
-            String expected = "ts\tcolumn\n" +
-                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
-                    "2021-07-26T02:36:03.094000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n";
-            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
+            String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000Z\t1\tNaN\tNaN\n" +
+                    "2021-07-26T02:36:03.094000Z\t2\t1\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t3\t2\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t4\t2\t2\n" +
+                    "2021-07-26T02:36:03.097000Z\t5\t2\t3\n" +
+                    "2021-07-26T02:36:03.097000Z\t6\t2\t4\n" +
+                    "2021-07-26T02:36:03.098000Z\t7\t6\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t8\t6\t2\n";
+            String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
             printSqlResult(expected, query, "ts", false, true);
         });
     }
@@ -784,5 +799,15 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
         });
+    }
+
+    private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
+        assertQuery("ts\ty\tts1\ty1\n",
+                "select * from " +
+                        "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
+                        joinType +
+                        "(select * from x order by ts limit 5) b",
+                "create table x (ts timestamp, y int) timestamp(ts)",
+                timestamp, false);
     }
 }
