@@ -45,8 +45,9 @@ public class MockedEpollTest {
 
     @Test
     public void testRegister(){
+        verify(epoll, times(1)).listen(anyInt()); // once in constructor
         ioDispatcherLinux.registerListenerFd();
-        verify(epoll, times(2)).listen(anyInt()); // once in constructor
+        verify(epoll, times(2)).listen(anyInt());
     }
 
     @Test

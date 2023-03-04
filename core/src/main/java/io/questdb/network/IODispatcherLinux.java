@@ -35,7 +35,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
     // id 0 is reserved for operations on the server fd
     private long idSeq = 1;
-
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
