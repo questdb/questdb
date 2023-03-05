@@ -25,8 +25,10 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
 
 import static org.mockito.Mockito.*;
 
@@ -55,4 +57,23 @@ public class MockedEpollTest {
         ioDispatcherLinux.unregisterListenerFd();
         verify(epoll, times(1)).removeListen(anyInt());
     }
+
+    @Test
+    public void testEpollGetEvent(){
+        Integer eventNum = epoll.getEvent();
+        Assert.assertEquals((Integer) 0, (Integer) eventNum);
+    }
+
+    @Test
+    public void testEpollGetData(){
+        long data = epoll.getData();
+        Assert.assertEquals((long) 0, (long) data);
+    }
+
+    @Test
+    public void testPoll(){
+        Integer pollNum = epoll.poll();
+        Assert.assertEquals((Integer) 0, (Integer) pollNum);
+    }
+
 }
