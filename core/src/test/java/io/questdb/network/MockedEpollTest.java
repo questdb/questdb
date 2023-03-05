@@ -56,7 +56,7 @@ public class MockedEpollTest {
         ioDispatcherLinux.unregisterListenerFd();
         verify(epoll, times(1)).removeListen(anyInt());
     }
-
+    
     // Test methods in Class Epoll
     @Test
     public void testEpollGetEvent(){
@@ -75,6 +75,11 @@ public class MockedEpollTest {
         Integer pollNum = epoll.poll();
         Assert.assertEquals((Integer) 0, (Integer) pollNum);
     }
-
-
+    
+    // Test methods in Class ioDispatcherLinux
+    @Test
+    public void testCloseioDispatcherLinux() {
+        ioDispatcherLinux.close();
+        Assert.assertTrue("closed", ioDispatcherLinux.closed);
+    }
 }
