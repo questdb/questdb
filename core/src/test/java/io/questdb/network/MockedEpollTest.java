@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -54,5 +55,11 @@ public class MockedEpollTest {
     public void testUnregister(){
         ioDispatcherLinux.unregisterListenerFd();
         verify(epoll, times(1)).removeListen(anyInt());
+    }
+
+    @Test
+    public void testCloseioDispatcherLinux() {
+        ioDispatcherLinux.close();
+        Assert.assertTrue("closed", ioDispatcherLinux.closed);
     }
 }
