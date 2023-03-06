@@ -59,7 +59,7 @@ public class MockedEpollTest {
     
     // Test methods in Class ioDispatcherLinux
     @Test
-    public void testCloseioDispatcherLinux() {
+    public void testCloseIoDispatcherLinux() {
         ioDispatcherLinux.close();
         Assert.assertTrue("closed", ioDispatcherLinux.closed);
     }
