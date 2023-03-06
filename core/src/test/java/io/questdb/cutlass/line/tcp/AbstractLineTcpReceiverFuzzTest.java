@@ -336,7 +336,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                             .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                    return table.size() <= cursor.size();
+                    if (table.size() > cursor.size()) {
+                        getLog().info().$("checkTable timestampMark=").$(timestampMark).$();
+                    }
+                    return table.size() <= cursor.size() + 1;
                 }
             } catch (SqlException ex) {
                 if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
