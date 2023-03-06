@@ -241,6 +241,8 @@ public final class Os {
         }
     }
 
+    native static void initQuestdbJni();
+
     static {
         type = determinePlatformType();
         if (type != _32Bit) {
@@ -257,6 +259,9 @@ public final class Os {
                     Os.class,
                     "/io/questdb/bin/",
                     "questdb_jni");
+
+            // Set up loggers and other stuff that the Rust environment needs.
+            initQuestdbJni();
         }
     }
 }

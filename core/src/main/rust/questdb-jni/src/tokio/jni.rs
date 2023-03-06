@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-use jni::{JavaVM, JNIEnv};
+use jni::JNIEnv;
 use jni::objects::JClass;
-use jni::sys::{jint, jlong, jobject};
+use jni::sys::{jint, jlong};
 use tokio::runtime::{Builder, Runtime};
 
 #[no_mangle]
@@ -37,18 +37,6 @@ pub extern "system" fn Java_io_questdb_tokio_TokioRuntime_create(
             .and_then(|clazz| env.throw_new(clazz, "workerThreads must be >= 0"))
             .expect("failed to throw TokioException");
         return 0;
-    }
-    let vm = match env.get_java_vm() {
-        Ok(vm) => vm,
-        Err(e) => {
-            env.find_class("io/questdb/tokio/TokioException")
-                .and_then(|clazz| env.throw_new(clazz, e.to_string()))
-                .expect("failed to throw TokioException");
-            return 0;
-        }
-    };
-    unsafe {
-        crate::JAVA_VM = vm.get_java_vm_pointer();
     }
     let mut builder = Builder::new_multi_thread();
     builder.enable_all();
