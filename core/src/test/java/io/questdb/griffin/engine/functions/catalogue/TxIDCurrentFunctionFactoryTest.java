@@ -25,17 +25,30 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class PrefixedPgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
+public class TxIDCurrentFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testPrefixedPgGetKeywordsFunc() throws Exception {
-        sink.clear();
-        sink.put("word\tcatcode\tcatdesc\n");
-        for (CharSequence keyword : Constants.KEYWORDS) {
-            sink.put(keyword).put('\t').put('\t').put('\n');
-        }
-        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
+    public void testPrefixedTxIDCurrentFunc() throws Exception {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select pg_catalog.txid_current();",
+                sink,
+                "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+        );
+    }
+
+    @Test
+    public void testTxIDCurrentFunc() throws Exception {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select txid_current();",
+                sink,
+                "txid_current\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
+        );
     }
 }

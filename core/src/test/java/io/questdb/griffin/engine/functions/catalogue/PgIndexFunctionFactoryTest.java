@@ -24,10 +24,34 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedTxIDCurrentFunctionFactory extends TxIDCurrentFunctionFactory {
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.txid_current()";
+public class PgIndexFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testPgIndexFunc() throws Exception {
+        assertQuery(
+                "indkey\tindrelid\tindexrelid\tindisprimary\n",
+                "pg_index;",
+                "create table x(a int)",
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testPrefixedPgIndexFunc() throws Exception {
+        assertQuery(
+                "indkey\tindrelid\tindexrelid\tindisprimary\n",
+                "pg_catalog.pg_index;",
+                "create table x(a int)",
+                null,
+                false,
+                false,
+                true
+        );
     }
 }

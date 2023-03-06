@@ -24,38 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordMetadata;
-
-public class PrefixedPgRolesFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private final static RecordMetadata METADATA;
+public class PrefixedPgRolesFunctionFactory extends PgRolesFunctionFactory {
 
     public PrefixedPgRolesFunctionFactory() {
-        super("pg_catalog.pg_roles()", METADATA);
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("rolname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("rolsuper", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolinherit", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolcreaterole", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolcreatedb", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolcanlogin", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolreplication", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolconnlimit", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("rolpassword", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("rolvaliduntil", ColumnType.TIMESTAMP));
-        metadata.add(new TableColumnMetadata("rolbypassrls", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("rolconfig", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
-        METADATA = metadata;
+        super("pg_catalog.pg_roles()");
     }
 }

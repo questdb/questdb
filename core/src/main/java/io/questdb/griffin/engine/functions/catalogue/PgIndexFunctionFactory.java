@@ -24,10 +24,33 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedTxIDCurrentFunctionFactory extends TxIDCurrentFunctionFactory {
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
+
+public class PgIndexFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private final static RecordMetadata METADATA;
+
+    public PgIndexFunctionFactory() {
+        this("pg_index()");
+    }
+
+    protected PgIndexFunctionFactory(String signature) {
+        super(signature, METADATA);
+    }
 
     @Override
-    public String getSignature() {
-        return "pg_catalog.txid_current()";
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN));
+        METADATA = metadata;
     }
 }

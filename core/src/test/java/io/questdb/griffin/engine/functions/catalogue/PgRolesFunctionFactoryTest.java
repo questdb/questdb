@@ -27,14 +27,27 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
-public class PrefixedPgIndexFunctionFactoryTest extends AbstractGriffinTest {
+public class PgRolesFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testPgIndexFunc() throws Exception {
+    public void testPgRolesFunc() throws Exception {
         assertQuery(
-                "indkey\tindrelid\tindexrelid\tindisprimary\n",
-                "pg_catalog.pg_index;",
-                "create table x(a int)",
+                "rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n",
+                "pg_roles;",
+                null,
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testPrefixedPgRolesFunc() throws Exception {
+        assertQuery(
+                "rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n",
+                "pg_catalog.pg_roles;",
+                null,
                 null,
                 false,
                 false,
