@@ -177,4 +177,14 @@ public interface CharSink extends CharSinkBase {
     default void putUtf8Special(char c) {
         put(c);
     }
+
+    /**
+     * Write bytes which are already encoded as UTF-8.
+     */
+    default CharSinkBase putUtf8(long size, long ptr) {
+        for (long i = 0; i < size; ++i) {
+            put((char) Unsafe.getUnsafe().getByte(ptr + i));
+        }
+        return this;
+    }
 }

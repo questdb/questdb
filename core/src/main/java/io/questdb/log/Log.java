@@ -59,4 +59,24 @@ public interface Log {
     LogRecord xerror();
 
     LogRecord xinfo();
+
+    default void advisoryUtf8(long lo, long hi) {
+        advisory().$utf8(lo, hi);
+    }
+
+    default void criticalUtf8(long lo, long hi) {
+        critical().$utf8(lo, hi);
+    }
+
+    default void debugUtf8(long lo, long hi) {
+        debug().$utf8(lo, hi);
+    }
+
+    default void errorUtf8(long lo, long hi) {
+        error().$utf8(lo, hi);
+    }
+
+    default void infoUtf8(long lo, long hi) {
+        info().$utf8(lo, hi);
+    }
 }
