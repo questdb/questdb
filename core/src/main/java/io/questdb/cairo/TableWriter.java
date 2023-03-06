@@ -858,6 +858,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
+    public void commitSeqTxn() {
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+    }
+
     public void destroy() {
         // Closes all the files and makes this instance unusable e.g. it cannot return to the pool on close.
         LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())
@@ -1420,7 +1424,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
-                        || (commitToTimestamp != Long.MAX_VALUE && totalUncommitted < metadata.getMaxUncommittedRows());
+                        || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
                 if (copyToLagOnly && totalUncommitted < MAX_WAL_LAG_ROWS) {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
@@ -1557,8 +1561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMin,
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
-            long seqTxn,
-            boolean isTerminating
+            long seqTxn
     ) {
         if (inTransaction()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1570,6 +1573,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+
+        if (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT) {
+            // If committed to this timestamp, will it make any of the transactions fully committed?
+            long canCommitToTxn = walTxnDetails.getFullyCommittedTxn(txWriter.getSeqTxn(), seqTxn, commitToTimestamp);
+            if (canCommitToTxn <= txWriter.getSeqTxn()) {
+                // no transactions will be fully committed anyway, copy to LAG without committing.
+                commitToTimestamp = Long.MIN_VALUE;
+            }
+        }
 
         LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo)
                 .$(", roHi=").$(rowHi)
@@ -1612,9 +1624,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Nothing was committed to the table, only copied to LAG.
             // Keep in memory last committed seq txn, but do not write it to _txn file.
             txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
-            if (isTerminating) {
-                txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
-            }
         }
         return 0L;
     }
@@ -1640,8 +1649,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             walTxnDetails = new WalTxnDetails(ff);
         }
 
-        transactionLogCursor.reset(Math.max(txWriter.getSeqTxn(), walTxnDetails.getLastSeqTxn()));
-        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, rootLen, txWriter.getSeqTxn(), txWriter.getMaxTimestamp());
+        long appliedSeqTxn = txWriter.getSeqTxn();
+        transactionLogCursor.reset(Math.max(appliedSeqTxn, walTxnDetails.getLastSeqTxn()));
+        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, rootLen, appliedSeqTxn, txWriter.getMaxTimestamp());
     }
 
     /**

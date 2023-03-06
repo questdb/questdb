@@ -280,10 +280,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Path tempPath,
             RunStatus runStatus
     ) {
-        long timeSpent = microClock.getTicks();
-        final long timeLimit = timeSpent + maxTimePerTableMicro;
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
+        boolean finishedAll = true;
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -304,8 +303,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 transactionLogCursor.toTop();
 
                 isTerminating = runStatus.isTerminating();
+                final long timeLimit = microClock.getTicks() + maxTimePerTableMicro;
                 WHILE_TRANSACTION_CURSOR:
-                while (!isTerminating && timeSpent <= timeLimit && transactionLogCursor.hasNext()) {
+                while (!isTerminating && (finishedAll = microClock.getTicks() <= timeLimit) && transactionLogCursor.hasNext()) {
                     final int walId = transactionLogCursor.getWalId();
                     final int segmentId = transactionLogCursor.getSegmentId();
                     final long segmentTxn = transactionLogCursor.getSegmentTxn();
@@ -381,8 +381,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
                             }
 
-                            timeSpent = microClock.getTicks();
-                            isTerminating = runStatus.isTerminating() || timeSpent > timeLimit;
+
+                            isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
                                     writer,
                                     walId,
@@ -390,8 +390,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     segmentTxn,
                                     operationCompiler,
                                     seqTxn,
-                                    commitTimestamp,
-                                    isTerminating
+                                    commitTimestamp
                             );
 
                             if (added > -1L) {
@@ -407,9 +406,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                 }
                 totalTransactionCount += iTransaction;
+
+                if (!finishedAll || isTerminating) {
+                    writer.commitSeqTxn();
+                }
+
                 if (totalTransactionCount > 0) {
                     LOG.info().$("job ")
-                            .$(timeSpent <= timeLimit ? "finished" : "ejected")
+                            .$(finishedAll ? "finished" : "ejected")
                             .$(" [table=").$(writer.getTableToken().getDirName())
                             .$(", seqTxn=").$(writer.getAppliedSeqTxn())
                             .$(", transactions=").$(totalTransactionCount)
@@ -419,7 +423,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
-                return timeSpent <= timeLimit;
+                return finishedAll;
             } finally {
                 Misc.free(structuralChangeCursor);
             }
@@ -441,8 +445,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long segmentTxn,
             OperationCompiler operationCompiler,
             long seqTxn,
-            long commitTimestamp,
-            boolean isTerminating
+            long commitTimestamp
     ) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
@@ -463,8 +466,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 dataInfo.getMinTimestamp(),
                                 dataInfo.getMaxTimestamp(),
                                 dataInfo,
-                                seqTxn,
-                                isTerminating
+                                seqTxn
                         );
                         final long latency = microClock.getTicks() - start;
                         long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();

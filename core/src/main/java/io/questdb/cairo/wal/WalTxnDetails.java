@@ -35,6 +35,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalTxnDetails {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
+    public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
     public static final int TXN_METADATA_LONGS_SIZE = 3;
     private static final int MAX_TIMESTAMP_OFFSET = 2;
     private static final int MIN_TIMESTAMP_OFFSET = 1;
@@ -47,7 +48,8 @@ public class WalTxnDetails {
     }
 
     public long getCommitToTimestamp(long seqTxn) {
-        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE));
+        long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE));
+        return value == LAST_ROW_COMMIT ? FORCE_FULL_COMMIT : value;
     }
 
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {
@@ -69,11 +71,11 @@ public class WalTxnDetails {
     }
 
     public void readObservableTxnMeta(
-            Path tempPath,
-            TransactionLogCursor transactionLogCursor,
-            int rootLen,
-            long committedSeqTxn,
-            long maxCommittedTimestamp
+            final Path tempPath,
+            final TransactionLogCursor transactionLogCursor,
+            final int rootLen,
+            final long committedSeqTxn,
+            final long maxCommittedTimestamp
     ) {
         if (committedSeqTxn <= getLastSeqTxn()) {
             int shift = (int) (committedSeqTxn - startSeqTxn + 1);
@@ -140,7 +142,7 @@ public class WalTxnDetails {
         }
 
         // set commit to timestamp moving backwards
-        long runningMinTimestamp = Long.MAX_VALUE;
+        long runningMinTimestamp = LAST_ROW_COMMIT;//Long.MAX_VALUE;
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
 
             long commitToTimestamp = runningMinTimestamp;
@@ -151,7 +153,7 @@ public class WalTxnDetails {
                 transactionMeta.set(i, commitToTimestamp);
             } else {
                 // Force full commit before this record
-                runningMinTimestamp = Long.MAX_VALUE;
+                runningMinTimestamp = FORCE_FULL_COMMIT;
             }
         }
 

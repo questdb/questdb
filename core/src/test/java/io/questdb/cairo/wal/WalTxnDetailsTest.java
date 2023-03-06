@@ -187,6 +187,47 @@ public class WalTxnDetailsTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testLastCommitToTimestampIsUpdated() {
+        TableToken tableToken = createTable(testName.getMethodName());
+        commitWalRows(tableToken, 2, "2022-02-24T02:00", "2022-02-24T12");
+        drainWalQueue();
+
+        commitWalRows(tableToken, 200, "2022-02-24T08", "2022-02-24T13");
+        commitWalRows(tableToken, 200, "2022-02-24T09", "2022-02-24T13");
+        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalRows(tableToken, 200, "2022-02-24T10", "2022-02-24T15");
+        commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
+        commitWalRows(tableToken, 200, "2022-02-24T13", "2022-02-24T18");
+
+        try (TableWriter writer = getWriter(tableToken)) {
+            int startTxn = (int) writer.getAppliedSeqTxn();
+
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
+                writer.readWalTxnDetails(cursor);
+                WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
+                assertTimestampEquals("2022-02-24T12:05", walTnxDetails.getCommitToTimestamp(startTxn + 4));
+                assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 6));
+            }
+
+            // Add one more commit
+            commitWalRows(tableToken, 200, "2022-02-24T15", "2022-02-24T18");
+
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn() + 5)) {
+                writer.readWalTxnDetails(cursor);
+
+                WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+                assertTimestampEquals("2022-02-24T15", walTnxDetails.getCommitToTimestamp(startTxn + 6));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 7));
+            }
+        }
+    }
+
     private static void commitWalRows(TableToken tableToken, int rowCount, long from, long to) {
         long step = (to - from) / (rowCount - 1);
 
