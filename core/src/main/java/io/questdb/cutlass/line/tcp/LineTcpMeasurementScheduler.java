@@ -807,7 +807,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 appendToWal(netIoJob, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
-                    ex.printStackTrace();
                     // table dropped, nothing to worry about
                     LOG.info().$("closing writer because table has been dropped [table=").$(measurementName).I$();
                     tud.setWriterInError();

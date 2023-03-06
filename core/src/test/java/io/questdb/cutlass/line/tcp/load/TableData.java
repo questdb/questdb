@@ -97,19 +97,16 @@ public class TableData {
 
     public void obtainPermit() {
         writePermits.incrementAndGet();
-        System.out.println("obtain, tableName=" + tableName + ", writePermits=" + writePermits.get());
     }
 
     public void returnPermit() {
         writePermits.decrementAndGet();
-        System.out.println("return, tableName=" + tableName + ", writePermits=" + writePermits.get());
     }
 
     public synchronized void clear() {
         rows.clear();
         index.clear();
         writePermits.set(0);
-        System.out.println("clear, tableName=" + tableName + ", writePermits=" + writePermits.get());
     }
 
     public synchronized int size() {
