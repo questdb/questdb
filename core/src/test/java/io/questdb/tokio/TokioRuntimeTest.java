@@ -51,4 +51,11 @@ public class TokioRuntimeTest {
         try (TokioRuntime runtime = new TokioRuntime(1)) {
         }
     }
+
+    @Test
+    public void testNullAfterClose() {
+        TokioRuntime runtime = new TokioRuntime();
+        runtime.close();
+        Assert.assertEquals(0, runtime.getPtr());
+    }
 }

@@ -29,5 +29,8 @@ use tokio::runtime::Runtime;
 
 #[allow(dead_code)]
 pub fn runtime_from_jlong(ptr: jlong) -> &'static mut Runtime {
+    if ptr == 0 {
+        panic!("TokioRuntime pointer is null");
+    }
     unsafe { &mut *(ptr as *mut Runtime) }
 }
