@@ -24,13 +24,20 @@
 
 package io.questdb.tokio;
 
+import io.questdb.ServerMain;
 import io.questdb.std.Os;
+import junit.framework.TestCase;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TokioRuntimeTest {
+public class TokioRuntimeTest extends TestCase {
     static {
         Os.init();
+    }
+
+    @Override
+    protected void setUp() {
+        ServerMain.initQuestdbJni();
     }
 
     @Test

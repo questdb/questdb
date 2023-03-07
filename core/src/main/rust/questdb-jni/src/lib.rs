@@ -22,7 +22,7 @@ fn get_jenv() -> Option<jni::JNIEnv<'static>> {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_initQuestdbJni(env: JNIEnv,_class: JClass) {
+pub extern "system" fn Java_io_questdb_ServerMain_initQuestdbJni(env: JNIEnv,_class: JClass) {
     let vm = match env.get_java_vm() {
         Ok(vm) => vm,
         Err(e) => {
