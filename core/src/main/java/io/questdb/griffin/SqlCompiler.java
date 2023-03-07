@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
@@ -2401,7 +2402,11 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.of(new TableListRecordCursorFactory());
             }
             if (isColumnsKeyword(tok)) {
-                return sqlShowColumns(executionContext);
+                return compiledQuery.of(new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext)));
+            }
+
+            if (isPartitionsKeyword(tok)) {
+                return compiledQuery.of(new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext)));
             }
 
             if (isTransactionKeyword(tok)) {
@@ -2439,7 +2444,7 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables', 'columns' or 'time zone'");
     }
 
-    private CompiledQuery sqlShowColumns(SqlExecutionContext executionContext) throws SqlException {
+    private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (null == tok || !isFromKeyword(tok)) {
@@ -2450,8 +2455,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-        return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableToken));
+        return tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
     }
 
     private CompiledQuery sqlShowTransaction() throws SqlException {

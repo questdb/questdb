@@ -178,6 +178,35 @@ public final class Files {
         return getDiskSize(0);
     }
 
+    public static long getDirectoryContentSize(Path path) {
+        final int rootLen = path.length();
+        final long addr = path.address();
+        if (isDir(addr) && path.charAt(rootLen - 1) != '.') {
+            final long pFind = findFirst(addr);
+            if (pFind > 0L) {
+                long totalSize = 0L;
+                try {
+                    while (findNext(pFind) > 0) {
+                        long name = findName(pFind);
+                        path.trimTo(rootLen).slash$();
+                        Chars.utf8DecodeZ(name, path);
+                        path.$();
+                        if (findType(pFind) == Files.DT_FILE) {
+                            totalSize += length0(addr);
+                        } else if (notDots(name) && isDir(addr)) {
+                            totalSize += getDirectoryContentSize(path);
+                        }
+                    }
+                } finally {
+                    findClose(pFind);
+                    path.trimTo(rootLen).$();
+                }
+                return totalSize;
+            }
+        }
+        return -1L; // not a folder, or link to one
+    }
+
     /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.
@@ -499,7 +528,7 @@ public final class Files {
 
     private native static boolean isDir(long pUtf8PathZ);
 
-    private native static long length0(long lpszName);
+    public native static long length0(long lpszName);
 
     private native static int mkdir(long lpszPath, int mode);
 

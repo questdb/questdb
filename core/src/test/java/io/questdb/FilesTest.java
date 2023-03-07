@@ -246,6 +246,141 @@ public class FilesTest {
     }
 
     @Test
+    public void testDirectoryContentSize() throws Exception {
+        String content = "Disk partitioning is the creation of one or more regions on secondary storage," + System.lineSeparator() +
+                "so that each region can be managed separately. These regions are called partitions." + System.lineSeparator() +
+                "The disk stores the information about the partitions' locations and sizes in an area" + System.lineSeparator() +
+                "known as the partition table that the operating system reads before any other part of" + System.lineSeparator() +
+                "the disk. Each partition then appears to the operating system as a distinct 'logical'" + System.lineSeparator() +
+                "disk that uses part of the actual disk." + System.lineSeparator();
+        assertMemoryLeak(() -> {
+            File noFolder = temporaryFolder.newFolder("yes", "no");
+            File yesFolder = noFolder.getParentFile();
+            File parentOfYesFolder = yesFolder.getParentFile();
+            try (Path path = new Path().of(parentOfYesFolder.getAbsolutePath()).$()) {
+                int rootLen = path.length();
+
+                Assert.assertTrue(Files.isDirOrSoftLinkDir(path.concat("..").$()));
+                Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
+
+                Assert.assertTrue(Files.isDirOrSoftLinkDir(path.trimTo(rootLen).concat("yes").$()));
+                Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
+
+                Assert.assertTrue(Files.isDirOrSoftLinkDir(path.concat("..").$()));
+                Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
+
+                // create files at yes level
+                createTempFile(path.parent(), "prose.txt", content);
+                Assert.assertEquals(content.length(), Files.length(path));
+                createTempFile(path.parent(), "dinner.txt", content);
+                Assert.assertEquals(content.length(), Files.length(path));
+                createTempFile(path.parent(), "apple.txt", content);
+                Assert.assertEquals(content.length(), Files.length(path));
+
+                // create files at no level
+                createTempFile(path.parent().concat("no"), "lunch.txt", content);
+                Assert.assertEquals(content.length(), Files.length(path));
+                createTempFile(path.parent(), "paella.txt", content);
+                Assert.assertEquals(content.length(), Files.length(path));
+
+                Assert.assertEquals(5 * content.length(), Files.getDirectoryContentSize(path.trimTo(rootLen).$()));
+                Assert.assertEquals(5 * content.length(), Files.getDirectoryContentSize(path.concat("yes").$()));
+                Assert.assertEquals(2 * content.length(), Files.getDirectoryContentSize(path.concat("no").$()));
+                Assert.assertEquals(-1L, Files.getDirectoryContentSize(path.concat("paella.txt").$()));
+                Assert.assertEquals(content.length(), Files.length(path));
+            }
+        });
+    }
+
+    @Test
+    public void testDirectoryContentSizeWithLinks() throws Exception {
+        String content = "RDBMSs favor consistency over availability and performance which" + System.lineSeparator() +
+                "complicates scaling the system horizontally with efficiency in big data" + System.lineSeparator() +
+                "scenarios. As a result, new DBMSs were developed to relax some consistency " + System.lineSeparator() +
+                "constraints and provide better scalability and performance. Many new technologies," + System.lineSeparator() +
+                "therefore, were introduced including wide-column stores Google Bigtable, " + System.lineSeparator() +
+                "Apache Cassandra, Apache HBase; key-value stores DynamoDB, LevelDB, and RocksDB;" + System.lineSeparator() +
+                "document-based stores AsterixDB, ArangoDB, and MongoDB; column-oriented" + System.lineSeparator() +
+                "stores Apache Druid and ClickHouse; graph stores Neo4j. However, the evolution" + System.lineSeparator() +
+                "of time-series applications in big data environments like large-scale scientific" + System.lineSeparator() +
+                "experiments, Internet of Things (IoT), IT infrastructure monitoring, industrial" + System.lineSeparator() +
+                "control systems, and forecasting and financial trends allowed the" + System.lineSeparator() +
+                "emergence of many Time-Series Databases (TSDB) technologies." + System.lineSeparator();
+        assertMemoryLeak(() -> {
+            File dir0 = temporaryFolder.newFolder("db", "table", "partition");
+            File dir1 = temporaryFolder.newFolder("backup", "table", "partition" + TableUtils.ATTACHABLE_DIR_MARKER);
+            try (
+                    Path dbPath = new Path().of(dir0.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path backupPath = new Path().of(dir1.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path auxPath = new Path()
+            ) {
+                int dbPathLen = dbPath.length();
+                int backupPathLen = backupPath.length();
+
+                // create files at table level
+                createTempFile(dbPath.concat("table"), "_meta", content);
+                createTempFile(dbPath.parent(), "_txn", content);
+                createTempFile(dbPath.parent(), "_cv", content);
+
+                // create files at partition level
+                createTempFile(dbPath.parent().concat("partition"), "timestamp.d", content);
+                createTempFile(dbPath.parent(), "column0.d", content);
+                createTempFile(dbPath.parent(), "column1.d", content);
+
+                // create a link to a file
+                Assert.assertEquals(0, Files.softLink(
+                        dbPath.parent().concat("timestamp.d").$(),
+                        auxPath.of(dbPath).parent().concat("timestamp_copy.d").$())
+                );
+
+                // create files in backup
+                createTempFile(backupPath.concat("table"), "_meta", content);
+                createTempFile(backupPath.parent(), "_txn", content);
+                createTempFile(backupPath.parent(), "_cv", content);
+                createTempFile(backupPath.parent().concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER), "timestamp.d", content);
+                createTempFile(backupPath.parent(), "column0.d", content);
+                createTempFile(backupPath.parent(), "column1.d", content);
+
+                // create an "attachable" partition
+                Assert.assertEquals(0, Files.softLink(
+                        backupPath.parent().$(),
+                        dbPath.parent().parent().concat("partitionB").$()));
+
+                // structure:
+                // db/table/_meta
+                // db/table/_txn
+                // db/table/_cv
+                // db/table/partition
+                // db/table/partition/timestamp.d
+                // db/table/partition/timestamp_copy.d -> db/table/partition/timestamp.d
+                // db/table/partition/column0.d
+                // db/table/partition/column1.d
+                // db/table/partitionB -> backup/table/partition.attachable/
+                // backup/table/_meta
+                // backup/table/_txn
+                // backup/table/_cv
+                // backup/table/partition.attachable/
+                // backup/table/partition.attachable/timestamp.d
+                // backup/table/partition.attachable/column0.d
+                // backup/table/partition.attachable/column1.d
+
+                Assert.assertEquals(9 * content.length(), Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()));
+                Assert.assertEquals(9 * content.length(), Files.getDirectoryContentSize(dbPath.concat("table").$()));
+                Assert.assertEquals(3 * content.length(), Files.getDirectoryContentSize(dbPath.concat("partition").$()));
+                Assert.assertEquals(3 * content.length(), Files.getDirectoryContentSize(dbPath.parent().concat("partitionB").$()));
+                Assert.assertEquals(-1L, Files.getDirectoryContentSize(dbPath.concat("timestamp.d").$()));
+                Assert.assertEquals(content.length(), Files.length(dbPath));
+                Assert.assertEquals(6 * content.length(), Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$()));
+                Assert.assertEquals(6 * content.length(), Files.getDirectoryContentSize(backupPath.concat("table").$()));
+                Assert.assertEquals(3 * content.length(), Files.getDirectoryContentSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
+                Assert.assertEquals(15 * content.length(),
+                        Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()) + Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();

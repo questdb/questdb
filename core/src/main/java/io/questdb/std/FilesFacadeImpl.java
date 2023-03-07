@@ -141,6 +141,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getDirectoryContentSize(Path path) {
+        return Files.getDirectoryContentSize(path);
+    }
+
+    @Override
     public long getDiskSize(LPSZ path) {
         return Files.getDiskSize(path);
     }
