@@ -285,10 +285,6 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                         engine.releaseInactive();
                     }
 
-                    if (i == 3) {
-                        int iasdf = 0;
-                    }
-
                     addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
 
                     LOG.info().$("verifying wal [").$("iteration:").$(i).I$();

@@ -43,7 +43,6 @@ import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -1618,7 +1617,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
-            // assert partitionTimestampInOrder("2022-03-03");
             return rowsAdded;
         } else {
             // Nothing was committed to the table, only copied to LAG.
@@ -3861,7 +3859,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
         final MemoryMA lagMem = columns.getQuick(primaryColumnIndex);
         final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
-        if (mappedMem instanceof MemoryCARW && ColumnType.isSymbol(columnType)) {
+        if (ColumnType.isSymbol(columnType) && mappedMem instanceof MemoryCARW) {
+            // If symbol column is in memory buffer it means that it was re-mapped
+            // and the offset it 0.
             mappedRowLo = 0;
         }
         final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
@@ -3871,55 +3871,58 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long src1 = mappedMem.addressOf(mappedRowLo << shl);
         long lagMemOffset = (txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex)) << shl;
         long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
-        long src2 = Math.abs(lagAddr);
-        final long dest = destMem.addressOf(0);
-        if (src2 == 0 && lagRows != 0) {
-            throw CairoException.critical(0)
-                    .put("cannot sort WAL data, lag rows are missing [table").put(tableToken.getTableName())
-                    .put(", columnName=").put(metadata.getColumnName(columnIndex))
-                    .put(", type=").put(ColumnType.nameOf(columnType))
-                    .put(", lagRows=").put(lagRows)
-                    .put(']');
-        }
-        if (src1 == 0) {
-            throw CairoException.critical(0)
-                    .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
-                    .put(", columnName=").put(metadata.getColumnName(columnIndex))
-                    .put(", type=").put(ColumnType.nameOf(columnType))
-                    .put(']');
-        }
-        if (dest == 0) {
-            throw CairoException.critical(0)
-                    .put("cannot sort WAL data, destination buffer is empty [table").put(tableToken.getTableName())
-                    .put(", columnName=").put(metadata.getColumnName(columnIndex))
-                    .put(", type=").put(ColumnType.nameOf(columnType))
-                    .put(']');
-        }
+        try {
+            long src2 = Math.abs(lagAddr);
+            final long dest = destMem.addressOf(0);
+            if (src2 == 0 && lagRows != 0) {
+                throw CairoException.critical(0)
+                        .put("cannot sort WAL data, lag rows are missing [table").put(tableToken.getTableName())
+                        .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                        .put(", type=").put(ColumnType.nameOf(columnType))
+                        .put(", lagRows=").put(lagRows)
+                        .put(']');
+            }
+            if (src1 == 0) {
+                throw CairoException.critical(0)
+                        .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
+                        .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                        .put(", type=").put(ColumnType.nameOf(columnType))
+                        .put(']');
+            }
+            if (dest == 0) {
+                throw CairoException.critical(0)
+                        .put("cannot sort WAL data, destination buffer is empty [table").put(tableToken.getTableName())
+                        .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                        .put(", type=").put(ColumnType.nameOf(columnType))
+                        .put(']');
+            }
 
-        switch (shl) {
-            case 0:
-                Vect.mergeShuffle8Bit(src1, src2, dest, mergeIndex, rowCount);
-                break;
-            case 1:
-                Vect.mergeShuffle16Bit(src1, src2, dest, mergeIndex, rowCount);
-                break;
-            case 2:
-                Vect.mergeShuffle32Bit(src1, src2, dest, mergeIndex, rowCount);
-                break;
-            case 3:
-                Vect.mergeShuffle64Bit(src1, src2, dest, mergeIndex, rowCount);
-                break;
-            case 4:
-                Vect.mergeShuffle128Bit(src1, src2, dest, mergeIndex, rowCount);
-                break;
-            case 5:
-                Vect.mergeShuffle256Bit(src1, src2, dest, mergeIndex, rowCount);
-                break;
-            default:
-                assert false : "col type is unsupported";
-                break;
+            switch (shl) {
+                case 0:
+                    Vect.mergeShuffle8Bit(src1, src2, dest, mergeIndex, rowCount);
+                    break;
+                case 1:
+                    Vect.mergeShuffle16Bit(src1, src2, dest, mergeIndex, rowCount);
+                    break;
+                case 2:
+                    Vect.mergeShuffle32Bit(src1, src2, dest, mergeIndex, rowCount);
+                    break;
+                case 3:
+                    Vect.mergeShuffle64Bit(src1, src2, dest, mergeIndex, rowCount);
+                    break;
+                case 4:
+                    Vect.mergeShuffle128Bit(src1, src2, dest, mergeIndex, rowCount);
+                    break;
+                case 5:
+                    Vect.mergeShuffle256Bit(src1, src2, dest, mergeIndex, rowCount);
+                    break;
+                default:
+                    assert false : "col type is unsupported";
+                    break;
+            }
+        } finally {
+            mapAppendColumnBufferRelease(lagAddr, lagMemOffset, lagRows << shl);
         }
-        mapAppendColumnBufferRelease(lagAddr, lagMemOffset, lagRows << shl);
     }
 
     private void o3MergeIntoLag(long mergedTimestamps, long countInLag, long mappedRowLo, long mappedRoHi, int timestampIndex) {
@@ -4048,6 +4051,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     0L
             );
         } else {
+            mapAppendColumnBufferRelease(lagIndxMapAddr, lagIndxOffset, lagIndxSize);
+            mapAppendColumnBufferRelease(lagDataMapAddr, lagDataBegin, lagDataSize);
             throw new UnsupportedOperationException("unsupported column type:" + ColumnType.nameOf(type));
         }
 
@@ -4880,53 +4885,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    private boolean partitionTimestampInOrder(String partitionTimestamp) {
-        long partitionTs;
-        try {
-            partitionTs = IntervalUtils.parseFloorPartialTimestamp(partitionTimestamp);
-        } catch (NumericException e) {
-            return true;
-        }
-
-        long rowCount = txWriter.getPartitionSizeByPartitionTimestamp(partitionTs);
-        if (rowCount <= 0) {
-            return true;
-        }
-        int otherLen = other.length();
-
-        try {
-            setStateForTimestamp(other, partitionTs);
-            CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-            TableUtils.dFile(other, tsColumnName);
-
-            var size = rowCount * 8;
-            int tsFileFd = openRO(ff, other, LOG);
-            var tsAddr = ff.mmap(tsFileFd, size, 0, Files.MAP_RO, MemoryTag.MMAP_TABLE_WAL_WRITER);
-
-            try {
-                var tsReadAddr = Math.abs(tsAddr);
-                var lastTs = Long.MIN_VALUE;
-                for (long offset = 0; offset < size; offset += 8) {
-                    long newTs = Unsafe.getUnsafe().getLong(tsReadAddr + offset);
-                    if (newTs < lastTs) {
-                        return false;
-                    }
-                    lastTs = newTs;
-                }
-                if (partitionTs == txWriter.getLastPartitionTimestamp() && lastTs != txWriter.getMaxTimestamp()) {
-                    return false;
-                }
-            } finally {
-                ff.munmap(tsAddr, size, MemoryTag.MMAP_TABLE_WAL_WRITER);
-                ff.close(tsFileFd);
-                mapAppendColumnBufferRelease(tsAddr, 0, size);
-            }
-        } finally {
-            other.trimTo(otherLen);
-        }
-        return true;
     }
 
     private void performRecovery() {

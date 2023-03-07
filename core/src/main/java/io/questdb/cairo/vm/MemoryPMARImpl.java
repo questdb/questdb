@@ -54,9 +54,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         releaseCurrentPage();
         super.close();
         if (fd != -1) {
-            if (sz == 0) {
-                int asd = 0;
-            }
             try {
                 Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
             } finally {

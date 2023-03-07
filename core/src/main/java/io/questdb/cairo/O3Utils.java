@@ -40,22 +40,6 @@ public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
-    public static boolean checkVarIndexColumnValues(long addr, long rowCount, long minOffset, long maxOffset) {
-        long prevDataOffset = -4;
-        for (int i = 0; i < rowCount; i++) {
-            long offset = Unsafe.getUnsafe().getLong(addr + ((long) i << 3L));
-            if (offset < 0 || offset > maxOffset || offset < prevDataOffset + 4) {
-                return false;
-            }
-            prevDataOffset = offset;
-        }
-        boolean good = maxOffset == Long.MAX_VALUE || prevDataOffset == maxOffset || rowCount == 0;
-        if (!good) {
-            int ab = 0;
-        }
-        return good;
-    }
-
     public static void setupWorkerPool(
             WorkerPool workerPool,
             CairoEngine cairoEngine,
@@ -129,7 +113,6 @@ public class O3Utils {
             long destSize
     ) {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
-        assert checkVarIndexColumnValues(dstAddr, srcHi - srcLo + 1, shift, destSize);
     }
 
     static void unmap(FilesFacade ff, long addr, long size) {
