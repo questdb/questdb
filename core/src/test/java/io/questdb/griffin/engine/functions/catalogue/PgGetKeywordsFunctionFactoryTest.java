@@ -32,9 +32,9 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgGetKeywordsFunc() throws Exception {
         sink.clear();
-        sink.put("word\tcatcode\tcatdesc\n");
+        sink.put("word\tcatcode\tbarelabel\tcatdesc\tbaredesc\n");
         for (CharSequence keyword : Constants.KEYWORDS) {
-            sink.put(keyword).put('\t').put('\t').put('\n');
+            sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
         assertQuery(sink.toString(), "pg_get_keywords;", null, false, sqlExecutionContext, false, true);
     }
@@ -42,9 +42,9 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPrefixedPgGetKeywordsFunc() throws Exception {
         sink.clear();
-        sink.put("word\tcatcode\tcatdesc\n");
+        sink.put("word\tcatcode\tbarelabel\tcatdesc\tbaredesc\n");
         for (CharSequence keyword : Constants.KEYWORDS) {
-            sink.put(keyword).put('\t').put('\t').put('\n');
+            sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
         assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
     }

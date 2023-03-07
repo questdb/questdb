@@ -97,6 +97,11 @@ public class PgGetKeywordsFunctionFactory implements FunctionFactory {
         class KeywordCatalogueRecord implements Record {
 
             @Override
+            public boolean getBool(int col) {
+                return false;
+            }
+
+            @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
                     return Constants.KEYWORDS[row];
@@ -123,7 +128,9 @@ public class PgGetKeywordsFunctionFactory implements FunctionFactory {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("word", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("catcode", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("barelabel", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("catdesc", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("baredesc", ColumnType.STRING));
         METADATA = metadata;
     }
 }
