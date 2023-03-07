@@ -27,7 +27,7 @@ package io.questdb.tokio;
 import java.io.Closeable;
 
 public class TokioRuntime implements Closeable {
-    private final long ptr;
+    private long ptr;
 
     private static native long create(int workerThreads);
 
@@ -41,8 +41,14 @@ public class TokioRuntime implements Closeable {
         this.ptr = create(workerThreads);
     }
 
+    public long getPtr() {
+        return ptr;
+    }
+
     @Override
-    public void close() {
+    public void close()
+    {
         free(ptr);
+        ptr = 0;
     }
 }
