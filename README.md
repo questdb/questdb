@@ -116,11 +116,11 @@ functionality, maturity and performance.
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
+results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB RAM:
 
 <div align="center">
-  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
+  <a href="https://github.com/questdb/questdb/releases/tag/7.0.1">
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.0-benchmark.png" width="600"/>
   </a>
 </div>
 
