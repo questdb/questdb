@@ -42,6 +42,11 @@ public class TxIDCurrentFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "txid_current()";
 
+    @TestOnly
+    public static long getTxID() {
+        return PG_TX_ID.get();
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -60,10 +65,5 @@ public class TxIDCurrentFunctionFactory implements FunctionFactory {
                 sink.val(SIGNATURE);
             }
         };
-    }
-
-    @TestOnly
-    static long getTxID() {
-        return PG_TX_ID.get();
     }
 }
