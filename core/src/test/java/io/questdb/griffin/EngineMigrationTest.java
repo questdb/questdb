@@ -26,12 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.NumericException;
-import io.questdb.std.TestFilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -77,53 +75,58 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        configOverrideMangleTableDirNames(false);
         AbstractGriffinTest.setUpStatic();
+        configOverrideMangleTableDirNames(false);
     }
 
     @Test
     public void test416() throws IOException, SqlException {
-        doMigration("/migration/data_416.zip", false, false, false, false);
+        doMigration("/migration/data_416.zip", false, false, false, false, false);
     }
 
     @Test
     public void test417() throws IOException, SqlException {
-        doMigration("/migration/data_417.zip", true, false, false, false);
+        doMigration("/migration/data_417.zip", true, false, false, false, false);
     }
 
     @Test
     public void test419() throws IOException, SqlException {
-        doMigration("/migration/data_419.zip", true, false, false, false);
+        doMigration("/migration/data_419.zip", true, false, false, false, false);
     }
 
     @Test
     public void test420() throws IOException, SqlException {
-        doMigration("/migration/data_420.zip", true, false, false, false);
+        doMigration("/migration/data_420.zip", true, false, false, false, false);
     }
 
     @Test
     public void test421() throws IOException, SqlException {
-        doMigration("/migration/data_421.zip", true, true, false, false);
+        doMigration("/migration/data_421.zip", true, true, false, false, false);
     }
 
     @Test
     public void test422() throws IOException, SqlException {
-        doMigration("/migration/data_422.zip", true, true, false, false);
+        doMigration("/migration/data_422.zip", true, true, false, false, false);
     }
 
     @Test
     public void test423() throws IOException, SqlException {
-        doMigration("/migration/data_423.zip", true, true, false, false);
+        doMigration("/migration/data_423.zip", true, true, false, false, false);
     }
 
     @Test
     public void test424() throws IOException, SqlException {
-        doMigration("/migration/data_424.zip", true, true, true, false);
+        doMigration("/migration/data_424.zip", true, true, true, false, false);
     }
 
     @Test
     public void test425() throws IOException, SqlException {
-        doMigration("/migration/data_425.zip", true, true, true, true);
+        doMigration("/migration/data_425.zip", true, true, true, true, false);
+    }
+
+    @Test
+    public void test426() throws IOException, SqlException {
+        doMigration("/migration/data_426.zip", true, true, true, true, true);
     }
 
     @Test
@@ -131,7 +134,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     public void testGenerateTables() throws SqlException, NumericException {
         generateMigrationTables();
         engine.releaseAllWriters();
-        assertData(true, true, true);
+        assertData(true, true, true, true);
     }
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {
@@ -145,6 +148,68 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 fos.write(buffer, 0, n);
             }
         }
+    }
+
+    private static void createTableWithColumnTops(String createTable, String tableName) throws SqlException {
+        compiler.compile(
+                createTable,
+                sqlExecutionContext
+        );
+        compiler.compile("alter table " + tableName + " add column день symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table " + tableName + " add column str string", sqlExecutionContext).execute(null).await();
+        compiler.compile(
+                "insert into " + tableName + " " +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", rnd_symbol('a', 'b', 'c', null)" +
+                        ", rnd_str()" +
+                        " from long_sequence(10),",
+                sqlExecutionContext
+        );
+        compiler.compile(
+                "insert into " + tableName + " " +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", rnd_symbol('a', 'b', 'c', null)" +
+                        ", rnd_str()" +
+                        " from long_sequence(36)",
+                sqlExecutionContext
+        );
+    }
+
+    private static void insertData(String tableName) throws SqlException {
+        Rnd rnd = sqlExecutionContext.getRandom();
+        long seed0 = rnd.getSeed0();
+        long seed1 = rnd.getSeed1();
+
+        compiler.compile(
+                "insert into " + tableName + " " +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", rnd_symbol('a', 'b', 'c', null)" +
+                        ", rnd_str()" +
+                        " from long_sequence(10),",
+                sqlExecutionContext
+        );
+        compiler.compile(
+                "insert into " + tableName + " " +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", rnd_symbol('a', 'b', 'c', null)" +
+                        ", rnd_str()" +
+                        " from long_sequence(36)",
+                sqlExecutionContext
+        );
+
+        rnd.reset(seed0, seed1);
     }
 
     @NotNull
@@ -166,7 +231,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void appendData(boolean withColTopO3) throws SqlException {
+    private void appendData(boolean withColTopO3, boolean withWalTxn) throws SqlException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
@@ -183,32 +248,16 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " from long_sequence(5)", sqlExecutionContext);
 
         if (withColTopO3) {
-            compiler.compile(
-                    "insert into t_col_top_ooo_day " +
-                            "select " +
-                            " x" +
-                            ", rnd_symbol('a', 'b', 'c', null) m" +
-                            ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
-                            ", rnd_symbol('a', 'b', 'c', null)" +
-                            ", rnd_str()" +
-                            " from long_sequence(10),",
-                    sqlExecutionContext
-            );
-            compiler.compile(
-                    "insert into t_col_top_ooo_day " +
-                            "select " +
-                            " x" +
-                            ", rnd_symbol('a', 'b', 'c', null) m" +
-                            ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
-                            ", rnd_symbol('a', 'b', 'c', null)" +
-                            ", rnd_str()" +
-                            " from long_sequence(36)",
-                    sqlExecutionContext
-            );
+            insertData("t_col_top_ooo_day");
+        }
+
+        if (withWalTxn) {
+            insertData("t_col_top_ooo_day_wal");
+            drainWalQueue();
         }
     }
 
-    private void assertAppendedData(boolean withColTopO3) throws SqlException {
+    private void assertAppendedData(boolean withColTopO3, boolean withWalTxn) throws SqlException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         assertSql("select * FROM t_year LIMIT -10",
@@ -248,6 +297,28 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                             "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
                             "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
                             "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n");
+        }
+
+        if (withWalTxn) {
+            TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day_wal where ts > '1970-01-05T04:25'", sink,
+                    "x\tm\tts\tдень\tstr\n" +
+                            "3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE\n" +
+                            "2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR\n" +
+                            "4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL\n" +
+                            "3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC\n" +
+                            "5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB\n" +
+                            "4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO\n" +
+                            "6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW\n" +
+                            "5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS\n" +
+                            "7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD\n" +
+                            "6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF\n" +
+                            "8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ\n" +
+                            "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
+                            "9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ\n" +
+                            "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
+                            "10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY\n" +
+                            "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n" +
+                            "10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ\n");
         }
     }
 
@@ -399,7 +470,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n");
     }
 
-    private void assertData(boolean withO3, boolean withColTops, boolean withColTopO3) throws SqlException {
+    private void assertData(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn) throws SqlException {
         assertNoneNts();
         assertNone();
         assertDay();
@@ -416,6 +487,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         if (withColTopO3) {
             assertColTopsO3();
             assertMissingPartitions();
+        }
+        if (withWalTxn) {
+            assertWalTxn();
         }
     }
 
@@ -1099,6 +1173,28 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
     }
 
+    private void assertWalTxn() throws SqlException {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_col_top_ooo_day_wal where день = 'a'", sink,
+                "x\tm\tts\tдень\tstr\n" +
+                        "1\tb\t1970-01-01T01:30:00.000000Z\ta\tUVFMQXL\n" +
+                        "4\t\t1970-01-01T04:30:00.000000Z\ta\tTOKMJCP\n" +
+                        "9\t\t1970-01-01T09:30:00.000000Z\ta\tNHEBR\n" +
+                        "23\tb\t1970-01-01T23:30:00.000000Z\ta\tXNVLE\n" +
+                        "29\tc\t1970-01-02T05:30:00.000000Z\ta\tHPVNVKZXSH\n" +
+                        "31\tc\t1970-01-02T07:30:00.000000Z\ta\tOHSWKWI\n" +
+                        "32\ta\t1970-01-02T08:30:00.000000Z\ta\tLXIJKQZWR\n" +
+                        "34\tb\t1970-01-02T10:30:00.000000Z\ta\tPMJWIP\n" +
+                        "35\t\t1970-01-02T11:30:00.000000Z\ta\tUTBCSWDH\n" +
+                        "36\ta\t1970-01-02T12:30:00.000000Z\ta\tQWYVWLUGT\n" +
+                        "3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE\n" +
+                        "4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL\n" +
+                        "7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD\n" +
+                        "8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ\n");
+    }
+
     private void assertYear() throws SqlException {
         TestUtils.assertSql(
                 compiler,
@@ -1267,16 +1363,16 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3) throws IOException, SqlException {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn) throws IOException, SqlException {
         if (freeTableId) {
             engine.getTableIdGenerator().close();
         }
         replaceDbContent(dataZip);
-        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
         engine.reloadTableNames();
-        assertData(withO3, withColTops, withColTopO3);
-        appendData(withColTopO3);
-        assertAppendedData(withColTopO3);
+        assertData(withO3, withColTops, withColTopO3, withWalTxn);
+        appendData(withColTopO3, withWalTxn);
+        assertAppendedData(withColTopO3, withWalTxn);
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
@@ -1476,45 +1572,36 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        compiler.compile(
-                "create table t_col_top_ooo_day as (" +
+        createTableWithColumnTops("create table t_col_top_ooo_day as (" +
+                "select " +
+                " x" +
+                ", rnd_symbol('a', 'b', 'c', null) m" +
+                ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                " from long_sequence(96)," +
+                "), index(m) timestamp(ts) partition by DAY", "t_col_top_ooo_day");
+
+        createTableWithColumnTops(
+                "create table t_col_top_ooo_day_wal as (" +
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
                         ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
                         " from long_sequence(96)," +
-                        "), index(m) timestamp(ts) partition by DAY",
-                sqlExecutionContext
+                        "), index(m) timestamp(ts) partition by DAY WAL",
+                "t_col_top_ooo_day_wal"
         );
-        compiler.compile("alter table t_col_top_ooo_day add column день symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table t_col_top_ooo_day add column str string", sqlExecutionContext).execute(null).await();
-        compiler.compile(
-                "insert into t_col_top_ooo_day " +
-                        "select " +
-                        " x" +
-                        ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
-                        ", rnd_symbol('a', 'b', 'c', null)" +
-                        ", rnd_str()" +
-                        " from long_sequence(10),",
-                sqlExecutionContext
-        );
-        compiler.compile(
-                "insert into t_col_top_ooo_day " +
-                        "select " +
-                        " x" +
-                        ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
-                        ", rnd_symbol('a', 'b', 'c', null)" +
-                        ", rnd_str()" +
-                        " from long_sequence(36)",
-                sqlExecutionContext
+        drainWalQueue();
+
+        TestUtils.messTxnUnallocated(
+                engine.getConfiguration().getFilesFacade(),
+                Path.getThreadLocal(root),
+                new Rnd(),
+                engine.getTableToken("t_col_top_ooo_day_wal")
         );
 
         Path from = Path.getThreadLocal(configuration.getRoot()).concat("t_col_top_день");
         String copyTableWithMissingPartitions = "t_col_top_день_missing_parts";
         Path to = Path.getThreadLocal2(configuration.getRoot()).concat(copyTableWithMissingPartitions);
-
 
         TestUtils.copyDirectory(from.$(), to.$(), configuration.getMkDirMode());
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -1532,5 +1619,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         if (ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$()) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno()).put("cannot rename to ").put(to);
         }
+
+        // Remove table name file
+        ff.remove(
+                to.of(configuration.getRoot())
+                        .concat(copyTableWithMissingPartitions)
+                        .concat(TableUtils.TABLE_NAME_FILE)
+                        .$()
+        );
+        engine.reloadTableNames();
     }
 }

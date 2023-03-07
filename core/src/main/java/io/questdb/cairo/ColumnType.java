@@ -117,6 +117,7 @@ public final class ColumnType {    //@formatter:off
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int GEO_HASH_MAX_BITS_LENGTH = 60;
     public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
+    public static final int MIGRATION_VERSION = 427;
     public static final int NO_OVERLOAD = 10000;
     public static final short UNDEFINED = 0;
     // column type version as written to the metadata file
@@ -374,6 +375,7 @@ public final class ColumnType {    //@formatter:off
     }
 
     static {
+        assert MIGRATION_VERSION >= VERSION;
         GEO_TYPE_SIZE_POW2 = new int[GEO_HASH_MAX_BITS_LENGTH + 1];
         for (int bits = 1; bits <= GEO_HASH_MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
