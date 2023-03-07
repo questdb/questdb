@@ -857,11 +857,13 @@ class SqlOptimiser {
     }
 
     private void checkIsNotAggregateOrWindowFunction(ExpressionNode node, QueryModel model) throws SqlException {
-        if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-            throw SqlException.$(node.position, "aggregate functions are not allowed in GROUP BY");
-        }
-        if (functionParser.getFunctionFactoryCache().isWindow(node.token)) {
-            throw SqlException.$(node.position, "window functions are not allowed in GROUP BY");
+        if (node.type == FUNCTION) {
+            if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                throw SqlException.$(node.position, "aggregate functions are not allowed in GROUP BY");
+            }
+            if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isWindow(node.token)) {
+                throw SqlException.$(node.position, "window functions are not allowed in GROUP BY");
+            }
         }
         if (node.type == LITERAL) {
             QueryColumn column = model.getAliasToColumnMap().get(node.token);
@@ -939,7 +941,6 @@ class SqlOptimiser {
     private QueryColumn createGroupByColumn(
             CharSequence columnName,
             ExpressionNode columnAst,
-            boolean hasSeenWildcardExpression,
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
@@ -953,21 +954,12 @@ class SqlOptimiser {
         LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
-            if (hasSeenWildcardExpression && translatingModel.getAliasToColumnMap().contains(columnName)) {
-                throw SqlException.duplicateColumn(columnAst.position, columnName);
-            }
             // column is already being referenced by translating model
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
-
-            // analytic model is used together with inner model
-            final CharSequence analyticAlias = createColumnAlias(innerAlias, analyticModel);
-            final QueryColumn analyticColumn = nextColumn(analyticAlias, innerAlias);
-            analyticModel.addBottomUpColumn(analyticColumn);
-
             return translatedColumn;
         } else {
             final CharSequence alias = createColumnAlias(columnName, translatingModel);
@@ -981,12 +973,10 @@ class SqlOptimiser {
             );
 
             final QueryColumn translatedColumn = nextColumn(alias);
-
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
             analyticModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
-
             return translatedColumn;
         }
     }
@@ -1801,7 +1791,7 @@ class SqlOptimiser {
                     continue;
                 }
                 if (column != null) {
-                    return null;
+                    return null;//more than one column match 
                 }
                 column = qc;
             }
@@ -3770,7 +3760,7 @@ class SqlOptimiser {
                         throw SqlException.$(0, "'*' is not allowed in GROUP BY");
                     }
 
-                    if (alias == null) {//models ?
+                    if (alias == null) {
                         alias = createColumnAlias(node, groupByModel);
                     } else {
                         alias = createColumnAlias(alias, innerVirtualModel, true);
@@ -3778,7 +3768,6 @@ class SqlOptimiser {
                     QueryColumn groupByColumn = createGroupByColumn(
                             alias,
                             node,
-                            false,
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
@@ -3833,9 +3822,6 @@ class SqlOptimiser {
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
-                    if (explicitGroupBy) {//e.g. select * from t group by t.x, t.y
-                        useOuterModel = true;
-                    }
                     // in general sense we need to create new column in case
                     // there is change of alias, for example we may have something as simple as
                     // select a.f, b.f from ....

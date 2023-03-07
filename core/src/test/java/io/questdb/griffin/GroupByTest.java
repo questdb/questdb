@@ -574,6 +574,71 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByExpressionAndLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "    select 1 as l, 'a' as s " +
+                    "    union all " +
+                    "    select 1, 'a' )");
+
+            String query = "select l,s, l+1 from t group by l+1,s, l, l+2";
+            assertPlan(query,
+                    "VirtualRecord\n" +
+                            "  functions: [l,s,column]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [l,s,column,column1]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [l,s,l+1,l+2]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+
+            assertQuery("l\ts\tcolumn\n" +
+                    "1\ta\t2\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByWithAliasClash1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "    select 1 as l, 'a' as s, -1 max " +
+                    "    union all " +
+                    "    select 1, 'a', -2 )");
+
+            String query = "select s, max, max(l) from t group by s, max";
+            assertPlan(query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [s,max]\n" +
+                            "  values: [max(l)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n");
+
+            assertQuery("s\tmax\tmax1\n" +
+                    "a\t-1\t1\n" +
+                    "a\t-2\t1\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByWithAliasClash2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x, x%2 as y from long_sequence(2))");
+            compile("create table t2 as (select x, x%2 as y from long_sequence(2))");
+
+            String query = "select t1.x, max(t2.y), t2.x " +
+                    "from t1 " +
+                    "join t2 on t1.y = t2.y  " +
+                    "group by t1.x, t2.x";
+
+            assertQuery("x\tmax\tx1\n" +
+                    "1\t1\t1\n" +
+                    "2\t0\t2\n", query, null, true, true);
+        });
+    }
+
+    @Test
     public void testGroupByWithDuplicateSelectColumn() throws Exception {
         assertQuery("k1\tkey2\tkey21\tcount\n" +
                         "0\t0\t0\t2\n" +
@@ -582,6 +647,57 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t3\t3\t2\n",
                 "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
                 "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, false, true);
+    }
+
+    @Test
+    public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "    select 1 as l, 'a' as s " +
+                    "    union all " +
+                    "    select 1, 'a' )");
+
+            String query = "select l,s,rnd_int(0,1,0)/10 from t group by l,s";
+            assertPlan(query,
+                    "VirtualRecord\n" +
+                            "  functions: [l,s,rnd_int(0,1,0)/10]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [l,s]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+            assertQuery("l\ts\tcolumn\n" +
+                    "1\ta\t0\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x (" +
+                    "    sym symbol," +
+                    "    bid double, " +
+                    "    ts timestamp " +
+                    ") timestamp(ts) partition by DAY");
+            compile("insert into x " +
+                    " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
+                    " from long_sequence(20)");
+
+            String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym ";
+            assertPlan(query, "VirtualRecord\n" +
+                    "  functions: [sym,hour,avgBid]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [sym,hour]\n" +
+                    "      values: [avg(bid)]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [sym,hour(ts),bid]\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: x\n");
+            assertQuery("sym\thour\tavgBid\n" +
+                    "A\t0\t0.4922298136511458\n" +
+                    "B\t0\t0.4796420804429589\n", query, null, true, true);
+        });
     }
 
     private void assertError(String query, String errorMessage) {
