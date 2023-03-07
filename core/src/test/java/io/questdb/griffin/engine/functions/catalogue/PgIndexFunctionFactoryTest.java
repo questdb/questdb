@@ -32,7 +32,7 @@ public class PgIndexFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgIndexFunc() throws Exception {
         assertQuery(
-                "indkey\tindrelid\tindexrelid\tindisprimary\n",
+                "indexrelid\tindrelid\tindnatts\tindnkeyatts\tindisunique\tindnullsnotdistinct\tindisprimary\tindisexclusion\tindimmediate\tindisclustered\tindisvalid\tindcheckxmin\tindisready\tindislive\tindisreplident\tindkey\tindcollation\tindclass\tindoption\tindexprs\tindpred\n",
                 "pg_index;",
                 "create table x(a int)",
                 null,
@@ -45,7 +45,7 @@ public class PgIndexFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPrefixedPgIndexFunc() throws Exception {
         assertQuery(
-                "indkey\tindrelid\tindexrelid\tindisprimary\n",
+                "indexrelid\tindrelid\tindnatts\tindnkeyatts\tindisunique\tindnullsnotdistinct\tindisprimary\tindisexclusion\tindimmediate\tindisclustered\tindisvalid\tindcheckxmin\tindisready\tindislive\tindisreplident\tindkey\tindcollation\tindclass\tindoption\tindexprs\tindpred\n",
                 "pg_catalog.pg_index;",
                 "create table x(a int)",
                 null,

@@ -47,10 +47,27 @@ public class PgIndexFunctionFactory extends AbstractEmptyCatalogueFunctionFactor
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT));
         metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indnatts", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("indnkeyatts", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("indisunique", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indnullsnotdistinct", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indisexclusion", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indimmediate", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indisclustered", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indisvalid", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indcheckxmin", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indisready", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indislive", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indisreplident", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indcollation", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indclass", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indoption", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indexprs", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indpred", ColumnType.STRING));
         METADATA = metadata;
     }
 }
