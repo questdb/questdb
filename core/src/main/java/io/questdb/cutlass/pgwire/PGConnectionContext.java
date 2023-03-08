@@ -1720,6 +1720,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareDescribePortalResponse();
     }
 
+    private void prepareEmptyQueryResponse() {
+        LOG.debug().$("empty").$();
+        responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
+        responseAsciiSink.putIntDirect(INT_BYTES_X);
+    }
+
     private void prepareError(CairoException ex) {
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
@@ -2033,7 +2039,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.EXPLAIN:
-                //explain results should not be cached 
+                //explain results should not be cached
                 typesAndSelectIsCached = false;
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
@@ -2368,7 +2374,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (Chars.utf8Decode(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
             try {
-                compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                if (!compiler.compileBatch(queryText, sqlExecutionContext, batchCallback)) {
+                    prepareEmptyQueryResponse();
+                }
                 // we need to continue parsing receive buffer even if we errored out
                 // this is because PG client might expect separate responses to everything it sent
             } catch (SqlException ex) {
@@ -2752,9 +2760,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     void prepareCommandComplete(boolean addRowCount) {
         if (isEmptyQuery) {
-            LOG.debug().$("empty").$();
-            responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
-            responseAsciiSink.putIntDirect(INT_BYTES_X);
+            prepareEmptyQueryResponse();
         } else {
             responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
             long addr = responseAsciiSink.skip();
