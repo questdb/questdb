@@ -26,37 +26,43 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
-public class PgNamespaceFunctionFactory implements FunctionFactory {
+import java.util.concurrent.atomic.AtomicLong;
 
-    @Override
-    public String getSignature() {
-        return "pg_namespace()";
+public class TxIDCurrentFunctionFactory implements FunctionFactory {
+    private static final AtomicLong PG_TX_ID = new AtomicLong();
+
+    private static final String SIGNATURE = "txid_current()";
+
+    @TestOnly
+    public static long getTxID() {
+        return PG_TX_ID.get();
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public String getSignature() {
+        return SIGNATURE;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                new GenericRecordCursorFactory(
-                        PgNamespaceRecordCursor.METADATA,
-                        new PgNamespaceRecordCursor(),
-                        false
-                )
-        ) {
+        return new LongFunction() {
             @Override
-            public boolean isRuntimeConstant() {
-                return true;
+            public long getLong(Record rec) {
+                return PG_TX_ID.incrementAndGet();
+            }
+
+            @Override
+            public void toPlan(PlanSink sink) {
+                sink.val(SIGNATURE);
             }
         };
     }
