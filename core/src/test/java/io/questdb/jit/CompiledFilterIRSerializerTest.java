@@ -146,22 +146,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         serialize(
                 "auuid = :auuid" + // i128
-                " or aboolean = :aboolean or abyte = :abyte or ageobyte = :ageobyte" + // i8
-                " or ashort = :ashort or ageoshort = :ageoshort or achar = :achar" + // i16
-                " or anint = :anint or ageoint = :ageoint or asymbol = :asymbol" + // i32
-                " or along = :along or adate = :adate or ageolong = :ageolong or atimestamp = :atimestamp" + // i64
-                " or afloat = :afloat" + // f32
-                " or adouble = :adouble" // f64
+                        " or aboolean = :aboolean or abyte = :abyte or ageobyte = :ageobyte" + // i8
+                        " or ashort = :ashort or ageoshort = :ageoshort or achar = :achar" + // i16
+                        " or anint = :anint or ageoint = :ageoint or asymbol = :asymbol" + // i32
+                        " or along = :along or adate = :adate or ageolong = :ageolong or atimestamp = :atimestamp" + // i64
+                        " or afloat = :afloat" + // f32
+                        " or adouble = :adouble" // f64
         );
         assertIR(
                 "(f64 :0)(f64 adouble)" +
-                "(=)(f32 :1)(f32 afloat)(=)" +
-                "(i64 :2)(i64 atimestamp)(=)(i64 :3)(i64 ageolong)(=)(i64 :4)(i64 adate)(=)(i64 :5)(i64 along)(=)" +
-                "(i32 :6)(i32 asymbol)(=)(i32 :7)(i32 ageoint)(=)(i32 :8)(i32 anint)(=)" +
-                "(i16 :9)(i16 achar)(=)(i16 :10)(i16 ageoshort)(=)(i16 :11)(i16 ashort)(=)" +
-                "(i8 :12)(i8 ageobyte)(=)(i8 :13)(i8 abyte)(=)(i8 :14)(i8 aboolean)(=)" +
-                "(i128 :15)(i128 auuid)(=)" +
-                "(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(ret)");
+                        "(=)(f32 :1)(f32 afloat)(=)" +
+                        "(i64 :2)(i64 atimestamp)(=)(i64 :3)(i64 ageolong)(=)(i64 :4)(i64 adate)(=)(i64 :5)(i64 along)(=)" +
+                        "(i32 :6)(i32 asymbol)(=)(i32 :7)(i32 ageoint)(=)(i32 :8)(i32 anint)(=)" +
+                        "(i16 :9)(i16 achar)(=)(i16 :10)(i16 ageoshort)(=)(i16 :11)(i16 ashort)(=)" +
+                        "(i8 :12)(i8 ageobyte)(=)(i8 :13)(i8 abyte)(=)(i8 :14)(i8 aboolean)(=)" +
+                        "(i128 :15)(i128 auuid)(=)" +
+                        "(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(ret)");
 
         Assert.assertEquals(16, bindVarFunctions.size());
     }
@@ -196,12 +196,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testCharConstant() throws Exception {
         serialize("achar = 'a'");
         assertIR("(i16 97L)(i16 achar)(=)(ret)");
-    }
-
-    @Test
-    public void testUuidConstant() throws Exception {
-        serialize("auuid = '00000000-0000-0000-0000-000000000000'");
-        assertIR("(i128 0 0L)(i128 auuid)(=)(ret)");
     }
 
     @Test
@@ -285,6 +279,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             serialize(name + " = " + constant);
             assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(=)(ret)");
         }
+    }
+
+    @Test(expected = SqlException.class)
+    public void testInvalidUuidConstant() throws Exception {
+        serialize("auuid = '111111110111101111011110111111111111'");
     }
 
     @Test
@@ -521,16 +520,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedUuidColumnInNumericContext() throws Exception {
-        serialize("auuid = 0");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedUuidConstantInNumericContext() throws Exception {
-        serialize("along = '11111111-1111-1111-1111-111111111111'");
-    }
-
-    @Test(expected = SqlException.class)
     public void testUnsupportedCharConstantInNumericContext() throws Exception {
         serialize("along = 'x'");
     }
@@ -616,6 +605,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedMixedUuidAndNumericColumns() throws Exception {
+        serialize("auuid = anint");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedUuidAndStringColumns() throws Exception {
+        serialize("auuid = astring");
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedNullType() throws Exception {
         serialize("astring <> null");
     }
@@ -648,6 +647,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedUuidColumnInNumericContext() throws Exception {
+        serialize("auuid = 0");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedUuidConstantInNumericContext() throws Exception {
+        serialize("along = '11111111-1111-1111-1111-111111111111'");
+    }
+
+    @Test
+    public void testUuidConstant() throws Exception {
+        serialize("auuid = '00000000-0000-0000-0000-000000000000'");
+        assertIR("(i128 0 0L)(i128 auuid)(=)(ret)");
     }
 
     private void assertIR(String message, String expectedIR) {
@@ -766,7 +781,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         private void appendBindVariable(int type) {
             long index = irMem.getLong(offset);
-            offset +=  2 * Long.BYTES;
+            offset += 2 * Long.BYTES;
             sb.append("(");
             sb.append(typeName(type));
             sb.append(" :");
@@ -820,7 +835,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         private void appendOperator(int operator) {
             irMem.getLong(offset);
-            offset +=  2 * Long.BYTES;
+            offset += 2 * Long.BYTES;
             sb.append("(");
             sb.append(operatorName(operator));
             sb.append(")");
