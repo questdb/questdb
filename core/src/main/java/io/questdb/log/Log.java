@@ -24,6 +24,9 @@
 
 package io.questdb.log;
 
+import io.questdb.std.Chars;
+import io.questdb.std.str.StringSink;
+
 public interface Log {
 
     LogRecord advisory();
@@ -69,6 +72,9 @@ public interface Log {
     }
 
     default void debugUtf8(long lo, long hi) {
+        StringSink sink = new StringSink();
+        Chars.utf8Decode(lo, hi, sink);
+        System.err.println("debugUtf8 called :: " + sink.toString());
         debug().$utf8(lo, hi);
     }
 

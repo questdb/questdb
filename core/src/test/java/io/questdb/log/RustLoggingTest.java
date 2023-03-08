@@ -22,41 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.tokio;
+package io.questdb.log;
 
-import io.questdb.std.Os;
 import junit.framework.TestCase;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class TokioRuntimeTest extends TestCase {
-    static {
-        Os.init();
-    }
-
+public class RustLoggingTest extends TestCase {
     @Test
-    public void testNegThreads() {
-        Assert.assertThrows(TokioException.class, () -> {
-            new TokioRuntime(-1);
-        });
-    }
-
-    @Test
-    public void testDefaultThreads() {
-        try (TokioRuntime runtime = new TokioRuntime()) {
-        }
-    }
-
-    @Test
-    public void testOneThread() {
-        try (TokioRuntime runtime = new TokioRuntime(1)) {
-        }
-    }
-
-    @Test
-    public void testNullAfterClose() {
-        TokioRuntime runtime = new TokioRuntime();
-        runtime.close();
-        Assert.assertEquals(0, runtime.getPtr());
+    public void testDebug() {
+        LogFactory.configureSync();
+        RustLogging.logMsg(RustLogging.LEVEL_DEBUG, "test_target", "test_msg");
     }
 }

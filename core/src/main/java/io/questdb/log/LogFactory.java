@@ -75,6 +75,9 @@ public class LogFactory implements Closeable {
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
+    // No-op method to control static initialization order.
+    public static void init() {}
+
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
     }

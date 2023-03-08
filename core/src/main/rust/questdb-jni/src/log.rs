@@ -28,10 +28,11 @@ use std::fmt;
 
 use dashmap::DashMap;
 use jni::JNIEnv;
-use jni::objects::{GlobalRef, JMethodID, JStaticMethodID, JValue};
+use jni::objects::{GlobalRef, JClass, JMethodID, JStaticMethodID, JString, JValue};
 use jni::signature::{Primitive, ReturnType};
-use jni::sys::jlong;
-use log::{Log, Level, debug};
+use jni::sys::{jint, jlong};
+use log::{Log, Level};
+use crate::unwrap_or_throw;
 
 struct JavaLogWrapper { obj: GlobalRef }
 
@@ -210,7 +211,7 @@ thread_local! {
     static LOG_BUF: UnsafeCell<String> = UnsafeCell::new(String::with_capacity(64));
 }
 
-fn get_formatted_msg<'a>(args: &fmt::Arguments) -> &'a str {
+fn get_formatted_msg<'a>(line_num: Option<u32>, args: &fmt::Arguments) -> &'a str {
     if let Some(no_args_str) = args.as_str() {
         return no_args_str;
     }
@@ -218,6 +219,10 @@ fn get_formatted_msg<'a>(args: &fmt::Arguments) -> &'a str {
     LOG_BUF.with(|msg: &UnsafeCell<String>| {
         let msg: &mut String = unsafe { &mut *msg.get() };
         msg.clear();
+
+        if let Some(line_num) = line_num {
+            write!(msg, "[{}] ", line_num).unwrap();
+        }
 
         // Clone here is cheap: The args object just holds references.
         msg.write_fmt(args.clone()).unwrap();
@@ -235,10 +240,8 @@ impl Log for TrampolineLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        eprintln!("TRAMPOLINE LOGGER :: (0) target: {} - record={:?}", record.target(), record);
-
         let target = record.target();
-        let msg = get_formatted_msg(record.args());
+        let msg = get_formatted_msg(record.line(), record.args());
         let jenv = crate::get_jenv()
             .expect("could not get JNIEnv");
         get_call_state().with_log_wrapper(
@@ -261,19 +264,53 @@ impl Log for TrampolineLogger {
 const TRAMPOLINE_LOGGER: TrampolineLogger = TrampolineLogger;
 static mut LOGGER_INSTALLED: bool = false;
 
-pub fn install_jni_logger(env: &JNIEnv) {
+pub fn install_jni_logger(env: &JNIEnv, max_level: Level) -> jni::errors::Result<()> {
     if unsafe { LOGGER_INSTALLED } {
-        return;
+        return Ok(())
     }
-    if let Err(e) = lookup_and_set_java_call_info(&env) {
-        let throwable = env.exception_occurred().unwrap();
-        if !throwable.is_null() {
-            return;
-        }
-        panic!("could not set up Java call info: {}", e);
-    }
-    log::set_logger(&TRAMPOLINE_LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Debug);
+    lookup_and_set_java_call_info(env)?;
+    log::set_logger(&TRAMPOLINE_LOGGER).map_err(|e| {
+        env.throw_new(
+            "java/lang/RuntimeException",
+            &format!("Could not set Rust logger: {}", e)).unwrap();
+        jni::errors::Error::JavaException
+    })?;
+    log::set_max_level(max_level.to_level_filter());
     unsafe { LOGGER_INSTALLED = true; }
-    debug!("installed JNI logger");
+    Ok(())
+}
+
+fn level_from_int(b: jint) -> Level {
+    match b {
+        1 => Level::Error,
+        2 => Level::Warn,
+        3 => Level::Info,
+        4 => Level::Debug,
+        5 => Level::Trace,
+        _ => panic!("invalid log level: {}", b),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_log_RustLogging_installRustLogger(env: JNIEnv, _class: JClass, max_level: jint) {
+    let level = level_from_int(max_level);
+    unwrap_or_throw!(env, install_jni_logger(&env, level));
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_log_RustLogging_logMsg(
+        env: JNIEnv, _class: JClass, level: jint, target: JString, msg: JString) {
+    let level = match level {
+        1 => Level::Error,
+        2 => Level::Warn,
+        3 => Level::Info,
+        4 => Level::Debug,
+        5 => Level::Trace,
+        _ => panic!("invalid log level: {}", level),
+    };
+    let target = env.get_string(target).expect("could not get target");
+    let target_str = target.to_str().expect("could not convert target to str");
+    let msg= env.get_string(msg).expect("could not get msg");
+    let msg_str = msg.to_str().expect("could not convert msg to str");
+    log::log!(target: target_str, level, "{}", msg_str);
 }

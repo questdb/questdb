@@ -22,41 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.tokio;
+package io.questdb.log;
 
 import io.questdb.std.Os;
-import junit.framework.TestCase;
-import org.junit.Assert;
-import org.junit.Test;
 
-public class TokioRuntimeTest extends TestCase {
+public class RustLogging {
     static {
         Os.init();
+
+        // To ensure that the Log and LogFactory classes are loaded
+        // before the JNI code performs lookups on them.
+        LogFactory.init();
+
+        // Log debug messages and above.
+        installRustLogger(4);
     }
 
-    @Test
-    public void testNegThreads() {
-        Assert.assertThrows(TokioException.class, () -> {
-            new TokioRuntime(-1);
-        });
-    }
+    public static int LEVEL_ERROR = 1;
+    public static int LEVEL_WARN = 2;
+    public static int LEVEL_INFO = 3;
+    public static int LEVEL_DEBUG = 4;
+    public static int LEVEL_TRACE = 5;
 
-    @Test
-    public void testDefaultThreads() {
-        try (TokioRuntime runtime = new TokioRuntime()) {
-        }
-    }
+    private static native void installRustLogger(int maxLevel);
 
-    @Test
-    public void testOneThread() {
-        try (TokioRuntime runtime = new TokioRuntime(1)) {
-        }
-    }
-
-    @Test
-    public void testNullAfterClose() {
-        TokioRuntime runtime = new TokioRuntime();
-        runtime.close();
-        Assert.assertEquals(0, runtime.getPtr());
-    }
+    public static native void logMsg(int level, String target, String msg);
 }

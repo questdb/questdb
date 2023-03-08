@@ -206,8 +206,6 @@ public class ServerMain implements Closeable {
             ));
         }
 
-        initQuestdbJni();
-
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
     }
@@ -225,8 +223,6 @@ public class ServerMain implements Closeable {
             workerPool.freeOnExit(applyWal2TableJob);
         }
     }
-
-    public static native void initQuestdbJni();
 
     public static void main(String[] args) {
         try {

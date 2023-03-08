@@ -8,7 +8,7 @@ mod tokio;
 mod wal_upload;
 mod log;
 
-pub static mut JAVA_VM: Option<JavaVM> = None;
+static mut JAVA_VM: Option<JavaVM> = None;
 
 fn get_jenv() -> Option<jni::JNIEnv<'static>> {
     if let Some(vm) = unsafe { &JAVA_VM } {
@@ -21,21 +21,37 @@ fn get_jenv() -> Option<jni::JNIEnv<'static>> {
     }
 }
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_ServerMain_initQuestdbJni(env: JNIEnv,_class: JClass) {
-    let vm = match env.get_java_vm() {
-        Ok(vm) => vm,
-        Err(e) => {
-            env.find_class("io/questdb/jar/jni/LoadException")
-                .and_then(|clazz| env.throw_new(clazz, e.to_string()))
-                .expect("failed to throw TokioException");
-            return;
+/// A macro to be used in JNI functions to unwrap a `jni::errors::Result<T>`.
+/// It checks if the result is `Ok(T)` and returns the value, otherwise it
+/// will return from the calling function if there's a pending Java exception,
+/// or wrap the error in the specified exception class and throw it and return
+/// the calling function.
+#[macro_export]
+macro_rules! unwrap_or_throw {
+    ($env:expr, $result:expr, $fallback_java_exception_class:literal $(, $return_sentinel:literal)?) => {
+        match $result {
+            Ok(result) => result,
+            Err(e) => {
+                let throwable = $env.exception_occurred().unwrap();
+                if throwable.is_null() {
+                    $env.throw_new($fallback_java_exception_class, &format!("{}", e))
+                        .expect("failed to throw java exception");
+                }
+                return $($return_sentinel)?;
+            }
         }
     };
-    unsafe {
-        JAVA_VM = Some(vm);
-    }
-    crate::log::install_jni_logger(&env);
+    ($env:expr, $result:expr) => {
+        unwrap_or_throw!($env, $result, "java/lang/RuntimeException")
+    };
+}
+
+/// Entry point to register the JAVA_VM static.
+/// See `Os.java` for the Java side of this.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_std_Os_initQuestdbJni(env: JNIEnv, _class: JClass) {
+    let vm = unwrap_or_throw!(env, env.get_java_vm());
+    unsafe { JAVA_VM = Some(vm); }
 }
 
 #[cfg(test)]

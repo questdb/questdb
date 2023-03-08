@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.log.LogFactory;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.CharSequenceZ;
@@ -257,6 +258,10 @@ public final class Os {
                     Os.class,
                     "/io/questdb/bin/",
                     "questdb_jni");
+
+            initQuestdbJni();
         }
     }
+
+    private static native void initQuestdbJni();
 }
