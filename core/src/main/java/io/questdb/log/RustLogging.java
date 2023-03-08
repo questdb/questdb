@@ -27,6 +27,19 @@ package io.questdb.log;
 import io.questdb.std.Os;
 
 public class RustLogging {
+    public static int LEVEL_DEBUG = 4;
+    public static int LEVEL_ERROR = 1;
+    public static int LEVEL_INFO = 3;
+    public static int LEVEL_TRACE = 5;
+    public static int LEVEL_WARN = 2;
+
+    public static void init() {
+    }
+
+    public static native void logMsg(int level, String target, String msg);
+
+    private static native void installRustLogger(int maxLevel);
+
     static {
         Os.init();
 
@@ -35,16 +48,6 @@ public class RustLogging {
         LogFactory.init();
 
         // Log debug messages and above.
-        installRustLogger(4);
+        installRustLogger(3);  // LEVEL_INFO
     }
-
-    public static int LEVEL_ERROR = 1;
-    public static int LEVEL_WARN = 2;
-    public static int LEVEL_INFO = 3;
-    public static int LEVEL_DEBUG = 4;
-    public static int LEVEL_TRACE = 5;
-
-    private static native void installRustLogger(int maxLevel);
-
-    public static native void logMsg(int level, String target, String msg);
 }

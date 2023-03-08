@@ -24,28 +24,45 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Chars;
-import io.questdb.std.str.StringSink;
-
 public interface Log {
 
     LogRecord advisory();
+
+    default void advisoryUtf8(long lo, long hi) {
+        advisory().$utf8(lo, hi).$();
+    }
 
     LogRecord advisoryW();
 
     LogRecord critical();
 
+    default void criticalUtf8(long lo, long hi) {
+        critical().$utf8(lo, hi).$();
+    }
+
     LogRecord criticalW();
 
     LogRecord debug();
+
+    default void debugUtf8(long lo, long hi) {
+        debug().$utf8(lo, hi).$();
+    }
 
     LogRecord debugW();
 
     LogRecord error();
 
+    default void errorUtf8(long lo, long hi) {
+        error().$utf8(lo, hi).$();
+    }
+
     LogRecord errorW();
 
     LogRecord info();
+
+    default void infoUtf8(long lo, long hi) {
+        info().$utf8(lo, hi).$();
+    }
 
     LogRecord infoW();
 
@@ -62,27 +79,4 @@ public interface Log {
     LogRecord xerror();
 
     LogRecord xinfo();
-
-    default void advisoryUtf8(long lo, long hi) {
-        advisory().$utf8(lo, hi);
-    }
-
-    default void criticalUtf8(long lo, long hi) {
-        critical().$utf8(lo, hi);
-    }
-
-    default void debugUtf8(long lo, long hi) {
-        StringSink sink = new StringSink();
-        Chars.utf8Decode(lo, hi, sink);
-        System.err.println("debugUtf8 called :: " + sink.toString());
-        debug().$utf8(lo, hi);
-    }
-
-    default void errorUtf8(long lo, long hi) {
-        error().$utf8(lo, hi);
-    }
-
-    default void infoUtf8(long lo, long hi) {
-        info().$utf8(lo, hi);
-    }
 }

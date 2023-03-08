@@ -29,8 +29,18 @@ import org.junit.Test;
 
 public class RustLoggingTest extends TestCase {
     @Test
-    public void testDebug() {
-        LogFactory.configureSync();
-        RustLogging.logMsg(RustLogging.LEVEL_DEBUG, "test_target", "test_msg");
+    public void testLogging() {
+        // All info-level log messages (and above) should appear
+        // in stdout when running this test.
+        // If they don't, temporarily uncomment the following line:
+        //     LogFactory.configureSync();
+        RustLogging.logMsg(RustLogging.LEVEL_INFO, "a::b::c", "test_msg1");
+        RustLogging.logMsg(RustLogging.LEVEL_WARN, "def", "test_msg2");
+        RustLogging.logMsg(RustLogging.LEVEL_INFO, "a::b::c", "test_msg3");
+        RustLogging.logMsg(RustLogging.LEVEL_ERROR, "def", "test_msg4");
+        RustLogging.logMsg(RustLogging.LEVEL_INFO, "a::b::c", "test_msg5");
+        RustLogging.logMsg(RustLogging.LEVEL_DEBUG, "ghi", "test_msg6");
+        RustLogging.logMsg(RustLogging.LEVEL_TRACE, "a::b::c", "test_msg7");
+        RustLogging.logMsg(RustLogging.LEVEL_ERROR, "ghi", "test_msg8");
     }
 }

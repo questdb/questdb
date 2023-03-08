@@ -24,12 +24,11 @@
 
 package io.questdb.std;
 
-import io.questdb.log.LogFactory;
+import io.questdb.jar.jni.JarJniLoader;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.CharSequenceZ;
 import io.questdb.std.str.Path;
-import io.questdb.jar.jni.JarJniLoader;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -174,11 +173,40 @@ public final class Os {
         }
     }
 
+    private static int determinePlatformType() {
+        if ("32".equals(System.getProperty("sun.arch.data.model"))) {
+            return _32Bit;
+        }
+
+        String osName = System.getProperty("os.name");
+        if (osName.contains("Linux")) {
+            if ("aarch64".equals(System.getProperty("os.arch"))) {
+                return LINUX_ARM64;
+            } else {
+                return LINUX_AMD64;
+            }
+        } else if (osName.contains("Mac")) {
+            if ("aarch64".equals(System.getProperty("os.arch"))) {
+                return OSX_ARM64;
+            } else {
+                return OSX_AMD64; // darwin
+            }
+        } else if (osName.contains("Windows")) {
+            return WINDOWS;
+        } else if (osName.contains("FreeBSD")) {
+            return FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
+        } else {
+            throw new Error("Unsupported OS: " + osName);
+        }
+    }
+
     private static native long forkExec(long argv);
 
     private static native void freeKrbToken(long struct);
 
     private static native long generateKrbToken(long spn);
+
+    private static native void initQuestdbJni();
 
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
@@ -215,33 +243,6 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
-    private static int determinePlatformType() {
-        if ("32".equals(System.getProperty("sun.arch.data.model"))) {
-            return _32Bit;
-        }
-
-        String osName = System.getProperty("os.name");
-        if (osName.contains("Linux")) {
-            if ("aarch64".equals(System.getProperty("os.arch"))) {
-                return LINUX_ARM64;
-            } else {
-                return LINUX_AMD64;
-            }
-        } else if (osName.contains("Mac")) {
-            if ("aarch64".equals(System.getProperty("os.arch"))) {
-                return OSX_ARM64;
-            } else {
-                return OSX_AMD64; // darwin
-            }
-        } else if (osName.contains("Windows")) {
-            return WINDOWS;
-        } else if (osName.contains("FreeBSD")) {
-            return FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-        } else {
-            throw new Error("Unsupported OS: " + osName);
-        }
-    }
-
     static {
         type = determinePlatformType();
         if (type != _32Bit) {
@@ -262,6 +263,4 @@ public final class Os {
             initQuestdbJni();
         }
     }
-
-    private static native void initQuestdbJni();
 }

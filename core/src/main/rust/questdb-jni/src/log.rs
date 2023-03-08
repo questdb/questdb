@@ -31,13 +31,124 @@ use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JMethodID, JStaticMethodID, JString, JValue};
 use jni::signature::{Primitive, ReturnType};
 use jni::sys::{jint, jlong};
-use log::{Log, Level};
+use log::{Level, Log};
+
 use crate::unwrap_or_throw;
 
-struct JavaLogWrapper { obj: GlobalRef }
+#[derive(Clone, Debug)]
+pub struct JavaLog {
+    obj: GlobalRef,
+}
+
+impl JavaLog {
+    fn new(call_state: &CallState, jenv: &JNIEnv, name: &str) -> Self {
+        let j_name = jenv.new_string(name)
+            .expect("could not construct logger name string");
+        let j_name = jenv.auto_local(j_name);
+        let obj = jenv.call_static_method_unchecked(
+            call_state.log_factory_class.as_obj(),
+            call_state.log_factory_get_log_meth,
+            ReturnType::Object,
+            &[JValue::Object(j_name.as_obj()).into()])
+            .expect("io.questdb.log.LogFactory::getLog(String) call failed")
+            .l()
+            .expect("io.questdb.log.LogFactory::getLog(String) didn't return an object");
+        if obj.is_null() {
+            panic!("io.questdb.log.LogFactory::getLog(String) returned null");
+        }
+        let obj = jenv.new_global_ref(obj)
+            .expect("could not create global reference to io.questdb.log.Log object");
+        JavaLog { obj }
+    }
+
+    #[inline]
+    fn call_log_meth(&self, env: &JNIEnv, meth: JMethodID, meth_name: &str, msg: &str) {
+        let lo = msg.as_ptr() as jlong;
+        let hi = lo + msg.len() as jlong;
+        let lo = JValue::Long(lo);
+        let hi = JValue::Long(hi);
+        let res = env.call_method_unchecked(
+            self.obj.as_obj(),
+            meth,
+            ReturnType::Primitive(Primitive::Void),
+            &[lo.into(), hi.into()]);
+        if let Err(e) = res {
+            let throwable = env.exception_occurred().unwrap();
+            if !throwable.is_null() {
+                env.exception_describe().unwrap();
+            }
+            panic!("io.questdb.log.Log::{}(long, long) call failed: {}", meth_name, e);
+        }
+    }
+
+    // error: User problems, for the most part.
+    // info: Events that happened. Info contains context for debugging.
+    // debug: ~Trace, but not as verbose.
+
+    /// Log a message at the `Advisory` level.
+    /// An info-type message that doesn't get suppressed if info is disabled.
+    /// This is for messages that we pretty much always want to appear, so are higher
+    /// priority than info. This might be start-up information logging paths and/or ports.
+    #[allow(dead_code)]
+    fn advisory(&self, env: &JNIEnv, msg: &str) {
+        self.call_log_meth(
+            env,
+            get_call_state().log_advisory_meth,
+            "advisoryUtf8",
+            msg);
+    }
+
+    /// Log a message at the `Critical` level.
+    /// A message that indicates a critical error.
+    /// Critical log messages are forwarded to our alerting system and ping
+    /// our phones when stuff goes awry.
+    /// Details are usually in preceding info messages.
+    #[allow(dead_code)]
+    fn critical(&self, env: &JNIEnv, msg: &str) {
+        self.call_log_meth(
+            env,
+            get_call_state().log_critical_meth,
+            "criticalUtf8",
+            msg);
+    }
+
+    /// Log a message at the `Debug` level.
+    /// This level is usually turned off in most configurations.
+    fn debug(&self, env: &JNIEnv, msg: &str) {
+        self.call_log_meth(
+            env,
+            get_call_state().log_debug_meth,
+            "debugUtf8",
+            msg);
+    }
+
+    /// Log a message at the `Error` level.
+    /// An error has occured, but it is recoverable.
+    /// This is where users might find out that they have a bad query or a bad ILP message.
+    /// Details are generally present in preceding info messages.
+    fn error(&self, env: &JNIEnv, msg: &str) {
+        self.call_log_meth(
+            env,
+            get_call_state().log_error_meth,
+            "errorUtf8",
+            msg);
+    }
+
+    /// Log a message at the `Info` level.
+    /// This is the default level that's configured for logging.
+    /// It often carries details about an error or critical error that's going to be logged later.
+    fn info(&self, env: &JNIEnv, msg: &str) {
+        self.call_log_meth(
+            env,
+            get_call_state().log_info_meth,
+            "infoUtf8",
+            msg);
+    }
+}
 
 struct CallState {
-    impls: DashMap<Box<str>, JavaLogWrapper>,  // concurrent map
+    impls: DashMap<Box<str>, JavaLog>,
+    // concurrent map
     log_factory_class: GlobalRef,
     log_factory_get_log_meth: JStaticMethodID,
     log_advisory_meth: JMethodID,
@@ -48,18 +159,17 @@ struct CallState {
 }
 
 impl CallState {
-    fn with_log_wrapper<F>(&self, jenv: &JNIEnv, name: &str, f: F)
-            where F: FnOnce(&JNIEnv, &JavaLogWrapper) {
+    fn with_log_wrapper<F, R>(&self, jenv: &JNIEnv, name: &str, f: F) -> R
+        where F: FnOnce(&JavaLog) -> R {
         let log_wrapper_ref = if let Some(pre_existing) = self.impls.get(name) {
             // Fast path: we already have a logger for this name.
             pre_existing
-        }
-        else {
+        } else {
             // Race to insert this logger.
             // Another thread might be trying to do the same.
             // That's OK. The latest one wins.
             let boxed_name = name.to_string().into_boxed_str();
-            let log_wrapper = JavaLogWrapper::new(self, jenv, name);
+            let log_wrapper = JavaLog::new(self, jenv, name);
 
             // There's a race condition here, but it's benign. If two threads
             // try to insert the same key at the same time, one of them will
@@ -72,7 +182,7 @@ impl CallState {
         };
 
         let log_wrapper = log_wrapper_ref.value();
-        f(jenv, log_wrapper);
+        f(log_wrapper)
     }
 }
 
@@ -82,6 +192,13 @@ fn get_call_state() -> &'static CallState {
     unsafe {
         CALL_STATE.as_ref().expect("J_CALL_INFO not initialized")
     }
+}
+
+#[allow(dead_code)]
+pub fn get_java_log(env: &JNIEnv, name: &str) -> JavaLog {
+    get_call_state().with_log_wrapper(env, name, |log| {
+        log.clone()
+    })
 }
 
 fn lookup_and_set_java_call_info(env: &JNIEnv) -> jni::errors::Result<()> {
@@ -121,88 +238,6 @@ fn lookup_and_set_java_call_info(env: &JNIEnv) -> jni::errors::Result<()> {
     }
 
     Ok(())
-}
-
-impl JavaLogWrapper {
-    fn new(call_state: &CallState, jenv: &JNIEnv, name: &str) -> Self {
-        let j_name = jenv.new_string(name)
-            .expect("could not construct logger name string");
-        let j_name = jenv.auto_local(j_name);
-        let obj = jenv.call_static_method_unchecked(
-            call_state.log_factory_class.as_obj(),
-            call_state.log_factory_get_log_meth,
-            ReturnType::Object,
-            &[JValue::Object(j_name.as_obj()).into()])
-            .expect("io.questdb.log.LogFactory::getLog(String) call failed")
-            .l()
-            .expect("io.questdb.log.LogFactory::getLog(String) didn't return an object");
-        if obj.is_null() {
-            panic!("io.questdb.log.LogFactory::getLog(String) returned null");
-        }
-        let obj = jenv.new_global_ref(obj)
-            .expect("could not create global reference to io.questdb.log.Log object");
-        JavaLogWrapper { obj }
-    }
-
-    #[inline]
-    fn call_log_meth(&self, env: &JNIEnv, meth: JMethodID, meth_name: &str, msg: &str) {
-        let lo = msg.as_ptr() as jlong;
-        let hi = lo + msg.len() as jlong;
-        let lo = JValue::Long(lo);
-        let hi = JValue::Long(hi);
-        let res = env.call_method_unchecked(
-            self.obj.as_obj(),
-            meth,
-            ReturnType::Primitive(Primitive::Void),
-            &[lo.into(), hi.into()]);
-        if let Err(e) = res {
-            let throwable = env.exception_occurred().unwrap();
-            if !throwable.is_null() {
-                env.exception_describe().unwrap();
-            }
-            panic!("io.questdb.log.Log::{}(long, long) call failed: {}", meth_name, e);
-        }
-    }
-
-    fn advisory(&self, env: &JNIEnv, msg: &str) {
-        self.call_log_meth(
-            env,
-            get_call_state().log_advisory_meth,
-            "advisoryUtf8",
-            msg);
-    }
-
-    fn critical(&self, env: &JNIEnv, msg: &str) {
-        self.call_log_meth(
-            env,
-            get_call_state().log_critical_meth,
-            "criticalUtf8",
-            msg);
-    }
-
-    fn debug(&self, env: &JNIEnv, msg: &str) {
-        self.call_log_meth(
-            env,
-            get_call_state().log_debug_meth,
-            "debugUtf8",
-            msg);
-    }
-
-    fn error(&self, env: &JNIEnv, msg: &str) {
-        self.call_log_meth(
-            env,
-            get_call_state().log_error_meth,
-            "errorUtf8",
-            msg);
-    }
-
-    fn info(&self, env: &JNIEnv, msg: &str) {
-        self.call_log_meth(
-            env,
-            get_call_state().log_info_meth,
-            "infoUtf8",
-            msg);
-    }
 }
 
 struct TrampolineLogger;
@@ -246,14 +281,14 @@ impl Log for TrampolineLogger {
             .expect("could not get JNIEnv");
         get_call_state().with_log_wrapper(
             &jenv,
-            target, 
-            |jenv, log_wrapper| {
+            target,
+            |log_wrapper| {
                 match record.level() {
-                    Level::Error => log_wrapper.critical(jenv, msg),
-                    Level::Warn => log_wrapper.error(jenv, msg),
-                    Level::Info => log_wrapper.info(jenv, msg),
-                    Level::Debug => log_wrapper.debug(jenv, msg),
-                    Level::Trace => log_wrapper.advisory(jenv, msg),
+                    Level::Error => log_wrapper.error(&jenv, msg),
+                    Level::Warn => log_wrapper.error(&jenv, msg),
+                    Level::Info => log_wrapper.info(&jenv, msg),
+                    Level::Debug => log_wrapper.debug(&jenv, msg),
+                    Level::Trace => log_wrapper.debug(&jenv, msg),
                 }
             });
     }
@@ -266,7 +301,7 @@ static mut LOGGER_INSTALLED: bool = false;
 
 pub fn install_jni_logger(env: &JNIEnv, max_level: Level) -> jni::errors::Result<()> {
     if unsafe { LOGGER_INSTALLED } {
-        return Ok(())
+        return Ok(());
     }
     lookup_and_set_java_call_info(env)?;
     log::set_logger(&TRAMPOLINE_LOGGER).map_err(|e| {
@@ -280,7 +315,7 @@ pub fn install_jni_logger(env: &JNIEnv, max_level: Level) -> jni::errors::Result
     Ok(())
 }
 
-fn level_from_int(b: jint) -> Level {
+fn level_from_byte(b: jint) -> Level {
     match b {
         1 => Level::Error,
         2 => Level::Warn,
@@ -293,13 +328,13 @@ fn level_from_int(b: jint) -> Level {
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_log_RustLogging_installRustLogger(env: JNIEnv, _class: JClass, max_level: jint) {
-    let level = level_from_int(max_level);
+    let level = level_from_byte(max_level);
     unwrap_or_throw!(env, install_jni_logger(&env, level));
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_log_RustLogging_logMsg(
-        env: JNIEnv, _class: JClass, level: jint, target: JString, msg: JString) {
+    env: JNIEnv, _class: JClass, level: jint, target: JString, msg: JString) {
     let level = match level {
         1 => Level::Error,
         2 => Level::Warn,
@@ -310,7 +345,7 @@ pub extern "system" fn Java_io_questdb_log_RustLogging_logMsg(
     };
     let target = env.get_string(target).expect("could not get target");
     let target_str = target.to_str().expect("could not convert target to str");
-    let msg= env.get_string(msg).expect("could not get msg");
+    let msg = env.get_string(msg).expect("could not get msg");
     let msg_str = msg.to_str().expect("could not convert msg to str");
     log::log!(target: target_str, level, "{}", msg_str);
 }
