@@ -33,6 +33,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
+
 public class LikeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
@@ -295,4 +298,71 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(expected, query, null, true, false);
         assertQuery(expected, query.replace("like", "ilike"), null, true, false);
     }
+
+    @Test
+    public void testLikeEscapeOneSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeTwoSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is \\_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeThreeSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\\\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is \\_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeNotRealEscape() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('\\\\?\\D:\\path');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '\\\\\\\\_\\\\%';";
+        String expected1 = "name\n";
+        String expected2 = "name\n\\\\?\\D:\\path\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeAtEnd() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> {
+            assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+        });
+
+        String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+
 }
