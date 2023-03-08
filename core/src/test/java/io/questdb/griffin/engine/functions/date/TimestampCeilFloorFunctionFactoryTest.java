@@ -42,7 +42,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'o'", e.getFlyweightMessage());
             }
         });
     }
@@ -58,7 +58,23 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testFloorEmptyStrKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_floor('', null)",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(23, e.getPosition());
+                TestUtils.assertContains("invalid unit ''", e.getFlyweightMessage());
             }
         });
     }
@@ -74,7 +90,31 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'z'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'z'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testFloorInvalidMinutesKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_floor('-3m', null)",
+                        sqlExecutionContext
+                );
+            } catch (SqlException e) {
+                Assert.assertEquals(23, e.getPosition());
+                TestUtils.assertContains("invalid unit '-3m'", e.getFlyweightMessage());
+            }
+            try {
+                compiler.compile(
+                        "select timestamp_floor('0Y', null)",
+                        sqlExecutionContext
+                );
+            } catch (SqlException e) {
+                Assert.assertEquals(23, e.getPosition());
+                TestUtils.assertContains("invalid unit '0Y'", e.getFlyweightMessage());
             }
         });
     }
@@ -90,7 +130,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
             }
         });
     }
@@ -127,6 +167,29 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 sink,
                 "ts\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
                         "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
+        ));
+    }
+
+    @Test
+    public void testSimpleFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "with t as (\n" +
+                        "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                        ")\n" +
+                        "select\n" +
+                        "  ts\n" +
+                        "  , timestamp_floor('25T', ts) f_milli\n" +
+                        "  , timestamp_floor('20s', ts) f_second\n" +
+                        "  , timestamp_floor('5m', ts) f_minute\n" +
+                        "  , timestamp_floor('9h', ts) f_hour\n" +
+                        "  , timestamp_floor('4d', ts) f_day\n" +
+                        "  , timestamp_floor('3w', ts) f_week\n" +
+                        "  from t\n",
+                sink,
+                "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.850000Z\t2016-02-10T16:18:20.000000Z\t2016-02-10T16:15:00.000000Z\t2016-02-10T15:00:00.000000Z\t2016-02-09T00:00:00.000000Z\t2016-01-25T00:00:00.000000Z\n"
         ));
     }
 }
