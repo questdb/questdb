@@ -1396,6 +1396,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // If data is kept in lag on empty table, mark the partition it's stored
                 // as maxTimestamp.
                 txWriter.maxTimestamp = o3TimestampMin;
+                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, -1);
             }
         }
 
@@ -4014,6 +4015,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long lagDataBegin = lagRows > 0 ? Unsafe.getUnsafe().getLong(lagIndxAddr) : 0;
         final long lagDataEnd = lagRows > 0 ? Unsafe.getUnsafe().getLong(lagIndxAddr + lagIndxSize - 8) : 0;
         final long lagDataSize = lagDataEnd - lagDataBegin;
+        assert lagRows == 0 || lagDataSize > 0;
         final long lagDataMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagData, lagDataBegin, lagDataSize, false) : 0;
         final long lagDataAddr = Math.abs(lagDataMapAddr) - lagDataBegin;
 
