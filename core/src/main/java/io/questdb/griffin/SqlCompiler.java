@@ -282,14 +282,13 @@ public class SqlCompiler implements Closeable {
      * @param query            - block of queries to process
      * @param executionContext - SQL execution context
      * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
-     * @return true if batch contained at least one non-empty query, false otherwise
      * @throws SqlException              - in case of syntax error
      * @throws PeerDisconnectedException - when peer is disconnected
      * @throws PeerIsSlowToReadException - when peer is too slow
      * @throws QueryPausedException      - when query is paused
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
-    public boolean compileBatch(
+    public void compileBatch(
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
@@ -307,14 +306,12 @@ public class SqlCompiler implements Closeable {
 
         int position;
 
-        boolean batchHasQuery = false;
         while (lexer.hasNext()) {
             // skip over empty statements that'd cause error in parser
             position = getNextValidTokenPosition();
             if (position == -1) {
-                return batchHasQuery;
+                return;
             }
-            batchHasQuery = true;
 
             boolean recompileStale = true;
             for (int retries = 0; recompileStale; retries++) {
@@ -337,7 +334,6 @@ public class SqlCompiler implements Closeable {
                 }
             }
         }
-        return batchHasQuery;
     }
 
     public CairoEngine getEngine() {

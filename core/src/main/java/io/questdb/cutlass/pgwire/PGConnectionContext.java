@@ -2369,12 +2369,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             @Transient SqlCompiler compiler
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException {
         prepareForNewQuery();
+        isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
         CharacterStoreEntry e = characterStore.newEntry();
 
         if (Chars.utf8Decode(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
             try {
-                if (!compiler.compileBatch(queryText, sqlExecutionContext, batchCallback)) {
+                compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                if (isEmptyQuery) {
                     prepareEmptyQueryResponse();
                 }
                 // we need to continue parsing receive buffer even if we errored out
