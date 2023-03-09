@@ -35,6 +35,8 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     protected final long lim;
     protected long _wptr;
     private int level;
+    private int multibyteLength = 0;
+    private boolean done = false;
 
     LogRecordSink(long address, long addressSize) {
         this.address = _wptr = address;
@@ -43,6 +45,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     public void clear() {
         _wptr = address;
+        done = false;
     }
 
     public long getAddress() {
@@ -79,8 +82,24 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(char c) {
-        if (_wptr < lim) {
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+        if (done) {
+            return this;
+        }
+
+        final byte b = (byte) c;
+        final long left = lim - _wptr;
+        long needed = utf8charNeeded(b);
+        if (needed == -1) {
+            // Invalid UTF-8 char sentinel replacement.
+            Unsafe.getUnsafe().putByte(_wptr++, (byte) '?');
+            needed = 1;
+        }
+        if (left >= needed) {
+            Unsafe.getUnsafe().putByte(_wptr++, b);
+        }
+        else {
+            // Stop processing any further characters.
+            done = true;
         }
         return this;
     }
@@ -92,5 +111,39 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     @Override
     public void toSink(CharSink sink) {
         Chars.utf8Decode(address, _wptr, sink);
+    }
+
+    private long utf8charNeeded(byte b) {
+        // Reference the table at:
+        // https://en.wikipedia.org/wiki/UTF-8#Encoding
+
+        if (b >= 0) {
+            return 1;  // ASCII
+        }
+
+        if ((b & 0xC0) == 0x80) {
+            // 0xC0 = 1100 0000, 0x80 = 1000 0000, check if starts with 10
+            // This is a continuation byte.
+            if (multibyteLength < 2) {
+                // This if guards against broken UTF-8 strings.
+                multibyteLength = 2;
+            }
+            --multibyteLength;
+
+        } else if ((b & 0xE0) == 0xC0) {
+            // 0xE0 = 1110 0000, 0xC0 = 1100 0000, check if starts with 110
+            multibyteLength = 2;
+        } else if ((b & 0xF0) == 0xE0) {
+            // 0xF0 = 1111 0000, 0xE0 = 1110 0000m, check if starts with 1110
+            multibyteLength = 3;
+        } else if ((b & 0xF8) == 0xF0) {
+            // 0xF8 = 1111 1000, 0xF0 = 1111 0000, check if starts with 1111 0
+            multibyteLength = 4;
+        } else {
+            // Invalid UTF-8 char.
+            return -1;
+        }
+
+        return multibyteLength;
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -121,5 +122,78 @@ public class LogRecordSinkTest {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    /**
+     * Test that we don't trim the log on an invalid UTF-8 sequence.
+     */
+    @Test
+    public void testUtf8LineTrimming() throws Exception {
+        final String[] msgs = {
+                "abcd",  // ASCII last char, 4 bytes total.
+                "abcð",  // 2-byte UTF-8 last char, 5 bytes total.
+                "abc嚜", // 3-byte UTF-8 last char, 6 bytes total.
+                "abc\uD83D\uDCA9", // 4-byte UTF-8 last char, 7 bytes total.
+        };
+
+        // Expected byte length of each message when encoded as UTF-8.
+        final int[] expEncLens = {4, 5, 6, 7};
+
+        final int[][] scenarios = {
+                // { msg string index, sink max len, expected written len }
+
+                // ASCII
+                {0, 4, 4},
+                {0, 5, 4},
+                {0, 3, 3},
+                {0, 2, 2},
+                {0, 1, 1},
+                {0, 0, 0},
+
+                // 2-byte UTF-8
+                {1, 5, 5},
+                {1, 6, 5},
+                {1, 4, 3},
+                {1, 3, 3},
+
+                // 3-byte UTF-8
+                {2, 6, 6},
+                {2, 7, 6},
+                {2, 5, 3},
+                {2, 4, 3},
+                {2, 3, 3},
+
+                // 4-byte UTF-8
+                {3, 7, 7},
+                {3, 8, 7},
+                {3, 6, 3},
+                {3, 5, 3},
+                {3, 4, 3},
+                {3, 3, 3},
+        };
+
+        for (int[] scenario : scenarios) {
+            final int msgIdx = scenario[0];
+            final String msg = msgs[msgIdx];
+            final long sinkMaxLen = scenario[1];
+            final long expectedLen = scenario[2];
+            // System.err.printf(
+            //         "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
+            //         msgIdx, msg, sinkMaxLen, expectedLen);
+
+            TestUtils.assertMemoryLeak(() -> {
+                final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+                final int len = msgBytes.length;
+                Assert.assertEquals(len, expEncLens[msgIdx]);
+                final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                    logRecord.encodeUtf8(msg);
+                    Assert.assertEquals(expectedLen, logRecord.length());
+                } finally {
+                    Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            });
+        }
     }
 }
