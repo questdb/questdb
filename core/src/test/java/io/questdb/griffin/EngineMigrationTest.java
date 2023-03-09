@@ -54,6 +54,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.closeNameRegistry();
 
         final byte[] buffer = new byte[1024 * 1024];
         URL resource = EngineMigrationTest.class.getResource(path);
@@ -71,6 +73,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
             }
         }
+
+        engine.reloadTableNames();
     }
 
     @BeforeClass
