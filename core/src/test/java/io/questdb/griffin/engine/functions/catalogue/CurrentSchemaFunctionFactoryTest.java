@@ -24,10 +24,36 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedTxIDCurrentFunctionFactory extends TxIDCurrentFunctionFactory {
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.txid_current()";
+public class CurrentSchemaFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testCurrentSchemaFunc() throws Exception {
+        assertQuery(
+                "current_schema\n" +
+                        "public\n",
+                "select current_schema();",
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testPrefixedCurrentSchemaFunc() throws Exception {
+        assertQuery(
+                "current_schema\n" +
+                        "public\n",
+                "select pg_catalog.current_schema();",
+                null,
+                null,
+                true,
+                false,
+                true
+        );
     }
 }

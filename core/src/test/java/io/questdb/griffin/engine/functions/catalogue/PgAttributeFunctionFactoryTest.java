@@ -303,6 +303,18 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPgAttributeFuncNoPrefix() throws Exception {
+        assertQuery(
+                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
+                "pg_attribute;",
+                null,
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testPgAttributeFuncNoTables() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",

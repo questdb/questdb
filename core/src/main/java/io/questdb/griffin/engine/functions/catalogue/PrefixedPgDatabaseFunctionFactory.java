@@ -24,10 +24,10 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedTxIDCurrentFunctionFactory extends TxIDCurrentFunctionFactory {
+public class PrefixedPgDatabaseFunctionFactory extends PgDatabaseFunctionFactory {
 
     @Override
     public String getSignature() {
-        return "pg_catalog.txid_current()";
+        return "pg_catalog.pg_database()";
     }
 }
