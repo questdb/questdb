@@ -44,7 +44,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid kind 'invalid'", e.getFlyweightMessage());
+            TestUtils.assertContains("invalid unit 'invalid'", e.getFlyweightMessage());
         }
     }
 
@@ -58,7 +58,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+            TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
         }
     }
 

@@ -30,5 +30,4 @@ public class PrefixedPgTypeFunctionFactory extends PgTypeFunctionFactory {
     public String getSignature() {
         return "pg_catalog.pg_type()";
     }
-
 }
