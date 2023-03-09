@@ -29,14 +29,14 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 
-public class PgInheritsFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private static final RecordMetadata METADATA;
+public class PgRolesFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private final static RecordMetadata METADATA;
 
-    public PgInheritsFunctionFactory() {
-        super("pg_inherits()", METADATA);
+    public PgRolesFunctionFactory() {
+        this("pg_roles()");
     }
 
-    protected PgInheritsFunctionFactory(String signature) {
+    protected PgRolesFunctionFactory(String signature) {
         super(signature, METADATA);
     }
 
@@ -47,9 +47,19 @@ public class PgInheritsFunctionFactory extends AbstractEmptyCatalogueFunctionFac
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("inhrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("inhparent", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("inhseqno", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rolname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("rolsuper", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolinherit", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolcreaterole", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolcreatedb", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolcanlogin", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolreplication", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolconnlimit", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rolpassword", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("rolvaliduntil", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("rolbypassrls", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("rolconfig", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
         METADATA = metadata;
     }
 }
