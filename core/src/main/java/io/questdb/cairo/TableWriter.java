@@ -1396,7 +1396,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // If data is kept in lag on empty table, mark the partition it's stored
                 // as maxTimestamp.
                 txWriter.maxTimestamp = o3TimestampMin;
-                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, -1);
+                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
             }
         }
 
