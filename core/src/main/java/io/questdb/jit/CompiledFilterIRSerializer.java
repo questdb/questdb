@@ -58,13 +58,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int F8_TYPE = 5;
     static final int GE = 13;  // a >= b
     static final int GT = 12;  // a >  b
+    static final int I16_TYPE = 6;
     // Options:
     // Data types
     static final int I1_TYPE = 0;
     static final int I2_TYPE = 1;
     static final int I4_TYPE = 2;
     static final int I8_TYPE = 4;
-    static final int I16_TYPE = 6;
     // Constants
     static final int IMM = 1;
     static final int LE = 11;  // a <= b
@@ -90,11 +90,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PredicateContext predicateContext = new PredicateContext();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
+    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
     private MemoryCARW memory;
-    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
 
@@ -500,6 +500,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(offset + 2 * Integer.BYTES, lo);
         memory.putLong(offset + 2 * Integer.BYTES + Long.BYTES, hi);
     }
+
     private void putOperator(int opcode) {
         memory.putInt(opcode);
         // pad unused fields with zeros
@@ -605,10 +606,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 if (PredicateType.UUID != predicateContext.type) {
                     throw SqlException.position(position).put("uuid constant in non-uuid expression: ").put(token);
                 }
-                final CharSequence uuid = token.subSequence(1, token.length() - 1);
                 try {
-                    Uuid.checkDashesAndLength(uuid);
-                    putOperand(offset, IMM, I16_TYPE, Uuid.parseLo(uuid), Uuid.parseHi(uuid));
+                    // skip first and last char which are quotes
+                    Uuid.checkDashesAndLength(token, 1, token.length() - 1);
+                    putOperand(offset, IMM, I16_TYPE, Uuid.parseLo(token, 1), Uuid.parseHi(token, 1));
                 } catch (NumericException e) {
                     throw SqlException.position(position).put("invalid uuid constant: ").put(token);
                 }
@@ -920,11 +921,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private static final int F4_INDEX = 3;
         private static final int F8_INDEX = 5;
+        private static final int I16_INDEX = 6;
         private static final int I1_INDEX = 0;
         private static final int I2_INDEX = 1;
         private static final int I4_INDEX = 2;
         private static final int I8_INDEX = 4;
-        private static final int I16_INDEX = 6;
         private static final int TYPES_COUNT = I16_INDEX + 1;
 
 
