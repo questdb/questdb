@@ -118,21 +118,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
         (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong destOffset, jlong length) {
 
-    size_t len = length > 0 ? length : SIZE_MAX;
-    off_t offset = srcOffset;
-    off_t destOff = destOffset;
-
-    while (len > 0) {
-        ssize_t writtenLen = copy_file_range(srcFd, &offset, destFd, &destOff, len > MAX_RW_COUNT ? MAX_RW_COUNT : len, 0);
-        if (writtenLen <= 0
-            // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
-            && errno != EINTR) {
-            break;
-        }
-        len -= writtenLen;
+    if (destOffset != 0) {
+        lseek64(destFd, destOffset, SEEK_SET);
     }
-
-    return offset - srcOffset;
+    return Java_io_questdb_std_Files_copyData(e, cls, srcFd, destFd, srcOffset, length);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0
