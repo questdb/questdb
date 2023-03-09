@@ -339,7 +339,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     return table.size() <= cursor.size();
                 }
             } catch (SqlException ex) {
-                if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
+                if (ex.getFlyweightMessage().toString().contains("table does not exist")
+                        || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
                     getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                             .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
                     return table.size() <= 0;
@@ -349,6 +350,15 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             }
         } catch (SqlException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    protected void clearTables() {
+        final ObjList<CharSequence> names = tables.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            final CharSequence tableName = names.get(i);
+            final TableData table = tables.get(tableName);
+            table.clear();
         }
     }
 
@@ -403,6 +413,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
     }
 
+    void ingest(ObjList<Socket> sockets) {
+        threadPushFinished.setCount(numOfThreads);
+        for (int i = 0; i < numOfThreads; i++) {
+            startThread(i, sockets.get(i), threadPushFinished);
+        }
+        threadPushFinished.await();
+    }
+
     void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
                             boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace) {
         this.duplicatesFactor = duplicatesFactor;
@@ -437,22 +455,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         tableNames = new ConcurrentHashMap<>();
     }
 
-    protected void mayDrainWalQueue() {
-        if (walEnabled) {
-            drainWalQueue();
-        }
-    }
-
     protected void markTimestamp() {
         timestampMark = timestampMicros.get();
     }
 
-    protected void clearTables() {
-        final ObjList<CharSequence> names = tables.keys();
-        for (int i = 0, n = names.size(); i < n; i++) {
-            final CharSequence tableName = names.get(i);
-            final TableData table = tables.get(tableName);
-            table.clear();
+    protected void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
         }
     }
 
@@ -526,14 +535,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (errorMsg != null) {
             Assert.fail(errorMsg);
         }
-    }
-
-    void ingest(ObjList<Socket> sockets) {
-        threadPushFinished.setCount(numOfThreads);
-        for (int i = 0; i < numOfThreads; i++) {
-            startThread(i, sockets.get(i), threadPushFinished);
-        }
-        threadPushFinished.await();
     }
 
     void setError(String errorMsg) {
