@@ -236,6 +236,12 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
+    public CharSink put(long value) {
+        Numbers.append(this, value, false);
+        return this;
+    }
+
+    @Override
     public void putUtf8Special(char c) {
         validateNotClosed();
         switch (c) {

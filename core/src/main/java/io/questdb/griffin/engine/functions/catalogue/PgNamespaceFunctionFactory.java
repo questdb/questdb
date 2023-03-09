@@ -34,6 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class PgNamespaceFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "pg_namespace()";

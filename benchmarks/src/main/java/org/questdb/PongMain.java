@@ -45,7 +45,7 @@ public class PongMain {
         // worker pool, which would handle jobs
         final WorkerPool workerPool = new WorkerPool(() -> 1);
         // event loop that accepts connections and publishes network events to event queue
-        final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new MutableIOContextFactory<>(PongConnectionContext::new, 8));
+        final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new IOContextFactoryImpl<>(PongConnectionContext::new, 8));
         // event queue processor
         final PongRequestProcessor processor = new PongRequestProcessor();
         // event loop job
@@ -56,7 +56,7 @@ public class PongMain {
         workerPool.start();
     }
 
-    private static class PongConnectionContext extends AbstractMutableIOContext<PongConnectionContext> {
+    private static class PongConnectionContext extends IOContext<PongConnectionContext> {
         private final static String PING = "PING";
         private final static String PONG = "PONG";
         private final int bufSize = 1024;
@@ -141,6 +141,9 @@ public class PongMain {
                 case IOOperation.WRITE:
                     context.sendPong();
                     break;
+                case IOOperation.HEARTBEAT:
+                    context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                    return false;
                 default:
                     context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                     break;

@@ -89,7 +89,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
-    private static final int WINDOW_SIZE = 4;
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
@@ -131,7 +130,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MemoryCR> o3ColumnOverrides;
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
-    private final long[] o3LastTimestampSpreads = new long[WINDOW_SIZE];
+    private final long[] o3LastTimestampSpreads;
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final boolean o3QuickSortEnabled;
@@ -172,10 +171,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private long commitInterval;
-    private long commitIntervalDefault;
-    // ILP related
-    private double commitIntervalFraction;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -321,7 +316,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 this.partitionDirFmt = null;
             }
-            this.commitInterval = calculateCommitInterval();
 
             configureColumnMemory();
             configureTimestampSetter();
@@ -340,6 +334,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
             walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
+            o3LastTimestampSpreads = new long[configuration.getO3LagCalculationWindowsSize()];
             Arrays.fill(o3LastTimestampSpreads, 0);
         } catch (Throwable e) {
             doClose(false);
@@ -1101,11 +1096,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
-    }
-
-    @Override
-    public long getCommitInterval() {
-        return commitInterval;
     }
 
     @TestOnly
@@ -2026,13 +2016,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
     }
 
-    @Override
-    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
-        this.commitIntervalFraction = commitIntervalFraction;
-        this.commitIntervalDefault = commitIntervalDefault;
-        this.commitInterval = calculateCommitInterval();
-    }
-
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
@@ -2592,11 +2575,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
-    }
-
-    private long calculateCommitInterval() {
-        long commitIntervalMicros = (long) (configuration.getO3MinLag() * commitIntervalFraction);
-        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private void cancelRowAndBump() {
@@ -3443,7 +3421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     lagError = getMaxTimestamp() - o3CommitBatchTimestampMin;
 
-                    int n = WINDOW_SIZE - 1;
+                    int n = o3LastTimestampSpreads.length - 1;
 
                     if (lagError > 0) {
                         o3EffectiveLag += lagError * configuration.getO3LagIncreaseFactor();

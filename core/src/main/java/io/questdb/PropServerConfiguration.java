@@ -34,6 +34,7 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
@@ -90,6 +91,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
     private final long cairoTableRegistryAutoReloadFrequency;
+    private final int cairoTableRegistryCompactionThreshold;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final long circuitBreakerTimeout;
@@ -161,6 +163,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
+    private final int o3LagCalculationWindowsSize;
     private final long o3MaxLag;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
@@ -271,6 +274,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final int walApplyLookAheadTransactionCount;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final int[] walApplyWorkerAffinity;
@@ -359,6 +363,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpMsgBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
+    private long lineTcpNetConnectionHeartbeatInterval;
     private boolean lineTcpNetConnectionHint;
     private int lineTcpNetConnectionLimit;
     private long lineTcpNetConnectionQueueTimeout;
@@ -438,7 +443,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
-    private final int walApplyLookAheadTransactionCount;
 
     public PropServerConfiguration(
             String root,
@@ -451,6 +455,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
+        this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -895,6 +900,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
+            this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
             this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
@@ -1035,6 +1041,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$("), will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
+                final long heartbeatInterval = LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                        this.o3MinLagUs,
+                        this.lineTcpCommitIntervalFraction,
+                        this.lineTcpCommitIntervalDefault
+                );
+                this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, heartbeatInterval);
             }
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
@@ -1494,6 +1506,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
+        }
+
+        @Override
+        public int getO3LagCalculationWindowsSize() {
+            return o3LagCalculationWindowsSize;
         }
 
         @Override
@@ -2181,6 +2198,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return cairoTableRegistryAutoReloadFrequency;
         }
 
+        @Override
+        public int getTableRegistryCompactionThreshold() {
+            return cairoTableRegistryCompactionThreshold;
+        }
+
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -2201,13 +2223,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWalApplyLookAheadTransactionCount() {
-            return walApplyLookAheadTransactionCount;
+        public VolumeDefinitions getVolumeDefinitions() {
+            return volumeDefinitions;
         }
 
         @Override
-        public VolumeDefinitions getVolumeDefinitions() {
-            return volumeDefinitions;
+        public int getWalApplyLookAheadTransactionCount() {
+            return walApplyLookAheadTransactionCount;
         }
 
         @Override
@@ -2435,6 +2457,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
         public boolean getHint() {
             return httpNetConnectionHint;
         }
@@ -2517,6 +2544,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
         public boolean getHint() {
             return httpMinNetConnectionHint;
         }
@@ -2566,6 +2598,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return netTestConnectionBufferSize;
         }
 
+        @Override
         public long getTimeout() {
             return httpMinNetConnectionTimeout;
         }
@@ -2805,6 +2838,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getCommitInterval() {
+            return LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                    cairoConfiguration.getO3MinLag(),
+                    getCommitIntervalFraction(),
+                    getCommitIntervalDefault()
+            );
+        }
+
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
         }
@@ -2960,6 +3001,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public EpollFacade getEpollFacade() {
             return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return lineTcpNetConnectionHeartbeatInterval;
         }
 
         @Override
@@ -3389,6 +3435,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
         public boolean getHint() {
             return pgNetConnectionHint;
         }
@@ -3438,6 +3489,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return netTestConnectionBufferSize;
         }
 
+        @Override
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
         }

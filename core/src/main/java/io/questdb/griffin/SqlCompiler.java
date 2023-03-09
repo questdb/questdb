@@ -849,27 +849,6 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private CompiledQuery alterTableSetType(SqlExecutionContext executionContext,
-                                            int pos,
-                                            TableToken token,
-                                            byte walFlag) throws SqlException {
-        try {
-            try (TableReader reader = executionContext.getReader(token)) {
-                if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
-                    throw SqlException.$(pos, "Cannot convert non-partitioned table");
-                }
-            }
-
-            path.of(configuration.getRoot()).concat(token.getDirName());
-            TableUtils.createConvertFile(ff, path, walFlag);
-            return compiledQuery.ofTableSetType();
-        } catch (CairoException e) {
-            throw SqlException.position(pos)
-                    .put(e.getFlyweightMessage())
-                    .put("[errno=").put(e.getErrno()).put(']');
-        }
-    }
-
     private CompiledQuery alterTableDropColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {
         AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableToken, metadata.getTableId());
         int semicolonPos = -1;
@@ -1007,24 +986,21 @@ public class SqlCompiler implements Closeable {
                 }
                 break;
             }
-            if (Chars.equals(tok, ',')) {
+            if (Chars.equals(tok, ',') || Chars.equals(tok, ';')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
-            final CharSequence partitionName = GenericLexer.unquote(tok);
-            final int partitionNamePosition = lexer.lastTokenPosition();
+            final CharSequence partitionName = GenericLexer.unquote(tok); // potentially a full timestamp, or part of it
+            final int lastPosition = lexer.lastTokenPosition();
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             if (reader != null) {
-                final long timestamp;
                 try {
-                    timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
                 } catch (CairoException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
-                            .put("[errno=").put(e.getErrno()).put(']');
+                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
                 }
-
-                alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -1038,7 +1014,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {
@@ -1129,6 +1105,27 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableToken, tableId, o3MaxLag).build());
         } else {
             throw SqlException.$(paramNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
+    }
+
+    private CompiledQuery alterTableSetType(SqlExecutionContext executionContext,
+                                            int pos,
+                                            TableToken token,
+                                            byte walFlag) throws SqlException {
+        try {
+            try (TableReader reader = executionContext.getReader(token)) {
+                if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                    throw SqlException.$(pos, "Cannot convert non-partitioned table");
+                }
+            }
+
+            path.of(configuration.getRoot()).concat(token.getDirName());
+            TableUtils.createConvertFile(ff, path, walFlag);
+            return compiledQuery.ofTableSetType();
+        } catch (CairoException e) {
+            throw SqlException.position(pos)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
@@ -2248,7 +2245,7 @@ public class SqlCompiler implements Closeable {
                 int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
                 if (virtualColumnType != tableColumnType) {
-                    if (!ColumnType.isSymbol(tableColumnType) || virtualColumnType != ColumnType.STRING) {
+                    if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
                         throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);

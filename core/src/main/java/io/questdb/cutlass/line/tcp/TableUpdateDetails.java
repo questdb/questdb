@@ -49,8 +49,8 @@ import static io.questdb.std.Chars.utf8ToUtf16;
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private final long commitInterval;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final long defaultCommitInterval;
     private final long defaultMaxUncommittedRows;
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
@@ -87,7 +87,6 @@ public class TableUpdateDetails implements Closeable {
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
-        this.defaultCommitInterval = configuration.getCommitIntervalDefault();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
         TableRecordMetadata tableMetadata = writer.getMetadata();
@@ -95,12 +94,13 @@ public class TableUpdateDetails implements Closeable {
         this.tableToken = writer.getTableToken();
         if (writer.supportsMultipleWriters()) {
             metadataService = null;
-            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
         } else {
             metadataService = (MetadataService) writer;
-            metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-            this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();
         }
+
+        this.commitInterval = configuration.getCommitInterval();
+        this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
+
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
@@ -144,8 +144,10 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (null != writerAPI) {
                 try {
-                    if (!writerInError) {
-                        writerAPI.commit();
+                    writerAPI.commit();
+                } catch (CairoException ex) {
+                    if (!ex.isTableDropped()) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$((Throwable) ex).I$();
                     }
                 } catch (Throwable ex) {
                     LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$(ex).I$();
@@ -168,15 +170,14 @@ public class TableUpdateDetails implements Closeable {
                 } else {
                     writerAPI.commit();
                 }
-            } catch (Throwable ex) {
-                setWriterInError();
-                LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
-                try {
-                    writerAPI.rollback();
-                } catch (Throwable th) {
-                    LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
+            } catch (CairoException ex) {
+                if (!ex.isTableDropped()) {
+                    handleCommitException(ex);
                 }
-                throw CommitFailedException.instance(ex);
+                throw CommitFailedException.instance(ex, ex.isTableDropped());
+            } catch (Throwable ex) {
+                handleCommitException(ex);
+                throw CommitFailedException.instance(ex, false);
             }
         }
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
@@ -258,13 +259,6 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private long getCommitInterval() {
-        if (metadataService != null) {
-            return metadataService.getCommitInterval();
-        }
-        return defaultCommitInterval;
-    }
-
     private long getMetaMaxUncommittedRows() {
         if (metadataService != null) {
             return metadataService.getMetaMaxUncommittedRows();
@@ -272,12 +266,21 @@ public class TableUpdateDetails implements Closeable {
         return defaultMaxUncommittedRows;
     }
 
+    private void handleCommitException(Throwable ex) {
+        setWriterInError();
+        LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
+        try {
+            writerAPI.rollback();
+        } catch (Throwable th) {
+            LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
+        }
+    }
+
     long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
         if (writerAPI != null) {
-            final long commitInterval = getCommitInterval();
             long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
             // Do not commit row by row if the commit takes longer than commitInterval.
@@ -297,10 +300,12 @@ public class TableUpdateDetails implements Closeable {
             return;
         }
         LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableToken).I$();
-        nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
+        nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
         try {
             commit(true);
+        } catch (CommitFailedException ex) {
+            throw ex;
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
@@ -308,7 +313,7 @@ public class TableUpdateDetails implements Closeable {
                     .$(th)
                     .I$();
             writerAPI.rollback();
-            throw CommitFailedException.instance(th);
+            throw CommitFailedException.instance(th, false);
         }
 
         // Tick after commit.

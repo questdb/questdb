@@ -30,6 +30,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class TimestampFloorFunctionFactory implements FunctionFactory {
@@ -40,28 +42,47 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final char c = args.getQuick(0).getChar(null);
+        final CharSequence str = args.getQuick(0).getStr(null);
+        int stride = 1;
+        char c = 0;
+        if (str != null) {
+            if (str.length() == 1) {
+                c = str.charAt(0);
+            } else if (str.length() > 1) {
+                c = str.charAt(str.length() - 1);
+                try {
+                    stride = Numbers.parseInt(str, 0, str.length() - 1);
+                    if (stride <= 0) {
+                        c = 1;
+                    }
+                } catch (NumericException ignored) {
+                    c = 1;
+                }
+            } else {
+                c = 1; // report it as an empty unit rather than null
+            }
+        }
         switch (c) {
-            case 'd':
-                return new TimestampFloorFunctions.TimestampFloorDDFunction(args.getQuick(1));
             case 'M':
-                return new TimestampFloorFunctions.TimestampFloorMMFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorMMFunction(args.getQuick(1), stride);
             case 'y':
-                return new TimestampFloorFunctions.TimestampFloorYYYYFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorYYYYFunction(args.getQuick(1), stride);
             case 'w':
-                return new TimestampFloorFunctions.TimestampFloorWWFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorWWFunction(args.getQuick(1), stride);
+            case 'd':
+                return new TimestampFloorFunctions.TimestampFloorDDFunction(args.getQuick(1), stride);
             case 'h':
-                return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1), stride);
             case 'm':
-                return new TimestampFloorFunctions.TimestampFloorMIFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorMIFunction(args.getQuick(1), stride);
             case 's':
-                return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1), stride);
             case 'T':
-                return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1), stride);
             case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(c).put('\'');
+                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
         }
     }
 }

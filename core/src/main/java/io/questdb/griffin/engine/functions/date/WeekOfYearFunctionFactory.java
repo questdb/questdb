@@ -22,57 +22,63 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
-
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-public class LikeCharFunctionFactory implements FunctionFactory {
+public class WeekOfYearFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "like(Sa)";
+        return "week_of_year(N)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MatchFunction(
-                args.getQuick(0),
-                args.getQuick(1).getChar(null)
-        );
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0));
     }
 
-    private static class MatchFunction extends BooleanFunction implements UnaryFunction {
-        private final char expected;
-        private final Function value;
+    private static final class Func extends IntFunction implements UnaryFunction {
 
-        public MatchFunction(Function value, char expected) {
-            this.value = value;
-            this.expected = expected;
+        private final Function arg;
+
+        public Func(Function arg) {
+            this.arg = arg;
         }
 
         @Override
         public Function getArg() {
-            return value;
+            return arg;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && cs.length() == 1 && cs.charAt(0) == expected;
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NaN) {
+                return Numbers.INT_NaN;
+            }
+            return Timestamps.getWeek(value);
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(value).val(" like '").val(expected).val("'");
+        public String getName() {
+            return "week_of_year";
         }
     }
 }

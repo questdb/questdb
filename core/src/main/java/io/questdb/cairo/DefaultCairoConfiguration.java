@@ -64,6 +64,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LagCalculationWindowsSize() {
+        return 4;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -752,6 +757,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getTableRegistryCompactionThreshold() {
+        return 100;
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
@@ -772,6 +782,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
     }
@@ -779,11 +794,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalCommitSquashRowLimit() {
         return 512 * 1024;
-    }
-
-    @Override
-    public VolumeDefinitions getVolumeDefinitions() {
-        return volumeDefinitions;
     }
 
     @Override

@@ -22,33 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.griffin.engine.functions.catalogue;
 
-public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
-    protected IODispatcher<T> dispatcher;
-    protected int fd = -1;
+public class PrefixedPgAttributeFunctionFactory extends PgAttributeFunctionFactory {
 
     @Override
-    public void clear() {
-        this.fd = -1;
-        this.dispatcher = null;
-    }
-
-    @Override
-    public IODispatcher<T> getDispatcher() {
-        return dispatcher;
-    }
-
-    @Override
-    public int getFd() {
-        return fd;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public T of(int fd, IODispatcher<T> dispatcher) {
-        this.fd = fd;
-        this.dispatcher = dispatcher;
-        return (T) this;
+    public String getSignature() {
+        return "pg_catalog.pg_attribute()";
     }
 }

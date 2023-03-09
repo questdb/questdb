@@ -108,7 +108,14 @@ public class TableNameRegistryFileStore implements Closeable {
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
     }
 
-    private void compactTableNameFile(Map<CharSequence, TableToken> nameTableTokenMap, int lastFileVersion, FilesFacade ff, Path path, long currentOffset) {
+    private void compactTableNameFile(
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<CharSequence, ReverseTableMapItem> reverseNameMap,
+            int lastFileVersion,
+            FilesFacade ff,
+            Path path,
+            long currentOffset
+    ) {
         // compact the memory, remove deleted entries.
         // write to the tmp file.
         int pathRootLen = path.length();
@@ -118,6 +125,14 @@ public class TableNameRegistryFileStore implements Closeable {
             tableNameMemory.close(false);
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             tableNameMemory.putLong(0L);
+
+            // Save tables not fully deleted yet to complete the deletion.
+            for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
+                if (reverseMapItem.isDropped()) {
+                    writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
+                    writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
+                }
+            }
 
             for (TableToken token : nameTableTokenMap.values()) {
                 writeEntry(token, OPERATION_ADD);
@@ -310,7 +325,7 @@ public class TableNameRegistryFileStore implements Closeable {
         long currentOffset = Long.BYTES;
         memory.extend(mapMem);
 
-        boolean compactRequired = false;
+        int tableToCompact = 0;
         while (currentOffset < mapMem) {
             int operation = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
@@ -327,8 +342,13 @@ public class TableNameRegistryFileStore implements Closeable {
                 // remove from registry
                 final TableToken token = nameTableTokenMap.remove(tableName);
                 if (token != null) {
-                    reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
-                    compactRequired = true;
+                    if (!ff.exists(path.trimTo(plimit).concat(dirName).$())) {
+                        // table already fully removed
+                        tableToCompact++;
+                        reverseTableNameTokenMap.remove(token.getDirName());
+                    } else {
+                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
+                    }
                 }
             } else {
                 if (tableIds.contains(tableId)) {
@@ -349,6 +369,7 @@ public class TableNameRegistryFileStore implements Closeable {
             }
         }
 
+        int forceCompact = Integer.MAX_VALUE / 2;
         if (isLocked()) {
             // Check that the table directories exist
             for (TableToken token : nameTableTokenMap.values()) {
@@ -360,7 +381,7 @@ public class TableNameRegistryFileStore implements Closeable {
 
                     nameTableTokenMap.remove(token.getTableName());
                     reverseTableNameTokenMap.remove(token.getDirName());
-                    compactRequired = true;
+                    tableToCompact++;
                 }
             }
 
@@ -374,14 +395,15 @@ public class TableNameRegistryFileStore implements Closeable {
                         nameTableTokenMap.remove(token.getTableName());
                         reverseTableNameTokenMap.remove(token.getDirName());
                     }
-                    compactRequired = true;
+                    tableToCompact = Integer.MAX_VALUE / 2;
                 }
             }
 
-            if (compactRequired) {
+            int tableRegistryCompactionThreshold = configuration.getTableRegistryCompactionThreshold();
+            if ((tableRegistryCompactionThreshold > -1 && tableToCompact > tableRegistryCompactionThreshold) || tableToCompact >= forceCompact) {
                 path.trimTo(plimit);
                 LOG.info().$("compacting tables file").$();
-                compactTableNameFile(nameTableTokenMap, lastFileVersion, ff, path, currentOffset);
+                compactTableNameFile(nameTableTokenMap, reverseTableNameTokenMap, lastFileVersion, ff, path, currentOffset);
             } else {
                 tableNameMemory.jumpTo(currentOffset);
             }

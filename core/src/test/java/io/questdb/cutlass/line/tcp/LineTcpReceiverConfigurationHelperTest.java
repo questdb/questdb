@@ -22,23 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class PrefixedPgIndexFunctionFactoryTest extends AbstractGriffinTest {
-
+public class LineTcpReceiverConfigurationHelperTest {
     @Test
-    public void testPgIndexFunc() throws Exception {
-        assertQuery(
-                "indkey\tindrelid\tindexrelid\tindisprimary\n",
-                "pg_catalog.pg_index;",
-                "create table x(a int)",
-                null,
-                false,
-                false,
-                true
-        );
+    public void testILPCommitInterval() {
+        Assert.assertEquals(1000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.0, 1000));
+        Assert.assertEquals(500, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.5, 1000));
+        Assert.assertEquals(3000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, -0.5, 3000));
     }
+
 }

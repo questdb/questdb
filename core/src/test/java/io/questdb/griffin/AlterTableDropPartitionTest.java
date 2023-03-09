@@ -42,7 +42,23 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     @Test
-    public void testDropMalformedPartition() throws Exception {
+    public void testDropMalformedPartition0() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 72000000);
+
+                    try {
+                        compile("alter table x drop partition list '2017-01-no'", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertEquals(34, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected");
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testDropMalformedPartition1() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 72000000);
 
@@ -51,7 +67,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "'YYYY-MM-DD' expected");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2017-01]");
                     }
                 }
         );
@@ -79,8 +95,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionExpectName() throws Exception {
+    public void testDropPartitionExpectName0() throws Exception {
         assertFailure("alter table x drop partition list", 33, "partition name expected");
+    }
+
+    @Test
+    public void testDropPartitionExpectName1() throws Exception {
+        assertFailure("alter table x drop partition list,", 33, "partition name missing");
+    }
+
+    @Test
+    public void testDropPartitionExpectName2() throws Exception {
+        assertFailure("alter table x drop partition list;", 33, "partition name missing");
     }
 
     @Test
@@ -89,7 +115,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionListWithOneItem() throws Exception {
+    public void testDropPartitionListWithOneItem0() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
@@ -100,6 +126,29 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionListWithOneItem1() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    // names have extra characters
+                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -134,13 +183,71 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionNameMissing() throws Exception {
+    public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trade as (" +
+                            "select" +
+                            "  rnd_symbol('A', 'B', 'C') sym," +
+                            "  rnd_long(1, 10000000000, 0) px," +
+                            "  rnd_float() * 100 leverage," +
+                            "  rnd_timestamp(" +
+                            "    to_timestamp('2022-06-01', 'yyyy-MM-dd')," +
+                            "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
+                            "    0) ts" +
+                            "  from long_sequence(360)" +
+                            "), index(sym capacity 128) timestamp(ts) partition by week;",
+                    sqlExecutionContext);
+            assertSql(
+                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10",
+                    "year\tweek_of_year\twoy\n" +
+                            "2024\t1\t2024-W01\n" +
+                            "2023\t52\t2023-W52\n" +
+                            "2023\t51\t2023-W51\n" +
+                            "2023\t50\t2023-W50\n" +
+                            "2023\t49\t2023-W49\n" +
+                            "2023\t48\t2023-W48\n" +
+                            "2023\t47\t2023-W47\n" +
+                            "2023\t46\t2023-W46\n" +
+                            "2023\t45\t2023-W45\n" +
+                            "2023\t44\t2023-W44\n"
+            );
+
+            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+
+            assertSql(
+                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10",
+                    "year\tweek_of_year\twoy\n" +
+                            "2024\t1\t2024-W01\n" +
+                            "2023\t52\t2023-W52\n" +
+                            "2023\t48\t2023-W48\n" +
+                            "2023\t47\t2023-W47\n" +
+                            "2023\t46\t2023-W46\n" +
+                            "2023\t45\t2023-W45\n" +
+                            "2023\t44\t2023-W44\n" +
+                            "2023\t43\t2023-W43\n" +
+                            "2023\t42\t2023-W42\n" +
+                            "2023\t41\t2023-W41\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionNameMissing0() throws Exception {
         assertFailure("alter table x drop partition list ,", 34, "partition name missing");
     }
 
     @Test
+    public void testDropPartitionNameMissing1() throws Exception {
+        assertFailure("alter table x drop partition list ;", 34, "partition name missing");
+    }
+
+    @Test
     public void testDropPartitionNameMissing2() throws Exception {
-        assertFailure("alter table x drop partition list ;", 34, "'YYYY' expected");
+        assertFailure("alter table x drop partition list '202';", 34, "'yyyy' expected, found [ts=202]");
     }
 
     @Test

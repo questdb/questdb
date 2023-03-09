@@ -22,10 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.std.Mutable;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
-    T of(int fd, IODispatcher<T> dispatcher);
+public class PgIsInRecoveryFunctionFactory implements FunctionFactory {
+
+    @Override
+    public String getSignature() {
+        return "pg_is_in_recovery()";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return BooleanConstant.FALSE;
+    }
 }

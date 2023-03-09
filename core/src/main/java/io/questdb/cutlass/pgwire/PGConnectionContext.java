@@ -55,7 +55,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionContext> implements WriterSource {
+public class PGConnectionContext extends IOContext<PGConnectionContext> implements WriterSource {
 
     public static final char STATUS_IDLE = 'I';
     public static final char STATUS_IN_ERROR = 'E';
