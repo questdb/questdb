@@ -70,6 +70,45 @@ public class LogRecordSinkTest {
         });
     }
 
+    /**
+     * Test malformed UTF-8 sequences are handled correctly.
+     */
+    @Test
+    public void testMalformedUtf8Seq() throws Exception {
+        // UTF-8 encoding for an illegal 5-byte sequence.
+        final byte lead5 = (byte) 0xF8; // 1111 1000
+        final byte inter = (byte) 0xBF; // 1011 1111
+
+
+        final byte[][] buffers = {
+                {lead5, inter, inter, inter, inter},
+                {inter, inter, inter}
+        };
+
+        final String[] expectedMsgs = {
+                "?????",
+                "???"
+        };
+
+        for (int bufIndex = 0; bufIndex < buffers.length; bufIndex++) {
+            sink.clear();
+            final byte[] msgBytes = buffers[bufIndex];
+            final String expectedMsg = expectedMsgs[bufIndex];
+            final int len = msgBytes.length;
+            final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                for (int i = 0; i < len; i++) {
+                    logRecord.put((char) msgBytes[i]);
+                }
+                logRecord.toSink(sink);
+                Assert.assertEquals(expectedMsg, sink.toString());
+            } finally {
+                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
     @Test
     public void testSimpleMessage1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -190,6 +229,14 @@ public class LogRecordSinkTest {
                     LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
                     logRecord.encodeUtf8(msg);
                     Assert.assertEquals(expectedLen, logRecord.length());
+                    if (sinkMaxLen > 0) {
+                        // Now test that the log record can be cleared and reused.
+                        logRecord.clear();
+                        sink.clear();
+                        logRecord.encodeUtf8("x");
+                        logRecord.toSink(sink);
+                        Assert.assertEquals("x", sink.toString());
+                    }
                 } finally {
                     Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
                 }

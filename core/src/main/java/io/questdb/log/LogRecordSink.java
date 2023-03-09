@@ -86,14 +86,15 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
             return this;
         }
 
-        final byte b = (byte) c;
         final long left = lim - _wptr;
+        byte b = (byte) c;
         long needed = utf8charNeeded(b);
-        if (needed == -1) {
-            // Invalid UTF-8 char sentinel replacement.
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) '?');
+        if (needed < 1) {
+            // Invalid UTF-8 byte, sentinel replacement.
+            b = (byte) '?';
             needed = 1;
         }
+
         if (left >= needed) {
             Unsafe.getUnsafe().putByte(_wptr++, b);
         }
@@ -124,12 +125,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         if ((b & 0xC0) == 0x80) {
             // 0xC0 = 1100 0000, 0x80 = 1000 0000, check if starts with 10
             // This is a continuation byte.
-            if (multibyteLength < 2) {
-                // This if guards against broken UTF-8 strings.
-                multibyteLength = 2;
-            }
             --multibyteLength;
-
         } else if ((b & 0xE0) == 0xC0) {
             // 0xE0 = 1110 0000, 0xC0 = 1100 0000, check if starts with 110
             multibyteLength = 2;
