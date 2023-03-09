@@ -45,7 +45,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         CharSequence kind = kindFunction.getStr(null);
         Function innerFunction = args.getQuick(1);
         if (kind == null) {
-            throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+            throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
         } else if (Chars.equals(kind, "microseconds")) {
             // timestamps are in microseconds internally, there is nothing to truncate
             return innerFunction;
@@ -74,7 +74,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         } else if (Chars.equals(kind, "millennium")) {
             return new TimestampFloorFunctions.TimestampFloorMillenniumFunction(innerFunction);
         } else {
-            throw SqlException.$(argPositions.getQuick(0), "invalid kind '").put(kind).put('\'');
+            throw SqlException.$(argPositions.getQuick(0), "invalid unit '").put(kind).put('\'');
         }
     }
 }

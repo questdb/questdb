@@ -67,9 +67,9 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             case 'T':
                 return new TimestampCeilMSFunction(args.getQuick(1));
             case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(c).put('\'');
+                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(c).put('\'');
         }
     }
 

@@ -24,10 +24,28 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedTxIDCurrentFunctionFactory extends TxIDCurrentFunctionFactory {
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.txid_current()";
+public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testPgGetKeywordsFunc() throws Exception {
+        sink.clear();
+        sink.put("word\tcatcode\tbarelabel\tcatdesc\tbaredesc\n");
+        for (CharSequence keyword : Constants.KEYWORDS) {
+            sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
+        }
+        assertQuery(sink.toString(), "pg_get_keywords;", null, false, sqlExecutionContext, false, true);
+    }
+
+    @Test
+    public void testPrefixedPgGetKeywordsFunc() throws Exception {
+        sink.clear();
+        sink.put("word\tcatcode\tbarelabel\tcatdesc\tbaredesc\n");
+        for (CharSequence keyword : Constants.KEYWORDS) {
+            sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
+        }
+        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
     }
 }

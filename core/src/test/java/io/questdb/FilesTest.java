@@ -419,6 +419,19 @@ public class FilesTest {
     }
 
     @Test
+    public void testOpenCleanRWFailsWhenCalledOnDir() throws Exception {
+        assertMemoryLeak(() -> {
+            int fd = -1;
+            try (Path path = new Path()) {
+                fd = Files.openCleanRW(path.of(temporaryFolder.getRoot().getAbsolutePath()).$(), 32);
+                Assert.assertTrue(fd < 0);
+            } finally {
+                Files.close(fd);
+            }
+        });
+    }
+
+    @Test
     public void testOpenCleanRWParallel() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
@@ -460,6 +473,19 @@ public class FilesTest {
                 Assert.assertEquals(0, errors.get());
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(fileSize, Files.length(path));
+            }
+        });
+    }
+
+    @Test
+    public void testOpenRWFailsWhenCalledOnDir() throws Exception {
+        assertMemoryLeak(() -> {
+            int fd = -1;
+            try (Path path = new Path()) {
+                fd = Files.openRW(path.of(temporaryFolder.getRoot().getAbsolutePath()).$());
+                Assert.assertTrue(fd < 0);
+            } finally {
+                Files.close(fd);
             }
         });
     }
@@ -777,7 +803,6 @@ public class FilesTest {
                     "made available for reuse. Otherwise, if any process maintains the" + EOL +
                     "file open, it will remain in existence until the last file descriptor" + EOL +
                     "referring to it is closed." + EOL;
-
 
             try (
                     Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
