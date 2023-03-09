@@ -43,7 +43,7 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
-    private static final String SIGNATURE = "pg_catalog.pg_attribute()";
+    private static final String SIGNATURE = "pg_attribute()";
 
     @Override
     public String getSignature() {

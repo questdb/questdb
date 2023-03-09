@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -97,7 +98,7 @@ public class DataGripTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGetTxn() throws Exception {
+    public void testGetTxId() throws Exception {
         assertMemoryLeak(
                 () -> TestUtils.assertSql(
                         compiler,
@@ -109,8 +110,7 @@ public class DataGripTest extends AbstractGriffinTest {
                                 "    pg_catalog.txid_current()::varchar::bigint\n" +
                                 "  end as current_txid",
                         sink,
-                        "current_txid\n" +
-                                "1\n"
+                        "current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"
                 )
         );
     }
