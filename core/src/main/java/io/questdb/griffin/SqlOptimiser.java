@@ -921,7 +921,7 @@ class SqlOptimiser {
     private void createSelectColumn(
             CharSequence columnName,
             ExpressionNode columnAst,
-            boolean hasSeenWildcardExpression,
+            boolean allowDuplicates,
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
@@ -934,13 +934,11 @@ class SqlOptimiser {
         // taking into account that column is pre-aliased, e.g.
         // "col, col" will look like "col, col col1"
 
-        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
-        int index = translatingAliasMap.keyIndex(columnAst.token);
+        final LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
+        final int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
-            // check if the column is a duplicate, i.e. already referenced by the outer model;
-            // we're checking the outer model instead of the translating one
-            // to handle the "col as col1, *" case
-            if (hasSeenWildcardExpression && outerModel.getAliasToColumnMap().contains(columnName)) {
+            // check if the column is a duplicate, i.e. already referenced by the outer model
+            if (!allowDuplicates && outerModel.getAliasToColumnMap().contains(columnName)) {
                 throw SqlException.duplicateColumn(columnAst.position, columnName);
             }
             // column is already being referenced by translating model
@@ -3405,7 +3403,6 @@ class SqlOptimiser {
         boolean outerVirtualIsSelectChoose = true;
 
         // create virtual columns from select list
-        boolean hasSeenWildcardExpression = false;
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
@@ -3426,12 +3423,11 @@ class SqlOptimiser {
                             outerVirtualModel,
                             distinctModel
                     );
-                    hasSeenWildcardExpression = true;
                 } else {
                     createSelectColumn(
                             qc.getAlias(),
                             qc.getAst(),
-                            hasSeenWildcardExpression,
+                            false,
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
