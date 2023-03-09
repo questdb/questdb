@@ -24,27 +24,10 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+public class PrefixedPgGetPartKeyDefFunctionFactory extends PgGetPartKeyDefFunctionFactory {
 
-public class PrefixedPgGetPartKeyDefFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "pg_catalog.pg_get_partkeydef(I)";
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return StrConstant.NULL;
     }
 }
