@@ -81,10 +81,6 @@ impl JavaLog {
         }
     }
 
-    // error: User problems, for the most part.
-    // info: Events that happened. Info contains context for debugging.
-    // debug: ~Trace, but not as verbose.
-
     /// Log a message at the `Advisory` level.
     /// An info-type message that doesn't get suppressed if info is disabled.
     /// This is for messages that we pretty much always want to appear, so are higher
@@ -246,6 +242,7 @@ thread_local! {
     static LOG_BUF: UnsafeCell<String> = UnsafeCell::new(String::with_capacity(64));
 }
 
+/// Obtain a formatted buffer, possibly buffering using a thread-local String.
 fn get_formatted_msg<'a>(line_num: Option<u32>, args: &fmt::Arguments) -> &'a str {
     if let Some(no_args_str) = args.as_str() {
         return no_args_str;

@@ -43,4 +43,20 @@ public class RustLoggingTest extends TestCase {
         RustLogging.logMsg(RustLogging.LEVEL_TRACE, "a::b::c", "test_msg7");
         RustLogging.logMsg(RustLogging.LEVEL_ERROR, "ghi", "test_msg8");
     }
+
+    @Test
+    public void testLoggingUtf8() {
+        // This is expected to produce garbage output.
+
+        // 4 two-byte UTF-8 characters in both UTF-8 and UTF-16.
+        // >>> 'щось'.encode('utf-8')
+        // b'\xd1\x89\xd0\xbe\xd1\x81\xd1\x8c'
+        // >>> len(_)
+        // 8
+        // >>> 'щось'.encode('utf-16be')
+        // b'\x04I\x04>\x04A\x04L'
+        // >>> len(_)
+        // 8
+        RustLogging.logMsg(RustLogging.LEVEL_INFO, "x", "щось");
+    }
 }
