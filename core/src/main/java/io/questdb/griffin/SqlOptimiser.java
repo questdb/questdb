@@ -2172,7 +2172,7 @@ class SqlOptimiser {
         }
 
         if (status == TableUtils.TABLE_RESERVED) {
-            throw SqlException.$(tableNamePosition, "table directory is of unknown format");
+            throw SqlException.$(tableNamePosition, "table directory is of unknown format [table=").put(tableName).put(']');
         }
 
         if (model.isUpdate() && !executionContext.isWalApplication()) {
