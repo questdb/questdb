@@ -308,7 +308,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
 
     @Test
     public void testHugeFilter() throws Exception {
-        final int N = 1024;
+        final int N = 682; // depends on memory configuration for a jit IR
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_long() i64 " +
@@ -405,6 +405,62 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1, " +
+                " rnd_uuid4() uuid2 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("null")
+                .withBooleanOperator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidConstantComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_uuid4() uuid1, " +
+                " rnd_uuid4() uuid2 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'")
+                .withBooleanOperator()
+                .withOptionalNot()
+                .withAnyOf("uuid1", "uuid2")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testUuidConstantIntMixedComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() int, " +
+                " rnd_uuid4() uuid " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("int")
+                .withEqualityOperator()
+                .withAnyOf("3", "-1", "null")
+                .withBooleanOperator()
+                .withOptionalNot()
+                .withAnyOf("uuid")
+                .withEqualityOperator()
+                .withAnyOf("'22222222-2222-2222-2222-222222222222'", "null");
         assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
@@ -668,6 +724,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         private static final String[] ARITHMETIC_OPERATORS = new String[]{" + ", " - ", " * ", " / "};
         private static final String[] BOOLEAN_OPERATORS = new String[]{" and ", " or "};
         private static final String[] COMPARISON_OPERATORS = new String[]{" = ", " != ", " > ", " >= ", " < ", " <= "};
+        private static final String[] EQUALITY_OPERATORS = new String[]{" = ", " != ", " <> "};
         private static final String[] OPTIONAL_NEGATION = new String[]{"", "-"};
         private static final String[] OPTIONAL_NOT = new String[]{"", " not "};
         private final List<String[]> filterParts = new ArrayList<>();
@@ -720,6 +777,11 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
 
         public FilterGenerator withComparisonOperator() {
             filterParts.add(COMPARISON_OPERATORS);
+            return this;
+        }
+
+        public FilterGenerator withEqualityOperator() {
+            filterParts.add(EQUALITY_OPERATORS);
             return this;
         }
 
