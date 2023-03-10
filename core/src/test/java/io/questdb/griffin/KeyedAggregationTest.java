@@ -1131,11 +1131,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     //This triggers merge of two rostis that in turn forces rosti resize and only then hits OOM in native code.
     @Test
     public void testOOMInRostiMergeResetsAllocatedNativeMemoryToMinSizes() throws Exception {
-        final int WORKER_COUNT = 2;
-        pageFrameMaxRows = 1000;//if it's default (1mil) then rosti could create single task for whole table data
+        final int WORKER_COUNT = 2; // one more slot is reserved for work stealing, so 3 in total
+        pageFrameMaxRows = 1000; // if it's default (1mil) then rosti could create single task for whole table data
 
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
-            final long[] pRostis = new long[2];
+            final long[] pRostis = new long[WORKER_COUNT + 1];
             final AtomicInteger sizeCounter = new AtomicInteger(0);
             int rostis;
 
@@ -1163,15 +1163,22 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             @Override
             public void updateMemoryUsage(long pRosti, long oldSize) {
-                long otherProsti = pRosti == pRostis[0] ? pRostis[1] : pRostis[0];
                 long sleepStart = System.currentTimeMillis();
-
                 if (Rosti.getSize(pRosti) == 1000) {
-                    while (Rosti.getSize(otherProsti) < 1000) {
-                        Os.sleep(1);
-                        if ((System.currentTimeMillis() - sleepStart) > 30000) {
-                            throw new RuntimeException("Timed out waiting for rosti to consume data!");
+                    OUTER:
+                    while (true) {
+                        for (int i = 0; i < WORKER_COUNT + 1; i++) {
+                            if (pRostis[i] == pRosti) {
+                                continue;
+                            }
+                            if (Rosti.getSize(pRostis[i]) == 1000) {
+                                break OUTER;
+                            }
+                            if ((System.currentTimeMillis() - sleepStart) > 30000) {
+                                throw new RuntimeException("Timed out waiting for rosti to consume data!");
+                            }
                         }
+                        Os.sleep(1);
                     }
                 }
 

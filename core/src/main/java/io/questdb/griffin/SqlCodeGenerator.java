@@ -3253,7 +3253,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
                     int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getSharedWorkerCount());
+                    VectorAggregateFunction vaf = constructor.create(
+                            tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0),
+                            indexInBase,
+                            // reserve one more slot for work stealing;
+                            // work stealing thread will be using workerCount as the workerId
+                            executionContext.getSharedWorkerCount() + 1
+                    );
                     tempVaf.add(vaf);
                     meta.add(indexInThis,
                             new TableColumnMetadata(
@@ -3269,6 +3275,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             configuration,
                             factory,
                             meta,
+                            executionContext.getSharedWorkerCount(),
                             tempVaf
                     );
                 }

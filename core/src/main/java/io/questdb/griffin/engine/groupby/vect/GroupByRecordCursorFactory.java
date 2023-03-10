@@ -37,7 +37,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.mp.Worker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
@@ -88,12 +87,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.base = base;
+        // reserve one more slot for work stealing to avoid clashing with shared workers
+        final int nRosti = workerCount + 1;
         // first column is INT or SYMBOL
-        pRosti = new long[workerCount];
+        pRosti = new long[nRosti];
         final int vafCount = vafList.size();
         this.vafList = new ObjList<>(vafCount);
         raf = configuration.getRostiAllocFacade();
-        for (int i = 0; i < workerCount; i++) {
+        for (int i = 0; i < nRosti; i++) {
             long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
             if (ptr == 0) {
                 for (int k = i - 1; k > -1; k--) {
@@ -336,14 +337,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             doneLatch.reset();
 
-            // check if this is executed via worker pool
-            final Thread thread = Thread.currentThread();
-            final int workerId;
-            if (thread instanceof Worker) {
-                workerId = ((Worker) thread).getWorkerId();
-            } else {
-                workerId = pRosti.length - 1; // avoid clashing with other worker with id=0 in tests
-            }
+            // we use workerCount + 1 rosti tables,
+            // so by using the last one we avoid clashing with shared pool threads
+            final int workerId = pRosti.length - 1;
 
             try {
                 PageFrame frame;

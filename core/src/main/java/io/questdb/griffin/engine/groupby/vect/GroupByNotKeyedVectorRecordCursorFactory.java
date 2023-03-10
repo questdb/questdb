@@ -39,7 +39,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.mp.Worker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -58,11 +57,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private final ObjList<VectorAggregateFunction> vafList;
+    private final int workerCount;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
+            int workerCount,
             @Transient ObjList<VectorAggregateFunction> vafList
     ) {
         super(metadata);
@@ -73,6 +74,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         this.vafList.addAll(vafList);
         this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
         this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        this.workerCount = workerCount;
     }
 
     @Override
@@ -202,14 +204,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
             doneLatch.reset();
 
-            // check if this executed via worker pool
-            final Thread thread = Thread.currentThread();
-            final int workerId;
-            if (thread instanceof Worker) {
-                workerId = ((Worker) thread).getWorkerId();
-            } else {
-                workerId = 0;
-            }
+            // all aggregate functions use workerCount + 1 slots,
+            // so by using workerCount index we avoid clashing with shared pool threads
+            final int workerId = workerCount;
 
             try {
                 PageFrame frame;
