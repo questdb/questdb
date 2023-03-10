@@ -22,14 +22,14 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB core</name>
     <description>QuestDB a is high performance SQL time series database</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
@@ -217,7 +217,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-javadoc-plugin</artifactId>
-                        <version>3.2.0</version>
+                        <version>3.5.0</version>
                         <executions>
                             <execution>
                                 <id>attach-javadocs</id>
@@ -246,7 +246,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-javadoc-plugin</artifactId>
-                        <version>3.2.0</version>
+                        <version>3.5.0</version>
                         <executions>
                             <execution>
                                 <id>attach-javadocs</id>
@@ -375,9 +375,9 @@
             <build>
                 <plugins>
                     <plugin>
-                        <groupId>io.questdb</groupId>
+                        <groupId>org.questdb</groupId>
                         <artifactId>rust-maven-plugin</artifactId>
-                        <version>1.0.0-SNAPSHOT</version>
+                        <version>1.0.0</version>
                         <executions>
                             <execution>
                                 <id>questdb-jni-build</id>
@@ -675,19 +675,10 @@
     </profiles>
 
     <dependencies>
-        <!--
-            TODO: Upload dependency to Maven Central.
-            In the meantime you need to build and install the jar-jni dependency locally:
-
-            $ git clone https://github.com/questdb/rust-maven-plugin.git
-            $ cd rust-maven-plugin
-            $ cd jar-jni
-            $ mvn install
-        -->
         <dependency>
-            <groupId>io.questdb</groupId>
+            <groupId>org.questdb</groupId>
             <artifactId>jar-jni</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <version>1.0.0</version>
         </dependency>
 
         <!-- test dependencies -->

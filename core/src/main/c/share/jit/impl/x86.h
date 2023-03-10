@@ -503,6 +503,27 @@ namespace questdb::x86 {
         return r.as<Gpq>();
     }
 
+    inline void int128_cmp(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        Gp mask = c.newInt16();
+        c.pcmpeqb(lhs, rhs);
+        c.pmovmskb(mask, lhs);
+        c.cmp(mask, 0xffff);
+    }
+
+    inline Gpq int128_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        int128_cmp(c, lhs, rhs);
+        Gp r = c.newInt64();
+        c.sete(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
+    inline Gpq int128_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        int128_cmp(c, lhs, rhs);
+        Gp r = c.newInt64();
+        c.setne(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
     inline Gpq int64_lt(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
         Gp r = c.newInt64();
         c.xor_(r, r);
