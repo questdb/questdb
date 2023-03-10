@@ -473,10 +473,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         runTest((factoryType, thread, token, event, segment, position) -> {
             String tableName = token.getTableName();
             if (walEnabled) {
+                // There is no locking as such in WAL, so we treat writer return as an unlock event.
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
+                    handleWriterUnlockEvent(tableName);
                     handleWriterGetEvent(tableName);
                 }
-                // There is no locking as such in WAL, so we treat writer return as an unlock event.
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     handleWriterUnlockEvent(tableName);
                     handleWriterReturnEvent(tableName);
