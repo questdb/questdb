@@ -27,15 +27,31 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
-public class PrefixedPgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
+public class PgRolesFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testPrefixedPgGetKeywordsFunc() throws Exception {
-        sink.clear();
-        sink.put("word\tcatcode\tcatdesc\n");
-        for (CharSequence keyword : Constants.KEYWORDS) {
-            sink.put(keyword).put('\t').put('\t').put('\n');
-        }
-        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
+    public void testPgRolesFunc() throws Exception {
+        assertQuery(
+                "rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n",
+                "pg_roles;",
+                null,
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testPrefixedPgRolesFunc() throws Exception {
+        assertQuery(
+                "rolname\trolsuper\trolinherit\trolcreaterole\trolcreatedb\trolcanlogin\trolreplication\trolconnlimit\trolpassword\trolvaliduntil\trolbypassrls\trolconfig\toid\n",
+                "pg_catalog.pg_roles;",
+                null,
+                null,
+                false,
+                false,
+                true
+        );
     }
 }

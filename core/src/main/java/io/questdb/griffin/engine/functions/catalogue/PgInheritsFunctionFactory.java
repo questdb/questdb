@@ -36,7 +36,7 @@ public class PgInheritsFunctionFactory extends AbstractEmptyCatalogueFunctionFac
         super("pg_inherits()", METADATA);
     }
 
-    public PgInheritsFunctionFactory(String signature) {
+    protected PgInheritsFunctionFactory(String signature) {
         super(signature, METADATA);
     }
 
