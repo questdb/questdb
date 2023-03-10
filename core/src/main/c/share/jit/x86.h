@@ -44,7 +44,14 @@ namespace questdb::x86 {
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
+        if (type_size <= 8) {
+            return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
+        } else {
+            Gp offset = c.newInt64("row_offset");
+            c.mov(offset, input_index);
+            c.sal(offset, shift);
+            return {Mem(column_address, offset, 0, 0, type_size), type, data_kind_t::kMemory};
+        }
     }
 
     jit_value_t mem2reg(Compiler &c, const jit_value_t &v) {
@@ -71,6 +78,11 @@ namespace questdb::x86 {
                 c.mov(row_data, mem);
                 return {row_data, type, data_kind_t::kMemory};
             }
+            case data_type_t::i128: {
+                Xmm row_data = c.newXmm("i128_mem");
+                c.movdqu(row_data, mem);
+                return {row_data, type, data_kind_t::kMemory};
+            }
             case data_type_t::f32: {
                 Xmm row_data = c.newXmmSs("f32_mem");
                 c.movss(row_data, mem);
@@ -93,7 +105,13 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::i64: {
-                return {imm(instr.ipayload), type, data_kind_t::kConst};
+                return {imm(instr.ipayload.lo), type, data_kind_t::kConst};
+            }
+            case data_type_t::i128: {
+                return { c.newConst(ConstPool::kScopeLocal, &instr.ipayload, 16),
+                         type,
+                         data_kind_t::kMemory
+                };
             }
             case data_type_t::f32:
             case data_type_t::f64: {
@@ -236,6 +254,8 @@ namespace questdb::x86 {
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
+            case data_type_t::i128:
+                return {int128_eq(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             case data_type_t::f32:
                 return {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
@@ -255,6 +275,8 @@ namespace questdb::x86 {
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
+            case data_type_t::i128:
+                return {int128_ne(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             case data_type_t::f32:
                 return {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
@@ -526,6 +548,8 @@ namespace questdb::x86 {
                         __builtin_unreachable();
                 }
                 break;
+            case data_type_t::i128:
+                return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
         }
@@ -606,13 +630,13 @@ namespace questdb::x86 {
                     return;
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
-                    auto idx  = static_cast<int32_t>(instr.ipayload);
+                    auto idx  = static_cast<int32_t>(instr.ipayload.lo);
                     values.append(read_vars_mem(c, type, idx, vars_ptr));
                 }
                     break;
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
-                    auto idx  = static_cast<int32_t>(instr.ipayload);
+                    auto idx  = static_cast<int32_t>(instr.ipayload.lo);
                     values.append(read_mem(c, type, idx, cols_ptr, input_index));
                 }
                     break;
@@ -634,4 +658,3 @@ namespace questdb::x86 {
 }
 
 #endif //QUESTDB_JIT_X86_H
-

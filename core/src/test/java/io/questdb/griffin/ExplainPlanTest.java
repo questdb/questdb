@@ -6160,7 +6160,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testWhereUuid() throws Exception {
         assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
-                "Async Filter\n" +
+                "Async JIT Filter\n" +
                         "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +

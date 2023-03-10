@@ -58,6 +58,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int F8_TYPE = 5;
     static final int GE = 13;  // a >= b
     static final int GT = 12;  // a >  b
+    static final int I16_TYPE = 6;
     // Options:
     // Data types
     static final int I1_TYPE = 0;
@@ -89,11 +90,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PredicateContext predicateContext = new PredicateContext();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
+    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
     private MemoryCARW memory;
-    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
 
@@ -156,15 +157,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      * <li>1 LSB - debug flag</li>
-     * <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B</li>
-     * <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
-     * <li>6 LSB - flag to include null checks for column values into compiled filter</li>
+     * <li>2-4 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B</li>
+     * <li>5-6 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     * <li>7 LSB - flag to include null checks for column values into compiled filter</li>
      * </ul>
      * <p>
      * Examples:
      * <ul>
-     * <li>00000000 00000000 00000000 00010100 - 4B, mixed types, debug off, null checks disabled</li>
-     * <li>00000000 00000000 00000000 00100111 - 8B, scalar, debug on, null checks enabled</li>
+     * <li>00000000 00000000 00000000 00100100 - 4B, mixed types, debug off, null checks disabled</li>
+     * <li>00000000 00000000 00000000 01000111 - 8B, scalar, debug on, null checks enabled</li>
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
@@ -182,10 +183,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (!scalar && !forceScalarMode) {
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
-            options = options | (executionHint << 3);
+            options = options | (executionHint << 4);
         }
 
-        options = options | ((nullChecks ? 1 : 0) << 5);
+        options = options | ((nullChecks ? 1 : 0) << 6);
 
         return options;
     }
@@ -258,6 +259,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return I8_TYPE;
             case ColumnType.DOUBLE:
                 return F8_TYPE;
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+                return I16_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -286,6 +290,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return I8_TYPE;
             case ColumnType.DOUBLE:
                 return F8_TYPE;
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+                return I16_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -473,24 +480,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putInt(offset, CompiledFilterIRSerializer.IMM);
         memory.putInt(offset + Integer.BYTES, type);
         memory.putDouble(offset + 2 * Integer.BYTES, payload);
+        memory.putLong(offset + 2 * Integer.BYTES + Double.BYTES, 0L);
     }
 
     private void putOperand(int opcode, int type, long payload) {
         memory.putInt(opcode);
         memory.putInt(type);
         memory.putLong(payload);
+        memory.putLong(0L);
     }
 
     private void putOperand(long offset, int opcode, int type, long payload) {
+        putOperand(offset, opcode, type, payload, 0L);
+    }
+
+    private void putOperand(long offset, int opcode, int type, long lo, long hi) {
         memory.putInt(offset, opcode);
         memory.putInt(offset + Integer.BYTES, type);
-        memory.putLong(offset + 2 * Integer.BYTES, payload);
+        memory.putLong(offset + 2 * Integer.BYTES, lo);
+        memory.putLong(offset + 2 * Integer.BYTES + Long.BYTES, hi);
     }
 
     private void putOperator(int opcode) {
         memory.putInt(opcode);
         // pad unused fields with zeros
         memory.putInt(0);
+        memory.putLong(0L);
         memory.putLong(0L);
     }
 
@@ -580,12 +595,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (Chars.isQuoted(token)) {
-            if (PredicateType.CHAR != predicateContext.type) {
-                throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
-            }
             if (len == 3) {
+                if (PredicateType.CHAR != predicateContext.type) {
+                    throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
+                }
                 // this is 'x' - char
                 putOperand(offset, IMM, I2_TYPE, token.charAt(1));
+                return;
+            } else if (len == 2 + Uuid.UUID_LENGTH) {
+                if (PredicateType.UUID != predicateContext.type) {
+                    throw SqlException.position(position).put("uuid constant in non-uuid expression: ").put(token);
+                }
+                try {
+                    // skip first and last char which are quotes
+                    Uuid.checkDashesAndLength(token, 1, token.length() - 1);
+                    putOperand(offset, IMM, I16_TYPE, Uuid.parseLo(token, 1), Uuid.parseHi(token, 1));
+                } catch (NumericException e) {
+                    throw SqlException.position(position).put("invalid uuid constant: ").put(token);
+                }
                 return;
             }
             throw SqlException.position(position).put("unsupported string constant: ").put(token);
@@ -689,6 +716,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 break;
             case F8_TYPE:
                 putDoubleOperand(offset, typeCode, Double.NaN);
+                break;
+            case I16_TYPE:
+                putOperand(offset, IMM, typeCode, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
@@ -872,7 +902,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -891,11 +921,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private static final int F4_INDEX = 3;
         private static final int F8_INDEX = 5;
+        private static final int I16_INDEX = 6;
         private static final int I1_INDEX = 0;
         private static final int I2_INDEX = 1;
         private static final int I4_INDEX = 2;
         private static final int I8_INDEX = 4;
-        private static final int TYPES_COUNT = F8_INDEX + 1;
+        private static final int TYPES_COUNT = I16_INDEX + 1;
+
 
         private final byte[] sizes = new byte[TYPES_COUNT];
 
@@ -970,6 +1002,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case F8_TYPE:
                     sizes[F8_INDEX] = 8;
                     break;
+                case I16_TYPE:
+                    sizes[I16_INDEX] = 16;
+                    break;
             }
         }
 
@@ -987,6 +1022,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     return I8_TYPE;
                 case F8_INDEX:
                     return F8_TYPE;
+                case I16_INDEX:
+                    return I16_TYPE;
             }
             return UNDEFINED_CODE;
         }
@@ -1156,6 +1193,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
                     type = PredicateType.SYMBOL;
+                    break;
+                case ColumnType.UUID:
+                    if (type != null && type != PredicateType.UUID) {
+                        throw SqlException.position(position)
+                                .put("non-uuid column in uuid expression: ")
+                                .put(ColumnType.nameOf(columnTypeTag));
+                    }
+                    type = PredicateType.UUID;
                     break;
                 default:
                     if (type != null && type != PredicateType.NUMERIC) {
