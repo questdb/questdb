@@ -373,9 +373,9 @@
             <build>
                 <plugins>
                     <plugin>
-                        <groupId>io.questdb</groupId>
+                        <groupId>org.questdb</groupId>
                         <artifactId>rust-maven-plugin</artifactId>
-                        <version>1.0.0-SNAPSHOT</version>
+                        <version>1.0.0</version>
                         <executions>
                             <execution>
                                 <id>questdb-jni-build</id>
@@ -666,19 +666,10 @@
     </profiles>
 
     <dependencies>
-        <!--
-            TODO: Upload dependency to Maven Central.
-            In the meantime you need to build and install the jar-jni dependency locally:
-
-            $ git clone https://github.com/questdb/rust-maven-plugin.git
-            $ cd rust-maven-plugin
-            $ cd jar-jni
-            $ mvn install
-        -->
         <dependency>
-            <groupId>io.questdb</groupId>
+            <groupId>org.questdb</groupId>
             <artifactId>jar-jni</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <version>1.0.0</version>
         </dependency>
 
         <!-- test dependencies -->

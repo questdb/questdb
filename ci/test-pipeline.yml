@@ -117,23 +117,6 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
-          - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin
-          - task: Maven@3
-            displayName: "mvn install jar-jni"
-            inputs:
-              mavenPomFile: "rust-maven-plugin/jar-jni/pom.xml"
-              mavenOptions: "$(MAVEN_OPTS)"
-              options:
-                "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: "1.11"
-          - task: Maven@3
-            displayName: "mvn install rust-maven-plugin"
-            inputs:
-              mavenPomFile: "rust-maven-plugin/rust-maven-plugin/pom.xml"
-              mavenOptions: "$(MAVEN_OPTS)"
-              options:
-                "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: "1.11"
           - task: Cache@2
             inputs:
               key: '"questdb_main" | "maven"'

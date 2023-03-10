@@ -18,7 +18,6 @@ steps:
       echo '##vso[task.setvariable variable=path]$(PATH):$(HOME)/.cargo/bin'
     displayName: "Installing Rust"
     condition: eq(variables['install_rust'], 'true')
-  - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin
   - task: Cache@2
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
@@ -36,22 +35,6 @@ steps:
       archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
       destinationFolder: '$(build.sourcesdirectory)/maven'
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
-  - task: Maven@3
-    displayName: "mvn install jar-jni"
-    inputs:
-      mavenPomFile: "rust-maven-plugin/jar-jni/pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
-      options:
-        "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-      jdkVersionOption: $(jdk)
-  - task: Maven@3
-    displayName: "mvn install rust-maven-plugin"
-    inputs:
-      mavenPomFile: "rust-maven-plugin/rust-maven-plugin/pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
-      options:
-        "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-      jdkVersionOption: $(jdk)
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
