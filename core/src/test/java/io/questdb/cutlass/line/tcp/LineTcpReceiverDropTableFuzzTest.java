@@ -48,10 +48,10 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverDropTableFuzzTest.class);
     private SqlCompiler[] compilers;
+    private SOCountDownLatch dropsDone;
     private SqlExecutionContext[] executionContexts;
     private int numOfDropThreads;
     private int numOfDrops;
-    private SOCountDownLatch dropsDone;
 
     public LineTcpReceiverDropTableFuzzTest(WalMode walMode) {
         super(walMode);
@@ -61,7 +61,10 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
     public void testInsertDropParallel() throws Exception {
         Assume.assumeTrue(walEnabled);
 
-        initLoadParameters(500, 2, 2, 5, 50);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        maintenanceInterval = rnd.nextLong(200);
+        minIdleMsBeforeWriterRelease = rnd.nextLong(200);
+        initLoadParameters(1 + rnd.nextInt(5000), 1 + rnd.nextInt(10), 1 + rnd.nextInt(3), 1 + rnd.nextInt(4), 1 + rnd.nextLong(500));
         initDropParameters(5, 3);
         initFuzzParameters(-1, -1, -1, -1, -1, false, false, false, false);
         runTest();
@@ -158,6 +161,16 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
 
     @Override
     protected void waitDone(ObjList<Socket> sockets) {
+        for (int i = 0; i < numOfThreads; i++) {
+            try {
+                sockets.get(i).close();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            final Socket socket = newSocket();
+            sockets.set(i, socket);
+        }
+
         // wait for drop threads to finish
         dropsDone.await();
 
