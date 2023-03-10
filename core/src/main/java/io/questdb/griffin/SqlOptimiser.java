@@ -937,8 +937,8 @@ class SqlOptimiser {
         final LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
         final int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
-            // check if the column is a duplicate, i.e. already referenced by the outer model
-            if (!allowDuplicates && outerModel.getAliasToColumnMap().contains(columnName)) {
+            // check if the column is a duplicate, i.e. already referenced by the group-by model
+            if (!allowDuplicates && groupByModel.getAliasToColumnMap().contains(columnName)) {
                 throw SqlException.duplicateColumn(columnAst.position, columnName);
             }
             // column is already being referenced by translating model
@@ -955,7 +955,16 @@ class SqlOptimiser {
             outerModel.addBottomUpColumn(translatedColumn);
             distinctModel.addBottomUpColumn(translatedColumn);
         } else {
-            final CharSequence alias = createColumnAlias(columnName, translatingModel);
+            final CharSequence alias;
+            if (groupByModel.getAliasToColumnMap().contains(columnName)) {
+                // the column is not yet translated, but another column is referenced via the same name
+                if (!allowDuplicates) {
+                    throw SqlException.duplicateColumn(columnAst.position, columnName);
+                }
+                alias = createColumnAlias(columnName, groupByModel);
+            } else {
+                alias = createColumnAlias(columnName, translatingModel);
+            }
             addColumnToTranslatingModel(
                     queryColumnPool.next().of(
                             alias,

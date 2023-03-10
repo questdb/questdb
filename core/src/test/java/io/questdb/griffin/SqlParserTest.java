@@ -6692,9 +6692,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertSyntaxError(
-                "select t2.ts as \"TS\", t2.ts ts1, t1.* from t1 asof join (select * from t2) t2;",
-                0,
-                "Duplicate column [name=ts1]",
+                "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;",
+                10,
+                "Duplicate column [name=TS1]",
+                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
+                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
+        );
+
+        assertSyntaxError(
+                "select t1.*, t2.ts from t1 asof join (select * from t2) t2;",
+                13,
+                "Duplicate column [name=ts]",
                 modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
                 modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
         );

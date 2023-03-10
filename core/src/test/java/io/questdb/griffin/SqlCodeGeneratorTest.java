@@ -89,6 +89,27 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAliasedColumnFollowedByWildcardInJoinQuery2() throws Exception {
+        assertQuery("col_k\ta\tk\ta1\tk1\n" +
+                        "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
+                        "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
+                "select x1.k col_k, * from x x1 join x x2 on x1.a = x2.a",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_long() a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                false,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testAmbiguousFunction() throws Exception {
         assertQuery("column\n" +
                         "234990000000000\n",
