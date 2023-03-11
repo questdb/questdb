@@ -555,7 +555,7 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     //caller must call findClose to free allocated struct
-    native static long findFirst(long lpszName);
+    public native static long findFirst(long lpszName);
 
     static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();

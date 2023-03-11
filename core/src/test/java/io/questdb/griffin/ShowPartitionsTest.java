@@ -55,7 +55,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             "8\tMONTH\t2023-09\t2023-09-01T00:00:00.000000Z\t2023-09-30T23:59:00.000000Z\t43200\t1638400\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitions~\t-1\t-1\n" +
                             "9\tMONTH\t2023-10\t2023-10-01T00:00:00.000000Z\t2023-10-31T23:59:00.000000Z\t44640\t1654784\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitions~\t-1\t-1\n" +
                             "10\tMONTH\t2023-11\t2023-11-01T00:00:00.000000Z\t2023-11-30T23:59:00.000000Z\t43200\t1638400\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitions~\t-1\t-1\n" +
-                            "11\tMONTH\t2023-12\t2023-12-01T00:00:00.000000Z\t2023-12-14T05:20:00.000000Z\t19041\t9453568\t1.1 MB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\ttestShowPartitions~\t-1\t-1\n",
+                            "11\tMONTH\t2023-12\t2023-12-01T00:00:00.000000Z\t2023-12-14T05:20:00.000000Z\t19041\t9453568\t9.0 MB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\ttestShowPartitions~\t-1\t-1\n",
                     "SHOW PARTITIONS FROM " + tableName, null, false, sqlExecutionContext, false);
         });
     }
@@ -70,9 +70,9 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
                             "        rnd_double() * 50.0 price," +
                             "        rnd_double() * 20.0 amount," +
-                            "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 60 * 1000000 timestamp" +
+                            "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 120000000L timestamp" +
                             "    FROM long_sequence(500000)" +
-                            "), INDEX(symbol capacity 128) TIMESTAMP(timestamp) PARTITION BY MONTH;",
+                            "), INDEX(symbol capacity 1024) TIMESTAMP(timestamp) PARTITION BY MONTH;",
                     sqlExecutionContext);
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2023-01';");
             assertQuery(
@@ -87,7 +87,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             "7\tMONTH\t2023-09\t2023-09-01T00:00:00.000000Z\t2023-09-30T23:59:00.000000Z\t43200\t1638400\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsDetachedPartition~\t-1\t-1\n" +
                             "8\tMONTH\t2023-10\t2023-10-01T00:00:00.000000Z\t2023-10-31T23:59:00.000000Z\t44640\t1654784\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsDetachedPartition~\t-1\t-1\n" +
                             "9\tMONTH\t2023-11\t2023-11-01T00:00:00.000000Z\t2023-11-30T23:59:00.000000Z\t43200\t1638400\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsDetachedPartition~\t-1\t-1\n" +
-                            "10\tMONTH\t2023-12\t2023-12-01T00:00:00.000000Z\t2023-12-14T05:20:00.000000Z\t19041\t9453568\t1.1 MB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsDetachedPartition~\t-1\t-1\n",
+                            "10\tMONTH\t2023-12\t2023-12-01T00:00:00.000000Z\t2023-12-14T05:20:00.000000Z\t19041\t9453568\t9.0 MB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsDetachedPartition~\t-1\t-1\n",
                     "SHOW PARTITIONS FROM " + tableName, null, false, sqlExecutionContext, false);
         });
     }
@@ -119,7 +119,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             "8\tMONTH\t2023-09\t2023-09-01T00:00:00.000000Z\t2023-09-30T23:59:00.000000Z\t43200\t1638400\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsFunction~\t-1\t-1\n" +
                             "9\tMONTH\t2023-10\t2023-10-01T00:00:00.000000Z\t2023-10-31T23:59:00.000000Z\t44640\t1654784\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsFunction~\t-1\t-1\n" +
                             "10\tMONTH\t2023-11\t2023-11-01T00:00:00.000000Z\t2023-11-30T23:59:00.000000Z\t43200\t1638400\t1.6 MB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsFunction~\t-1\t-1\n" +
-                            "11\tMONTH\t2023-12\t2023-12-01T00:00:00.000000Z\t2023-12-14T05:20:00.000000Z\t19041\t9453568\t1.1 MB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsFunction~\t-1\t-1\n",
+                            "11\tMONTH\t2023-12\t2023-12-01T00:00:00.000000Z\t2023-12-14T05:20:00.000000Z\t19041\t9453568\t9.0 MB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\ttestShowPartitionsFunction~\t-1\t-1\n",
                     "SELECT * FROM table_partitions('" + tableName + "')", null, false, sqlExecutionContext, false);
         });
     }
