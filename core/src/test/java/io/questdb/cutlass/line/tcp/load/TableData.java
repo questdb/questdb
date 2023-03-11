@@ -103,6 +103,12 @@ public class TableData {
         writePermits.decrementAndGet();
     }
 
+    public synchronized void clear() {
+        rows.clear();
+        index.clear();
+        writePermits.set(0);
+    }
+
     public synchronized int size() {
         int count = 0;
         for (int i = 0, n = rows.size(); i < n; i++) {
