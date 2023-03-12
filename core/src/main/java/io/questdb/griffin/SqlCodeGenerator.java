@@ -104,6 +104,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList groupByFunctionPositions = new IntList();
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> groupedAnalytic = new ObjObjHashMap<>();
     private final IntHashSet intHashSet = new IntHashSet();
+    private final IntList intList = new IntList();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
@@ -260,8 +261,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                              int columnSplit,
                                                              RecordValueSink slaveValueSink,
                                                              IntList columnIndex,
-                                                             JoinContext joinContext) {
-        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex, joinContext);
+                                                             JoinContext joinContext,
+                                                             ColumnFilter masterTableKeyColumns) {
+        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
+                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex,
+                joinContext, masterTableKeyColumns);
     }
 
     private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
@@ -276,8 +280,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                            int columnSplit,
                                                            RecordValueSink slaveValueSink,
                                                            IntList columnIndex,
-                                                           JoinContext joinContext) {
-        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex, joinContext);
+                                                           JoinContext joinContext,
+                                                           ColumnFilter masterTableKeyColumns) {
+        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
+                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink,
+                columnIndex, joinContext, masterTableKeyColumns);
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
@@ -499,6 +506,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
             if (intHashSet.excludes(k)) {
+                // if column is not in key, it must be of fixed length.
+                // why? our maps do not support variable length types in values, only in keys
                 if (ColumnType.isVariableLength(slaveMetadata.getColumnType(k))) {
                     throw SqlException
                             .position(joinPosition).put("right side column '")
@@ -507,6 +516,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        // at this point listColumnFilterB has column indexes of the master table that are keys
+        // so masterSink writes key columns of master table to a record
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
@@ -536,13 +547,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList columnIndex = new IntList(slaveMetadata.getColumnCount());
             // In map record value columns go first, so at this stage
             // we add to metadata all slave columns that are not keys.
-            // Add same columns to filter while we are in this loop.
+            // Add the same columns to filter while we are in this loop.
+
+            // We clear listColumnFilterB because after this loop it will
+            // contain indexes of slave table columns that are not keys.
+            ColumnFilter masterTableKeyColumns = listColumnFilterB.copy();
             listColumnFilterB.clear();
             valueTypes.clear();
             ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
             if (slaveMetadata instanceof AbstractRecordMetadata) {
                 for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
                     if (intHashSet.excludes(i)) {
+                        // this is not a key column. Add it to metadata as it is. Symbols columns are kept as symbols
                         final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(i);
                         metadata.add(slaveAlias, m);
                         listColumnFilterB.add(i + 1);
@@ -556,6 +572,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                     int index = listColumnFilterA.getColumnIndexFactored(i);
                     final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(index);
+                    // symbols columns are converted to strings. This is because
+                    // we need to match them with columns from the master table
                     if (ColumnType.isSymbol(m.getType())) {
                         metadata.add(
                                 slaveAlias,
@@ -618,26 +636,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
-
             return generator.create(
                     configuration,
-                    metadata,
+                    metadata, // the metadata of the joined table
                     master,
                     slave,
-                    keyTypes,
-                    valueTypes,
-                    slaveTypes,
-                    masterSink,
-                    RecordSinkFactory.getInstance(
+                    keyTypes,  // used as map keys
+                    valueTypes, // used as map values
+                    slaveTypes, // used to create a null record which is used when the slave table has no matching row
+                    masterSink, // for sinking keys from a master table
+                    RecordSinkFactory.getInstance( // slaveKeySink
                             asm,
                             slaveMetadata,
-                            listColumnFilterA,
+                            listColumnFilterA, // this is a list of slave columns that are keys
                             true
                     ),
-                    masterMetadata.getColumnCount(),
-                    RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
+                    masterMetadata.getColumnCount(), // to calculate the split in JoinRecord
+                    RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
-                    joinContext
+                    joinContext,
+                    masterTableKeyColumns
             );
 
         } catch (Throwable e) {
@@ -4417,6 +4435,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
     ) throws SqlException {
+        // listColumnFilterA represents store column indexes of slave table
+        // todo: really? to be confirmed
         lookupColumnIndexesUsingVanillaNames(listColumnFilterA, jc.aNames, slaveMetadata);
         if (vanillaMaster) {
             lookupColumnIndexesUsingVanillaNames(listColumnFilterB, jc.bNames, masterMetadata);
@@ -4618,7 +4638,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnSplit,
                 RecordValueSink slaveValueSink,
                 IntList columnIndex,
-                JoinContext joinContext
+                JoinContext joinContext,
+                ColumnFilter masterTableKeyColumns
         );
     }
 

@@ -22,35 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.cairo;
 
-import io.questdb.cairo.ColumnFilter;
-import io.questdb.cairo.sql.Record;
+import org.junit.Test;
 
-public class OuterJoinRecord extends JoinRecord {
-    private final Record nullRecord;
-    private Record flappingSlave;
+public class ListColumnFilterTest {
+    @Test
+    public void getColumnIndexFactored() {
+        ListColumnFilter filter = new ListColumnFilter();
+//        filter.add(42);
+//        filter.add(43);
+        filter.add(-1);
 
-    public OuterJoinRecord(int split, Record nullRecord) {
-        super(split);
-        this.nullRecord = nullRecord;
+        int if0 = filter.getColumnIndexFactored(32);
+//        int if1 = filter.getColumnIndexFactored(1);
+//        int if2 = filter.getColumnIndexFactored(2);
+        System.out.println("breakpoint");
+
     }
 
-    void hasSlave(boolean value) {
-        if (value) {
-            // todo: this logic is odd, why is there the check at all? why not just slave = flappingSlave?
-            if (flappingSlave != slave) {
-                slave = flappingSlave;
-            }
-        } else {
-            if (slave != nullRecord) {
-                slave = nullRecord;
-            }
-        }
-    }
-
-    void of(Record master, Record slave, ColumnFilter masterTableKeyColumns) {
-        super.of(master, slave);
-        this.flappingSlave = slave;
-    }
 }

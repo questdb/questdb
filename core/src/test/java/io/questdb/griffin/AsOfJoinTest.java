@@ -24,6 +24,10 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import org.junit.Assert;
 import org.junit.Test;
 
 
@@ -290,6 +294,30 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testExplicitTimestampIsNotNecessaryWhenSpliceJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("splice join", null);
+    }
+
+    @Test
+    public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws SqlException {
+        compiler.setFullFatJoins(true);
+        compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
+        compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
+        compile("insert into tab_a values ('ABC', '2022-01-01T00:00:00.000000Z', 'foo')");
+        compile("insert into tab_b values ('ABC', '2021-01-01T00:00:00.000000Z', 'bar')");
+
+        try (RecordCursorFactory factory = compiler.compile("select sym_a, sym_b from tab_a a lt join tab_b b on sym_a = sym_b", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                io.questdb.cairo.sql.Record record = cursor.getRecord();
+                RecordMetadata metadata = factory.getMetadata();
+                Assert.assertTrue(cursor.hasNext());
+                CharSequence sym0 = record.getSym(0);
+                CharSequence sym1 = record.getSym(1);
+                Assert.assertEquals("ABC", sym0);
+                Assert.assertEquals("ABC", sym1);
+//                Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
+//                Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
+            }
+        }
+
     }
 
     @Test

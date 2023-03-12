@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -63,8 +60,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             int columnSplit,
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
-            JoinContext joinContext
-    ) {
+            JoinContext joinContext,
+            ColumnFilter masterTableKeyColumns) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
