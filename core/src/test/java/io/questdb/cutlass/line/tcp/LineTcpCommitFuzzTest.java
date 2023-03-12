@@ -97,6 +97,24 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
+    public void testCommitIntervalBasedFractionNoPauses() throws Exception {
+
+        configOverrideMaxUncommittedRows(500_000);
+
+        // idle table commit after 5 mins inactivity -> test would timeout
+        maintenanceInterval = 300_000_000;
+        minIdleMsBeforeWriterRelease = 300_000_000;
+
+        // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
+        configOverrideO3MaxLag(500_000);
+        commitIntervalFraction = 0.5;
+
+        initLoadParameters(100, 100, 1, 1, 10, false);
+
+        runTest();
+    }
+
+    @Test
     public void testCommitNumOfRowsBased() throws Exception {
         // rows based commit every 10 rows -> will commit 10 times 10 rows per table -> make test pass
         configOverrideMaxUncommittedRows(10);

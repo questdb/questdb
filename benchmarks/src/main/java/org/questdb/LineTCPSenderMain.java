@@ -27,11 +27,14 @@ package org.questdb;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSenderMain {
     public static void main(String[] args) {
-        int n = 3;
+        int n = 1;
         final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
         for (int i = 0; i < n; i++) {
             int k = i;
@@ -47,21 +50,34 @@ public class LineTCPSenderMain {
         int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
-        long start = System.nanoTime();
-        String tab = "weather" + k;
+        MicrosecondClock clock = new MicrosecondClockImpl();
+        String tab = "weather";
         try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
-            for (int i = 0; i < count; i++) {
+            long sent = 0;
+            while (true) {
                 sender.metric(tab);
                 sender
                         .tag("location", "london")
                         .tag("by", "blah")
+                        .field("wind", Long.toString(rnd.nextPositiveLong()))
                         .field("temp", rnd.nextPositiveLong())
                         .field("ok", rnd.nextPositiveInt());
-                sender.$();
+                final long ts = clock.getTicks() * 1000L; // * 1000L + rnd.nextLong(1_000_000_000) - 500_000_000;
+                sender.$(ts);
+//                if (rnd.nextLong() % (k + 1) == 0) {
+                Os.pause();
+                Os.pause();
+//                }
+
+                if (rnd.nextLong() % ((k + 1) * 10L) == 0) {
+                    Os.sleep(1);
+                }
+
+                if (rnd.nextLong(50_000) == 0) {
+                    Os.sleep(20);
+                }
             }
-            sender.flush();
         }
-        System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
-        haltLatch.countDown();
     }
 }
+
