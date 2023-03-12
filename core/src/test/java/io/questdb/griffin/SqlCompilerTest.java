@@ -3897,12 +3897,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
         // t2.ts as ts1 which produces the error
-        assertFailure(29, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*,  t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;");
-        assertFailure(29, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*,  t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
-        assertFailure(29, "Duplicate column [name=ts1]",
-                "select t2.ts as \"TS\", t1.*,  t2.ts ts1 from t1 asof join (select * from t2) t2;");
+        assertFailure(28, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*, t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertFailure(28, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertFailure(28, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
     }
 
     @Test

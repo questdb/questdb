@@ -63,9 +63,9 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandAddColumn() throws Exception {
         runInContext((server) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,room=6C watts=\"333\" 1531817902842\n";
+            String lineData = "plug,room=6A watts=\"1\" 2631819998000\n" +
+                    "plug,room=6B watts=\"22\" 1631817901842\n" +
+                    "plug,room=6C watts=\"333\" 1531817901842\n";
 
             SqlException exception = sendWithAlterStatement(
                     lineData,
@@ -79,12 +79,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(lineData);
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817901Z\tNaN\t\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
-                    "6C\t333\t1970-01-01T00:25:31.817902Z\tNaN\t\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817901Z\tNaN\t\n" +
                     "6B\t55\t1970-01-01T00:27:11.817902Z\tNaN\tPower\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tNaN\t\n" +
-                    "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\t\n";
+                    "6A\t1\t1970-01-01T00:43:51.819998Z\tNaN\t\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n";
             assertTable(expected);
         });
     }
