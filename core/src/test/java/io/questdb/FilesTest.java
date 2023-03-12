@@ -294,6 +294,7 @@ public class FilesTest {
 
     @Test
     public void testDirectoryContentSizeWithLinks() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         String content = "RDBMSs favor consistency over availability and performance which" + System.lineSeparator() +
                 "complicates scaling the system horizontally with efficiency in big data" + System.lineSeparator() +
                 "scenarios. As a result, new DBMSs were developed to relax some consistency " + System.lineSeparator() +

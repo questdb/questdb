@@ -528,7 +528,7 @@ public final class Files {
 
     private native static boolean isDir(long pUtf8PathZ);
 
-    public native static long length0(long lpszName);
+    private native static long length0(long lpszName);
 
     private native static int mkdir(long lpszPath, int mode);
 
@@ -555,7 +555,7 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     //caller must call findClose to free allocated struct
-    public native static long findFirst(long lpszName);
+    native static long findFirst(long lpszName);
 
     static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();
