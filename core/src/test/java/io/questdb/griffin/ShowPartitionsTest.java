@@ -36,19 +36,10 @@ import org.junit.Test;
 public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
-    public void testShowPartitionsWhenThereAreNoAttachableNorDetached() throws Exception {
+    public void testShowPartitionsWhenThereAreNoDetachedNorAttachable() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
-                    "CREATE TABLE " + tableName + " AS (" +
-                            "    SELECT" +
-                            "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
-                            "        rnd_double() * 50.0 price," +
-                            "        rnd_double() * 20.0 amount," +
-                            "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
-                            "    FROM long_sequence(700)" +
-                            "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH;",
-                    sqlExecutionContext);
+            compile(createTable(tableName), sqlExecutionContext);
             assertShowPartitions(
                     "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize (bytes)\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                             "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\t98304\t96.0 KB\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
@@ -63,25 +54,14 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testShowPartitionsDetachedPartition() throws Exception {
+    public void testShowPartitionsOnlyDetachedPartition() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
-                    "CREATE TABLE " + tableName + " AS (" +
-                            "    SELECT" +
-                            "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
-                            "        rnd_double() * 50.0 price," +
-                            "        rnd_double() * 20.0 amount," +
-                            "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
-                            "    FROM long_sequence(700)" +
-                            "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH;",
-                    sqlExecutionContext);
-
+            compile(createTable(tableName), sqlExecutionContext);
             compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
-
+            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2023-06'", sqlExecutionContext);
             assertShowPartitions(
                     "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize (bytes)\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
-                            "0\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\t9453568\t9.0 MB\tfalse\ttrue\ttrue\tfalse\tfalse\n" +
                             "0\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\t147456\t144.0 KB\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
                             "-1\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\t147456\t144.0 KB\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
                             "-2\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\t147456\t144.0 KB\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
@@ -96,17 +76,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
-            compile(
-                    "CREATE TABLE " + tableName + " AS (" +
-                            "    SELECT" +
-                            "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
-                            "        rnd_double() * 50.0 price," +
-                            "        rnd_double() * 20.0 amount," +
-                            "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
-                            "    FROM long_sequence(700)" +
-                            "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH;",
-                    sqlExecutionContext);
-
+            compile(createTable(tableName), sqlExecutionContext);
             compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
 
             // prepare 3 partitions for attachment
@@ -153,8 +123,46 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testShowPartitionsSelectActive() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            compile(createTable(tableName), sqlExecutionContext);
+            assertQuery(
+                    "expected",
+                    "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true",
+                    null,
+                    false,
+                    false,
+                    true);
+        });
+    }
+
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
-        assertQuery(expected, "SHOW PARTITIONS FROM " + tableName, null, false, sqlExecutionContext, false);
-        assertQuery(expected, "SELECT * FROM table_partitions('" + tableName + "')", null, false, sqlExecutionContext, false);
+        assertQuery(
+                expected,
+                "SHOW PARTITIONS FROM " + tableName,
+                null,
+                false,
+                false,
+                true);
+        assertQuery(
+                expected,
+                "SELECT * FROM table_partitions('" + tableName + "')",
+                null,
+                false,
+                false,
+                true);
+    }
+
+    private static String createTable(String tableName) {
+        return "CREATE TABLE " + tableName + " AS (" +
+                "    SELECT" +
+                "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
+                "        rnd_double() * 50.0 price," +
+                "        rnd_double() * 20.0 amount," +
+                "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
+                "    FROM long_sequence(700)" +
+                "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH;";
     }
 }
