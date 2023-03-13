@@ -189,7 +189,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 try {
                     attachablePartitions.clear();
                     detachedPartitions.clear();
-                    while (Files.findNext(pFind) > 0) {
+                    do {
                         sink.clear();
                         Chars.utf8DecodeZ(Files.findName(pFind), sink);
                         int type = Files.findType(pFind);
@@ -198,7 +198,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         } else if (type == Files.DT_DIR && Chars.endsWith(sink, TableUtils.DETACHED_DIR_MARKER)) {
                             detachedPartitions.add(Chars.toString(sink));
                         }
-                    }
+                    } while (Files.findNext(pFind) > 0);
                     attachablePartitions.sort(Chars::compare);
                     detachedPartitions.sort(Chars::compare);
                 } finally {

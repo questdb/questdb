@@ -390,7 +390,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             int len = path.length();
             long pFind = Files.findFirst(path);
             try {
-                while (Files.findNext(pFind) > 0) {
+                do {
                     sink.clear();
                     Chars.utf8DecodeZ(Files.findName(pFind), sink);
                     path.trimTo(len).concat(sink).$();
@@ -406,7 +406,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         }
                     }
                     sizes.put(Chars.toString(sink, 0, limit), Files.getDirectoryContentSize(path));
-                }
+                } while (Files.findNext(pFind) > 0);
             } finally {
                 Files.findClose(pFind);
             }
