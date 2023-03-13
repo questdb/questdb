@@ -29,7 +29,6 @@ import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -37,12 +36,6 @@ import org.junit.Test;
 import static io.questdb.cairo.TableUtils.*;
 
 public class ShowPartitionsTest extends AbstractGriffinTest {
-
-    @After
-    public void tearDown() {
-        super.tearDown();
-        Path.clearThreadLocals();
-    }
 
     @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachable() throws Exception {

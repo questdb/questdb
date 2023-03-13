@@ -681,14 +681,14 @@ public final class TableUtils {
         final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
-                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
 
         if (ff.lock(fd) != 0) {
             if (verbose) {
-                LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+                LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
             }
             ff.close(fd);
             return -1;
@@ -844,7 +844,7 @@ public final class TableUtils {
     public static int openRO(FilesFacade ff, LPSZ path, Log log) {
         final int fd = ff.openRO(path);
         if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
@@ -853,7 +853,7 @@ public final class TableUtils {
     public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
         final int fd = ff.openRW(path, opts);
         if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
@@ -1426,13 +1426,13 @@ public final class TableUtils {
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
                                 .$(", errno=").$(e.getErrno())
-                                .$(']').$();
+                                .I$();
                     }
                 } else {
                     LOG.error()
                             .$("could not remove swap [file=").$(path)
                             .$(", errno=").$(ff.errno())
-                            .$(']').$();
+                            .I$();
                 }
             } while (++index < retryCount);
             throw CairoException.critical(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);

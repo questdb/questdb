@@ -35,7 +35,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.Formatter;
@@ -55,16 +54,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        int partitionBy;
-        String tsColName = null;
-        try (TableReader reader = executionContext.getReader(tableToken)) {
-            partitionBy = reader.getPartitionedBy();
-            if (PartitionBy.isPartitioned(partitionBy)) {
-                TableReaderMetadata meta = reader.getMetadata();
-                tsColName = meta.getColumnName(meta.getTimestampIndex());
-            }
-        }
-        return cursor.init(executionContext.getCairoEngine().getConfiguration(), partitionBy, tsColName, tableToken);
+        return cursor.init(executionContext, tableToken);
     }
 
     @Override
@@ -82,6 +72,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private CairoConfiguration cairoConfig;
+        private int dynamicPartitionIndex = -1;
         private final Formatter humanReadable = new Formatter(new Appendable() {
             @Override
             public Appendable append(CharSequence csq) {
@@ -101,11 +92,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 return this;
             }
         });
-        private int partitionBy = -1;
-        private int dynamicPartitionIndex = -1;
-        private int partitionIndex = -1;
         private int limit; // partitionCount + detached + attachable
+        private Path path;
+        private int partitionBy = -1;
+        private int partitionIndex = -1;
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
+        private int rootLen;
         private final StringSink sink = new StringSink();
         private TableToken tableToken;
         private final TxReader tableTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
@@ -115,6 +107,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             Misc.free(tableTxReader);
             Misc.free(partitionRecord);
+            path = Misc.free(path);
             attachablePartitions.clear();
             detachedPartitions.clear();
             sink.clear();
@@ -124,6 +117,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionIndex = -1;
             limit = 0;
             partitionBy = -1;
+            rootLen = 0;
         }
 
         @Override
@@ -161,13 +155,26 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             return limit;
         }
 
-        private ShowPartitionsRecordCursor init(CairoConfiguration cairoConfig, int partitionBy, @Nullable String tsColName, TableToken tableToken) {
-            this.cairoConfig = cairoConfig;
+        private ShowPartitionsRecordCursor init(SqlExecutionContext executionContext, TableToken tableToken) {
+            int partitionBy;
+            String tsColName = null;
+            try (TableReader reader = executionContext.getReader(tableToken)) {
+                partitionBy = reader.getPartitionedBy();
+                if (PartitionBy.isPartitioned(partitionBy)) {
+                    TableReaderMetadata meta = reader.getMetadata();
+                    tsColName = meta.getColumnName(meta.getTimestampIndex());
+                }
+            }
+            cairoConfig = executionContext.getCairoEngine().getConfiguration();
             this.partitionBy = partitionBy;
             this.tsColName = tsColName;
             this.tableToken = tableToken;
-            Path path = Path.PATH2.get().of(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
-            findDetachedAndAttachablePartitions(path);
+            if (path == null) {
+                path = new Path();
+            }
+            path.of(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
+            rootLen = path.length();
+            findDetachedAndAttachablePartitions();
             path.concat(TableUtils.TXN_FILE_NAME).$();
             tableTxReader.ofRO(path, partitionBy);
             tableTxReader.unsafeLoadAll();
@@ -176,7 +183,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             return this;
         }
 
-        private void findDetachedAndAttachablePartitions(Path path) {
+        private void findDetachedAndAttachablePartitions() {
             long pFind = Files.findFirst(path);
             if (pFind > 0L) {
                 try {
@@ -310,10 +317,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 dynamicPartitionIndex = partitionIndex;
                 CharSequence dynamicTsColName = tsColName;
                 FilesFacade ff = cairoConfig.getFilesFacade();
-
-                // initialize path to root of table
-                Path path = Path.PATH2.get().of(cairoConfig.getRoot()).concat(tableToken);
-
+                path.trimTo(rootLen);
                 int partitionCount = tableTxReader.getPartitionCount();
                 if (partitionIndex < partitionCount) {
                     // we are within the partition table
@@ -343,7 +347,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         }
                     }
                     assert partitionName != null;
-
                     // open meta files if they exist
                     dynamicPartitionIndex = Integer.MIN_VALUE; // so that in absence of metadata is NaN
                     path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$();
@@ -368,35 +371,32 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
                                 }
                                 dynamicPartitionIndex = -pIndex;
-                                detachedTxReader.clear();
                             } else {
                                 LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
                             }
                         } else {
-                            LOG.error().$("detached partition meta does not match");
+                            LOG.error().$("detached partition meta does not match [path=").$(path).I$();
                         }
-                        detachedMetaReader.clear();
                     } else {
                         LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
                     }
                     path.parent();
                 }
-
                 partitionSize = ff.getDirectoryContentSize(path.$());
                 if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                     TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
                     int fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path, LOG);
-                        minTimestamp = ff.readNonNegativeLong(fd, 0);
                         long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
+                        minTimestamp = ff.readNonNegativeLong(fd, 0);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {
                         if (partitionIndex < partitionCount) {
-                            throw CairoException.critical(ff.errno()).put("no file found for designated timestamp column [").put(path).put(']');
+                            throw CairoException.critical(ff.errno()).put("no file found for designated timestamp column [path=").put(path).put(']');
                         }
                         dynamicPartitionIndex = Integer.MIN_VALUE;
-                        LOG.error().$("no file found for designated timestamp column [").$(path).I$();
+                        LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
                     } finally {
                         ff.close(fd);
                     }
