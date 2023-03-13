@@ -921,7 +921,7 @@ class SqlOptimiser {
     private void createSelectColumn(
             CharSequence columnName,
             ExpressionNode columnAst,
-            boolean hasSeenWildcardExpression,
+            boolean allowDuplicates,
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
@@ -934,10 +934,11 @@ class SqlOptimiser {
         // taking into account that column is pre-aliased, e.g.
         // "col, col" will look like "col, col col1"
 
-        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
-        int index = translatingAliasMap.keyIndex(columnAst.token);
+        final LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
+        final int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
-            if (hasSeenWildcardExpression && translatingModel.getAliasToColumnMap().contains(columnName)) {
+            // check if the column is a duplicate, i.e. already referenced by the group-by model
+            if (!allowDuplicates && groupByModel.getAliasToColumnMap().contains(columnName)) {
                 throw SqlException.duplicateColumn(columnAst.position, columnName);
             }
             // column is already being referenced by translating model
@@ -954,7 +955,16 @@ class SqlOptimiser {
             outerModel.addBottomUpColumn(translatedColumn);
             distinctModel.addBottomUpColumn(translatedColumn);
         } else {
-            final CharSequence alias = createColumnAlias(columnName, translatingModel);
+            final CharSequence alias;
+            if (groupByModel.getAliasToColumnMap().contains(columnName)) {
+                // the column is not yet translated, but another column is referenced via the same name
+                if (!allowDuplicates) {
+                    throw SqlException.duplicateColumn(columnAst.position, columnName);
+                }
+                alias = createColumnAlias(columnName, groupByModel);
+            } else {
+                alias = createColumnAlias(columnName, translatingModel);
+            }
             addColumnToTranslatingModel(
                     queryColumnPool.next().of(
                             alias,
@@ -2172,7 +2182,7 @@ class SqlOptimiser {
         }
 
         if (status == TableUtils.TABLE_RESERVED) {
-            throw SqlException.$(tableNamePosition, "table directory is of unknown format");
+            throw SqlException.$(tableNamePosition, "table directory is of unknown format [table=").put(tableName).put(']');
         }
 
         if (model.isUpdate() && !executionContext.isWalApplication()) {
@@ -3402,7 +3412,6 @@ class SqlOptimiser {
         boolean outerVirtualIsSelectChoose = true;
 
         // create virtual columns from select list
-        boolean hasSeenWildcardExpression = false;
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
@@ -3423,12 +3432,11 @@ class SqlOptimiser {
                             outerVirtualModel,
                             distinctModel
                     );
-                    hasSeenWildcardExpression = true;
                 } else {
                     createSelectColumn(
                             qc.getAlias(),
                             qc.getAst(),
-                            hasSeenWildcardExpression,
+                            false,
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
