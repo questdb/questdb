@@ -156,7 +156,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteRollbackHeavyToFix() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
-        rnd1 = new Rnd(1657846284109333L, 1678704734109L);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01);
         setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);
@@ -165,7 +164,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteRollbackTruncateHeavy() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
-        rnd1 = new Rnd(1654800911884041L, 1678699951124L);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15);
         setFuzzCounts(rnd1.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);

@@ -51,6 +51,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
     public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
     public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
+    static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     protected final LongList cachedList = new LongList();
     private MemoryCMR mem;
