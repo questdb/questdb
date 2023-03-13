@@ -163,18 +163,17 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
-        boolean busy = true;
         if (operation == IOOperation.HEARTBEAT) {
             context.doMaintenance(millisecondClock.getTicks());
             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
-            busy = false;
+            return false;
         }
         if (handleIO(context)) {
             busyContext = context;
             LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
-            busy = false;
+            return false;
         }
-        return busy;
+        return true;
     }
 
 }
