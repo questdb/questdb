@@ -412,7 +412,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         MIN_TIMESTAMP(3, "minTimestamp", ColumnType.TIMESTAMP),
         MAX_TIMESTAMP(4, "maxTimestamp", ColumnType.TIMESTAMP),
         NUM_ROWS(5, "numRows", ColumnType.LONG),
-        DISK_SIZE(6, "diskSize (bytes)", ColumnType.LONG),
+        DISK_SIZE(6, "diskSize", ColumnType.LONG),
         DISK_SIZE_HUMAN(7, "diskSizeHuman", ColumnType.STRING),
         IS_READ_ONLY(8, "readOnly", ColumnType.BOOLEAN),
         IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
