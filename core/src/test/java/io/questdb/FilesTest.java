@@ -293,6 +293,13 @@ public class FilesTest {
     }
 
     @Test
+    public void testDirectoryContentSizeNonExistingFolder() throws Exception {
+        try (Path path = new Path().of("banana").$()) {
+            Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
+        }
+    }
+
+    @Test
     public void testDirectoryContentSizeWithLinks() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         String content = "RDBMSs favor consistency over availability and performance which" + System.lineSeparator() +

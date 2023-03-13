@@ -41,6 +41,11 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isCursor() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final CharSequence tableName = args.getQuick(0).getStr(null);
         final TableToken token = sqlExecutionContext.getTableToken(tableName);
