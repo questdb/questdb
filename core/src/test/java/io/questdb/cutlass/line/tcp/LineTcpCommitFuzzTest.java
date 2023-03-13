@@ -24,11 +24,15 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import org.hamcrest.MatcherAssert;
 import org.junit.Test;
+
+import static org.hamcrest.Matchers.greaterThan;
 
 public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
@@ -107,11 +111,21 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
         // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
         configOverrideO3MaxLag(500_000);
-        commitIntervalFraction = 0.5;
+        commitIntervalFraction = 0.2;
 
         initLoadParameters(100, 100, 1, 1, 10, false);
 
         runTest();
+
+        for (CharSequence table : tableNames.keySet()) {
+            try (TableWriter tw = getWriter(table)) {
+                if (walEnabled) {
+                    MatcherAssert.assertThat(tw.getSeqTxn(), greaterThan(3L));
+                } else {
+                    MatcherAssert.assertThat(tw.getTxn(), greaterThan(3L));
+                }
+            }
+        }
     }
 
     @Test
