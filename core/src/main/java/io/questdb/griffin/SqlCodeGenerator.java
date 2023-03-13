@@ -3256,9 +3256,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     VectorAggregateFunction vaf = constructor.create(
                             tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0),
                             indexInBase,
-                            // reserve one more slot for work stealing;
-                            // work stealing thread will be using workerCount as the workerId
-                            executionContext.getSharedWorkerCount() + 1
+                            executionContext.getSharedWorkerCount()
                     );
                     tempVaf.add(vaf);
                     meta.add(indexInThis,

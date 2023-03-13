@@ -34,11 +34,13 @@ import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.mp.Worker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -55,6 +57,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final GroupByNotKeyedVectorRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final PerWorkerLocks perWorkerLocks; // used to protect VAF's internal slots
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private final ObjList<VectorAggregateFunction> vafList;
     private final int workerCount;
@@ -73,6 +76,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         this.vafList = new ObjList<>(vafList.size());
         this.vafList.addAll(vafList);
         this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
+        this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.workerCount = workerCount;
     }
@@ -204,9 +208,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
             doneLatch.reset();
 
-            // all aggregate functions use workerCount + 1 slots,
-            // so by using workerCount index we avoid clashing with shared pool threads
-            final int workerId = workerCount;
+            final Thread thread = Thread.currentThread();
+            final int workerId;
+            if (thread instanceof Worker) {
+                // it's a worker thread, potentially from the shared pool
+                workerId = ((Worker) thread).getWorkerId() % workerCount;
+            } else {
+                // it's an embedder's thread, so use a random slot
+                workerId = -1;
+            }
 
             try {
                 PageFrame frame;
@@ -229,11 +239,16 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         long seq = pubSeq.next();
                         if (seq < 0) {
                             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                            // diy the func
+                            // acquire the slot and DIY the func
                             // vaf need to know which column it is hitting in the frame and will need to
                             // aggregate between frames until done
-                            vaf.aggregate(pageAddress, pageSize, colSizeShr, workerId);
-                            ownCount++;
+                            final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+                            try {
+                                vaf.aggregate(pageAddress, pageSize, colSizeShr, slot);
+                                ownCount++;
+                            } finally {
+                                perWorkerLocks.releaseSlot(slot);
+                            }
                         } else {
                             final VectorAggregateEntry entry = entryPool.next();
                             // null pRosti means that we do not need keyed aggregation
@@ -248,6 +263,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                     doneLatch,
                                     null,
                                     null,
+                                    perWorkerLocks,
                                     sharedCircuitBreaker
                             );
                             activeEntries.add(entry);

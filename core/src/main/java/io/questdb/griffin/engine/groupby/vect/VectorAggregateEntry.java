@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.Mutable;
@@ -42,6 +43,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     private long keyAddress;
     private AtomicInteger oomCounter;
     private long[] pRosti;
+    private PerWorkerLocks perWorkerLocks;
     private RostiAllocFacade raf;
     private long valueAddress;
     private long valueCount;
@@ -55,19 +57,29 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
 
     public boolean run(int workerId) {
         if (tryLock()) {
-            if (!circuitBreaker.checkIfTripped()
-                    && (oomCounter == null || oomCounter.get() == 0)) {
+            if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
+                doneLatch.countDown();
+                return true;
+            }
+
+            final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+            try {
+                if (circuitBreaker.checkIfTripped()) {
+                    return true;
+                }
                 if (pRosti != null) {
-                    long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
-                    if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
+                    long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+                    if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, valueCount, columnSizeShr, slot)) {
                         oomCounter.incrementAndGet();
                     }
-                    raf.updateMemoryUsage(pRosti[workerId], oldSize);
+                    raf.updateMemoryUsage(pRosti[slot], oldSize);
                 } else {
-                    func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
+                    func.aggregate(valueAddress, valueCount, columnSizeShr, slot);
                 }
+            } finally {
+                perWorkerLocks.releaseSlot(slot);
+                doneLatch.countDown();
             }
-            doneLatch.countDown();
             return true;
         }
         return false;
@@ -85,6 +97,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
             // oom is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
             RostiAllocFacade raf,
+            PerWorkerLocks perWorkerLocks,
             ExecutionCircuitBreaker circuitBreaker
     ) {
         of(sequence);
@@ -97,6 +110,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
         this.raf = raf;
+        this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;
     }
 }
