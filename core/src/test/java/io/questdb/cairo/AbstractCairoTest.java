@@ -322,6 +322,11 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
     }
 
+    protected static void configOverrideO3MinLag(long minLag) {
+        node1.getConfigurationOverrides().setO3MinLag(minLag);
+    }
+
+
     protected static void configOverrideO3ColumnMemorySize(int size) {
         node1.getConfigurationOverrides().setO3ColumnMemorySize(size);
     }
