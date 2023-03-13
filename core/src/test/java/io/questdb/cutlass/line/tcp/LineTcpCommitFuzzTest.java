@@ -72,7 +72,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
-        configOverrideO3MaxLag(0);
+        configO3MinLag(0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 500;
 
@@ -91,7 +91,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
-        configOverrideO3MaxLag(1_000_000);
+        configO3MinLag(1_000_000);
         commitIntervalFraction = 0.5;
         commitIntervalDefault = 300_000;
 
@@ -101,7 +101,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testCommitIntervalBasedFractionNoPauses() throws Exception {
+    public void testCommitIntervalBasedFractionConstantLowRate() throws Exception {
 
         configOverrideMaxUncommittedRows(500_000);
 
@@ -109,20 +109,19 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
-        configOverrideO3MaxLag(500_000);
+        // time based commit every 0.2 seconds (20% of 1 sec commit lag) -> should commit rows -> make test pass
+        configO3MinLag(1_000_000);
         commitIntervalFraction = 0.2;
 
-        initLoadParameters(100, 100, 1, 1, 10, false);
-
+        initLoadParameters(10, 100, 1, 1, 10, false);
         runTest();
 
         for (CharSequence table : tableNames.keySet()) {
             try (TableWriter tw = getWriter(table)) {
                 if (walEnabled) {
-                    MatcherAssert.assertThat(tw.getSeqTxn(), greaterThan(3L));
+                    MatcherAssert.assertThat(tw.getSeqTxn(), greaterThan(4L));
                 } else {
-                    MatcherAssert.assertThat(tw.getTxn(), greaterThan(3L));
+                    MatcherAssert.assertThat(tw.getTxn(), greaterThan(4L));
                 }
             }
         }
@@ -138,7 +137,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 5 mins (default interval) -> test would timeout
-        configOverrideO3MaxLag(0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 300_000;
 
@@ -157,7 +155,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 500;
 
         // time based commit every 5 mins (default interval) -> test would timeout
-        configOverrideO3MaxLag(0);
+        configO3MinLag(0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 300_000;
 
