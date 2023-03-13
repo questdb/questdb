@@ -147,7 +147,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             "0\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
                             "-1\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
                             "-2\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
-                            "NaN\tMONTH\t2023-04.detached\t\t\t120\tSIZE\t128.0 KB\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
+                            "NaN\tMONTH\t2023-04.detached\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
                             "-4\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n",
                     tableName);
         });
@@ -232,7 +232,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             compile("CREATE TABLE partitions AS (SELECT * FROM table_partitions('" + tableName + "'))", sqlExecutionContext);
             String finallyExpected = replaceSizeToMatchOs(
                     "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize (bytes)\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
-                            "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\t9453568\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
+                            "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
                     tableName);
             assertQuery(
                     finallyExpected,
@@ -286,7 +286,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize (bytes)\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tDAY\t2023-03-13\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
                                 "1\tDAY\t2023-03-14\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n" +
-                                "NaN\tDAY\t2023-03-15.attachable\t\t\t-1\t163840\t160.0 KB\tfalse\tfalse\tfalse\ttrue\ttrue\n",
+                                "NaN\tDAY\t2023-03-15.attachable\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\n",
                         tabName);
             }
         });
@@ -334,7 +334,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize (bytes)\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tDAY\t2023-03-13\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
                                 "1\tDAY\t2023-03-14\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n" +
-                                "NaN\tDAY\t2023-03.attachable\t\t\t-1\t163840\t160.0 KB\tfalse\tfalse\tfalse\ttrue\ttrue\n",
+                                "NaN\tDAY\t2023-03.attachable\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\n",
                         tabName);
             }
         });
