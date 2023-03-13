@@ -53,7 +53,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
-        configOverrideO3MaxLag(1_000_000);
+        configOverrideO3MinLag(1_000_000);
         commitIntervalFraction = 0.0;
         commitIntervalDefault = 500;
 
@@ -72,7 +72,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
-        configO3MinLag(0);
+        configOverrideO3MinLag(0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 500;
 
@@ -91,7 +91,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
-        configO3MinLag(1_000_000);
+        configOverrideO3MinLag(1_000_000);
         commitIntervalFraction = 0.5;
         commitIntervalDefault = 300_000;
 
@@ -110,7 +110,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.2 seconds (20% of 1 sec commit lag) -> should commit rows -> make test pass
-        configO3MinLag(1_000_000);
+        configOverrideO3MinLag(1_000_000);
         commitIntervalFraction = 0.2;
 
         initLoadParameters(10, 100, 1, 1, 10, false);
@@ -155,7 +155,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 500;
 
         // time based commit every 5 mins (default interval) -> test would timeout
-        configO3MinLag(0);
+        configOverrideO3MinLag(0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 300_000;
 
