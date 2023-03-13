@@ -181,7 +181,7 @@ public final class Files {
     public static long getDirectoryContentSize(Path path) {
         final int rootLen = path.length();
         final long addr = path.address();
-        if (isDir(addr) && path.charAt(rootLen - 1) != '.') {
+        if (rootLen > 0 && path.charAt(rootLen - 1) != '.' && isDir(addr)) {
             final long pFind = findFirst(addr);
             if (pFind > 0L) {
                 long totalSize = 0L;

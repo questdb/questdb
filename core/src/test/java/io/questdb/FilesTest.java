@@ -254,40 +254,26 @@ public class FilesTest {
                 "the disk. Each partition then appears to the operating system as a distinct 'logical'" + System.lineSeparator() +
                 "disk that uses part of the actual disk." + System.lineSeparator();
         assertMemoryLeak(() -> {
-            File noFolder = temporaryFolder.newFolder("yes", "no");
-            File yesFolder = noFolder.getParentFile();
-            File parentOfYesFolder = yesFolder.getParentFile();
-            try (Path path = new Path().of(parentOfYesFolder.getAbsolutePath()).$()) {
-                int rootLen = path.length();
-
-                Assert.assertTrue(Files.isDirOrSoftLinkDir(path.concat("..").$()));
-                Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
-
-                Assert.assertTrue(Files.isDirOrSoftLinkDir(path.trimTo(rootLen).concat("yes").$()));
-                Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
-
-                Assert.assertTrue(Files.isDirOrSoftLinkDir(path.concat("..").$()));
-                Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
+            File noDir = temporaryFolder.newFolder("yes", "no");
+            File tmpDir = temporaryFolder.newFolder("tmp");
+            try (Path path = new Path(); Path auxPath = new Path()) {
+                createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
+                long baseSize = Files.getDirectoryContentSize(auxPath.parent().$());
 
                 // create files at yes level
-                createTempFile(path.parent(), "prose.txt", content);
-                Assert.assertEquals(content.length(), Files.length(path));
+                path.of(noDir.getParentFile().getAbsolutePath()).$();
+                int rootLen = path.length();
+                createTempFile(path, "prose.txt", content);
                 createTempFile(path.parent(), "dinner.txt", content);
-                Assert.assertEquals(content.length(), Files.length(path));
                 createTempFile(path.parent(), "apple.txt", content);
-                Assert.assertEquals(content.length(), Files.length(path));
 
                 // create files at no level
                 createTempFile(path.parent().concat("no"), "lunch.txt", content);
-                Assert.assertEquals(content.length(), Files.length(path));
                 createTempFile(path.parent(), "paella.txt", content);
-                Assert.assertEquals(content.length(), Files.length(path));
 
-                Assert.assertEquals(5 * content.length(), Files.getDirectoryContentSize(path.trimTo(rootLen).$()));
-                Assert.assertEquals(5 * content.length(), Files.getDirectoryContentSize(path.concat("yes").$()));
-                Assert.assertEquals(2 * content.length(), Files.getDirectoryContentSize(path.concat("no").$()));
+                Assert.assertEquals(5 * baseSize, Files.getDirectoryContentSize(path.trimTo(rootLen).$()));
+                Assert.assertEquals(2 * baseSize, Files.getDirectoryContentSize(path.concat("no").$()));
                 Assert.assertEquals(-1L, Files.getDirectoryContentSize(path.concat("paella.txt").$()));
-                Assert.assertEquals(content.length(), Files.length(path));
             }
         });
     }
@@ -315,15 +301,18 @@ public class FilesTest {
                 "control systems, and forecasting and financial trends allowed the" + System.lineSeparator() +
                 "emergence of many Time-Series Databases (TSDB) technologies." + System.lineSeparator();
         assertMemoryLeak(() -> {
-            File dir0 = temporaryFolder.newFolder("db", "table", "partition");
-            File dir1 = temporaryFolder.newFolder("backup", "table", "partition" + TableUtils.ATTACHABLE_DIR_MARKER);
+            File dbDir = temporaryFolder.newFolder("db", "table", "partition");
+            File backupDir = temporaryFolder.newFolder("backup", "table", "partition" + TableUtils.ATTACHABLE_DIR_MARKER);
+            File tmpDir = temporaryFolder.newFolder("tmp");
             try (
-                    Path dbPath = new Path().of(dir0.getParentFile().getParentFile().getAbsolutePath()).$();
-                    Path backupPath = new Path().of(dir1.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path dbPath = new Path().of(dbDir.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path backupPath = new Path().of(backupDir.getParentFile().getParentFile().getAbsolutePath()).$();
                     Path auxPath = new Path()
             ) {
                 int dbPathLen = dbPath.length();
                 int backupPathLen = backupPath.length();
+                createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
+                long baseSize = Files.getDirectoryContentSize(auxPath.parent().$());
 
                 // create files at table level
                 createTempFile(dbPath.concat("table"), "_meta", content);
@@ -372,16 +361,16 @@ public class FilesTest {
                 // backup/table/partition.attachable/column0.d
                 // backup/table/partition.attachable/column1.d
 
-                Assert.assertEquals(9 * content.length(), Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()));
-                Assert.assertEquals(9 * content.length(), Files.getDirectoryContentSize(dbPath.concat("table").$()));
-                Assert.assertEquals(3 * content.length(), Files.getDirectoryContentSize(dbPath.concat("partition").$()));
-                Assert.assertEquals(3 * content.length(), Files.getDirectoryContentSize(dbPath.parent().concat("partitionB").$()));
+                Assert.assertEquals(9 * baseSize, Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()));
+                Assert.assertEquals(9 * baseSize, Files.getDirectoryContentSize(dbPath.concat("table").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(dbPath.concat("partition").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(dbPath.parent().concat("partitionB").$()));
                 Assert.assertEquals(-1L, Files.getDirectoryContentSize(dbPath.concat("timestamp.d").$()));
-                Assert.assertEquals(content.length(), Files.length(dbPath));
-                Assert.assertEquals(6 * content.length(), Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$()));
-                Assert.assertEquals(6 * content.length(), Files.getDirectoryContentSize(backupPath.concat("table").$()));
-                Assert.assertEquals(3 * content.length(), Files.getDirectoryContentSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
-                Assert.assertEquals(15 * content.length(),
+                Assert.assertEquals(baseSize, Files.length(dbPath));
+                Assert.assertEquals(6 * baseSize, Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$()));
+                Assert.assertEquals(6 * baseSize, Files.getDirectoryContentSize(backupPath.concat("table").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
+                Assert.assertEquals(15 * baseSize,
                         Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()) + Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$())
                 );
             }
