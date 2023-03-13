@@ -293,7 +293,7 @@ public class FilesTest {
     }
 
     @Test
-    public void testDirectoryContentSizeNonExistingFolder() throws Exception {
+    public void testDirectoryContentSizeNonExistingFolder() {
         try (Path path = new Path().of("banana").$()) {
             Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
         }
