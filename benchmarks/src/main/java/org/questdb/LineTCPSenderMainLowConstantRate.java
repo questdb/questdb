@@ -27,41 +27,52 @@ package org.questdb;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
-public class LineTCPSenderMain {
+// Sends data in slow constant rate. Test case that commits still happen in QuestDB regularly.
+public class LineTCPSenderMainLowConstantRate {
     public static void main(String[] args) {
-        int n = 3;
+        int n = 1;
         final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
         for (int i = 0; i < n; i++) {
             int k = i;
-            new Thread(() -> doSend(k, haltLatch)).start();
+            new Thread(() -> doSend(k)).start();
         }
         haltLatch.await();
     }
 
-    private static void doSend(int k, SOCountDownLatch haltLatch) {
-        final long count = 30_000_000;
+    private static void doSend(int k) {
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
         int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
-        long start = System.nanoTime();
-        String tab = "weather" + k;
+        MicrosecondClock clock = new MicrosecondClockImpl();
+        String tab = "weather";
         try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
-            for (int i = 0; i < count; i++) {
+            while (true) {
                 sender.metric(tab);
                 sender
                         .tag("location", "london")
                         .tag("by", "blah")
+                        .field("wind", Long.toString(rnd.nextPositiveLong()))
                         .field("temp", rnd.nextPositiveLong())
                         .field("ok", rnd.nextPositiveInt());
-                sender.$();
+                sender.$(clock.getTicks() * 1000L);
+                Os.pause();
+                Os.pause();
+
+                if (rnd.nextLong() % ((k + 1) * 10L) == 0) {
+                    Os.sleep(1);
+                }
+
+                if (rnd.nextLong(50_000) == 0) {
+                    Os.sleep(20);
+                }
             }
-            sender.flush();
         }
-        System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
-        haltLatch.countDown();
     }
 }
