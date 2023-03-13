@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.sql.Record;
 
 public class OuterJoinRecord extends JoinRecord {
@@ -49,7 +48,7 @@ public class OuterJoinRecord extends JoinRecord {
         }
     }
 
-    void of(Record master, Record slave, ColumnFilter masterTableKeyColumns) {
+    void of(Record master, Record slave) {
         super.of(master, slave);
         this.flappingSlave = slave;
     }

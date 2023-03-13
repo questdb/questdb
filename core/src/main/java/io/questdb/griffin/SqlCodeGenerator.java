@@ -575,20 +575,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // symbols columns are converted to strings. This is because
                     // we need to match them with columns from the master table
                     if (ColumnType.isSymbol(m.getType())) {
+                        // todo: fetch index, indexValueBlockCap and static flag from master table
                         metadata.add(
                                 slaveAlias,
                                 m.getName(),
-                                ColumnType.STRING,
+                                ColumnType.SYMBOL,
                                 false,
                                 0,
                                 false,
                                 null
                         );
-                        slaveTypes.add(ColumnType.STRING);
                     } else {
                         metadata.add(slaveAlias, m);
-                        slaveTypes.add(m.getType());
                     }
+                    slaveTypes.add(ColumnType.SYMBOL);
                     columnIndex.add(index);
                 }
             } else {
