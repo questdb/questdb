@@ -47,6 +47,69 @@ import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
 public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
+    public void testAliasedColumnFollowedByWildcard() throws Exception {
+        assertQuery("k1\ta\tk\n" +
+                        "1970-01-01T00:00:00.000000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.010000Z\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
+                        "1970-01-01T00:00:00.020000Z\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
+                "select k as k1, * from x",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_double(0)*100 a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
+        assertQuery("col_k\ta\tk\tcol_k1\n" +
+                        "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t1970-01-01T00:00:00.010000Z\n" +
+                        "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t1970-01-01T00:00:00.020000Z\n",
+                "select x1.k col_k, x1.*, x2.k col_k1 from x x1 join x x2 on x1.a = x2.a",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_long() a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                false,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testAliasedColumnFollowedByWildcardInJoinQuery2() throws Exception {
+        assertQuery("col_k\ta\tk\ta1\tk1\n" +
+                        "1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
+                        "1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
+                "select x1.k col_k, * from x x1 join x x2 on x1.a = x2.a",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_long() a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                false,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testAmbiguousFunction() throws Exception {
         assertQuery("column\n" +
                         "234990000000000\n",
@@ -316,6 +379,90 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
+    }
+
+    @Test
+    public void testCastAndAliasedColumnAfterWildcard() throws Exception {
+        assertQuery("a\tk\tklong\n" +
+                        "80.43224099968394\t1970-01-01T00:00:00.000000Z\t0\n" +
+                        "8.486964232560668\t1970-01-01T00:00:00.010000Z\t10000\n" +
+                        "8.43832076262595\t1970-01-01T00:00:00.020000Z\t20000\n",
+                "select *, cast(k as long) klong from x",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_double(0)*100 a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testCastAndAliasedColumnFollowedByWildcard() throws Exception {
+        assertQuery("klong\ta\tk\n" +
+                        "0\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
+                        "10000\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
+                        "20000\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
+                "select cast(k as long) klong, * from x",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_double(0)*100 a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testCastAndAliasedColumnFollowedByWildcardInJoinQuery() throws Exception {
+        assertQuery("klong1\tklong2\ta\tk\ta1\tk1\n" +
+                        "0\t0\t4689592037643856\t1970-01-01T00:00:00.000000Z\t4689592037643856\t1970-01-01T00:00:00.000000Z\n" +
+                        "10000\t10000\t4729996258992366\t1970-01-01T00:00:00.010000Z\t4729996258992366\t1970-01-01T00:00:00.010000Z\n" +
+                        "20000\t20000\t7746536061816329025\t1970-01-01T00:00:00.020000Z\t7746536061816329025\t1970-01-01T00:00:00.020000Z\n",
+                "select cast(x1.k as long) klong1, cast(x2.k as long) klong2, * from x x1 join x x2 on x1.a = x2.a",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_long() a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                false,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testCastAndAliasedColumnRepeatedTwiceFollowedByWildcard() throws Exception {
+        assertQuery("klong\tkdate\ta\tk\n" +
+                        "0\t1970-01-01T00:00:00.000Z\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
+                        "10000\t1970-01-01T00:00:00.010Z\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
+                        "20000\t1970-01-01T00:00:00.020Z\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
+                "select cast(k as long) klong, cast(k as date) kdate, * from x",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_double(0)*100 a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false,
+                true
+        );
     }
 
     @Test

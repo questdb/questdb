@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -224,12 +225,12 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     @Override
-    protected void waitDone() {
+    protected void waitDone(ObjList<Socket> sockets) {
         // wait for update threads to finish
         updatesDone.await();
 
         // wait for ingestion to finish
-        super.waitDone();
+        super.waitDone(sockets);
 
         // repeat all updates after all lines are guaranteed to be landed in the tables
         final SqlCompiler compiler = compilers[0];
