@@ -130,17 +130,19 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Test
     public void testCommitNumOfRowsBased() throws Exception {
         // rows based commit every 10 rows -> will commit 10 times 10 rows per table -> make test pass
-        configOverrideMaxUncommittedRows(10);
+        // WAL data is split against multiple WAL writers, so WAL table have to commit every row
+        configOverrideMaxUncommittedRows(walEnabled ? 1 : 10);
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 5 mins (default interval) -> test would timeout
+        configOverrideO3MinLag(0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 300_000;
 
-        initLoadParameters(20, 5, 2, 2, 50, true);
+        initLoadParameters(20, 5, 1, 1, 50, true);
 
         runTest();
     }
