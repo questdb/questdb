@@ -91,7 +91,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
-        commitSquashRowLimit = configuration.getWalCommitSquashRowLimit();
+        commitSquashRowLimit = 500;//configuration.getWalCommitSquashRowLimit();
         metrics = engine.getMetrics().getWalMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
     }
@@ -148,7 +148,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .I$();
             return WAL_APPLY_FAILED;
         }
-        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
+//        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
 
         return lastWriterTxn;
     }

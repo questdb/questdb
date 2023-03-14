@@ -64,7 +64,7 @@ public class FuzzTransactionGenerator {
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
-        transactionCount = Math.min(transactionCount, 10 * 1_000_000 / rowCount);
+//        transactionCount = Math.min(transactionCount, 10 * 1_000_000 / rowCount);
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = rnd.nextDouble();
@@ -104,7 +104,8 @@ public class FuzzTransactionGenerator {
                         startTs = (minTimestamp + offset - jitter);
                     }
                 } else {
-                    startTs = lastTimestamp;
+                    long writeInterval = rnd.nextLong((maxTimestamp - minTimestamp) / transactionCount);
+                    startTs = lastTimestamp - writeInterval;
                 }
                 long size = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {

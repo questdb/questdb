@@ -5061,6 +5061,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (o3LagRowCount > 0) {
+            LOG.info().$("shifting lag rows up [table=").$(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
             o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax, 0L, false);
         }
     }
