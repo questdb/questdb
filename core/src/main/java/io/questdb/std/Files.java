@@ -179,8 +179,10 @@ public final class Files {
     }
 
     public static long getDirectoryContentSize(Path path) {
+        // TODO remove sysout which is added to spot the failure in linux and windows
         final int rootLen = path.length();
         final long addr = path.address();
+        System.out.printf("getDirectoryContentSize rootLen: %d, addr: %d, path: %s%n", rootLen, addr, path);
         if (rootLen > 0 && path.charAt(rootLen - 1) != '.' && isDir(addr)) {
             final long pFind = findFirst(addr);
             if (pFind > 0L) {
@@ -191,15 +193,20 @@ public final class Files {
                         path.trimTo(rootLen).slash$();
                         Chars.utf8DecodeZ(name, path);
                         path.$();
+                        System.out.printf("- found: %s%n", path);
                         if (findType(pFind) == Files.DT_FILE) {
                             totalSize += length0(addr);
+                            System.out.printf("  -> is file, totalSize: %d%n", totalSize);
                         } else if (notDots(name) && isDir(addr)) {
+                            System.out.printf("  -> is not file!!, totalSize so far before going in: %d%n", totalSize);
                             totalSize += getDirectoryContentSize(path);
+                            System.out.printf("  -> is not file!!, totalSize so far after going in: %d%n", totalSize);
                         }
                     }
                 } finally {
                     findClose(pFind);
                     path.trimTo(rootLen).$();
+                    System.out.printf("OVER at final path %s%n", path);
                 }
                 return totalSize;
             }
