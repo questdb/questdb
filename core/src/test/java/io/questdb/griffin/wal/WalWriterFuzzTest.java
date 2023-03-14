@@ -255,6 +255,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
     }
 
+    private static void forceReleaseTableWriter(Rnd applyRnd) {
+        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
+        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+        engine.releaseAllWriters();
+        if (applyRnd.nextDouble() < 0.8) {
+            engine.releaseAllWriters();
+        }
+    }
+
     private void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase) {
         ObjList<WalWriter> writers = new ObjList<>();
         int tableCount = fuzzTransactions.size();
@@ -330,7 +339,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         ObjList<Thread> applyThreads = new ObjList<>();
         int applyThreadCount = Math.max(1, fuzzTransactions.size() - 1);
         for (int thread = 0; thread < applyThreadCount; thread++) {
-            Thread applyThread = new Thread(() -> runApplyThread(done, errors));
+            final Rnd threadApplyRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
+            Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
             applyThread.start();
             applyThreads.add(applyThread);
         }
@@ -363,17 +373,16 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
     }
 
-    private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount) {
+    private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
             TableToken token = engine.getTableToken(tableName);
             writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), token, "apply trans test"));
         }
 
-        Rnd writerRnd = new Rnd();
         Rnd tempRnd = new Rnd();
         for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(writerRnd.nextPositiveInt() % walWriterCount);
+            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
             writer.goActive();
             FuzzTransaction transaction = transactions.getQuick(i);
             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
@@ -389,10 +398,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
 
         Misc.freeObjList(writers);
-        drainWalQueue();
+        drainWalQueue(applyRnd);
     }
 
-    private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount) {
+    private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
 
         Thread[] threads = new Thread[walWriterCount];
@@ -458,7 +467,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             thread.start();
         }
 
-        Thread applyThread = new Thread(() -> runApplyThread(done, errors));
+        final Rnd threadApplyRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
+        Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
         applyThread.start();
 
         Thread walPurgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
@@ -545,6 +555,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         return transactions;
     }
 
+    private void drainWalQueue(Rnd applyRnd) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+                forceReleaseTableWriter(applyRnd);
+            }
+        }
+    }
+
     private void fullRandomFuzz(Rnd rnd) throws Exception {
         setFuzzProbabilities(
                 0.5 * rnd.nextDouble(),
@@ -601,20 +620,24 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         return 1 + rnd.nextInt(4);
     }
 
-    private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
+    private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1, null)) {
                 while (done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
-                    //noinspection StatementWithEmptyBody
-                    while (job.run(0) || checkJob.run(0)) ;
+                    while (job.run(0) || checkJob.run(0)) {
+                        // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
+                        // where it can be fully closed before continuing the WAL application Test TableWriter closures.
+                        forceReleaseTableWriter(applyRnd);
+                    }
                     Os.sleep(1);
                     i++;
                 }
-                //noinspection StatementWithEmptyBody
-                while (job.run(0) || checkJob.run(0)) ;
+                while (job.run(0) || checkJob.run(0)) {
+                    forceReleaseTableWriter(applyRnd);
+                }
                 i++;
             }
             LOG.info().$("finished apply thread after iterations: ").$(i).$();
@@ -673,15 +696,16 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 long endNonWalMicro = System.nanoTime() / 1000;
                 long nonWalTotal = endNonWalMicro - startMicro;
 
-                applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd));
+                applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd), rnd);
 
                 long endWalMicro = System.nanoTime() / 1000;
                 long walTotal = endWalMicro - endNonWalMicro;
 
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                String limit = "";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
 
                 startMicro = System.nanoTime() / 1000;
-                applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd));
+                applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd), rnd);
                 endWalMicro = System.nanoTime() / 1000;
                 long totalWalParallel = endWalMicro - startMicro;
 
