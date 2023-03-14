@@ -247,6 +247,7 @@ public class FilesTest {
 
     @Test
     public void testDirectoryContentSize() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // is dir does not work for windows
         String content = "Disk partitioning is the creation of one or more regions on secondary storage," + System.lineSeparator() +
                 "so that each region can be managed separately. These regions are called partitions." + System.lineSeparator() +
                 "The disk stores the information about the partitions' locations and sizes in an area" + System.lineSeparator() +
@@ -280,6 +281,7 @@ public class FilesTest {
 
     @Test
     public void testDirectoryContentSizeNonExistingFolder() {
+        Assume.assumeFalse(Os.isWindows()); // is dir does not work for windows
         try (Path path = new Path().of("banana").$()) {
             Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
         }
