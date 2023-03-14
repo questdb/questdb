@@ -174,7 +174,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 long pUtf8NameZ = ff.findName(findPtr);
                 if (ff.findType(findPtr) == DT_FILE) {
                     nameSink.clear();
-                    Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+                    assert Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
                     if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) && nameSink.length() > TABLE_REGISTRY_NAME_FILE.length() + 1) {
                         try {
                             int version = Numbers.parseInt(nameSink, TABLE_REGISTRY_NAME_FILE.length() + 1, nameSink.length());
