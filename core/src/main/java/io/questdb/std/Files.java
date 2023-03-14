@@ -183,21 +183,21 @@ public final class Files {
         final int rootLen = path.length();
         final long addr = path.address();
         System.out.printf("getDirectoryContentSize rootLen: %d, addr: %d, path: %s%n", rootLen, addr, path);
-        if (rootLen > 0 && path.charAt(rootLen - 1) != '.' && isDir(addr)) {
+        if (rootLen > 0 && isDir(addr)) {
             final long pFind = findFirst(addr);
             if (pFind > 0L) {
                 long totalSize = 0L;
                 try {
                     while (findNext(pFind) > 0) {
-                        long name = findName(pFind);
+                        long namePtr = findName(pFind);
                         path.trimTo(rootLen).slash$();
-                        Chars.utf8DecodeZ(name, path);
+                        Chars.utf8DecodeZ(namePtr, path);
                         path.$();
                         System.out.printf("- found: %s%n", path);
                         if (findType(pFind) == Files.DT_FILE) {
                             totalSize += length0(addr);
                             System.out.printf("  -> is file, totalSize: %d%n", totalSize);
-                        } else if (notDots(name) && isDir(addr)) {
+                        } else if (notDots(namePtr) && isDir(addr)) {
                             System.out.printf("  -> is not file!!, totalSize so far before going in: %d%n", totalSize);
                             totalSize += getDirectoryContentSize(path);
                             System.out.printf("  -> is not file!!, totalSize so far after going in: %d%n", totalSize);
