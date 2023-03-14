@@ -255,25 +255,17 @@ public class FilesTest {
                 "disk that uses part of the actual disk." + System.lineSeparator();
         assertMemoryLeak(() -> {
             File noDir = temporaryFolder.newFolder("yes", "no");
-            File tmpDir = temporaryFolder.newFolder("tmp");
-            try (Path path = new Path(); Path auxPath = new Path()) {
-                createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
-                long baseSize = Files.getDirectoryContentSize(auxPath.parent().$());
-
-                // create files at yes level
-                path.of(noDir.getParentFile().getAbsolutePath()).$();
+            try (Path path = new Path().of(noDir.getParentFile().getAbsolutePath()).$()) {
                 int rootLen = path.length();
                 createTempFile(path, "prose.txt", content);
-                createTempFile(path.parent(), "dinner.txt", content);
+                long baseSize = Files.getDirectoryContentSize(path.parent().$());
+                createTempFile(path, "dinner.txt", content);
                 createTempFile(path.parent(), "apple.txt", content);
-
-                // create files at no level
                 createTempFile(path.parent().concat("no"), "lunch.txt", content);
                 createTempFile(path.parent(), "paella.txt", content);
-
                 Assert.assertEquals(5 * baseSize, Files.getDirectoryContentSize(path.trimTo(rootLen).$()));
                 Assert.assertEquals(2 * baseSize, Files.getDirectoryContentSize(path.concat("no").$()));
-                Assert.assertEquals(-1L, Files.getDirectoryContentSize(path.concat("paella.txt").$()));
+                Assert.assertEquals(0L, Files.getDirectoryContentSize(path.concat("paella.txt").$()));
             }
         });
     }
@@ -281,7 +273,7 @@ public class FilesTest {
     @Test
     public void testDirectoryContentSizeNonExistingFolder() {
         try (Path path = new Path().of("banana").$()) {
-            Assert.assertEquals(-1L, Files.getDirectoryContentSize(path));
+            Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
         }
     }
 
@@ -365,7 +357,7 @@ public class FilesTest {
                 Assert.assertEquals(9 * baseSize, Files.getDirectoryContentSize(dbPath.concat("table").$()));
                 Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(dbPath.concat("partition").$()));
                 Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(dbPath.parent().concat("partitionB").$()));
-                Assert.assertEquals(-1L, Files.getDirectoryContentSize(dbPath.concat("timestamp.d").$()));
+                Assert.assertEquals(0L, Files.getDirectoryContentSize(dbPath.concat("timestamp.d").$()));
                 Assert.assertEquals(baseSize, Files.length(dbPath));
                 Assert.assertEquals(6 * baseSize, Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$()));
                 Assert.assertEquals(6 * baseSize, Files.getDirectoryContentSize(backupPath.concat("table").$()));

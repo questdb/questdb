@@ -179,40 +179,30 @@ public final class Files {
     }
 
     public static long getDirectoryContentSize(Path path) {
-        // TODO remove sysout which is added to spot the failure in linux and windows
-        final int rootLen = path.length();
-        final long addr = path.address();
-        System.out.printf("getDirectoryContentSize rootLen: %d, addr: %d, path: %s%n", rootLen, addr, path);
-        if (rootLen > 0 && isDir(addr)) {
-            final long pFind = findFirst(addr);
-            if (pFind > 0L) {
+        int len = path.length();
+        long addr = path.address();
+        long pFind = findFirst(addr);
+        if (pFind > 0L) {
+            try {
                 long totalSize = 0L;
-                try {
-                    while (findNext(pFind) > 0) {
-                        long namePtr = findName(pFind);
-                        int type = findType(pFind);
-                        path.trimTo(rootLen).slash$();
-                        Chars.utf8DecodeZ(namePtr, path);
-                        path.$();
-                        System.out.printf("- found: %s%n", path);
-                        if (type == Files.DT_FILE) {
-                            totalSize += length0(addr);
-                            System.out.printf("  -> is file, totalSize: %d%n", totalSize);
-                        } else if (notDots(namePtr) && (type == Files.DT_DIR || isDir(addr))) { // for linux ?
-                            System.out.printf("  -> is not file!!, totalSize so far before going in: %d%n", totalSize);
-                            totalSize += getDirectoryContentSize(path);
-                            System.out.printf("  -> is not file!!, totalSize so far after going in: %d%n", totalSize);
-                        }
+                do {
+                    long namePtr = findName(pFind);
+                    Chars.utf8DecodeZ(namePtr, path.trimTo(len).slash$());
+                    path.$();
+                    if (findType(pFind) == Files.DT_FILE) {
+                        totalSize += length0(addr);
+                    } else if (notDots(namePtr)) {
+                        totalSize += getDirectoryContentSize(path);
                     }
-                } finally {
-                    findClose(pFind);
-                    path.trimTo(rootLen).$();
-                    System.out.printf("OVER at final path %s%n", path);
                 }
+                while (findNext(pFind) > 0);
                 return totalSize;
+            } finally {
+                findClose(pFind);
+                path.trimTo(len).$();
             }
         }
-        return -1L; // not a folder, or link to one
+        return 0L;
     }
 
     /**
@@ -574,6 +564,29 @@ public final class Files {
             }
         }
         return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
+    }
+
+    public static void walk(Path path, FindVisitor func) {
+        int len = path.length();
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (notDots(name)) {
+                        int type = findType(p);
+                        path.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            func.onFind(name, type);
+                        } else {
+                            walk(path.concat(name).$(), func);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+            }
+        }
     }
 
     static {

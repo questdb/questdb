@@ -370,7 +370,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     int tsIndex = detachedMetaReader.getTimestampIndex();
                                     dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
                                 }
-                                dynamicPartitionIndex = -pIndex;
                             } else {
                                 LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
                             }
