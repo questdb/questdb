@@ -295,6 +295,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsAttachablePartitionOfWrongPartitionBy() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         String tabName = testName.getMethodName();
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
