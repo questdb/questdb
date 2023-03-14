@@ -91,7 +91,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
-        commitSquashRowLimit = 500;//configuration.getWalCommitSquashRowLimit();
+        commitSquashRowLimit = 1000;//configuration.getWalCommitSquashRowLimit();
         metrics = engine.getMetrics().getWalMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
     }
