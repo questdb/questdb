@@ -54,7 +54,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.init(executionContext, tableToken);
+        return cursor.of(executionContext, tableToken);
     }
 
     @Override
@@ -64,8 +64,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_partitions");
-        sink.meta("of").val(tableToken);
+        sink.type("show_partitions").meta("of").val(tableToken);
     }
 
     private static class ShowPartitionsRecordCursor implements RecordCursor {
@@ -136,7 +135,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             return limit;
         }
 
-        private ShowPartitionsRecordCursor init(SqlExecutionContext executionContext, TableToken tableToken) {
+        private ShowPartitionsRecordCursor of(SqlExecutionContext executionContext, TableToken tableToken) {
             int partitionBy;
             String tsColName = null;
             try (TableReader reader = executionContext.getReader(tableToken)) {
@@ -174,7 +173,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         sink.clear();
                         Chars.utf8DecodeZ(Files.findName(pFind), sink);
                         int type = Files.findType(pFind);
-                        if (type == Files.DT_LNK && Chars.endsWith(sink, TableUtils.ATTACHABLE_DIR_MARKER)) {
+                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(sink, TableUtils.ATTACHABLE_DIR_MARKER)) {
                             attachablePartitions.add(Chars.toString(sink));
                         } else if (type == Files.DT_DIR && Chars.endsWith(sink, TableUtils.DETACHED_DIR_MARKER)) {
                             detachedPartitions.add(Chars.toString(sink));
@@ -282,7 +281,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 throw new UnsupportedOperationException();
             }
 
-            void loadNextPartition() {
+            private void loadNextPartition() {
                 isReadOnly = false;
                 isActive = false;
                 isDetached = false;
@@ -348,6 +347,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     int tsIndex = detachedMetaReader.getTimestampIndex();
                                     dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
                                 }
+                                // could set dynamicPartitionIndex to -pIndex
                             } else {
                                 LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
                             }
