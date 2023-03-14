@@ -190,14 +190,15 @@ public final class Files {
                 try {
                     while (findNext(pFind) > 0) {
                         long namePtr = findName(pFind);
+                        int type = findType(pFind);
                         path.trimTo(rootLen).slash$();
                         Chars.utf8DecodeZ(namePtr, path);
                         path.$();
                         System.out.printf("- found: %s%n", path);
-                        if (findType(pFind) == Files.DT_FILE) {
+                        if (type == Files.DT_FILE) {
                             totalSize += length0(addr);
                             System.out.printf("  -> is file, totalSize: %d%n", totalSize);
-                        } else if (notDots(namePtr) && isDir(addr)) {
+                        } else if (notDots(namePtr) && (type == Files.DT_DIR || isDir(addr))) { // for linux ?
                             System.out.printf("  -> is not file!!, totalSize so far before going in: %d%n", totalSize);
                             totalSize += getDirectoryContentSize(path);
                             System.out.printf("  -> is not file!!, totalSize so far after going in: %d%n", totalSize);
