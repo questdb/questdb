@@ -246,6 +246,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsAttachablePartitionOfWrongTableId() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // symlink required, and not well supported in Windows
         String tabName = testName.getMethodName();
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
