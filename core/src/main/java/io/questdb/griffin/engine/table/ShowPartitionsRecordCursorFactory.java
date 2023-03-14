@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -37,7 +38,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
-import java.util.Formatter;
 
 public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -73,25 +73,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private CairoConfiguration cairoConfig;
         private int dynamicPartitionIndex = -1;
-        private final Formatter humanReadable = new Formatter(new Appendable() {
-            @Override
-            public Appendable append(CharSequence csq) {
-                sink.put(csq);
-                return this;
-            }
-
-            @Override
-            public Appendable append(CharSequence csq, int start, int end) {
-                sink.put(csq, start, end);
-                return this;
-            }
-
-            @Override
-            public Appendable append(char c) {
-                sink.put(c);
-                return this;
-            }
-        });
         private int limit; // partitionCount + detached + attachable
         private Path path;
         private int partitionBy = -1;
@@ -271,12 +252,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     return PartitionBy.toString(partitionBy);
                 }
                 if (Column.DISK_SIZE_HUMAN.is(col)) {
-                    int z = Numbers.msb(partitionSize) / 10;
-                    sink.clear(); // _, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta
-                    humanReadable.format("%.1f %sB", (float) partitionSize / (1L << z * 10), " KMGTPEZ".charAt(z));
-                    return Chars.toString(sink);
+                    return SizePrettyFunctionFactory.toSizePretty(partitionSize);
                 }
-                if (Column.PARTITION_NAME.is(col)) { // name
+                if (Column.PARTITION_NAME.is(col)) {
                     return partitionName;
                 }
                 throw new UnsupportedOperationException();
