@@ -45,6 +45,7 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private long o3MinLag = -1;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
@@ -196,6 +197,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return o3MinLag;
     }
 
     @Override
@@ -363,6 +369,7 @@ public class Overrides implements ConfigurationOverrides {
         hideTelemetryTable = false;
         maxUncommittedRows = -1;
         o3MaxLag = -1;
+        o3MinLag = -1;
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
@@ -531,6 +538,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
+    }
+
+    @Override
+    public void setO3MinLag(long minLag) {
+        o3MinLag = minLag;
     }
 
     @Override

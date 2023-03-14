@@ -118,7 +118,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 finished = applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
                 lastWriterTxn = writer.getAppliedSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
-                if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
+                if (tableBusy.getReason() != null // only pool release action does not have lock reason
+                        && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
+                        && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                     LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
                 }
                 // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.

@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.VolumeDefinitions;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
@@ -153,6 +153,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public long getO3MaxLag() {
         return overrides.getO3MaxLag() >= 0 ? overrides.getO3MaxLag() : super.getO3MaxLag();
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return overrides.getO3MinLag() >= 0 ? overrides.getO3MinLag() : super.getO3MinLag();
     }
 
     @Override

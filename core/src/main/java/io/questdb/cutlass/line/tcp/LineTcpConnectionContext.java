@@ -244,7 +244,9 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
         try {
-            return parseMeasurements(netIoJob);
+            IOContextResult parasResult = parseMeasurements(netIoJob);
+            doMaintenance(milliClock.getTicks());
+            return parasResult;
         } finally {
             netIoJob.releaseWalTableDetails();
         }
