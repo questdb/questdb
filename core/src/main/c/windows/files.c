@@ -374,11 +374,22 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir(JNIEnv *e, jclass cl, jlong lpszName) {
 
-    FILE_STANDARD_INFO info;
-    if (GetFileInformationByHandleEx(FD_TO_HANDLE(fd), FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
-        return (jboolean) info.Directory;
+    HANDLE h = openUtf8(lpszName, FILE_READ_ONLY, FILE_SHARE_READ, OPEN_EXISTING);
+
+    if (h == INVALID_HANDLE_VALUE) {
+        return JNI_FALSE;
     }
-    return JNI_FALSE;
+
+    FILE_STANDARD_INFO info;
+    jboolean result = JNI_FALSE;
+    if (GetFileInformationByHandleEx(h, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
+        result = info.Directory;
+    }
+
+    int tmpErr = errno;
+    CloseHandle(h);
+    errno = tmpErr;
+    return result;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
