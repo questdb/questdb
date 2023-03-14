@@ -91,14 +91,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.base = base;
-        // reserve one more slot for work stealing to avoid clashing with shared workers
-        final int nRosti = workerCount + 1;
         // first column is INT or SYMBOL
-        pRosti = new long[nRosti];
+        pRosti = new long[workerCount];
         final int vafCount = vafList.size();
         this.vafList = new ObjList<>(vafCount);
         raf = configuration.getRostiAllocFacade();
-        for (int i = 0; i < nRosti; i++) {
+        for (int i = 0; i < workerCount; i++) {
             long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
             if (ptr == 0) {
                 for (int k = i - 1; k > -1; k--) {
