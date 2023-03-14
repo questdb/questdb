@@ -372,7 +372,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 // of observed transactions built upfront in the beginning of the loop.
                                 // Check if more transaction exist, exit restart the loop to have better picture
                                 // of the future transactions and optimise the application.
-                                if (transactionLogCursor.reset()) {
+                                if (transactionLogCursor.setPosition()) {
                                     writer.readWalTxnDetails(transactionLogCursor);
                                     transactionLogCursor.toTop();
                                     totalTransactionCount += iTransaction;

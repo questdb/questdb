@@ -1649,7 +1649,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long appliedSeqTxn = txWriter.getSeqTxn();
-        transactionLogCursor.reset(Math.max(appliedSeqTxn, walTxnDetails.getLastSeqTxn()));
+        transactionLogCursor.setPosition(Math.max(appliedSeqTxn, walTxnDetails.getLastSeqTxn()));
         walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, rootLen, appliedSeqTxn, txWriter.getMaxTimestamp());
     }
 
