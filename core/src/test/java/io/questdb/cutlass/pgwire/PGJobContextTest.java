@@ -8582,7 +8582,8 @@ create table tab as (
     private List<Tuple> getRows(ResultSet rs) {
         try {
             Field field = PgResultSet.class.getDeclaredField("rows");
-            if (!field.canAccess(rs)) {
+
+            if (!field.isAccessible()) {
                 field.setAccessible(true);
             }
             field.setAccessible(true);
