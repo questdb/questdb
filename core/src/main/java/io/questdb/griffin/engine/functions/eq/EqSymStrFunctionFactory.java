@@ -72,7 +72,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         if (func.getStaticSymbolTable() != null) {
             return new ConstCheckColumnFunc(func, constValue);
         } else {
-            if (constValue == null) {
+            if (constValue == null || constValue.length() == 0) {
                 return new NullCheckFunc(varFunc);
             }
             if (func.isSymbolTableStatic()) {
@@ -187,8 +187,12 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             final CharSequence a = left.getSymbol(rec);
             final CharSequence b = right.getStr(rec);
 
-            if (a == null) {
-                return negated != (b == null);
+            if (a == null || a.length() == 0) {
+                return negated != (b == null || b.length() == 0);
+            }
+
+            if (b == null || b.length() == 0) {
+                return !negated;
             }
 
             return negated != Chars.equalsNc(a, b);
@@ -209,7 +213,8 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getSymbol(rec) == null);
+            CharSequence sym = arg.getSymbol(rec);
+            return negated != (sym == null || sym.length() == 0);
         }
 
         @Override

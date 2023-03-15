@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
@@ -2179,6 +2180,13 @@ public class SqlCompiler implements Closeable {
         if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
             if (metadataColumnIndex == metadataTimestampIndex) {
                 return;
+            }
+
+            if (ColumnType.isSymbol(columnType) && function.isConstant() && ColumnType.isString(function.getType())) {
+                CharSequence sym = function.getStr(null);
+                if (sym != null && sym.length() == 0) {
+                    function = SymbolConstant.NULL;
+                }
             }
 
             valueFunctions.add(function);

@@ -419,7 +419,7 @@ public class InsertTest extends AbstractGriffinTest {
                 () -> {
                     compiler.compile("create table tab (id int, val symbol index)", sqlExecutionContext);
                     executeInsert("insert into tab values (1, '')");
-                    assertSql("select id from tab where val = null", "id\n");
+                    assertSql("select id from tab where val = null", "id\n1\n");
                 }
         );
     }
@@ -843,7 +843,7 @@ public class InsertTest extends AbstractGriffinTest {
                 () -> {
                     compiler.compile("create table tab (id int, val symbol index)", sqlExecutionContext);
                     executeInsert("insert into tab values (1, NULL)");
-                    assertSql("select id from tab where val = ''", "id\n");
+                    assertSql("select id from tab where val = ''", "id\n1\n");
                 }
         );
     }
