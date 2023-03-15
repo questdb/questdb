@@ -103,8 +103,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static class ShowPartitionsRecordCursor implements RecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
+        private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
-        private final StringSink sink = new StringSink();
         private final TxReader tableTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
         private CairoConfiguration cairoConfig;
         private int dynamicPartitionIndex = -1;
@@ -120,7 +120,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             Misc.free(partitionRecord);
             attachablePartitions.clear();
             detachedPartitions.clear();
-            sink.clear();
+            partitionName.clear();
             tableToken = null;
             cairoConfig = null;
             tsColName = null;
@@ -172,13 +172,13 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     attachablePartitions.clear();
                     detachedPartitions.clear();
                     do {
-                        sink.clear();
-                        Chars.utf8DecodeZ(ff.findName(pFind), sink);
+                        partitionName.clear();
+                        Chars.utf8DecodeZ(ff.findName(pFind), partitionName);
                         int type = ff.findType(pFind);
-                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(sink, TableUtils.ATTACHABLE_DIR_MARKER)) {
-                            attachablePartitions.add(Chars.toString(sink));
-                        } else if (type == Files.DT_DIR && Chars.endsWith(sink, TableUtils.DETACHED_DIR_MARKER)) {
-                            detachedPartitions.add(Chars.toString(sink));
+                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
+                            attachablePartitions.add(Chars.toString(partitionName));
+                        } else if (type == Files.DT_DIR && Chars.endsWith(partitionName, TableUtils.DETACHED_DIR_MARKER)) {
+                            detachedPartitions.add(Chars.toString(partitionName));
                         }
                     } while (ff.findNext(pFind) > 0);
                     attachablePartitions.sort(CC);
@@ -223,7 +223,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             private long maxTimestamp = Long.MIN_VALUE;
             private long minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
             private long numRows = -1L;
-            private String partitionName;
             private long partitionSize = -1L;
 
             @Override
@@ -315,8 +314,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
                 maxTimestamp = Long.MIN_VALUE;
                 numRows = -1L;
-                partitionName = null;
                 partitionSize = -1L;
+                partitionName.clear();
                 dynamicPartitionIndex = partitionIndex;
                 CharSequence dynamicTsColName = tsColName;
                 FilesFacade ff = cairoConfig.getFilesFacade();
@@ -327,10 +326,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
                     long timestamp = tableTxReader.getPartitionTimestamp(partitionIndex);
                     isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
-                    sink.clear();
-                    PartitionBy.setSinkForPartition(sink, partitionBy, timestamp, false);
-                    TableUtils.txnPartitionConditionally(path.concat(sink), tableTxReader.getPartitionNameTxn(partitionIndex));
-                    partitionName = Chars.toString(sink);
+                    PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp, false);
+                    TableUtils.txnPartitionConditionally(path.concat(partitionName), tableTxReader.getPartitionNameTxn(partitionIndex));
                     numRows = tableTxReader.getPartitionSize(partitionIndex);
                 } else {
                     // partition table is over
@@ -340,16 +337,16 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     int n = detachedPartitions.size();
                     if (idx < n) {
                         // is detached
-                        partitionName = detachedPartitions.get(idx);
+                        partitionName.put(detachedPartitions.get(idx));
                     } else {
                         idx -= n; // index in attachablePartitions
                         if (idx < attachablePartitions.size()) {
                             // is attachable, also detached
-                            partitionName = attachablePartitions.get(idx);
+                            partitionName.put(attachablePartitions.get(idx));
                             isAttachable = true;
                         }
                     }
-                    assert partitionName != null;
+                    assert partitionName.length() != 0;
                     // open meta files if they exist
                     dynamicPartitionIndex = Integer.MIN_VALUE; // so that in absence of metadata is NaN
                     path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$();
