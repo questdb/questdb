@@ -24,8 +24,6 @@
 
 package io.questdb.tokio;
 
-import io.questdb.log.LogFactory;
-
 import java.io.Closeable;
 
 public class TokioRuntime implements Closeable {

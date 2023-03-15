@@ -1,9 +1,5 @@
 use jni::{JavaVM, JNIEnv, objects::JClass};
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
 mod tokio;
 mod wal_upload;
 mod log;
@@ -52,15 +48,4 @@ macro_rules! unwrap_or_throw {
 pub extern "system" fn Java_io_questdb_std_Os_initQuestdbJni(env: JNIEnv, _class: JClass) {
     let vm = unwrap_or_throw!(env, env.get_java_vm());
     unsafe { JAVA_VM = Some(vm); }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
 }

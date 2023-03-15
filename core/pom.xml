@@ -641,7 +641,7 @@
             </dependencies>
         </profile>
         <profile>
-            <id>make-jni-headers</id>
+            <id>jni-headers</id>
             <properties>
                 <makeJniHeaderArg1>-h</makeJniHeaderArg1>
                 <makeJniHeaderArg2>${project.build.directory}/headers</makeJniHeaderArg2>

@@ -25,6 +25,7 @@
 use core::fmt::Write;
 use std::cell::UnsafeCell;
 use std::fmt;
+use std::sync::Once;
 
 use dashmap::DashMap;
 use jni::JNIEnv;
@@ -76,8 +77,9 @@ impl JavaLog {
             let throwable = env.exception_occurred().unwrap();
             if !throwable.is_null() {
                 env.exception_describe().unwrap();
+            } else {
+                panic!("io.questdb.log.Log::{}(long, long) call failed: {}", meth_name, e);
             }
-            panic!("io.questdb.log.Log::{}(long, long) call failed: {}", meth_name, e);
         }
     }
 
@@ -294,52 +296,49 @@ impl Log for TrampolineLogger {
 }
 
 const TRAMPOLINE_LOGGER: TrampolineLogger = TrampolineLogger;
-static mut LOGGER_INSTALLED: bool = false;
+static INSTALL_JNI_LOGGER_ONCE: Once = Once::new();
 
 pub fn install_jni_logger(env: &JNIEnv, max_level: Level) -> jni::errors::Result<()> {
-    if unsafe { LOGGER_INSTALLED } {
-        return Ok(());
-    }
-    lookup_and_set_java_call_info(env)?;
-    log::set_logger(&TRAMPOLINE_LOGGER).map_err(|e| {
-        env.throw_new(
-            "java/lang/RuntimeException",
-            &format!("Could not set Rust logger: {}", e)).unwrap();
-        jni::errors::Error::JavaException
-    })?;
-    log::set_max_level(max_level.to_level_filter());
-    unsafe { LOGGER_INSTALLED = true; }
-    Ok(())
+    let mut result = Ok(());
+    INSTALL_JNI_LOGGER_ONCE.call_once(|| {
+        result = lookup_and_set_java_call_info(env)
+            .and_then(|_| {
+                log::set_logger(&TRAMPOLINE_LOGGER).map_err(|e| {
+                    env.throw_new(
+                        "java/lang/RuntimeException",
+                        &format!("Could not set Rust logger: {}", e)).unwrap();
+                    jni::errors::Error::JavaException
+                })
+            })
+            .and_then(|_| {
+                log::set_max_level(max_level.to_level_filter());
+                Ok(())
+            });
+    });
+    result
 }
 
-fn level_from_byte(b: jint) -> Level {
-    match b {
+fn level_from_jint(num: jint) -> Level {
+    match num {
         1 => Level::Error,
         2 => Level::Warn,
         3 => Level::Info,
         4 => Level::Debug,
         5 => Level::Trace,
-        _ => panic!("invalid log level: {}", b),
+        _ => panic!("invalid log level: {}", num),
     }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_log_RustLogging_installRustLogger(env: JNIEnv, _class: JClass, max_level: jint) {
-    let level = level_from_byte(max_level);
+    let level = level_from_jint(max_level);
     unwrap_or_throw!(env, install_jni_logger(&env, level));
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_log_RustLogging_logMsg(
     env: JNIEnv, _class: JClass, level: jint, target: JString, msg: JString) {
-    let level = match level {
-        1 => Level::Error,
-        2 => Level::Warn,
-        3 => Level::Info,
-        4 => Level::Debug,
-        5 => Level::Trace,
-        _ => panic!("invalid log level: {}", level),
-    };
+    let level = level_from_jint(level);
     let target = env.get_string(target).expect("could not get target");
     let target_str = target.to_str().expect("could not convert target to str");
     let msg = env.get_string(msg).expect("could not get msg");
