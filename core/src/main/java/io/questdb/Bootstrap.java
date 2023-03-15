@@ -31,6 +31,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.log.RustLogging;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
@@ -108,6 +109,7 @@ public class Bootstrap {
             LogFactory.configureRootDir(rootDirectory);
         }
         log = LogFactory.getLog(LOG_NAME);
+        RustLogging.init();
 
         // report copyright and architecture
         log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
@@ -154,22 +156,22 @@ public class Bootstrap {
             // /server.conf properties
             final Properties properties = loadProperties(rootPath);
             config = ffOverride == null
-                ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
-                : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
-                    private CairoConfiguration cairoConf;
+                    ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
+                    : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
+                private CairoConfiguration cairoConf;
 
-                    @Override
-                    public CairoConfiguration getCairoConfiguration() {
-                        if (cairoConf == null) {
-                            cairoConf = new PropCairoConfiguration() {
-                                @Override
-                                public FilesFacade getFilesFacade() {
-                                    return ffOverride;
-                                }
-                            };
-                        }
-                        return cairoConf;
+                @Override
+                public CairoConfiguration getCairoConfiguration() {
+                    if (cairoConf == null) {
+                        cairoConf = new PropCairoConfiguration() {
+                            @Override
+                            public FilesFacade getFilesFacade() {
+                                return ffOverride;
+                            }
+                        };
                     }
+                    return cairoConf;
+                }
             };
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);

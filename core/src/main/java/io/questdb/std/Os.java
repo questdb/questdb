@@ -24,11 +24,11 @@
 
 package io.questdb.std;
 
+import io.questdb.jar.jni.JarJniLoader;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.CharSequenceZ;
 import io.questdb.std.str.Path;
-import io.questdb.jar.jni.JarJniLoader;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -173,47 +173,6 @@ public final class Os {
         }
     }
 
-    private static native long forkExec(long argv);
-
-    private static native void freeKrbToken(long struct);
-
-    private static native long generateKrbToken(long spn);
-
-    private static void loadLib(String lib) {
-        InputStream is = Os.class.getResourceAsStream(lib);
-        if (is == null) {
-            throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
-        }
-
-        try {
-            File tempLib = null;
-            try {
-                int dot = lib.indexOf('.');
-                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
-                // copy to tempLib
-                try (FileOutputStream out = new FileOutputStream(tempLib)) {
-                    byte[] buf = new byte[4096];
-                    while (true) {
-                        int read = is.read(buf);
-                        if (read == -1) {
-                            break;
-                        }
-                        out.write(buf, 0, read);
-                    }
-                } finally {
-                    tempLib.deleteOnExit();
-                }
-                System.load(tempLib.getAbsolutePath());
-            } catch (IOException e) {
-                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
-            }
-        } finally {
-            Misc.free(is);
-        }
-    }
-
-    private static native int setCurrentThreadAffinity0(int cpu);
-
     private static int determinePlatformType() {
         if ("32".equals(System.getProperty("sun.arch.data.model"))) {
             return _32Bit;
@@ -241,6 +200,16 @@ public final class Os {
         }
     }
 
+    private static native long forkExec(long argv);
+
+    private static native void freeKrbToken(long struct);
+
+    private static native long generateKrbToken(long spn);
+
+    private static native void initQuestdbJni();
+
+    private static native int setCurrentThreadAffinity0(int cpu);
+
     static {
         type = determinePlatformType();
         if (type != _32Bit) {
@@ -257,6 +226,8 @@ public final class Os {
                     Os.class,
                     "/io/questdb/bin/",
                     "questdb_jni");
+
+            initQuestdbJni();
         }
     }
 }

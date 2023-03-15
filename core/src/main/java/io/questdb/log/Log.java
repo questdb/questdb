@@ -28,21 +28,46 @@ public interface Log {
 
     LogRecord advisory();
 
+    @SuppressWarnings("unused")  // Called by `log.rs` across JNI.
+    default void advisoryUtf8(long lo, long hi) {
+        advisory().$utf8(lo, hi).$();
+    }
+
     LogRecord advisoryW();
 
     LogRecord critical();
+
+    @SuppressWarnings("unused")  // Called by `log.rs` across JNI.
+    default void criticalUtf8(long lo, long hi) {
+        critical().$utf8(lo, hi).$();
+    }
 
     LogRecord criticalW();
 
     LogRecord debug();
 
+    @SuppressWarnings("unused")  // Called by `log.rs` across JNI.
+    default void debugUtf8(long lo, long hi) {
+        debug().$utf8(lo, hi).$();
+    }
+
     LogRecord debugW();
 
     LogRecord error();
 
+    @SuppressWarnings("unused")  // Called by `log.rs` across JNI.
+    default void errorUtf8(long lo, long hi) {
+        error().$utf8(lo, hi).$();
+    }
+
     LogRecord errorW();
 
     LogRecord info();
+
+    @SuppressWarnings("unused")  // Called by `log.rs` across JNI.
+    default void infoUtf8(long lo, long hi) {
+        info().$utf8(lo, hi).$();
+    }
 
     LogRecord infoW();
 

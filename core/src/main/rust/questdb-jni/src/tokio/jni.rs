@@ -25,7 +25,7 @@
 use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::{jint, jlong};
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_tokio_TokioRuntime_create(
@@ -38,19 +38,16 @@ pub extern "system" fn Java_io_questdb_tokio_TokioRuntime_create(
             .expect("failed to throw TokioException");
         return 0;
     }
-    let rt =
-        if worker_threads == 0 {
-            Builder::new_multi_thread()
-                .enable_all()
-                .build()
-        } else {
-            Builder::new_multi_thread()
-                .enable_all()
-                .worker_threads(worker_threads as usize)
-                .build()
-        };
+    let mut builder = Builder::new_multi_thread();
+    builder.enable_all();
+    if worker_threads > 0 {
+        builder.worker_threads(worker_threads as usize);
+    }
+    let rt = builder.build();
     match rt {
-        Ok(rt) => Box::into_raw(Box::new(rt)) as jlong,
+        Ok(rt) => {
+            Box::into_raw(Box::new(rt)) as jlong
+        },
         Err(e) => {
             env.find_class("io/questdb/tokio/TokioException")
                 .and_then(|clazz| env.throw_new(clazz, e.to_string()))
@@ -65,7 +62,7 @@ pub extern "system" fn Java_io_questdb_tokio_TokioRuntime_free(
     _env: JNIEnv,
     _class: JClass,
     ptr: jlong) {
-    let ptr = ptr as *mut tokio::runtime::Runtime;
+    let ptr = ptr as *mut Runtime;
     if !ptr.is_null() {
         let rt = unsafe { Box::from_raw(ptr) };
         drop(rt);
