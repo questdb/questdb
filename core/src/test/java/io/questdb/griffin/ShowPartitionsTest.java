@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -36,6 +37,12 @@ import static io.questdb.cairo.TableUtils.ATTACHABLE_DIR_MARKER;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 
 public class ShowPartitionsTest extends AbstractGriffinTest {
+
+    @After
+    public void tearDown() {
+        super.tearDown();
+        Path.clearThreadLocals();
+    }
 
     @Test
     public void testShowPartitionsAttachablePartitionOfWrongPartitionBy() throws Exception {

@@ -110,8 +110,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int limit; // partitionCount + detached + attachable
         private int partitionBy = -1;
         private int partitionIndex = -1;
-        private Path path;
-        private int rootLen;
         private TableToken tableToken;
         private CharSequence tsColName;
 
@@ -119,7 +117,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             Misc.free(tableTxReader);
             Misc.free(partitionRecord);
-            path = Misc.free(path);
             attachablePartitions.clear();
             detachedPartitions.clear();
             sink.clear();
@@ -129,7 +126,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionIndex = -1;
             limit = 0;
             partitionBy = -1;
-            rootLen = 0;
         }
 
         @Override
@@ -167,7 +163,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionIndex = -1;
         }
 
-        private void findDetachedAndAttachablePartitions() {
+        private void findDetachedAndAttachablePartitions(Path path) {
             long pFind = Files.findFirst(path);
             if (pFind > 0L) {
                 try {
@@ -205,12 +201,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             this.partitionBy = partitionBy;
             this.tsColName = tsColName;
             this.tableToken = tableToken;
-            if (path == null) {
-                path = new Path();
-            }
-            path.of(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
-            rootLen = path.length();
-            findDetachedAndAttachablePartitions();
+            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
+            findDetachedAndAttachablePartitions(path);
             path.concat(TableUtils.TXN_FILE_NAME).$();
             tableTxReader.ofRO(path, partitionBy);
             tableTxReader.unsafeLoadAll();
@@ -326,7 +318,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 dynamicPartitionIndex = partitionIndex;
                 CharSequence dynamicTsColName = tsColName;
                 FilesFacade ff = cairoConfig.getFilesFacade();
-                path.trimTo(rootLen);
+                Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
                 int partitionCount = tableTxReader.getPartitionCount();
                 if (partitionIndex < partitionCount) {
                     // we are within the partition table
