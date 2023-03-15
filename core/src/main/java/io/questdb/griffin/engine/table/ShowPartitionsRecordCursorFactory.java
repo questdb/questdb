@@ -38,12 +38,13 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
+import java.util.Comparator;
 
 public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    private static final Comparator<String> CC = Chars::compare;
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
     private static final RecordMetadata METADATA;
-
     private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private final TableToken tableToken;
 
@@ -180,8 +181,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             detachedPartitions.add(Chars.toString(sink));
                         }
                     } while (ff.findNext(pFind) > 0);
-                    attachablePartitions.sort(Chars::compare);
-                    detachedPartitions.sort(Chars::compare);
+                    attachablePartitions.sort(CC);
+                    detachedPartitions.sort(CC);
                 } finally {
                     ff.findClose(pFind);
                 }
