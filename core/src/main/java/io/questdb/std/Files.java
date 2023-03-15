@@ -175,7 +175,7 @@ public final class Files {
             return getDiskSize(path.address());
         }
         // current directory
-        return getDiskSize(0);
+        return 0L;
     }
 
     public static long getDirectoryContentSize(Path path) {
