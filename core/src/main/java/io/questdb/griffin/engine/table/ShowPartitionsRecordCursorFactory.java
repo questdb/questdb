@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -100,7 +101,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    private static class ShowPartitionsRecordCursor implements RecordCursor {
+    private static class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
@@ -135,11 +136,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public boolean hasNext() {
             if (++partitionIndex < limit) {
                 partitionRecord.loadNextPartition();
@@ -147,11 +143,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
             --partitionIndex;
             return false;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
