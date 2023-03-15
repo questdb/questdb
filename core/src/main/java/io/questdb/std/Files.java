@@ -170,14 +170,6 @@ public final class Files {
 
     public static native int fsync(int fd);
 
-    public static long getDiskSize(LPSZ path) {
-        if (path != null) {
-            return getDiskSize(path.address());
-        }
-        // current directory
-        return 0L;
-    }
-
     public static long getDirectoryContentSize(Path path) {
         int len = path.length();
         long addr = path.address();
@@ -202,6 +194,14 @@ public final class Files {
                 path.trimTo(len).$();
             }
         }
+        return 0L;
+    }
+
+    public static long getDiskSize(LPSZ path) {
+        if (path != null) {
+            return getDiskSize(path.address());
+        }
+        // current directory
         return 0L;
     }
 
@@ -502,6 +502,29 @@ public final class Files {
         return unlink(softLink.address());
     }
 
+    public static void walk(Path path, FindVisitor func) {
+        int len = path.length();
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (notDots(name)) {
+                        int type = findType(p);
+                        path.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            func.onFind(name, type);
+                        } else {
+                            walk(path.concat(name).$(), func);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+            }
+        }
+    }
+
     public native static long write(int fd, long address, long len, long offset);
 
     private native static int close0(int fd);
@@ -564,29 +587,6 @@ public final class Files {
             }
         }
         return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
-    }
-
-    public static void walk(Path path, FindVisitor func) {
-        int len = path.length();
-        long p = findFirst(path);
-        if (p > 0) {
-            try {
-                do {
-                    long name = findName(p);
-                    if (notDots(name)) {
-                        int type = findType(p);
-                        path.trimTo(len);
-                        if (type == Files.DT_FILE) {
-                            func.onFind(name, type);
-                        } else {
-                            walk(path.concat(name).$(), func);
-                        }
-                    }
-                } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-            }
-        }
     }
 
     static {

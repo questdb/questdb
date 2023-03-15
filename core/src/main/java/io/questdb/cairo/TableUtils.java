@@ -441,18 +441,6 @@ public final class TableUtils {
         return exists(ff, volumePath.concat(name).$());
     }
 
-    private static int exists(FilesFacade ff, Path path) {
-        if (ff.exists(path)) { // it can also be a file, for example created with touch
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return TABLE_EXISTS;
-            } else {
-                return TABLE_RESERVED;
-            }
-        } else {
-            return TABLE_DOES_NOT_EXIST;
-        }
-    }
-
     public static void freeTransitionIndex(long address) {
         if (address == 0) {
             return;
@@ -1362,6 +1350,18 @@ public final class TableUtils {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    private static int exists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) { // it can also be a file, for example created with touch
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return TABLE_EXISTS;
+            } else {
+                return TABLE_RESERVED;
+            }
+        } else {
+            return TABLE_DOES_NOT_EXIST;
+        }
     }
 
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {

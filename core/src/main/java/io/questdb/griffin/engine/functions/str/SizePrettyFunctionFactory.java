@@ -42,6 +42,26 @@ import java.util.Formatter;
 public class SizePrettyFunctionFactory implements FunctionFactory {
 
     public static final String SYMBOL = "size_pretty";
+    private static final StringSink sink = new StringSink();
+    private static final Formatter humanReadable = new Formatter(new Appendable() {
+        @Override
+        public Appendable append(CharSequence csq) {
+            sink.put(csq);
+            return this;
+        }
+
+        @Override
+        public Appendable append(CharSequence csq, int start, int end) {
+            sink.put(csq, start, end);
+            return this;
+        }
+
+        @Override
+        public Appendable append(char c) {
+            sink.put(c);
+            return this;
+        }
+    });
 
     public static String toSizePretty(long size) {
         sink.clear();
@@ -94,25 +114,4 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
             return getStr(rec);
         }
     }
-
-    private static final StringSink sink = new StringSink();
-    private static final Formatter humanReadable = new Formatter(new Appendable() {
-        @Override
-        public Appendable append(CharSequence csq) {
-            sink.put(csq);
-            return this;
-        }
-
-        @Override
-        public Appendable append(CharSequence csq, int start, int end) {
-            sink.put(csq, start, end);
-            return this;
-        }
-
-        @Override
-        public Appendable append(char c) {
-            sink.put(c);
-            return this;
-        }
-    });
 }

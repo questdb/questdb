@@ -67,20 +67,52 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         sink.type("show_partitions").meta("of").val(tableToken);
     }
 
+    private enum Column {
+        PARTITION_INDEX(0, "index", ColumnType.INT),
+        PARTITION_BY(1, "partitionBy", ColumnType.STRING),
+        PARTITION_NAME(2, "name", ColumnType.STRING),
+        MIN_TIMESTAMP(3, "minTimestamp", ColumnType.TIMESTAMP),
+        MAX_TIMESTAMP(4, "maxTimestamp", ColumnType.TIMESTAMP),
+        NUM_ROWS(5, "numRows", ColumnType.LONG),
+        DISK_SIZE(6, "diskSize", ColumnType.LONG),
+        DISK_SIZE_HUMAN(7, "diskSizeHuman", ColumnType.STRING),
+        IS_READ_ONLY(8, "readOnly", ColumnType.BOOLEAN),
+        IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
+        IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
+        IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
+        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN);
+
+        private final int idx;
+        private final TableColumnMetadata metadata;
+
+        Column(int idx, String name, int type) {
+            this.idx = idx;
+            this.metadata = new TableColumnMetadata(name, type);
+        }
+
+        boolean is(int idx) {
+            return this.idx == idx;
+        }
+
+        TableColumnMetadata metadata() {
+            return metadata;
+        }
+    }
+
     private static class ShowPartitionsRecordCursor implements RecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
+        private final PartitionsRecord partitionRecord = new PartitionsRecord();
+        private final StringSink sink = new StringSink();
+        private final TxReader tableTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
         private CairoConfiguration cairoConfig;
         private int dynamicPartitionIndex = -1;
         private int limit; // partitionCount + detached + attachable
-        private Path path;
         private int partitionBy = -1;
         private int partitionIndex = -1;
-        private final PartitionsRecord partitionRecord = new PartitionsRecord();
+        private Path path;
         private int rootLen;
-        private final StringSink sink = new StringSink();
         private TableToken tableToken;
-        private final TxReader tableTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
         private CharSequence tsColName;
 
         @Override
@@ -126,13 +158,37 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long size() {
+            return limit;
+        }
+
+        @Override
         public void toTop() {
             partitionIndex = -1;
         }
 
-        @Override
-        public long size() {
-            return limit;
+        private void findDetachedAndAttachablePartitions() {
+            long pFind = Files.findFirst(path);
+            if (pFind > 0L) {
+                try {
+                    attachablePartitions.clear();
+                    detachedPartitions.clear();
+                    do {
+                        sink.clear();
+                        Chars.utf8DecodeZ(Files.findName(pFind), sink);
+                        int type = Files.findType(pFind);
+                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(sink, TableUtils.ATTACHABLE_DIR_MARKER)) {
+                            attachablePartitions.add(Chars.toString(sink));
+                        } else if (type == Files.DT_DIR && Chars.endsWith(sink, TableUtils.DETACHED_DIR_MARKER)) {
+                            detachedPartitions.add(Chars.toString(sink));
+                        }
+                    } while (Files.findNext(pFind) > 0);
+                    attachablePartitions.sort(Chars::compare);
+                    detachedPartitions.sort(Chars::compare);
+                } finally {
+                    Files.findClose(pFind);
+                }
+            }
         }
 
         private ShowPartitionsRecordCursor of(SqlExecutionContext executionContext, TableToken tableToken) {
@@ -163,39 +219,15 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             return this;
         }
 
-        private void findDetachedAndAttachablePartitions() {
-            long pFind = Files.findFirst(path);
-            if (pFind > 0L) {
-                try {
-                    attachablePartitions.clear();
-                    detachedPartitions.clear();
-                    do {
-                        sink.clear();
-                        Chars.utf8DecodeZ(Files.findName(pFind), sink);
-                        int type = Files.findType(pFind);
-                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(sink, TableUtils.ATTACHABLE_DIR_MARKER)) {
-                            attachablePartitions.add(Chars.toString(sink));
-                        } else if (type == Files.DT_DIR && Chars.endsWith(sink, TableUtils.DETACHED_DIR_MARKER)) {
-                            detachedPartitions.add(Chars.toString(sink));
-                        }
-                    } while (Files.findNext(pFind) > 0);
-                    attachablePartitions.sort(Chars::compare);
-                    detachedPartitions.sort(Chars::compare);
-                } finally {
-                    Files.findClose(pFind);
-                }
-            }
-        }
-
         private class PartitionsRecord implements Record, Closeable {
             private TableReaderMetadata detachedMetaReader;
             private TxReader detachedTxReader;
             private boolean isActive;
-            private boolean isDetached;
             private boolean isAttachable;
+            private boolean isDetached;
             private boolean isReadOnly;
-            private long minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
             private long maxTimestamp = Long.MIN_VALUE;
+            private long minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
             private long numRows = -1L;
             private String partitionName;
             private long partitionSize = -1L;
@@ -379,38 +411,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     }
                 }
             }
-        }
-    }
-
-    private enum Column {
-        PARTITION_INDEX(0, "index", ColumnType.INT),
-        PARTITION_BY(1, "partitionBy", ColumnType.STRING),
-        PARTITION_NAME(2, "name", ColumnType.STRING),
-        MIN_TIMESTAMP(3, "minTimestamp", ColumnType.TIMESTAMP),
-        MAX_TIMESTAMP(4, "maxTimestamp", ColumnType.TIMESTAMP),
-        NUM_ROWS(5, "numRows", ColumnType.LONG),
-        DISK_SIZE(6, "diskSize", ColumnType.LONG),
-        DISK_SIZE_HUMAN(7, "diskSizeHuman", ColumnType.STRING),
-        IS_READ_ONLY(8, "readOnly", ColumnType.BOOLEAN),
-        IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
-        IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
-        IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
-        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN);
-
-        private final TableColumnMetadata metadata;
-        private final int idx;
-
-        Column(int idx, String name, int type) {
-            this.idx = idx;
-            this.metadata = new TableColumnMetadata(name, type);
-        }
-
-        boolean is(int idx) {
-            return this.idx == idx;
-        }
-
-        TableColumnMetadata metadata() {
-            return metadata;
         }
     }
 
