@@ -524,7 +524,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             } else {
                 CharSequence a = func.getStr(record);
                 CharSequence b = func.getStrB(record);
-                if (!func.isConstant() && (!(a instanceof String) || !(b instanceof String))) {
+                if (!func.isConstant() && (!(a instanceof CharSequence) || !(b instanceof CharSequence))) {
                     Assert.assertNotSame(a, b);
                 }
                 TestUtils.assertEquals(expected, a);

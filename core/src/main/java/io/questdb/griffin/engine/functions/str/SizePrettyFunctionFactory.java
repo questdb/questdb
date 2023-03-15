@@ -31,10 +31,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 
 import java.util.Formatter;
@@ -42,33 +42,11 @@ import java.util.Formatter;
 public class SizePrettyFunctionFactory implements FunctionFactory {
 
     public static final String SYMBOL = "size_pretty";
-    private static final StringSink sink = new StringSink();
-    private static final Formatter humanReadable = new Formatter(new Appendable() {
-        @Override
-        public Appendable append(CharSequence csq) {
-            sink.put(csq);
-            return this;
-        }
 
-        @Override
-        public Appendable append(CharSequence csq, int start, int end) {
-            sink.put(csq, start, end);
-            return this;
-        }
+    private final static io.questdb.std.ThreadLocal<SizeFormatter> tlSizeFormatter = new ThreadLocal<>(SizeFormatter::new);
 
-        @Override
-        public Appendable append(char c) {
-            sink.put(c);
-            return this;
-        }
-    });
-
-    public static String toSizePretty(long size) {
-        sink.clear();
-        int z = Numbers.msb(size) / 10;
-        // _, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta (this last is out of range for a long)
-        humanReadable.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
-        return Chars.toString(sink);
+    public static CharSequence toSizePretty(long size) {
+        return tlSizeFormatter.get().toSizePretty(size);
     }
 
     @Override
@@ -78,12 +56,44 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position, ObjList<Function> args,
+            int position,
+            ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
         return new SizePretty(args.getQuick(0));
+    }
+
+    private static class SizeFormatter {
+        private final StringSink sink = new StringSink();
+        private final Formatter humanReadable = new Formatter(new Appendable() {
+            @Override
+            public Appendable append(CharSequence csq) {
+                sink.put(csq);
+                return this;
+            }
+
+            @Override
+            public Appendable append(CharSequence csq, int start, int end) {
+                sink.put(csq, start, end);
+                return this;
+            }
+
+            @Override
+            public Appendable append(char c) {
+                sink.put(c);
+                return this;
+            }
+        });
+
+        public CharSequence toSizePretty(long size) {
+            sink.clear();
+            int z = Numbers.msb(size) / 10;
+            // _, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta (this last is out of range for a long)
+            humanReadable.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
+            return sink;
+        }
     }
 
     private static class SizePretty extends StrFunction implements UnaryFunction {
@@ -106,7 +116,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             long s = size.getLong(rec);
-            return s != Long.MIN_VALUE ? toSizePretty(size.getLong(rec)) : null;
+            return s != Long.MIN_VALUE ? toSizePretty(s) : null;
         }
 
         @Override

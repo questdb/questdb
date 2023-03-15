@@ -417,6 +417,8 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         return sink.toString();
     }
 
+    // CHANGE assertQuery for assertCursor
+
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
         String finallyExpected = replaceSizeToMatchOs(expected, tableName);
         assertQuery(
