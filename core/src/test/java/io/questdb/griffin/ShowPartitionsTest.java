@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -428,19 +430,22 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
         String finallyExpected = replaceSizeToMatchOs(expected, tableName);
-        assertQuery(
-                finallyExpected,
-                "SHOW PARTITIONS FROM " + tableName,
-                null,
-                false,
-                false,
-                true);
+        TableToken tableToken = engine.getTableToken(tableName);
+        try (
+                ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tableToken);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            for (int i = 0; i < 3; i++) {
+                assertCursor(finallyExpected, false, true, false, cursor, factory.getMetadata(), false);
+                cursor.toTop();
+            }
+        }
         assertQuery(
                 finallyExpected,
                 "SELECT * FROM table_partitions('" + tableName + "')",
                 null,
                 false,
-                false,
+                true,
                 true);
     }
 }
