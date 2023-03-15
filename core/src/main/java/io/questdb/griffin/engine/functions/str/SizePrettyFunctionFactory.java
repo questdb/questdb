@@ -66,6 +66,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     }
 
     private static class SizeFormatter {
+        private static final char[] SCALE = {' ', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
         private final StringSink sink = new StringSink();
         private final Formatter humanReadable = new Formatter(new Appendable() {
             @Override
@@ -91,7 +92,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
             sink.clear();
             int z = Numbers.msb(size) / 10;
             // _, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta (this last is out of range for a long)
-            humanReadable.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
+            humanReadable.format("%.1f %cB", (float) size / (1L << z * 10), SCALE[z]);
             return sink;
         }
     }
