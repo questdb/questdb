@@ -164,25 +164,26 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private void findDetachedAndAttachablePartitions(Path path) {
-            long pFind = Files.findFirst(path);
+            FilesFacade ff = cairoConfig.getFilesFacade();
+            long pFind = ff.findFirst(path);
             if (pFind > 0L) {
                 try {
                     attachablePartitions.clear();
                     detachedPartitions.clear();
                     do {
                         sink.clear();
-                        Chars.utf8DecodeZ(Files.findName(pFind), sink);
-                        int type = Files.findType(pFind);
+                        Chars.utf8DecodeZ(ff.findName(pFind), sink);
+                        int type = ff.findType(pFind);
                         if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(sink, TableUtils.ATTACHABLE_DIR_MARKER)) {
                             attachablePartitions.add(Chars.toString(sink));
                         } else if (type == Files.DT_DIR && Chars.endsWith(sink, TableUtils.DETACHED_DIR_MARKER)) {
                             detachedPartitions.add(Chars.toString(sink));
                         }
-                    } while (Files.findNext(pFind) > 0);
+                    } while (ff.findNext(pFind) > 0);
                     attachablePartitions.sort(Chars::compare);
                     detachedPartitions.sort(Chars::compare);
                 } finally {
-                    Files.findClose(pFind);
+                    ff.findClose(pFind);
                 }
             }
         }
