@@ -43,11 +43,12 @@ import java.util.Comparator;
 
 public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private static final Comparator<String> CC = Chars::compare;
+    private static final Comparator<String> CHAR_COMPARATOR = Chars::compare;
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
     private static final RecordMetadata METADATA;
     private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private final TableToken tableToken;
+    private SqlExecutionContext executionContext;
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken) {
         super(METADATA);
@@ -56,7 +57,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(executionContext, tableToken);
+        this.executionContext = executionContext;
+        return cursor.initialize();
     }
 
     @Override
@@ -67,6 +69,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("show_partitions").meta("of").val(tableToken);
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(cursor);
     }
 
     private enum Column {
@@ -101,33 +108,37 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    private static class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
+    private class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
-        private final TxReader tableTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
-        private CairoConfiguration cairoConfig;
+        private TableReaderMetadata detachedMetaReader;
+        private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
+        private boolean isActive;
+        private boolean isAttachable;
+        private boolean isDetached;
+        private boolean isReadOnly;
         private int limit; // partitionCount + detached + attachable
+        private long maxTimestamp = Long.MIN_VALUE;
+        private long minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
+        private long numRows = -1L;
         private int partitionBy = -1;
         private int partitionIndex = -1;
-        private TableToken tableToken;
+        private long partitionSize = -1L;
+        private TableReader tableReader;
         private CharSequence tsColName;
 
         @Override
         public void close() {
-            Misc.free(tableTxReader);
-            Misc.free(partitionRecord);
+            tableReader = Misc.free(tableReader);
+            detachedMetaReader = Misc.free(detachedMetaReader);
+            detachedTxReader = Misc.free(detachedTxReader);
             attachablePartitions.clear();
             detachedPartitions.clear();
             partitionName.clear();
-            tableToken = null;
-            cairoConfig = null;
-            tsColName = null;
-            partitionIndex = -1;
-            limit = 0;
-            partitionBy = -1;
+            partitionRecord.close();
         }
 
         @Override
@@ -138,7 +149,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public boolean hasNext() {
             if (++partitionIndex < limit) {
-                partitionRecord.loadNextPartition();
+                loadNextPartition();
                 return true;
             }
             --partitionIndex;
@@ -155,7 +166,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionIndex = -1;
         }
 
-        private void findDetachedAndAttachablePartitions(Path path) {
+        private void findDetachedAndAttachablePartitions() {
+            CairoConfiguration cairoConfig = executionContext.getCairoEngine().getConfiguration();
+            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
             FilesFacade ff = cairoConfig.getFilesFacade();
             long pFind = ff.findFirst(path);
             if (pFind > 0L) {
@@ -172,54 +185,147 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             detachedPartitions.add(Chars.toString(partitionName));
                         }
                     } while (ff.findNext(pFind) > 0);
-                    attachablePartitions.sort(CC);
-                    detachedPartitions.sort(CC);
+                    attachablePartitions.sort(CHAR_COMPARATOR);
+                    detachedPartitions.sort(CHAR_COMPARATOR);
                 } finally {
                     ff.findClose(pFind);
                 }
             }
         }
 
-        private ShowPartitionsRecordCursor of(SqlExecutionContext executionContext, TableToken tableToken) {
-            int partitionBy;
-            String tsColName = null;
-            try (TableReader reader = executionContext.getReader(tableToken)) {
-                partitionBy = reader.getPartitionedBy();
-                if (PartitionBy.isPartitioned(partitionBy)) {
-                    TableReaderMetadata meta = reader.getMetadata();
-                    tsColName = meta.getColumnName(meta.getTimestampIndex());
-                }
+        private ShowPartitionsRecordCursor initialize() {
+            if (tableReader != null) {
+                // this call is idempotent
+                return this;
             }
-            cairoConfig = executionContext.getCairoEngine().getConfiguration();
-            this.partitionBy = partitionBy;
-            this.tsColName = tsColName;
-            this.tableToken = tableToken;
-            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
-            findDetachedAndAttachablePartitions(path);
-            path.concat(TableUtils.TXN_FILE_NAME).$();
-            tableTxReader.ofRO(path, partitionBy);
-            tableTxReader.unsafeLoadAll();
-            limit = tableTxReader.getPartitionCount() + attachablePartitions.size() + detachedPartitions.size();
+            tsColName = null;
+            tableReader = executionContext.getReader(tableToken);
+            partitionBy = tableReader.getPartitionedBy();
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                TableReaderMetadata meta = tableReader.getMetadata();
+                tsColName = meta.getColumnName(meta.getTimestampIndex());
+            }
+            findDetachedAndAttachablePartitions();
+            limit = tableReader.getTxFile().getPartitionCount() + attachablePartitions.size() + detachedPartitions.size();
             toTop();
             return this;
         }
 
+        private void loadNextPartition() {
+            isReadOnly = false;
+            isActive = false;
+            isDetached = false;
+            isAttachable = false;
+            minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
+            maxTimestamp = Long.MIN_VALUE;
+            numRows = -1L;
+            partitionSize = -1L;
+            partitionName.clear();
+            dynamicPartitionIndex = partitionIndex;
+            CharSequence dynamicTsColName = tsColName;
+
+            CairoConfiguration cairoConfig = executionContext.getCairoEngine().getConfiguration();
+            FilesFacade ff = cairoConfig.getFilesFacade();
+            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
+            TxReader tableTxReader = tableReader.getTxFile();
+            int partitionCount = tableTxReader.getPartitionCount();
+
+            if (partitionIndex < partitionCount) {
+                // we are within the partition table
+                isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
+                long timestamp = tableTxReader.getPartitionTimestamp(partitionIndex);
+                isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
+                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp, false);
+                TableUtils.txnPartitionConditionally(path.concat(partitionName), tableTxReader.getPartitionNameTxn(partitionIndex));
+                numRows = tableTxReader.getPartitionSize(partitionIndex);
+            } else {
+                // partition table is over, we will iterate over detached and attachable partitions
+                isDetached = true;
+                int idx = partitionIndex - partitionCount; // index in detachedPartitions
+                int n = detachedPartitions.size();
+                if (idx < n) {
+                    // is detached
+                    partitionName.put(detachedPartitions.get(idx));
+                } else {
+                    idx -= n; // index in attachablePartitions
+                    if (idx < attachablePartitions.size()) {
+                        // is attachable, also detached
+                        partitionName.put(attachablePartitions.get(idx));
+                        isAttachable = true;
+                    }
+                }
+                assert partitionName.length() != 0;
+
+                // open meta files if they exist
+                dynamicPartitionIndex = Integer.MIN_VALUE; // so that in absence of metadata is NaN
+                if (ff.exists(path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$())) {
+                    try {
+                        if (detachedMetaReader == null) {
+                            detachedMetaReader = new TableReaderMetadata(cairoConfig);
+                        }
+                        detachedMetaReader.load(path);
+                        if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
+                            if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
+                                try {
+                                    if (detachedTxReader == null) {
+                                        detachedTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
+                                    }
+                                    detachedTxReader.ofRO(path, partitionBy);
+                                    detachedTxReader.unsafeLoadAll();
+                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+                                    int pIndex = detachedTxReader.getPartitionIndex(timestamp);
+                                    // could set dynamicPartitionIndex to -pIndex
+                                    numRows = detachedTxReader.getPartitionSize(pIndex);
+                                    if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
+                                        int tsIndex = detachedMetaReader.getTimestampIndex();
+                                        dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
+                                    }
+                                } finally {
+                                    detachedTxReader.clear();
+                                }
+                            } else {
+                                LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
+                            }
+                        } else {
+                            LOG.error().$("detached partition meta does not match [path=").$(path).I$();
+                        }
+                    } finally {
+                        detachedMetaReader.clear();
+                    }
+                } else {
+                    LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
+                }
+                path.parent();
+            }
+
+            partitionSize = ff.getDirectoryContentSize(path.$());
+            if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
+                TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
+                int fd = -1;
+                try {
+                    fd = TableUtils.openRO(ff, path, LOG);
+                    long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
+                    minTimestamp = ff.readNonNegativeLong(fd, 0);
+                    maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
+                } catch (CairoException e) {
+                    if (partitionIndex < partitionCount) {
+                        throw CairoException.critical(ff.errno()).put("no file found for designated timestamp column [path=").put(path).put(']');
+                    }
+                    dynamicPartitionIndex = Integer.MIN_VALUE;
+                    LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
+                } finally {
+                    if (fd != -1) {
+                        ff.close(fd);
+                    }
+                }
+            }
+        }
+
         private class PartitionsRecord implements Record, Closeable {
-            private TableReaderMetadata detachedMetaReader;
-            private TxReader detachedTxReader;
-            private boolean isActive;
-            private boolean isAttachable;
-            private boolean isDetached;
-            private boolean isReadOnly;
-            private long maxTimestamp = Long.MIN_VALUE;
-            private long minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
-            private long numRows = -1L;
-            private long partitionSize = -1L;
 
             @Override
             public void close() {
-                detachedMetaReader = Misc.free(detachedMetaReader);
-                detachedTxReader = Misc.free(detachedTxReader);
+                // no-op
             }
 
             @Override
@@ -295,103 +401,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     return maxTimestamp;
                 }
                 throw new UnsupportedOperationException();
-            }
-
-            private void loadNextPartition() {
-                isReadOnly = false;
-                isActive = false;
-                isDetached = false;
-                isAttachable = false;
-                minTimestamp = Long.MIN_VALUE; // so that in absence of metadata is NaN
-                maxTimestamp = Long.MIN_VALUE;
-                numRows = -1L;
-                partitionSize = -1L;
-                partitionName.clear();
-                dynamicPartitionIndex = partitionIndex;
-                CharSequence dynamicTsColName = tsColName;
-                FilesFacade ff = cairoConfig.getFilesFacade();
-                Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
-                int partitionCount = tableTxReader.getPartitionCount();
-                if (partitionIndex < partitionCount) {
-                    // we are within the partition table
-                    isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
-                    long timestamp = tableTxReader.getPartitionTimestamp(partitionIndex);
-                    isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
-                    PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp, false);
-                    TableUtils.txnPartitionConditionally(path.concat(partitionName), tableTxReader.getPartitionNameTxn(partitionIndex));
-                    numRows = tableTxReader.getPartitionSize(partitionIndex);
-                } else {
-                    // partition table is over
-                    // we will iterate over detached and attachable
-                    isDetached = true;
-                    int idx = partitionIndex - partitionCount; // index in detachedPartitions
-                    int n = detachedPartitions.size();
-                    if (idx < n) {
-                        // is detached
-                        partitionName.put(detachedPartitions.get(idx));
-                    } else {
-                        idx -= n; // index in attachablePartitions
-                        if (idx < attachablePartitions.size()) {
-                            // is attachable, also detached
-                            partitionName.put(attachablePartitions.get(idx));
-                            isAttachable = true;
-                        }
-                    }
-                    assert partitionName.length() != 0;
-                    // open meta files if they exist
-                    dynamicPartitionIndex = Integer.MIN_VALUE; // so that in absence of metadata is NaN
-                    path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$();
-                    if (ff.exists(path)) {
-                        if (detachedMetaReader == null) {
-                            detachedMetaReader = new TableReaderMetadata(cairoConfig);
-                        }
-                        detachedMetaReader.load(path);
-                        if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
-                            path.parent().concat(TableUtils.TXN_FILE_NAME).$();
-                            if (ff.exists(path)) {
-                                if (detachedTxReader == null) {
-                                    detachedTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
-                                }
-                                detachedTxReader.ofRO(path, partitionBy);
-                                detachedTxReader.unsafeLoadAll();
-                                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
-                                int pIndex = detachedTxReader.getPartitionIndex(timestamp);
-                                numRows = detachedTxReader.getPartitionSize(pIndex);
-                                if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                                    int tsIndex = detachedMetaReader.getTimestampIndex();
-                                    dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
-                                }
-                                // could set dynamicPartitionIndex to -pIndex
-                            } else {
-                                LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
-                            }
-                        } else {
-                            LOG.error().$("detached partition meta does not match [path=").$(path).I$();
-                        }
-                    } else {
-                        LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
-                    }
-                    path.parent();
-                }
-                partitionSize = ff.getDirectoryContentSize(path.$());
-                if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                    TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
-                    int fd = -1;
-                    try {
-                        fd = TableUtils.openRO(ff, path, LOG);
-                        long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
-                        minTimestamp = ff.readNonNegativeLong(fd, 0);
-                        maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
-                    } catch (CairoException e) {
-                        if (partitionIndex < partitionCount) {
-                            throw CairoException.critical(ff.errno()).put("no file found for designated timestamp column [path=").put(path).put(']');
-                        }
-                        dynamicPartitionIndex = Integer.MIN_VALUE;
-                        LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
-                    } finally {
-                        ff.close(fd);
-                    }
-                }
             }
         }
     }
