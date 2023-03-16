@@ -576,6 +576,26 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testFailMergeWalFixIntoLagContended() throws Exception {
+        executeWithPool(0, O3FailureTest::testFailMergeWalFixIntoLag0);
+    }
+
+    @Test
+    public void testFailMergeWalFixIntoLagParallel() throws Exception {
+        executeWithPool(2, O3FailureTest::testFailMergeWalFixIntoLag0);
+    }
+
+    @Test
+    public void testFailMergeWalVarIntoLagContended() throws Exception {
+        executeWithPool(0, O3FailureTest::testFailMergeWalVarIntoLag0);
+    }
+
+    @Test
+    public void testFailMergeWalVarIntoLagParallel() throws Exception {
+        executeWithPool(2, O3FailureTest::testFailMergeWalVarIntoLag0);
+    }
+
+    @Test
     public void testFailMoveUncommittedContended() throws Exception {
         executeWithPool(0, O3FailureTest::testFailMoveUncommitted0);
     }
@@ -2760,6 +2780,114 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testFailMergeWalFixIntoLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        o3MemMaxPages = 1;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_long256(5) l256," +
+                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp (ts) partition by DAY WAL",
+                executionContext
+        );
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_long256(5) l256," +
+                        " timestamp_sequence('2020-02-24',100L) ts" +
+                        " from long_sequence(50000)",
+                executionContext);
+
+
+        drainWalQueue(engine);
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        engine.releaseInactive();
+
+        o3MemMaxPages = Integer.MAX_VALUE;
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        assertXCountAndMax(
+                compiler,
+                executionContext,
+                "count\n" +
+                        "50020\n",
+                "max\n" +
+                        "2020-02-24T00:00:04.999900Z\n"
+        );
+    }
+
+    private static void testFailMergeWalVarIntoLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        o3MemMaxPages = 1;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_str(5,16,2) str," +
+                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp (ts) partition by DAY WAL",
+                executionContext
+        );
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_str(5,160,2) str," +
+                        " timestamp_sequence('2020-02-24',100L) ts" +
+                        " from long_sequence(50000)",
+                executionContext);
+
+
+        drainWalQueue(engine);
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        engine.releaseInactive();
+
+        o3MemMaxPages = Integer.MAX_VALUE;
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        assertXCountAndMax(
+                compiler,
+                executionContext,
+                "count\n" +
+                        "50020\n",
+                "max\n" +
+                        "2020-02-24T00:00:04.999900Z\n"
+        );
     }
 
     private static void testFailMoveUncommitted0(

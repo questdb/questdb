@@ -53,15 +53,15 @@ public class VectorAggregateEntry implements Mutable {
 
     public void run(int workerId, Sequence seq, long cursor) {
         long keyAddress = this.keyAddress;
-        var valueAddress = this.valueAddress;
-        var valueCount = this.valueCount;
-        var columnSizeShr = this.columnSizeShr;
-        var oomCounter = this.oomCounter;
-        var pRosti = this.pRosti;
-        var raf = this.raf;
-        var func = this.func;
-        var circuitBreaker = this.circuitBreaker;
-        var doneLatch = this.doneLatch;
+        long valueAddress = this.valueAddress;
+        long valueCount = this.valueCount;
+        int columnSizeShr = this.columnSizeShr;
+        AtomicInteger oomCounter = this.oomCounter;
+        long[] pRosti = this.pRosti;
+        RostiAllocFacade raf = this.raf;
+        VectorAggregateFunction func = this.func;
+        ExecutionCircuitBreaker circuitBreaker = this.circuitBreaker;
+        CountDownLatchSPI doneLatch = this.doneLatch;
 
         seq.done(cursor);
         run(workerId, keyAddress, valueAddress, valueCount, columnSizeShr, oomCounter, pRosti, raf, func, circuitBreaker, doneLatch);

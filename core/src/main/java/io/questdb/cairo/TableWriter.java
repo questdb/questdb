@@ -2600,6 +2600,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void checkO3Errors() {
         if (o3ErrorCount.get() > 0) {
             if (lastErrno == O3_ERRNO_FATAL) {
+                distressed = true;
                 throw new CairoError("commit failed with fatal error, see logs for details [table=" +
                         tableToken.getTableName() +
                         ", tableDir=" + tableToken.getDirName() + "]");
@@ -3994,7 +3995,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable e) {
             handleWorkStealingException(
-                    "cannot merge fix column into lag",
+                    "cannot merge variable length column into lag",
                     columnIndex,
                     columnType,
                     mergedTimestampAddress,
