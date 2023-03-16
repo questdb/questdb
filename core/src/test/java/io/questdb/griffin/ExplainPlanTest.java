@@ -2286,6 +2286,40 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
+    @Test//inner hash join maintains order metadata and can be part of asof join
+    public void testHashInnerJoinWithAsof() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+            compile("create table tabb (b1 int, b2 long)");
+            compile("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+
+            try {
+                compiler.setFullFatJoins(true);
+                assertPlan("select * " +
+                                "from taba " +
+                                "inner join tabb on a1=b1 " +
+                                "asof join tabc on b1=c1",
+                        "SelectedRecord\n" +
+                                "    AsOf Join\n" +
+                                "      condition: c1=b1\n" +
+                                "        Hash Join\n" +
+                                "          condition: b1=a1\n" +
+                                "            DataFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                DataFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: tabc\n");
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
+        });
+    }
+
     @Test
     public void testHashLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
@@ -3010,6 +3044,21 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLeftJoinWithEquality7() throws Exception {
+        testHashAndAsofJoin(true);
+    }
+
+    @Test
+    public void testLeftJoinWithEquality8() throws Exception {
+        try {
+            compiler.setFullFatJoins(true);
+            testHashAndAsofJoin(false);
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+    @Test
     public void testLeftJoinWithEqualityAndExpressions1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -3558,6 +3607,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n");
         });
+    }
+
+    @Test
+    public void testOrderByTimestampAndOtherColumns() throws Exception {
+        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)",
+                "select * from (select * from tab order by ts, i desc limit 10) order by ts",
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Sort light lo: 10\n" +
+                        "      keys: [ts, i desc]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tab\n");
     }
 
     @Test
@@ -6456,6 +6518,35 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             compile("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
             compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+        });
+    }
+
+    //left join maintains order metadata and can be part of asof join
+    private void testHashAndAsofJoin(boolean isLight) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+            compile("create table tabb (b1 int, b2 long)");
+            compile("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+
+            assertPlan("select * " +
+                            "from taba " +
+                            "left join tabb on a1=b1 " +
+                            "asof join tabc on b1=c1",
+                    "SelectedRecord\n" +
+                            "    AsOf Join" + (isLight ? " Light" : "") + "\n" +
+                            "      condition: c1=b1\n" +
+                            "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
+                            "          condition: b1=a1\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: taba\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tabb\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tabc\n");
         });
     }
 
