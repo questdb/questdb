@@ -176,7 +176,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         if (cursor.getRowCursorFactory() instanceof SequentialRowCursorFactory) {//sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
-        sink.attr("symbolFilter").putColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
+        sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
         sink.child(cursor.getRowCursorFactory());
         sink.child(dataFrameCursorFactory);
