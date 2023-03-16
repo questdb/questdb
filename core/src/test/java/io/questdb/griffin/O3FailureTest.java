@@ -2920,8 +2920,8 @@ public class O3FailureTest extends AbstractO3Test {
                             "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
                     executionContext);
             Assert.fail();
-        } catch (CairoException ignored) {
-            TestUtils.assertContains(ignored.getFlyweightMessage(), "commit failed");
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "commit failed");
         }
 
         compiler.compile(
