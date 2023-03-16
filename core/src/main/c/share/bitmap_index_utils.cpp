@@ -40,7 +40,7 @@ int64_t find_latest_for_key(int64_t k,
     const auto vblock_capacity = vblock_capacity_mask + 1;
     const auto key_count = static_cast<int64_t>(keys.key_count()); // assert(key_count <= Long.MAX_VALUE)
 
-    if (k > key_count) {
+    if (k >= key_count) {
         return -1;
     }
 

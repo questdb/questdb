@@ -167,6 +167,44 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByWithIndexedSymbolKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE records (\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  account_uuid SYMBOL INDEX,\n" +
+                    "  requests LONG\n" +
+                    ") timestamp (ts)");
+
+            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
+
+            String query = "select account_uuid, " +
+                    "     sum(requests) request_count " +
+                    "from records " +
+                    "where ts > '2023-02-01' " +
+                    "    and ts < '2023-02-02' " +
+                    "order by 1 asc";
+
+            assertPlan(query,
+                    "Sort light\n" +
+                            "  keys: [account_uuid]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [account_uuid]\n" +
+                            "      values: [sum(requests)]\n" +
+                            "        SortedSymbolIndex\n" +
+                            "            Index forward scan on: account_uuid\n" +
+                            "              symbolOrder: asc\n" +
+                            "            Interval forward scan on: records\n" +
+                            "              intervals: [static=[1675209600000001,1675295999999999]\n");
+
+            assertQuery("account_uuid\trequest_count\n" +
+                    "s0\t0\n" +
+                    "s1\t100\n" +
+                    "s2\t200\n" +
+                    "s3\t300\n", query, null, true, true, false);
+        });
+    }
+
+    @Test
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
