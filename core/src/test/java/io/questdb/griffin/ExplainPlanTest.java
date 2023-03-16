@@ -4594,19 +4594,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectIndexedSymbols7b() throws Exception {
-        assertPlan("create table a ( ts timestamp, s symbol index) timestamp(ts);",
-                "select s from a where s != 'S1' and length(s) = 2 order by s ",
-                "Sort light\n" +
-                        "  keys: [s]\n" +
-                        "    FilterOnExcludedValues\n" +
-                        "      symbolFilter: s not in ['S1']\n" +
-                        "      filter: length(s)=2\n" +
-                        "        Cursor-order scan\n" +
-                        "        Frame forward scan on: a\n");
-    }
-
-    @Test
     public void testSelectIndexedSymbols08() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s symbol index)");
@@ -4824,6 +4811,16 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testSelectIndexedSymbols7b() throws Exception {
+        assertPlan("create table a ( ts timestamp, s symbol index) timestamp(ts);",
+                "select s from a where s != 'S1' and length(s) = 2 order by s ",
+                "FilterOnExcludedValues symbolOrder: asc\n" +
+                        "  symbolFilter: s not in ['S1']\n" +
+                        "  filter: length(s)=2\n" +
+                        "    Cursor-order scan\n" +
+                        "    Frame forward scan on: a\n");
+    }
 
     @Test
     public void testSelectNoOrderByWithNegativeLimit() throws Exception {
