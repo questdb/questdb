@@ -808,6 +808,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
+                    LOG.info().$("closing writer because table has been dropped (1) [table=").$(measurementName).I$();
                     tud.setWriterInError();
                     tud.releaseWriter(false);
                     // continue to next line

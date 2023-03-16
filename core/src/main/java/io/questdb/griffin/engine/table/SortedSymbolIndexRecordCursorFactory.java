@@ -50,7 +50,8 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
                 new SortedSymbolIndexRowCursorFactory(
                         columnIndex,
                         columnOrderAsc,
-                        indexDirection
+                        indexDirection,
+                        columnIndexes
                 ),
                 true,
                 null,

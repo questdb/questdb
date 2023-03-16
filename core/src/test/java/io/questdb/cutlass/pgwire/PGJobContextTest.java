@@ -4482,6 +4482,69 @@ nodejs code:
     }
 
     @Test
+    public void testNoDataAndEmptyQueryResponsesHex_simpleTextProtocol() throws Exception {
+        /**
+         * go.mod:
+         * module testquestpg
+         *
+         * go 1.19
+         *
+         * require github.com/lib/pq v1.10.7 // indirect
+         *
+         * main.go:
+         *package main
+         *
+         * import (
+         * 	"database/sql"
+         * 	"fmt"
+         * 	_ "github.com/lib/pq"
+         * )
+         *
+         * const (
+         * 	host     = "localhost"
+         * 	port     = 8812
+         * 	user     = "xyz"
+         * 	password = "oh"
+         * 	dbname   = "qdb"
+         * )
+         *
+         * func main() {
+         * 	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+         *
+         * 	db, err := sql.Open("postgres", psqlconn)
+         * 	if err != nil {
+         * 		panic(err)
+         *        }
+         *
+         * 	err = db.Ping()
+         * 	if err != nil {
+         * 		panic(err)
+         *    }
+         *
+         * 	db.Close()
+         * }
+         *
+         *
+         */
+
+        // db.Ping() in the golang program above uses the simple text protocol to execute ";" as a query
+        // we need to make sure that we respond with an empty query response
+        String script = ">0000005c00030000636c69656e745f656e636f64696e6700555446380065787472615f666c6f61745f646967697473003200646174657374796c650049534f2c204d445900757365720078797a006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">51000000063b00\n" +
+                "<49000000045a0000000549\n" +
+                ">5800000004";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
     public void testNullTypeSerialization() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {

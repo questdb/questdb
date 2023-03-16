@@ -76,6 +76,8 @@ public interface ConfigurationOverrides {
 
     long getO3MaxLag();
 
+    long getO3MinLag();
+
     int getPageFrameMaxRows();
 
     int getPageFrameReduceQueueCapacity();
@@ -191,6 +193,8 @@ public interface ConfigurationOverrides {
     void setO3ColumnMemorySize(int size);
 
     void setO3MaxLag(long configOverrideO3MaxLag);
+
+    void setO3MinLag(long minLag);
 
     void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
 
