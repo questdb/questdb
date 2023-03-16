@@ -25,11 +25,13 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
@@ -611,15 +613,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         } else if (mustExist) {
             Assert.fail("does not exist: " + folderName);
         }
-    }
-
-    private static SqlExecutionContext executionContext(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
-                null,
-                null,
-                -1,
-                null);
     }
 
     private Thread concurrentTableCreator(

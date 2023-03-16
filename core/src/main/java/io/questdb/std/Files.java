@@ -178,12 +178,12 @@ public final class Files {
             try {
                 long totalSize = 0L;
                 do {
-                    long namePtr = findName(pFind);
-                    Chars.utf8DecodeZ(namePtr, path.trimTo(len).slash$());
+                    long nameUtf8Ptr = findName(pFind);
+                    Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
                     path.$();
                     if (findType(pFind) == Files.DT_FILE) {
                         totalSize += length0(pathPtr);
-                    } else if (notDots(namePtr)) {
+                    } else if (notDots(nameUtf8Ptr)) {
                         totalSize += getDirectoryContentSize(path);
                     }
                 }

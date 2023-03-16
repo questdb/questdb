@@ -25,8 +25,11 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -39,6 +42,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
@@ -106,7 +110,7 @@ public abstract class AbstractBootstrapTest {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
 
             // enable services
             writer.println("http.enabled=true");
@@ -150,14 +154,14 @@ public abstract class AbstractBootstrapTest {
 
         // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
             writer.println("");
         }
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
@@ -175,6 +179,15 @@ public abstract class AbstractBootstrapTest {
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
+    }
+
+    static SqlExecutionContext executionContext(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllCairoSecurityContext.INSTANCE,
+                null,
+                null,
+                -1,
+                null);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {

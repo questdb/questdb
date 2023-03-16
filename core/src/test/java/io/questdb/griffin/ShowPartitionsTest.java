@@ -30,20 +30,63 @@ import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.ATTACHABLE_DIR_MARKER;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 
+@RunWith(Parameterized.class)
 public class ShowPartitionsTest extends AbstractGriffinTest {
+
+    private final boolean isWal;
+
+    public ShowPartitionsTest(WalMode walMode) {
+        isWal = walMode == WalMode.WITH_WAL;
+        node1.getConfigurationOverrides().setDefaultTableWriteMode(isWal ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{{WalMode.WITH_WAL}, {WalMode.NO_WAL}});
+    }
+
+    public static String replaceSizeToMatchOS(
+            String expected,
+            CharSequence root,
+            String tableName,
+            CairoEngine engine,
+            StringSink sink
+    ) {
+        ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
+        String[] lines = expected.split("\n");
+        sink.clear();
+        sink.put(lines[0]).put('\n');
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            String nameColumn = line.split("\t")[2];
+            long size = sizes.get(nameColumn);
+            int z = Numbers.msb(size) / 10;
+            String human = String.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
+            line = line.replaceAll("SIZE", String.valueOf(size));
+            line = line.replaceAll("HUMAN", human);
+            sink.put(line).put('\n');
+        }
+        return sink.toString();
+    }
 
     @Test
     public void testShowPartitionsAttachablePartitionOfWrongPartitionBy() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        String tabName = testName.getMethodName();
+        String tabName = testTableName(testName.getMethodName());
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
             try (
@@ -75,6 +118,9 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         4
                 );
                 compile("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03'");
+                if (isWal) {
+                    drainWalQueue();
+                }
                 engine.releaseAllWriters();
                 srcPath.of(configuration.getRoot()).concat(engine.getTableToken(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER).$();
                 dstPath.of(configuration.getRoot()).concat(engine.getTableToken(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER).$();
@@ -94,7 +140,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     @Test
     public void testShowPartitionsAttachablePartitionOfWrongTableId() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // symlink required, and not well supported in Windows
-        String tabName = testName.getMethodName();
+        String tabName = testTableName(testName.getMethodName());
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
             try (
@@ -126,6 +172,9 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         4
                 );
                 compile("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03-15'");
+                if (isWal) {
+                    drainWalQueue();
+                }
                 engine.releaseAllWriters();
                 srcPath.of(configuration.getRoot()).concat(engine.getTableToken(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER).$();
                 dstPath.of(configuration.getRoot()).concat(engine.getTableToken(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER).$();
@@ -145,12 +194,17 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     @Test
     public void testShowPartitionsDetachedPartitionPlusAttachable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
-
+                if (isWal) {
+                    drainWalQueue();
+                }
                 // prepare 3 partitions for attachment
                 TableToken tableToken = engine.getTableToken(tableName);
                 try (
@@ -164,7 +218,6 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, Files.softLink(path, link));
                     }
                 }
-
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n" +
@@ -177,9 +230,10 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                                 "NaN\tMONTH\t2023-03.attachable\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\n" +
                                 "NaN\tMONTH\t2023-04.attachable\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\n",
                         tableName);
-
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
-
+                if (isWal) {
+                    drainWalQueue();
+                }
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tMONTH\t2023-02\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\ttrue\tfalse\ttrue\tfalse\tfalse\n" +
@@ -200,11 +254,17 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsOnlyDetachedPartitionMissingMeta() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 deleteFile(tableName, "2023-04" + TableUtils.DETACHED_DIR_MARKER, TableUtils.META_FILE_NAME);
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
@@ -223,11 +283,17 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsOnlyDetachedPartitionMissingTimestampColumn() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 deleteFile(tableName, "2023-04" + TableUtils.DETACHED_DIR_MARKER, "timestamp.d");
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
@@ -246,11 +312,14 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsOnlyDetachedPartitionMissingTxn() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 deleteFile(tableName, "2023-04" + TableUtils.DETACHED_DIR_MARKER, TableUtils.TXN_FILE_NAME);
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
@@ -269,12 +338,15 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsOnlyDetachedPartitions() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2023-06'", sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "NaN\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
@@ -291,16 +363,18 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsSelectActive() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
-                String finallyExpected = replaceSizeToMatchOs(
-                        "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
-                                "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
-                        tableName);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 assertQuery(
-                        finallyExpected,
+                        replaceSizeToMatchOS(
+                                "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
+                                        "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
+                                tableName),
                         "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
                         null,
                         false,
@@ -314,17 +388,22 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsSelectActiveMaterializing() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 compile("CREATE TABLE partitions AS (SELECT * FROM table_partitions('" + tableName + "'))", sqlExecutionContext);
-                String finallyExpected = replaceSizeToMatchOs(
-                        "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
-                                "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
-                        tableName);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 assertQuery(
-                        finallyExpected,
+                        replaceSizeToMatchOS(
+                                "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
+                                        "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
+                                tableName),
                         "SELECT * FROM partitions WHERE active = true;",
                         null,
                         true,
@@ -338,10 +417,13 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             try {
                 compile(createTable(tableName), sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
@@ -359,9 +441,12 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachableMissingTimestampColumn() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             compile(createTable(tableName), sqlExecutionContext);
+            if (isWal) {
+                drainWalQueue();
+            }
             deleteFile(tableName, "2023-04", "timestamp.d");
             try {
                 assertShowPartitions(
@@ -382,17 +467,6 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         });
     }
 
-    private static String createTable(String tableName) {
-        return "CREATE TABLE " + tableName + " AS (" +
-                "    SELECT" +
-                "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
-                "        rnd_double() * 50.0 price," +
-                "        rnd_double() * 20.0 amount," +
-                "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
-                "    FROM long_sequence(700)" +
-                "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH;";
-    }
-
     private static void deleteFile(String tableName, String... pathParts) {
         engine.releaseAllWriters();
         TableToken tableToken = engine.getTableToken(tableName);
@@ -407,29 +481,33 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         }
     }
 
-    private static ObjObjHashMap<String, Long> findPartitionSizes(String tableName) {
+    private static ObjObjHashMap<String, Long> findPartitionSizes(CharSequence root, String tableName, CairoEngine engine, StringSink sink) {
         ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
         TableToken tableToken = engine.getTableToken(tableName);
-        try (Path path = new Path().of(configuration.getRoot()).concat(tableToken).$()) {
+        try (Path path = new Path().of(root).concat(tableToken).$()) {
             int len = path.length();
             long pFind = Files.findFirst(path);
             try {
                 do {
-                    sink.clear();
-                    Chars.utf8DecodeZ(Files.findName(pFind), sink);
-                    path.trimTo(len).concat(sink).$();
-                    int n = sink.length();
-                    int limit = n;
-                    for (int i = 0; i < n; i++) {
-                        if (sink.charAt(i) == '.' && i < n - 1) {
-                            char c = sink.charAt(i + 1);
-                            if (c >= '0' && c <= '9') {
-                                limit = i;
-                                break;
+                    long namePtr = Files.findName(pFind);
+                    if (Files.notDots(namePtr)) {
+                        sink.clear();
+                        Chars.utf8DecodeZ(namePtr, sink);
+                        path.trimTo(len).concat(sink).$();
+                        int n = sink.length();
+                        int limit = n;
+                        for (int i = 0; i < n; i++) {
+                            if (sink.charAt(i) == '.' && i < n - 1) {
+                                char c = sink.charAt(i + 1);
+                                if (c >= '0' && c <= '9') {
+                                    limit = i;
+                                    break;
+                                }
                             }
                         }
+                        sink.clear(limit);
+                        sizes.put(sink.toString(), Files.getDirectoryContentSize(path));
                     }
-                    sizes.put(Chars.toString(sink, 0, limit), Files.getDirectoryContentSize(path));
                 } while (Files.findNext(pFind) > 0);
             } finally {
                 Files.findClose(pFind);
@@ -438,29 +516,15 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         return sizes;
     }
 
-    private static String replaceSizeToMatchOs(String expected, String tableName) {
-        ObjObjHashMap<String, Long> sizes = findPartitionSizes(tableName);
-        String[] lines = expected.split("\n");
-        sink.clear();
-        sink.put(lines[0]).put('\n');
-        for (int i = 1; i < lines.length; i++) {
-            String line = lines[i];
-            String nameColumn = line.split("\t")[2];
-            long size = sizes.get(nameColumn);
-            int z = Numbers.msb(size) / 10;
-            String human = String.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
-            line = line.replaceAll("SIZE", String.valueOf(size));
-            line = line.replaceAll("HUMAN", human);
-            sink.put(line).put('\n');
-        }
-        return sink.toString();
+    private static String testTableName(String tableName) {
+        int idx = tableName.indexOf('[');
+        return idx > 0 ? tableName.substring(0, idx) : tableName;
     }
-
 
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
         SOCountDownLatch done = new SOCountDownLatch(1);
         TableToken tableToken = engine.getTableToken(tableName);
-        String finallyExpected = replaceSizeToMatchOs(expected, tableName);
+        String finallyExpected = replaceSizeToMatchOS(expected, tableName);
         new Thread(() -> {
             try {
                 try (
@@ -488,5 +552,25 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 false,
                 true,
                 true);
+    }
+
+    private String createTable(String tableName) {
+        String create = "CREATE TABLE " + tableName + " AS (" +
+                "    SELECT" +
+                "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
+                "        rnd_double() * 50.0 price," +
+                "        rnd_double() * 20.0 amount," +
+                "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
+                "    FROM long_sequence(700)" +
+                "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH";
+        if (isWal) {
+            create += " WAL";
+        }
+        System.out.printf("%s%n", create);
+        return create;
+    }
+
+    private String replaceSizeToMatchOS(String expected, String tableName) {
+        return replaceSizeToMatchOS(expected, configuration.getRoot(), tableName, engine, sink);
     }
 }
