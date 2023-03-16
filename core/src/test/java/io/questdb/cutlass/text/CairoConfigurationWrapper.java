@@ -84,11 +84,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LagCalculationWindowsSize() {
-        return conf.getO3LagCalculationWindowsSize();
-    }
-
-    @Override
     public CharSequence getBackupTempDirName() {
         return conf.getBackupTempDirName();
     }
@@ -264,6 +259,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return conf.getInactiveReaderMaxOpenPartitions();
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return conf.getInactiveReaderTTL();
     }
@@ -356,6 +356,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return conf.getO3CopyQueueCapacity();
+    }
+
+    @Override
+    public int getO3LagCalculationWindowsSize() {
+        return conf.getO3LagCalculationWindowsSize();
     }
 
     @Override

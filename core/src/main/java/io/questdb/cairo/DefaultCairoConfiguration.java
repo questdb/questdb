@@ -64,11 +64,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LagCalculationWindowsSize() {
-        return 4;
-    }
-
-    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -279,6 +274,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return 128;
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return -10000;
     }
@@ -361,6 +361,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getO3LagCalculationWindowsSize() {
+        return 4;
     }
 
     @Override

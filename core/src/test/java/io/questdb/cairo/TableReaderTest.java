@@ -48,7 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTest extends AbstractCairoTest {
-    public static final int DONT_CARE = 0;
+    public static final int DO_NOT_CARE = 0;
     public static final int MUST_NOT_SWITCH = 2;
     public static final int MUST_SWITCH = 1;
     private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 11);
@@ -1852,7 +1852,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLong256WriterReOpen() throws Exception {
+    public void testLong256WriterReopen() throws Exception {
         // we had a bug where size of LONG256 column was incorrectly defined
         // this caused TableWriter to incorrectly calculate append position in constructor
         // subsequent records would have been appended to far away from records from first writer instance
@@ -2435,6 +2435,62 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderKeepsNLatestOpenPartitions() {
+        final int openPartitionsLimit = 2;
+        final int expectedPartitions = 12;
+        final long tsStep = Timestamps.SECOND_MICROS;
+        final int rows = expectedPartitions * 60 * 60;
+
+        maxOpenPartitions = openPartitionsLimit;
+
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            for (int i = 0; i < rows; i++) {
+                TableWriter.Row row = writer.newRow(i * tsStep);
+                row.putInt(0, i);
+                row.append();
+            }
+            writer.commit();
+        }
+
+        try (TableReader reader = newTableReader(configuration, "x")) {
+            Assert.assertEquals(expectedPartitions, reader.getPartitionCount());
+            Assert.assertEquals(0, reader.calculateOpenPartitionCount());
+            assertOpenPartitionCount(reader);
+
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                Assert.assertEquals(count, record.getInt(0));
+                count++;
+            }
+            Assert.assertEquals(rows, count);
+            Assert.assertEquals(expectedPartitions, reader.calculateOpenPartitionCount());
+            assertOpenPartitionCount(reader);
+
+            reader.goPassive();
+            Assert.assertFalse(reader.reload());
+
+            Assert.assertEquals(openPartitionsLimit, reader.calculateOpenPartitionCount());
+            assertOpenPartitionCount(reader);
+
+            cursor.toTop();
+            count = 0;
+            while (cursor.hasNext()) {
+                Assert.assertEquals(count, record.getInt(0));
+                count++;
+            }
+            Assert.assertEquals(rows, count);
+            Assert.assertEquals(expectedPartitions, reader.calculateOpenPartitionCount());
+            assertOpenPartitionCount(reader);
+        }
+    }
+
+    @Test
     public void testReaderReloadWhenColumnAddedBeforeTheData() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -2475,10 +2531,6 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadDaySamePartition() throws Exception {
-        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
-    }
-    @Test
     public void testReloadByDaySwitch() throws Exception {
         testReload(PartitionBy.DAY, 15, 60L * 60000, MUST_SWITCH);
     }
@@ -2514,8 +2566,13 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReloadDaySamePartition() throws Exception {
+        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
+    }
+
+    @Test
     public void testReloadNonPartitioned() throws Exception {
-        testReload(PartitionBy.NONE, 10, 60L * 60000, DONT_CARE);
+        testReload(PartitionBy.NONE, 10, 60L * 60000, DO_NOT_CARE);
     }
 
     @Test
@@ -4136,12 +4193,14 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
                     assertCursor(cursor, ts, increment, blob, 0, null);
                     Assert.assertFalse(reader.reload());
+                    assertOpenPartitionCount(reader);
 
                     // create table with first batch populating all columns (there could be null values too)
                     long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0);
 
                     // can we reload from empty to first batch?
                     Assert.assertTrue(reader.reload());
+                    assertOpenPartitionCount(reader);
 
                     // make sure we can see first batch right after table is open
                     assertCursor(cursor, ts, increment, blob, count, BATCH1_ASSERTER);
@@ -4154,6 +4213,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     // try to reload when table hasn't changed
                     Assert.assertFalse(reader.reload());
+                    assertOpenPartitionCount(reader);
 
                     // add second batch to test if reload of open table will pick it up
                     nextTs = testAppend(rnd, configuration, nextTs, count, increment, blob, testPartitionSwitch);
@@ -4165,6 +4225,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     // reload should be successful because we have new data in the table
                     Assert.assertTrue(reader.reload());
+                    assertOpenPartitionCount(reader);
 
                     // check if we can see second batch after reader was reloaded
                     assertCursor(cursor, ts, increment, blob, 2L * count, BATCH1_ASSERTER);
@@ -4178,6 +4239,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         // also make sure that there is nothing to reload, we've not done anything to data after all
                         Assert.assertFalse(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         // check that we can still see two batches after no-op reload
                         // we rule out possibility of reload() corrupting table state
@@ -4188,6 +4250,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         // table must be able to reload now
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         // and we should see three batches of data
                         assertCursor(cursor, ts, increment, blob, 3L * count, BATCH1_ASSERTER);
@@ -4202,6 +4265,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         // reload table, check if it was positive effort
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         // two-step assert checks 3/4 rows checking that new column is NUL
                         // the last 1/3 is checked including new column
@@ -4217,6 +4281,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH3_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         assertBatch3(count, increment, ts, blob, reader);
 
@@ -4238,6 +4303,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH4_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         assertBatch4(count, increment, ts, blob, reader);
 
@@ -4250,6 +4316,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.removeColumn("bin2");
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         // and assert that all columns that have not been deleted contain correct values
 
@@ -4259,6 +4326,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH6_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         // and assert that all columns that have not been deleted contain correct values
                         assertBatch6(count, increment, ts, blob, cursor);
@@ -4272,6 +4340,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.addColumn("int", ColumnType.INT);
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         assertBatch7(count, increment, ts, blob, cursor);
 
@@ -4280,6 +4349,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH8_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         assertBatch8(count, increment, ts, blob, cursor);
 
@@ -4290,13 +4360,14 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.removeColumn("sym");
                         writer.addColumn("sym", ColumnType.SYMBOL);
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH9_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
+                        assertOpenPartitionCount(reader);
 
                         assertBatch9(count, increment, ts, blob, cursor);
-
                     }
                 }
             } finally {
@@ -4564,6 +4635,10 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void testTableCursor() throws NumericException {
         testTableCursor(60 * 60000);
+    }
+
+    static void assertOpenPartitionCount(TableReader reader) {
+        Assert.assertEquals(reader.calculateOpenPartitionCount(), reader.getOpenPartitionCount());
     }
 
     static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
