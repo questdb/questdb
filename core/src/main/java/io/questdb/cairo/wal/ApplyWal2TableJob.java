@@ -152,8 +152,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .I$();
             return WAL_APPLY_FAILED;
         }
-//        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
-
         return lastWriterTxn;
     }
 
