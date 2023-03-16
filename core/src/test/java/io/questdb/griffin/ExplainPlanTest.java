@@ -4008,12 +4008,20 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectCount14() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
                 "select * from a where s = 'S1' order by ts desc ",
-                "Sort light\n" +
-                        "  keys: [ts desc]\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
-                        "        Index forward scan on: s deferred: true\n" +
-                        "          filter: s='S1'\n" +
-                        "        Frame forward scan on: a\n");
+                "DeferredSingleSymbolFilterDataFrame\n" +
+                        "    Index backward scan on: s deferred: true\n" +
+                        "      filter: s='S1'\n" +
+                        "    Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectCount15() throws Exception {
+        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
+                "select * from a where s = 'S1' order by ts asc",
+                "DeferredSingleSymbolFilterDataFrame\n" +
+                        "    Index forward scan on: s deferred: true\n" +
+                        "      filter: s='S1'\n" +
+                        "    Frame forward scan on: a\n");
     }
 
     @Test
@@ -4348,11 +4356,188 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectIndexedSymbolWithLimitLo() throws Exception {
+    public void testSelectIndexedSymbolWithLimitLoOrderByTsAscNotPartitioned() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
+                "Limit lo: 1\n" +
+                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "        Index backward scan on: s deferred: true\n" +
+                        "          filter: s='S1'\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbolWithLimitLoOrderByTsAscPartitioned() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
+                "select * from a where s = 'S1' order by ts desc limit 1 ",
+                "Limit lo: 1\n" +
+                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "        Index backward scan on: s deferred: true\n" +
+                        "          filter: s='S1'\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbolWithLimitLoOrderByTsDescNotPartitioned() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s = 'S1' order by ts desc limit 1 ",
+                "Limit lo: 1\n" +
+                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "        Index backward scan on: s deferred: true\n" +
+                        "          filter: s='S1'\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbolWithLimitLoOrderByTsDescPartitioned() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
+                "select * from a where s = 'S1' order by ts desc limit 1 ",
+                "Limit lo: 1\n" +
+                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "        Index backward scan on: s deferred: true\n" +
+                        "          filter: s='S1'\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbols01a() throws Exception {
+        //if query is ordered by symbol and there's only one partition to scan, there's no need to sort   
+        testSelectIndexedSymbol("");
+        testSelectIndexedSymbol("timestamp(ts)");
+        testSelectIndexedSymbolWithIntervalFilter("timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testSelectIndexedSymbols01b() throws Exception {
+        //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan 
+        assertMemoryLeak(() -> {
+            compile("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
+            compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+
+            String queryDesc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "S1");
+            bindVariableService.setStr("s2", "S2");
+
+            String expectedPlan = "Sort light lo: 5\n" +
+                    "  keys: [s#ORDER#]\n" +
+                    "    FilterOnValues symbolOrder: desc\n" +
+                    "        Cursor-order scan\n" +
+                    "            Index forward scan on: s deferred: true\n" +
+                    "              filter: s=:s1::string\n" +
+                    "            Index forward scan on: s deferred: true\n" +
+                    "              filter: s=:s2::string\n" +
+                    "        Interval forward scan on: a\n" +
+                    "          intervals: [static=[0,86399999999]\n";
+
+            assertPlan(queryDesc, expectedPlan.replace("#ORDER#", " desc"));
+            assertQuery("s\tts\n" +
+                    "S2\t1970-01-01T01:00:00.000003Z\n" +
+                    "S2\t1970-01-01T00:00:00.000000Z\n" +
+                    "S1\t1970-01-01T00:00:00.000001Z\n", queryDesc, null, true, true);
+
+            //order by asc
+            String queryAsc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
+            assertPlan(queryAsc, expectedPlan.replace("#ORDER#", ""));
+            assertQuery("s\tts\n" +
+                    "S1\t1970-01-01T00:00:00.000001Z\n" +
+                    "S2\t1970-01-01T01:00:00.000003Z\n" +
+                    "S2\t1970-01-01T00:00:00.000000Z\n", queryAsc, null, true, true);
+        });
+    }
+
+    @Test
+    public void testSelectIndexedSymbols01c() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1",
+                "Limit lo: 1\n" +
+                        "    FilterOnValues symbolOrder: desc\n" +
+                        "        Cursor-order scan\n" + //actual order is S2, S1
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              symbolFilter: s='S1'\n" +
+                        "              filter: length(s)=2\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              symbolFilter: s='S2'\n" +
+                        "              filter: length(s)=2\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
+    public void testSelectIndexedSymbols02() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s = $1 or s = $2 order by ts desc limit 1",
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: (s=$0::string or s=$1::string)\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
+    public void testSelectIndexedSymbols03() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: (s='S1' or s='S2')\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test // TODO: it would be better to get rid of unnecessary sort and limit factories
+    public void testSelectIndexedSymbols04() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
+                "Limit lo: 1\n" +
+                        "    Sort\n" +
+                        "      keys: [ts desc]\n" +
+                        "        Empty table\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbols05() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
                 "Sort light lo: 1\n" +
                         "  keys: [ts desc]\n" +
+                        "    FilterOnSubQuery\n" +
+                        "        Union All\n" +
+                        "            VirtualRecord\n" +
+                        "              functions: ['S1']\n" +
+                        "                long_sequence count: 1\n" +
+                        "            VirtualRecord\n" +
+                        "              functions: ['S2']\n" +
+                        "                long_sequence count: 1\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbols05a() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
+                "Sort light lo: 1\n" +
+                        "  keys: [ts desc]\n" +
+                        "    FilterOnSubQuery\n" +
+                        "      filter: length(s)=2\n" +
+                        "        Union All\n" +
+                        "            VirtualRecord\n" +
+                        "              functions: ['S1']\n" +
+                        "                long_sequence count: 1\n" +
+                        "            VirtualRecord\n" +
+                        "              functions: ['S2']\n" +
+                        "                long_sequence count: 1\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectIndexedSymbols06() throws Exception {
+        assertPlan("create table a ( s symbol index) ;",
+                "select * from a where s = 'S1' order by s asc limit 10",
+                "Limit lo: 10\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -4360,21 +4545,111 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectIndexedSymbols1() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in ('S1', 'S2') order by s desc limit 1",
-                "Sort light lo: 1\n" +
-                        "  keys: [s desc]\n" +
-                        "    FilterOnValues\n" +
-                        "        Cursor-order scan\n" +
-                        "            Index forward scan on: s deferred: true\n" +
-                        "              filter: s='S1'\n" +
-                        "            Index forward scan on: s deferred: true\n" +
-                        "              filter: s='S2'\n" +
+    public void testSelectIndexedSymbols06a() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day",
+                "select * from a where s = 'S1' order by s asc limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [s]\n" +
+                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "        Index forward scan on: s deferred: true\n" +
+                        "          filter: s='S1'\n" +
                         "        Frame forward scan on: a\n");
     }
 
-    @Test // TODO: having multiple cursors on the same level isn't very clear
+    @Test
+    public void testSelectIndexedSymbols07NonPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( s symbol index)");
+            String expectedPlan = "FilterOnExcludedValues symbolOrder: #ORDER#\n" +
+                    "  symbolFilter: s not in ['S1']\n" +
+                    "  filter: length(s)=2\n" +
+                    "    Cursor-order scan\n" +
+                    "    Frame forward scan on: a\n";
+            assertPlan("select * from a where s != 'S1' and length(s) = 2 order by s ",
+                    expectedPlan.replace("#ORDER#", "asc"));
+            assertPlan("select * from a where s != 'S1' and length(s) = 2 order by s desc",
+                    expectedPlan.replace("#ORDER#", "desc"));
+        });
+    }
+
+    @Test
+    public void testSelectIndexedSymbols07Partitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
+
+            String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
+            String expectedPlan = "FilterOnExcludedValues symbolOrder: #ORDER#\n" +
+                    "  symbolFilter: s not in ['S1']\n" +
+                    "  filter: length(s)=2\n" +
+                    "    Cursor-order scan\n" +
+                    "    Interval forward scan on: a\n" +
+                    "      intervals: [static=[1678838400000000,1678924799999999]\n";
+
+            assertPlan(query.replace("#ORDER#", "asc"),
+                    expectedPlan.replace("#ORDER#", "asc"));
+
+            assertPlan(query.replace("#ORDER#", "desc"),
+                    expectedPlan.replace("#ORDER#", "desc"));
+        });
+    }
+
+    @Test
+    public void testSelectIndexedSymbols08() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( s symbol index)");
+            compile("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
+
+            String query = "select * from a where s != 'a' order by s";
+            assertPlan(query,
+                    "FilterOnExcludedValues symbolOrder: asc\n" +
+                            "  symbolFilter: s not in ['a']\n" +
+                            "    Cursor-order scan\n" +
+                            "    Frame forward scan on: a\n");
+
+            assertQuery("s\n" +
+                    "\n" +//null
+                    "b\n" +
+                    "w\n", query, null, true, false);
+
+            query = "select * from a where s != 'a' order by s desc";
+            assertPlan(query,
+                    "FilterOnExcludedValues symbolOrder: desc\n" +
+                            "  symbolFilter: s not in ['a']\n" +
+                            "    Cursor-order scan\n" +
+                            "    Frame forward scan on: a\n");
+
+            assertQuery("s\n" +
+                    "w\n" +
+                    "b\n" +
+                    "\n"/*null*/, query, null, true, false);
+
+            query = "select * from a where s != null order by s desc";
+            assertPlan(query,
+                    "FilterOnExcludedValues symbolOrder: desc\n" +
+                            "  symbolFilter: s not in [null]\n" +
+                            "    Cursor-order scan\n" +
+                            "    Frame forward scan on: a\n");
+
+            assertQuery("s\n" +
+                    "w\n" +
+                    "b\n" +
+                    "a\n" +
+                    "a\n", query, null, true, false);
+        });
+    }
+
+    @Test
+    public void testSelectIndexedSymbols09() throws Exception {
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;",
+                "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc",
+                "SortedSymbolIndex\n" +
+                        "    Index forward scan on: s\n" +
+                        "      symbolOrder: asc\n" +
+                        "    Interval forward scan on: a\n" +
+                        "      intervals: [static=[0,99]\n");
+    }
+
+    @Test
     public void testSelectIndexedSymbols10() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in ('S1', 'S2') limit 1",
@@ -4388,7 +4663,13 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test // TODO: having multiple cursors on the same level isn't very clear
+    @Test
+    public void testSelectIndexedSymbols10WithOrder() throws Exception {
+        testSelectIndexedSymbols10WithOrder("");
+        testSelectIndexedSymbols10WithOrder("partition by hour");
+    }
+
+    @Test
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s symbol index, ts timestamp) timestamp(ts)");
@@ -4426,12 +4707,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 in ('S1')  order by ts desc",
-                    "Sort light\n" +
-                            "  keys: [ts desc]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: s1\n" +
-                            "          filter: s1=1\n" +
-                            "        Frame forward scan on: a\n");
+                    "DeferredSingleSymbolFilterDataFrame\n" +
+                            "    Index backward scan on: s1\n" +
+                            "      filter: s1=1\n" +
+                            "    Frame backward scan on: a\n");
         });
     }
 
@@ -4441,12 +4720,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 = 'S1'  order by ts desc",
-                    "Sort light\n" +
-                            "  keys: [ts desc]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: s1\n" +
-                            "          filter: s1=1\n" +
-                            "        Frame forward scan on: a\n");
+                    "DeferredSingleSymbolFilterDataFrame\n" +
+                            "    Index backward scan on: s1\n" +
+                            "      filter: s1=1\n" +
+                            "    Frame backward scan on: a\n");
         });
     }
 
@@ -4476,7 +4753,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "where s1 in ('S1', 'S2') " +
                             "and ts > 0::timestamp and ts < 9::timestamp  " +
                             "order by s1,ts desc",
-                    "FilterOnValues\n" +
+                    "FilterOnValues symbolOrder: asc\n" +
                             "    Cursor-order scan\n" +
                             "        Index backward scan on: s1\n" +
                             "          filter: s1=1\n" +
@@ -4509,140 +4786,31 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectIndexedSymbols1a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1",
-                "Sort light lo: 1\n" +
-                        "  keys: [s desc]\n" +
-                        "    FilterOnValues\n" +
-                        "        Cursor-order scan\n" +
-                        "            Index forward scan on: s deferred: true\n" +
-                        "              symbolFilter: s='S1'\n" +
-                        "              filter: length(s)=2\n" +
-                        "            Index forward scan on: s deferred: true\n" +
-                        "              symbolFilter: s='S2'\n" +
-                        "              filter: length(s)=2\n" +
-                        "        Frame forward scan on: a\n");
+    public void testSelectIndexedSymbols18() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
+            compile("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
+            String query = "select * from " +
+                    "(" +
+                    "  select * from a " +
+                    "  where s1 not in ('S1', 'S2') " +
+                    "  order by ts asc " +
+                    "  limit 5" +
+                    ") order by ts asc";
+            assertPlan(query,
+                    "Limit lo: 5\n" +
+                            "    FilterOnExcludedValues\n" +
+                            "      symbolFilter: s1 not in ['S1','S2']\n" +
+                            "        Table-order scan\n" +
+                            "        Frame forward scan on: a\n");
+
+            assertQuery("s1\tts\n" +
+                    "S5\t1970-01-01T00:20:00.000000Z\n" +
+                    "S4\t1970-01-01T00:40:00.000000Z\n" +
+                    "S3\t1970-01-01T01:00:00.000000Z\n", query, "ts", true, false);
+        });
     }
 
-    @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
-    public void testSelectIndexedSymbols2() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = $1 or s = $2 order by ts desc limit 1",
-                "Async JIT Filter\n" +
-                        "  limit: 1\n" +
-                        "  filter: (s=$0::string or s=$1::string)\n" +
-                        "  workers: 1\n" +
-                        "    DataFrame\n" +
-                        "        Row backward scan\n" +
-                        "        Frame backward scan on: a\n");
-    }
-
-    @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
-    public void testSelectIndexedSymbols3() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
-                "Async JIT Filter\n" +
-                        "  limit: 1\n" +
-                        "  filter: (s='S1' or s='S2')\n" +
-                        "  workers: 1\n" +
-                        "    DataFrame\n" +
-                        "        Row backward scan\n" +
-                        "        Frame backward scan on: a\n");
-    }
-
-    @Test // TODO: it would be better to get rid of unnecessary sort and limit factories
-    public void testSelectIndexedSymbols4() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
-                "Limit lo: 1\n" +
-                        "    Sort\n" +
-                        "      keys: [ts desc]\n" +
-                        "        Empty table\n");
-    }
-
-    @Test
-    public void testSelectIndexedSymbols5() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
-                "Sort light lo: 1\n" +
-                        "  keys: [ts desc]\n" +
-                        "    FilterOnSubQuery\n" +
-                        "        Union All\n" +
-                        "            VirtualRecord\n" +
-                        "              functions: ['S1']\n" +
-                        "                long_sequence count: 1\n" +
-                        "            VirtualRecord\n" +
-                        "              functions: ['S2']\n" +
-                        "                long_sequence count: 1\n" +
-                        "        Frame forward scan on: a\n");
-    }
-
-    @Test
-    public void testSelectIndexedSymbols5a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
-                "Sort light lo: 1\n" +
-                        "  keys: [ts desc]\n" +
-                        "    FilterOnSubQuery\n" +
-                        "      filter: length(s)=2\n" +
-                        "        Union All\n" +
-                        "            VirtualRecord\n" +
-                        "              functions: ['S1']\n" +
-                        "                long_sequence count: 1\n" +
-                        "            VirtualRecord\n" +
-                        "              functions: ['S2']\n" +
-                        "                long_sequence count: 1\n" +
-                        "        Frame forward scan on: a\n");
-    }
-
-    @Test // TODO: this one should scan index/data file backward and skip sorting
-    public void testSelectIndexedSymbols6() throws Exception {
-        assertPlan("create table a ( s symbol index) ;",
-                "select * from a where s = 'S1' order by s asc limit 10",
-                "Sort light lo: 10\n" +
-                        "  keys: [s]\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
-                        "        Index forward scan on: s deferred: true\n" +
-                        "          filter: s='S1'\n" +
-                        "        Frame forward scan on: a\n");
-    }
-
-    @Test
-    public void testSelectIndexedSymbols7() throws Exception {
-        assertPlan("create table a ( s symbol index) ;",
-                "select * from a where s != 'S1' and length(s) = 2 order by s ",
-                "Sort light\n" +
-                        "  keys: [s]\n" +
-                        "    FilterOnExcludedValues\n" +
-                        "      symbolFilter: s not in ['S1']\n" +
-                        "      filter: length(s)=2\n" +
-                        "        Cursor-order scan\n" +
-                        "        Frame forward scan on: a\n");
-    }
-
-    @Test
-    public void testSelectIndexedSymbols8() throws Exception {
-        assertPlan("create table a ( s symbol index) ;",
-                "select * from a where s != 'S1' order by s ",
-                "Sort light\n" +
-                        "  keys: [s]\n" +
-                        "    FilterOnExcludedValues\n" +
-                        "      symbolFilter: s not in ['S1']\n" +
-                        "        Cursor-order scan\n" +
-                        "        Frame forward scan on: a\n");
-    }
-
-    @Test
-    public void testSelectIndexedSymbols9() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;",
-                "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc",
-                "SortedSymbolIndex\n" +
-                        "    Index forward scan on: s\n" +
-                        "      symbolOrder: asc\n" +
-                        "    Interval forward scan on: a\n" +
-                        "      intervals: [static=[0,99]\n");
-    }
 
     @Test
     public void testSelectNoOrderByWithNegativeLimit() throws Exception {
@@ -6278,6 +6446,149 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             compile("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
             compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+        });
+    }
+
+    private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("drop table if exists a");
+            compile("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+            compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+
+            String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "S1");
+            bindVariableService.setStr("s2", "S2");
+
+            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution 
+            // actual order is S2, S1 
+            assertPlan(query,
+                    "Limit lo: 5\n" +
+                            "    FilterOnValues symbolOrder: desc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
+                            "        Frame forward scan on: a\n");
+
+            assertQuery("s\tts\n" +
+                    "S2\t1970-01-01T00:00:00.000000Z\n" +
+                    "S2\t1970-01-01T01:00:00.000003Z\n" +
+                    "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
+
+            //order by asc
+            query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
+
+            assertPlan(query,
+                    "Limit lo: 5\n" +
+                            "    FilterOnValues symbolOrder: asc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
+                            "        Frame forward scan on: a\n");
+
+            assertQuery("s\tts\n" +
+                    "S1\t1970-01-01T00:00:00.000001Z\n" +
+                    "S2\t1970-01-01T00:00:00.000000Z\n" +
+                    "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
+        });
+    }
+
+    private void testSelectIndexedSymbolWithIntervalFilter(String timestampAndPartitionByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("drop table if exists a");
+            compile("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+            compile("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+
+            String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "S1");
+            bindVariableService.setStr("s2", "S2");
+
+            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution 
+            // actual order is S2, S1 
+            assertPlan(query,
+                    "Limit lo: 5\n" +
+                            "    FilterOnValues symbolOrder: desc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
+                            "        Interval forward scan on: a\n" +
+                            "          intervals: [static=[0,86399999999]\n");
+
+            assertQuery("s\tts\n" +
+                    "S2\t1970-01-01T00:00:00.000000Z\n" +
+                    "S2\t1970-01-01T01:00:00.000003Z\n" +
+                    "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
+
+            //order by asc
+            query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
+
+            assertPlan(query,
+                    "Limit lo: 5\n" +
+                            "    FilterOnValues symbolOrder: asc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
+                            "        Interval forward scan on: a\n" +
+                            "          intervals: [static=[0,86399999999]\n");
+
+            assertQuery("s\tts\n" +
+                    "S1\t1970-01-01T00:00:00.000001Z\n" +
+                    "S2\t1970-01-01T00:00:00.000000Z\n" +
+                    "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
+        });
+    }
+
+    private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("drop table if exists a");
+            compile("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
+            compile("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("s1", "S1");
+            bindVariableService.setStr("s2", "S2");
+
+            String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
+            assertPlan(queryAsc,
+                    "Limit lo: 5\n" +
+                            "    FilterOnValues\n" +
+                            "        Table-order scan\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
+                            "        Frame forward scan on: a\n");
+            assertQuery("s\tts\n" +
+                    "S2\t1970-01-01T00:00:00.000001Z\n" +
+                    "S1\t1970-01-01T01:00:00.000003Z\n" +
+                    "S2\t1970-01-01T01:00:00.000004Z\n" +
+                    "S1\t1970-01-01T01:00:00.000005Z\n", queryAsc, "ts", true, false);
+
+            String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
+            assertPlan(queryDesc,
+                    "Sort light lo: 5\n" +
+                            "  keys: [ts desc]\n" +
+                            "    FilterOnValues symbolOrder: desc\n" +
+                            "        Cursor-order scan\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
+                            "        Frame backward scan on: a\n");
+            assertQuery("s\tts\n" +
+                    "S1\t1970-01-01T01:00:00.000005Z\n" +
+                    "S2\t1970-01-01T01:00:00.000004Z\n" +
+                    "S1\t1970-01-01T01:00:00.000003Z\n" +
+                    "S2\t1970-01-01T00:00:00.000001Z\n", queryDesc, "ts###DESC", true, true);
         });
     }
 }

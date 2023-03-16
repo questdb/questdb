@@ -78,8 +78,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return hasDescendingOrder(sortColumnFilter);
+    public int getScanDirection() {
+        return getScanDirection(sortColumnFilter);
     }
 
     @Override
@@ -99,16 +99,25 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
-    static boolean hasDescendingOrder(ListColumnFilter sortColumnFilter) {
-        assert sortColumnFilter.size() > 0;
+    private static int toOrder(int filter) {
+        if (filter >= 0) {
+            return SCAN_DIRECTION_FORWARD;
+        } else {
+            return SCAN_DIRECTION_BACKWARD;
+        }
+    }
 
-        for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
-            if (sortColumnFilter.get(i) >= 0) {
-                return false;
+    static int getScanDirection(ListColumnFilter sortColumnFilter) {
+        assert sortColumnFilter.size() > 0;
+        int order = toOrder(sortColumnFilter.get(0));
+
+        for (int i = 1, n = sortColumnFilter.size(); i < n; i++) {
+            if (order != toOrder(sortColumnFilter.get(i))) {
+                return SCAN_DIRECTION_OTHER;
             }
         }
 
-        return true;
+        return order;
     }
 
     @Override

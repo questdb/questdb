@@ -58,6 +58,11 @@ import java.io.Closeable;
  * }
  */
 public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
+
+    int SCAN_DIRECTION_BACKWARD = 2;
+    int SCAN_DIRECTION_FORWARD = 1;
+    int SCAN_DIRECTION_OTHER = 0;
+
     @Override
     default void close() {
     }
@@ -139,8 +144,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default boolean hasDescendingOrder() {
-        return false;
+    /**
+     * Returns the direction of scanning used in this factory:
+     * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
+     * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values
+     * where order is 'random'.
+     */
+    default int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
     }
 
     /* Returns true if this factory handles limit M , N clause already and false otherwise .

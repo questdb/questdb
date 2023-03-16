@@ -59,7 +59,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             @NotNull @Transient TableReader reader,
             @Nullable Function filter,
             int orderByMnemonic,
-            boolean followedOrderByAdvice,
+            boolean orderByKeyColumn,
+            boolean orderByTimestamp,
             int orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes
@@ -81,18 +82,27 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
                 addSymbolKey(SymbolTable.VALUE_NOT_FOUND, symbol, indexDirection);
             }
         }
-        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
+        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         } else {
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         }
         cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
-        this.followedOrderByAdvice = followedOrderByAdvice;
+        this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
     }
 
     @Override
     public boolean followedOrderByAdvice() {
         return followedOrderByAdvice;
+    }
+
+    @Override
+    public int getScanDirection() {
+        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC
+                && rowCursorFactory instanceof HeapRowCursorFactory) {
+            return SCAN_DIRECTION_FORWARD;
+        }
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -103,6 +113,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
+        if (rowCursorFactory instanceof SequentialRowCursorFactory) {//sorting symbols makes no sense for heap factory
+            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+        }
         sink.child(rowCursorFactory);
         sink.child(dataFrameCursorFactory);
     }
@@ -200,7 +213,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
         }
-        //sorting here can produce order of cursorFactories different from one shown by explain command       
+
+        // sort values to facilitate duplicate removal (even for heap row cursor)  
+        // sorting here can produce order of cursorFactories different from one shown by explain command       
         if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {

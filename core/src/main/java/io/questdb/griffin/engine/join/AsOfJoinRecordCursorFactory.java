@@ -100,8 +100,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
     }
 
     @Override
