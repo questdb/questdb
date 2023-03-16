@@ -51,7 +51,6 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
-    private final ObjList<VectorAggregateEntry> activeEntries;
     private final RecordCursorFactory base;
     private final GroupByNotKeyedVectorRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
@@ -67,7 +66,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     ) {
         super(metadata);
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
-        this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         this.base = base;
         this.vafList = new ObjList<>(vafList.size());
         this.vafList.addAll(vafList);
@@ -109,26 +107,37 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     static int getRunWhatsLeft(
+            Sequence subSeq,
+            RingQueue<VectorAggregateTask> queue,
             int queuedCount,
             int reclaimed,
             int workerId,
-            ObjList<VectorAggregateEntry> activeEntries,
             SOUnboundedCountDownLatch doneLatch,
             Log log,
             SqlExecutionCircuitBreaker circuitBreaker,
             AtomicBooleanCircuitBreaker sharedCB
     ) {
-        for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
+        while (!doneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
             }
-            if (activeEntries.getQuick(i).run(workerId)) {
+
+            long cursor = subSeq.next();
+            if (cursor > -1) {
+                VectorAggregateTask task = queue.get(cursor);
+                task.entry.run(workerId, subSeq, cursor);
                 reclaimed++;
             }
-        }
 
-        log.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
-        doneLatch.await(queuedCount);
+            if (cursor == -1) {
+                if (circuitBreaker.checkIfTripped()) {
+                    sharedCB.cancel();
+                }
+
+                log.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
+                doneLatch.await(queuedCount);
+            }
+        }
         return reclaimed;
     }
 
@@ -194,7 +203,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
             sharedCircuitBreaker.reset();
             entryPool.clear();
-            activeEntries.clear();
             int queuedCount = 0;
             int ownCount = 0;
             int reclaimed = 0;
@@ -240,8 +248,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         } else {
                             final VectorAggregateEntry entry = entryPool.next();
                             // null pRosti means that we do not need keyed aggregation
+                            queuedCount++;
                             entry.of(
-                                    queuedCount++,
                                     vaf,
                                     null,
                                     0,
@@ -253,7 +261,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                     null,
                                     sharedCircuitBreaker
                             );
-                            activeEntries.add(entry);
                             queue.get(seq).entry = entry;
                             pubSeq.done(seq);
                         }
@@ -276,10 +283,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
                 // start at the back to reduce chance of clashing
                 reclaimed = getRunWhatsLeft(
+                        bus.getVectorAggregateSubSeq(),
+                        queue,
                         queuedCount,
                         reclaimed,
                         workerId,
-                        activeEntries,
                         doneLatch,
                         LOG,
                         circuitBreaker,

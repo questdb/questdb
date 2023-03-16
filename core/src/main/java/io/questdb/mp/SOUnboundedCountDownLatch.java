@@ -57,6 +57,10 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
         }
     }
 
+    public boolean done(int count) {
+        return this.count <= -count;
+    }
+
     public int getCount() {
         return count;
     }

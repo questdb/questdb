@@ -26,11 +26,10 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.AbstractLockable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class O3CopyTask extends AbstractLockable {
+public class O3CopyTask {
     private int blockType;
     private AtomicInteger columnCounter;
     private int columnType;
