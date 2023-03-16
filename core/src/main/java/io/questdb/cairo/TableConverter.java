@@ -79,7 +79,8 @@ class TableConverter {
             try {
                 do {
                     sink.clear();
-                    assert Chars.utf8DecodeZ(ff.findName(pFind), sink);
+                    boolean b = Chars.utf8DecodeZ(ff.findName(pFind), sink);
+                    assert b;
                     if (Chars.startsWith(sink, WalUtils.WAL_NAME_BASE)) {
                         path.trimTo(rootLen).concat(dirName).concat(sink).$();
                         if (Chars.endsWith(sink, ".lock")) {
