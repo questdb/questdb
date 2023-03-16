@@ -26,7 +26,6 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.Os;
 
 public class O3CallbackTask {
     private int columnIndex;
