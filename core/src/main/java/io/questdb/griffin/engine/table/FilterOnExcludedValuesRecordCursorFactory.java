@@ -137,7 +137,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
-        sink.attr("symbolFilter").putColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
+        sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
         sink.child(cursor.getRowCursorFactory());
         sink.child(dataFrameCursorFactory);
