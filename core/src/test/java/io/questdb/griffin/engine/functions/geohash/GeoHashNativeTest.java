@@ -24,9 +24,14 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.BitmapIndexFwdReader;
+import io.questdb.cairo.BitmapIndexTest;
+import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.griffin.engine.table.LatestByArguments;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -46,6 +51,61 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                     Assert.assertEquals(j + K, list.get(j));
                 }
             }
+        }
+    }
+
+    @Test
+    public void testLatestByAndFilterPrefixShouldNotAccessUnmappedMemory() {
+        Path path = new Path().of(configuration.getRoot());
+
+        // allocate and map 1-page index
+        long pageSize = Files.PAGE_SIZE;
+        int N = (int) ((pageSize - 64) / 32);
+        int keyCount = N + 1; // +1 is important here
+
+        final DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
+        long argsAddress = LatestByArguments.allocateMemoryArray(1);
+
+        try {
+            BitmapIndexTest.create(configuration, path, "x", 64);
+
+            rows.setCapacity(keyCount);
+            GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+
+            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+            LatestByArguments.setKeyLo(argsAddress, 0);
+            LatestByArguments.setKeyHi(argsAddress, keyCount);
+            LatestByArguments.setRowsSize(argsAddress, 0);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < N; i++) {
+                    writer.add(i, i);
+                }
+            }
+
+            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
+                GeoHashNative.latestByAndFilterPrefix(
+                        indexReader.getKeyBaseAddress(),
+                        indexReader.getKeyMemorySize(),
+                        indexReader.getValueBaseAddress(),
+                        indexReader.getValueMemorySize(),
+                        argsAddress,
+                        indexReader.getUnIndexedNullCount(),
+                        255,
+                        0,
+                        0,
+                        indexReader.getValueBlockCapacity(),
+                        0,
+                        0,
+                        0,
+                        0
+                );
+            }
+        } finally {
+            rows.close();
+            path.close();
+            LatestByArguments.releaseMemoryArray(argsAddress, 1);
         }
     }
 
@@ -97,62 +157,5 @@ public class GeoHashNativeTest extends AbstractCairoTest {
             LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
         }
 
-    }
-
-    @Test
-    public void testLatestByAndFilterPrefixShouldNotAccessUnmappedMemory() {
-        Path path = new Path().of(configuration.getRoot());
-
-        // allocate and map 1-page index
-        long pageSize = Files.PAGE_SIZE;
-        int N = (int) ((pageSize - 64) / 32);
-        int keyCount = N + 1; // +1 is important here
-
-        final DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
-        long argsAddress = LatestByArguments.allocateMemoryArray(1);
-
-        try {
-            BitmapIndexTest.create(configuration, path, "x", 64);
-
-            rows.setCapacity(keyCount);
-            GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
-
-            final long klo = 0;
-            final long khi = keyCount;
-            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-            LatestByArguments.setKeyLo(argsAddress, klo);
-            LatestByArguments.setKeyHi(argsAddress, khi);
-            LatestByArguments.setRowsSize(argsAddress, 0);
-
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
-                for (int i = 0; i < N; i++) {
-                    writer.add(i, i);
-                }
-            }
-
-            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
-                GeoHashNative.latestByAndFilterPrefix(
-                        indexReader.getKeyBaseAddress(),
-                        indexReader.getKeyMemorySize(),
-                        indexReader.getValueBaseAddress(),
-                        indexReader.getValueMemorySize(),
-                        argsAddress,
-                        indexReader.getUnIndexedNullCount(),
-                        255,
-                        0,
-                        0,
-                        indexReader.getValueBlockCapacity(),
-                        0,
-                        0,
-                        0,
-                        0
-                );
-            }
-        } finally {
-            rows.close();
-            path.close();
-            LatestByArguments.releaseMemoryArray(argsAddress, 1);
-        }
     }
 }
