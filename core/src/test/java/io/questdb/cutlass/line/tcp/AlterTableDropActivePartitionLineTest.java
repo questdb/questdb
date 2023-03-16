@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -177,7 +176,12 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // check table reader size
                 long beforeDropSize;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
+                try (
+                        TableReader reader = engine.getReader(
+                                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                                token
+                        )
+                ) {
                     beforeDropSize = reader.size();
                     Assert.assertTrue(beforeDropSize > 0L);
                 }
@@ -197,7 +201,12 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 ilpAgentHalted.await();
 
                 // check size
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
+                try (
+                        TableReader reader = engine.getReader(
+                                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                                token
+                        )
+                ) {
                     Assert.assertTrue(beforeDropSize > reader.size());
                 }
 
@@ -233,7 +242,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
     private static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
         return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 null,
                 null,
                 -1,

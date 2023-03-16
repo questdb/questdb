@@ -71,7 +71,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public CairoSecurityContext getCairoSecurityContext() {
-        return null;
+        return engine.getConfiguration().getCairoSecurityContextFactory().getRootContext();
     }
 
     @Override

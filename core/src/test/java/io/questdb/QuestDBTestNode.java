@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -38,13 +37,13 @@ import io.questdb.test.tools.TestUtils;
 
 import java.io.IOException;
 
-public class QuestDBNode {
+public class QuestDBTestNode {
     private final int nodeId;
 
     private Cairo cairo;
     private Griffin griffin;
 
-    public QuestDBNode(int nodeId) {
+    public QuestDBTestNode(int nodeId) {
         this.nodeId = nodeId;
     }
 
@@ -207,11 +206,12 @@ public class QuestDBNode {
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(
-                            AllowAllCairoSecurityContext.INSTANCE,
+                            cairo.configuration.getCairoSecurityContextFactory().getInstance(null),
                             bindVariableService,
                             null,
                             -1,
-                            circuitBreaker);
+                            circuitBreaker
+                    );
             bindVariableService.clear();
         }
 

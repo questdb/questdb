@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -594,12 +593,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 File root = directories.pop();
                 File[] content = root.listFiles();
                 if (content == null || content.length == 0) {
-                    root.delete();
+                    Assert.assertTrue(root.delete());
                 } else {
                     for (File f : content) {
                         File target = f.getAbsoluteFile();
                         if (target.isFile()) {
-                            target.delete();
+                            Assert.assertTrue(target.delete());
                         } else if (target.isDirectory()) {
                             directories.offer(target);
                         }
@@ -615,7 +614,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private static SqlExecutionContext executionContext(CairoEngine engine) {
         return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
                 null,
                 null,
                 -1,

@@ -31,10 +31,10 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
 
-public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
+class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
     private TableToken tableToken;
 
-    public WalSqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
+    TableRenameSupportExecutionContext(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         super(cairoEngine, workerCount, sharedWorkerCount);
     }
 

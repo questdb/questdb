@@ -3653,12 +3653,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
                     compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
                     // we need to pass the engine here, so the global test context won't do
-                    compiler.compile("insert into x select * from y", AllowAllSqlSecurityContext.instance(engine));
+                    compiler.compile("insert into x select * from y", sqlExecutionContext);
 
                     TestUtils.assertSql(
                             compiler,
                             // we need to pass the engine here, so the global test context won't do
-                            AllowAllSqlSecurityContext.instance(engine),
+                            sqlExecutionContext,
                             "select * from x",
                             sink,
                             expected

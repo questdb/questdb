@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractMultiNodeTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
@@ -42,7 +41,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.wal.WalWriterTest.createTable;
 import static io.questdb.cairo.wal.WalWriterTest.removeColumn;
 import static org.junit.Assert.*;
 
@@ -859,7 +857,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
     }
 
     private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName))) {
+        try (TableReader reader = getReader(engine.getTableToken(tableName))) {
             assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
                     "maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n");
             reader.reload();
@@ -873,27 +871,13 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
         // tableName is WAL enabled
         try (TableModel model = createTableModel(tableName).wal()) {
             forEachNode(node ->
-                    tableToken.set(node.getEngine().createTable(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            model.getMem(),
-                            model.getPath(),
-                            false,
-                            model,
-                            false)
-                    )
+                    tableToken.set(CairoTestUtils.create(node.getEngine(), model))
             );
         }
 
         // tableCopyName is not WAL enabled
         try (TableModel model = createTableModel(tableCopyName).noWal()) {
-            engine.createTable(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    false,
-                    model,
-                    false
-            );
+            createTable(model);
         }
         return tableToken.get();
     }
@@ -940,7 +924,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(securityContext, tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 walName = walWriter.getWalName();
             }

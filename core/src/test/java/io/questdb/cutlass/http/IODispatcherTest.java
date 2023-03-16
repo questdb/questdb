@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
@@ -896,8 +895,7 @@ public class IODispatcherTest {
                             }
                         }),
                         cairoEngine,
-                        workerPool,
-                        metrics
+                        workerPool
                 )) {
 
             workerPool.start(LOG);
@@ -906,7 +904,12 @@ public class IODispatcherTest {
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
                 TableToken tableToken = cairoEngine.getTableToken("sample.csv");
-                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (
+                        TableReader reader = cairoEngine.getReader(
+                                cairoEngine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                                tableToken
+                        )
+                ) {
                     StringSink sink = new StringSink();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -969,8 +972,7 @@ public class IODispatcherTest {
                             }
                         }),
                         cairoEngine,
-                        workerPool,
-                        metrics
+                        workerPool
                 )) {
 
             workerPool.start(LOG);
@@ -979,7 +981,12 @@ public class IODispatcherTest {
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
                 TableToken tableToken = cairoEngine.getTableToken("sample.csv");
-                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (
+                        TableReader reader = cairoEngine.getReader(
+                                cairoEngine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                                tableToken
+                        )
+                ) {
                     StringSink sink = new StringSink();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -3461,7 +3468,7 @@ public class IODispatcherTest {
     public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
-            createTestTable(engine, 20);
+            createTestTable(engine);
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     "GET /query?query=y HTTP/1.1\r\n" +
@@ -7625,8 +7632,7 @@ public class IODispatcherTest {
     private static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
+            WorkerPool workerPool
     ) {
         return Services.createHttpServer(
                 configuration,
@@ -7635,18 +7641,18 @@ public class IODispatcherTest {
                 workerPool.getWorkerCount(),
                 null,
                 null,
-                metrics
+                IODispatcherTest.metrics
         );
     }
 
-    private static void createTestTable(CairoEngine engine, int n) {
+    private static void createTestTable(CairoEngine engine) {
         try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
             model.col("j", ColumnType.SYMBOL);
             CairoTestUtils.create(model, engine);
         }
 
         try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
-            for (int i = 0; i < n; i++) {
+            for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
                 row.append();

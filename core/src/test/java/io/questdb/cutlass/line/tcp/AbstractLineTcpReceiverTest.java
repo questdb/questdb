@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -189,7 +188,13 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
             TableToken tt = engine.getTableTokenIfExists(tableName);
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt));
+            assertEquals(
+                    TableUtils.TABLE_EXISTS,
+                    engine.getStatus(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                            path,
+                            tt
+                    )
+            );
         }
     }
 

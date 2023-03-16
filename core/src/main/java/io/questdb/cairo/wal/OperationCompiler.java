@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -41,13 +40,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class OperationCompiler implements Closeable {
+class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
     private final Rnd rnd;
     private final SqlCompiler sqlCompiler;
-    private final WalSqlExecutionContextImpl sqlExecutionContext;
+    private final TableRenameSupportExecutionContext renameSupportExecutionContext;
 
-    public OperationCompiler(
+    OperationCompiler(
             CairoEngine engine,
             int workerCount,
             int sharedWorkerCount,
@@ -55,13 +54,13 @@ public class OperationCompiler implements Closeable {
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new WalSqlExecutionContextImpl(
+        renameSupportExecutionContext = new TableRenameSupportExecutionContext(
                 engine,
                 workerCount,
                 sharedWorkerCount
         );
-        sqlExecutionContext.with(
-                AllowAllCairoSecurityContext.INSTANCE,
+        renameSupportExecutionContext.with(
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 bindVariableService,
                 rnd,
                 -1,
@@ -73,22 +72,22 @@ public class OperationCompiler implements Closeable {
     @Override
     public void close() {
         Misc.free(sqlCompiler);
-        Misc.free(sqlExecutionContext);
+        Misc.free(renameSupportExecutionContext);
     }
 
     public AlterOperation compileAlterSql(CharSequence alterSql, TableToken tableToken) throws SqlException {
-        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
-        final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, sqlExecutionContext);
+        renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
+        final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, renameSupportExecutionContext);
         final AlterOperation alterOp = compiledQuery.getAlterOperation();
-        alterOp.withContext(sqlExecutionContext);
+        alterOp.withContext(renameSupportExecutionContext);
         return alterOp;
     }
 
     public UpdateOperation compileUpdateSql(CharSequence updateSql, TableToken tableToken) throws SqlException {
-        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
-        final CompiledQuery compiledQuery = sqlCompiler.compile(updateSql, sqlExecutionContext);
+        renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
+        final CompiledQuery compiledQuery = sqlCompiler.compile(updateSql, renameSupportExecutionContext);
         final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-        updateOperation.withContext(sqlExecutionContext);
+        updateOperation.withContext(renameSupportExecutionContext);
         return updateOperation;
     }
 
@@ -101,6 +100,6 @@ public class OperationCompiler implements Closeable {
     }
 
     public void setNowAndFixClock(long now) {
-        sqlExecutionContext.setNowAndFixClock(now);
+        renameSupportExecutionContext.setNowAndFixClock(now);
     }
 }

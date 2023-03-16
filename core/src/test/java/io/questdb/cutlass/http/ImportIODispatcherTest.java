@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.CompiledQuery;
@@ -557,7 +556,7 @@ public class ImportIODispatcherTest {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
-                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt) == TableUtils.TABLE_RESERVED) {
+                                if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tt) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -860,7 +859,7 @@ public class ImportIODispatcherTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
+                        sqlExecutionContext.getCairoSecurityContext(),
                         bindVariableService,
                         null,
                         -1,

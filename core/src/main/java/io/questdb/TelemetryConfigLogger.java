@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -110,7 +109,11 @@ public class TelemetryConfigLogger implements Closeable {
             SqlExecutionContextImpl sqlExecutionContext,
             TableToken tableToken
     ) throws SqlException {
-        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetryConfig");
+        final TableWriter configWriter = compiler.getEngine().getWriter(
+                sqlExecutionContext.getCairoSecurityContext(),
+                tableToken,
+                "telemetryConfig"
+        );
         final CompiledQuery cc = compiler.compile(TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sqlExecutionContext);
         try (
                 final RecordCursorFactory factory = cc.getRecordCursorFactory();

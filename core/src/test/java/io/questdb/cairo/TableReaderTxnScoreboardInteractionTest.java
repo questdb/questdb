@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -36,7 +35,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
 
             TableToken tt = createTable();
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+            try (TableReader reader = getReader(tt)) {
                 TxnScoreboard txnScoreboard = reader.getTxnScoreboard();
                 // when table is empty the "min" is set to max long
                 Assert.assertEquals(0, txnScoreboard.getMin());
@@ -46,7 +45,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
             try (TableWriter w = getWriter(tt)) {
                 addRow(w);
                 final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+                try (TableReader reader = getReader(tt)) {
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
@@ -58,18 +57,18 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
                 }
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+                try (TableReader reader = getReader(tt)) {
                     Assert.assertEquals(2, reader.getTxn());
                     Assert.assertEquals(2, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(2));
 
-                    try (TableReader reader2 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+                    try (TableReader reader2 = getReader(tt)) {
                         Assert.assertEquals(2, reader2.getTxn());
                         Assert.assertEquals(2, txnScoreboard.getMin());
                         Assert.assertEquals(2, txnScoreboard.getActiveReaderCount(2));
 
                         addRow(w);
-                        try (TableReader reader3 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+                        try (TableReader reader3 = getReader(tt)) {
                             Assert.assertEquals(3, reader3.getTxn());
                             Assert.assertEquals(2, txnScoreboard.getMin());
                             Assert.assertEquals(2, txnScoreboard.getActiveReaderCount(2));
@@ -87,7 +86,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
 
                 w.addColumn("z", ColumnType.LONG);
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+                try (TableReader reader = getReader(tt)) {
                     Assert.assertEquals(4, reader.getTxn());
                     Assert.assertEquals(4, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(4));
@@ -97,7 +96,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 Assert.assertEquals(4, txnScoreboard.getMin());
                 Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(4));
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
+                try (TableReader reader = getReader(tt)) {
                     Assert.assertEquals(4, reader.getTxn());
                     Assert.assertEquals(4, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(4));

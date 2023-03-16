@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -532,7 +533,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine));
                             cursor.hasNext();
                         }
                         Assert.fail();
@@ -1768,8 +1769,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "x as lat,\n" +
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
-                        "), index(s) timestamp(k) partition by DAY",
-                false);
+                        "), index(s) timestamp(k) partition by DAY"
+        );
     }
 
     @Test
@@ -1951,8 +1952,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence(172800000000, 1000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
-                        "), index(s capacity 10) timestamp(k) partition by DAY",
-                false);
+                        "), index(s capacity 10) timestamp(k) partition by DAY"
+        );
     }
 
     @Test
@@ -1975,8 +1976,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence(172800000000, 1000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
-                        "), index(s capacity 10) timestamp(k) partition by DAY",
-                false);
+                        "), index(s capacity 10) timestamp(k) partition by DAY"
+        );
     }
 
     @Test
@@ -4391,7 +4392,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     try {
                         try (
                                 RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
-                                RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine))
+                                RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine))
                         ) {
                             // with mmap count = 5 we should get failure in cursor
                             // noinspection StatementWithEmptyBody
@@ -10038,10 +10039,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
-        assertSampleByIndexQuery(expected, query, insert, false);
-    }
-
-    private void assertSampleByIndexQuery(String expected, String query, String insert, boolean expectSize) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
 
@@ -10051,7 +10048,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 "k",
                 false,
                 false,
-                expectSize);
+                false
+        );
 
         assertQuery(expected,
                 query,
@@ -10059,7 +10057,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 "k",
                 false,
                 false,
-                expectSize);
+                false
+        );
     }
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {

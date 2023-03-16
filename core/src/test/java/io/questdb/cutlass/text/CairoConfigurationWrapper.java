@@ -28,6 +28,7 @@ import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
@@ -84,11 +85,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LagCalculationWindowsSize() {
-        return conf.getO3LagCalculationWindowsSize();
-    }
-
-    @Override
     public CharSequence getBackupTempDirName() {
         return conf.getBackupTempDirName();
     }
@@ -106,6 +102,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return conf.getBuildInformation();
+    }
+
+    @Override
+    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+        return conf.getCairoSecurityContextFactory();
     }
 
     @Override
@@ -356,6 +357,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return conf.getO3CopyQueueCapacity();
+    }
+
+    @Override
+    public int getO3LagCalculationWindowsSize() {
+        return conf.getO3LagCalculationWindowsSize();
     }
 
     @Override

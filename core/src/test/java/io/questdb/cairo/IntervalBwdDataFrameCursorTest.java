@@ -24,8 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
@@ -356,7 +357,11 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             GenericRecordMetadata metadata;
             final int timestampIndex;
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+
+            final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
+            final CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+
+            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
@@ -369,7 +374,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                             new RuntimeIntervalModel(intervals),
                             timestampIndex,
                             metadata);
-                    final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC)
+                    final DataFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
             ) {
 
                 // assert that there is nothing to start with
@@ -411,12 +416,12 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.reload());
                 }
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
+                try (TableWriter writer = engine.getWriter(securityContext, tableToken, "testing")) {
                     writer.removeColumn("b");
                 }
 
                 try {
-                    factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC);
+                    factory.getCursor(executionContext, ORDER_DESC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }

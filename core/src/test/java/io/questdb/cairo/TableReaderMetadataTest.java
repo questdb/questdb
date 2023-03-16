@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -77,7 +76,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         TableToken tableToken = engine.getTableToken("all");
 
         Thread writerThread = new Thread(() -> {
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+            try (TableWriter writer = engine.getWriter(securityContext, tableToken, "test")) {
                 start.await();
                 for (int i = 0; i < totalColAddCount; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);
@@ -92,7 +91,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         });
 
         Thread readerThread = new Thread(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
                 start.await();
                 int colAdded = -1, newColsAdded;
                 while (colAdded < totalColAddCount) {
@@ -397,7 +396,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, engine.getTableToken("all"));
+            engine.drop(securityContext, path, engine.getTableToken("all"));
         }
         CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
 

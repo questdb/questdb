@@ -26,7 +26,9 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -88,6 +90,10 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
                 tud.close();
             }
         }
+    }
+
+    protected CairoSecurityContext getSecurityContext() {
+        return AllowAllCairoSecurityContext.INSTANCE;
     }
 
     @Override
@@ -259,7 +265,7 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, this, parser)) {
+                            if (scheduler.scheduleEvent(getSecurityContext(), netIoJob, this, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();

@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -92,7 +91,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final ObjList<PartitionInfo> partitions;
     private final Sequence pubSeq;
     private final RingQueue<TextImportTask> queue;
-    private final CairoSecurityContext securityContext;
     private final TableStructureAdapter targetTableStructure;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
@@ -163,8 +161,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.pubSeq = bus.getTextImportPubSeq();
         this.collectSeq = bus.getTextImportColSeq();
         this.localImportJob = new TextImportJob(bus);
-
-        this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.configuration = cairoEngine.getConfiguration();
 
         this.ff = configuration.getFilesFacade();
@@ -375,7 +371,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         );
     }
 
-    public void process() throws TextImportException {
+    public void process(CairoSecurityContext securityContext) throws TextImportException {
         final long startMs = getCurrentTimeMs();
 
         int fd = -1;
@@ -394,7 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     throw TextImportException.instance(TextImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
                 }
 
-                try (TableWriter writer = parseStructure(fd)) {
+                try (TableWriter writer = parseStructure(securityContext, fd)) {
                     phaseBoundaryCheck(length);
                     phaseIndexing();
                     phasePartitionImport();
@@ -410,7 +406,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                     updateImportStatus(TextImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
-                    cleanUp();
+                    cleanUp(securityContext);
                     throw t;
                 } finally {
                     if (createdWorkDir) {
@@ -491,7 +487,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    private void cleanUp() {
+    private void cleanUp(CairoSecurityContext securityContext) {
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
         }
@@ -1176,7 +1172,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return taskIds;
     }
 
-    TableWriter parseStructure(int fd) throws TextImportException {
+    TableWriter parseStructure(CairoSecurityContext securityContext, int fd) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 

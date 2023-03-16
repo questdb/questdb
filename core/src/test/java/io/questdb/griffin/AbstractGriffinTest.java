@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.QuestDBNode;
+import io.questdb.QuestDBTestNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -272,7 +272,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @AfterClass
     public static void tearDownStatic() {
         AbstractCairoTest.tearDownStatic();
-        forEachNode(QuestDBNode::closeGriffin);
+        forEachNode(QuestDBTestNode::closeGriffin);
         circuitBreaker = null;
     }
 
@@ -280,7 +280,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        forEachNode(QuestDBNode::setUpGriffin);
+        forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
     }
 
@@ -288,7 +288,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @After
     public void tearDown() {
         super.tearDown();
-        forEachNode(QuestDBNode::tearDownGriffin);
+        forEachNode(QuestDBTestNode::tearDownGriffin);
     }
 
     private static void assertQueryNoVerify(
@@ -1584,7 +1584,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void executeOperation(
-            QuestDBNode node,
+            QuestDBTestNode node,
             String query,
             int opType
     ) throws SqlException {

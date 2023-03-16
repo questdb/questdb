@@ -61,7 +61,12 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private boolean authenticated;
     private PublicKey pubKey;
 
-    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+    LineTcpAuthConnectionContext(
+            LineTcpReceiverConfiguration configuration,
+            AuthDb authDb,
+            LineTcpMeasurementScheduler scheduler,
+            Metrics metrics
+    ) {
         super(configuration, scheduler, metrics);
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);

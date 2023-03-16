@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -403,8 +402,8 @@ public class TableUpdateDetails implements Closeable {
             latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex, CairoSecurityContext securityContext) {
+            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and
@@ -646,18 +645,18 @@ public class TableUpdateDetails implements Closeable {
             return ANY_TABLE_VERSION;
         }
 
-        DirectByteSymbolLookup getSymbolLookup(int columnIndex) {
+        DirectByteSymbolLookup getSymbolLookup(int columnIndex, CairoSecurityContext securityContext) {
             if (columnIndex > -1) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);
                 if (symCache != null) {
                     return symCache;
                 }
-                return addSymbolCache(columnIndex);
+                return addSymbolCache(columnIndex, securityContext);
             }
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetStateIfNecessary() {
+        void resetStateIfNecessary(CairoSecurityContext securityContext) {
             // First, reset processed column tracking.
             clearProcessedColumns();
             // Second, check if writer's structure version has changed
@@ -672,7 +671,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+                    latestKnownMetadata = engine.getMetadata(securityContext, tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
                         setWriterInError();

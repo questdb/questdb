@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -245,7 +244,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.await(barrier);
                 int i = 0;
                 while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                    try (TableWriter writer = getWriter(tableToken)) {
                         TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
                         row.append();
                         writer.commit();
@@ -271,7 +270,7 @@ public class TableWriterTest extends AbstractCairoTest {
                                 .ofAddColumn(0, tableToken, tableId)
                                 .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableToken, alterOp)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(securityContext, tableToken, alterOp)) {
                             if (writer != null) {
                                 writer.publishAsyncWriterCommand(alterOp);
                             }
@@ -298,7 +297,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             Assert.assertTrue(insertCount.get() > 0);
 
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (TableReader rdr = getReader(tableToken)) {
                 Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
             }
 
@@ -860,7 +859,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                 // add 48 hours
                 ts = populateProducts(writer, rnd, ts, N / 2, increment);
-                TableWriter.Row r = writer.newRow(ts += increment);
+                TableWriter.Row r = writer.newRow(ts + increment);
                 r.putInt(0, rnd.nextPositiveInt());
                 r.putStr(1, rnd.nextString(7));
                 r.putSym(2, rnd.nextString(4));
@@ -1820,7 +1819,7 @@ public class TableWriterTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
         long increment = 2_000_000;
-        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test reason")) {
+        try (TableWriter w = getWriter(tableToken)) {
             testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
             w.commit();
 
@@ -1843,7 +1842,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(1, w.getPartitionCount());
 
             // ensure indexes can be read
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (TableReader reader = getReader(tableToken)) {
                 final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
@@ -2918,7 +2917,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                     final Rnd rnd = new Rnd();
                     final ObjList<String> timestampsReported = new ObjList<>();
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                    try (TableWriter w = getWriter(tableToken)) {
                         w.setExtensionListener(
                                 timestamp -> timestampsReported.add(Timestamps.toString(timestamp))
                         );
@@ -4157,7 +4156,7 @@ public class TableWriterTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
             long increment = 2_000_000;
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test reason")) {
+            try (TableWriter w = getWriter(tableToken)) {
                 testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
                 w.commit();
 
@@ -4195,7 +4194,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(1, w.getPartitionCount());
 
                 // ensure indexes can be read
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (TableReader reader = getReader(tableToken)) {
                     final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
                     assertIndex(reader, record, 0);
                     assertIndex(reader, record, 1);
@@ -4219,7 +4218,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(1, w.getPartitionCount());
 
                 // ensure indexes can be read
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (TableReader reader = getReader(tableToken)) {
                     final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
                     assertIndex(reader, record, 0);
                     assertIndex(reader, record, 1);

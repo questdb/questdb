@@ -25,7 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -86,6 +87,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoPageFrameReduceTaskPoolCapacity;
+    private final CairoSecurityContextFactory cairoSecurityContextFactory = new AllowAllSecurityContextFactory();
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -1509,11 +1511,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3LagCalculationWindowsSize() {
-            return o3LagCalculationWindowsSize;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1566,6 +1563,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public BuildInformation getBuildInformation() {
             return buildInformation;
+        }
+
+        @Override
+        public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+            return cairoSecurityContextFactory;
         }
 
         @Override
@@ -1806,6 +1808,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3CopyQueueCapacity() {
             return o3CopyQueueCapacity;
+        }
+
+        @Override
+        public int getO3LagCalculationWindowsSize() {
+            return o3LagCalculationWindowsSize;
         }
 
         @Override
@@ -2833,11 +2840,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
-        }
-
-        @Override
         public long getCommitInterval() {
             return LineTcpReceiverConfigurationHelper.calcCommitInterval(
                     cairoConfiguration.getO3MinLag(),
@@ -3109,11 +3111,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindIPv4Address() {
             return lineUdpBindIPV4Address;
-        }
-
-        @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
         }
 
         @Override

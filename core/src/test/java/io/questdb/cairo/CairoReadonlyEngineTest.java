@@ -108,7 +108,8 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                     roEngine.drop(
                             AllowAllCairoSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
-                            token);
+                            token
+                    );
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertEquals("instance is read only", e.getFlyweightMessage());

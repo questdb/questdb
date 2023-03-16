@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
@@ -90,7 +91,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(w.getTableToken(), TableUtils.ANY_TABLE_ID, 0, GenericRecordMetadata.deepCopyOf(w.getMetadata()))) {
                     final TableReaderRecord record = new TableReaderRecord();
 
-                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC)) {
+                    try (final DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {
                         printCursor(record, cursor);
 
                         TestUtils.assertEquals(expected, sink);
@@ -115,14 +116,13 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     w.removeColumn("a");
 
                     try {
-                        factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC);
+                        factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC);
                         Assert.fail();
                     } catch (TableReferenceOutOfDateException ignored) {
                     }
                 }
             }
         });
-
     }
 
     private void printCursor(TableReaderRecord record, DataFrameCursor cursor) {

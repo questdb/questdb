@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -3085,17 +3084,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         try (TableModel model = defaultModel("testTable", true)) {
             return createTable(model);
         }
-    }
-
-    static TableToken createTable(TableModel model) {
-        return engine.createTable(
-                AllowAllCairoSecurityContext.INSTANCE,
-                model.getMem(),
-                model.getPath(),
-                false,
-                model,
-                false
-        );
     }
 
     static void prepareBinPayload(long pointer, int limit) {

@@ -203,7 +203,14 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
             tm.col("ask", ColumnType.DOUBLE);
             tm.timestamp("ts");
             tm.wal();
-            token = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, tm.getMem(), Path.PATH.get(), false, tm, false);
+            token = engine.createTable(
+                    securityContext,
+                    tm.getMem(),
+                    Path.PATH.get(),
+                    false,
+                    tm,
+                    false
+            );
             Assert.assertTrue(engine.isWalTable(token));
         }
         return token;

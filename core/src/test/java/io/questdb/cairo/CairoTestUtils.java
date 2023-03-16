@@ -25,10 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 public class CairoTestUtils {
@@ -57,7 +55,14 @@ public class CairoTestUtils {
     }
 
     public static TableToken create(CairoEngine engine, TableModel model) {
-        return engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), Path.PATH.get(), false, model, false);
+        return engine.createTable(
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                model.getMem(),
+                model.getPath(),
+                false,
+                model,
+                false
+        );
     }
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {

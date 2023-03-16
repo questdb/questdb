@@ -26,12 +26,13 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -189,7 +190,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             } else {
                 try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
                     final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-                    sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+                    sqlExecutionContext.with(securityContext, null, null);
                     final String sql = tableName + " where timestamp > " + timestampMark;
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -330,7 +331,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
         try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+            sqlExecutionContext.with(securityContext, null, null);
             final String sql = tableName + " where timestamp > " + timestampMark;
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

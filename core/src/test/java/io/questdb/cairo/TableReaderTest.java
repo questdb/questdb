@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -1446,7 +1445,7 @@ public class TableReaderTest extends AbstractCairoTest {
             TableToken tableToken = createTable(tableName, PartitionBy.DAY);
 
             Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                try (TableWriter writer = getWriter(tableToken)) {
                     start.await();
                     for (int i = 0; i < totalColAddCount; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
@@ -1466,7 +1465,7 @@ public class TableReaderTest extends AbstractCairoTest {
             });
 
             Thread readerThread = new Thread(() -> {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (TableReader reader = getReader(tableToken)) {
                     start.await();
                     int colAdded = 0, newColsAdded;
                     while (colAdded < totalColAddCount) {
@@ -1515,7 +1514,7 @@ public class TableReaderTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                try (TableWriter writer = getWriter(tableToken)) {
                     start.await();
                     for (int i = 0; i < totalColAddCount; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
@@ -1543,7 +1542,7 @@ public class TableReaderTest extends AbstractCairoTest {
             });
 
             Thread readerThread = new Thread(() -> {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (TableReader reader = getReader(tableToken)) {
                     start.await();
                     int colAdded = -1;
                     while (colAdded < totalColAddCount) {
@@ -1591,7 +1590,7 @@ public class TableReaderTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                try (TableWriter writer = getWriter(tableToken)) {
                     start.await();
                     for (int i = 0; i < totalColAddCount; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
@@ -1624,7 +1623,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     int colAdded = -1, newColsAdded;
                     while (colAdded < totalColAddCount) {
                         if (colAdded < (newColsAdded = columnsAdded.get())) {
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                            try (TableReader reader = getReader(tableToken)) {
                                 Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
                                 colAdded = newColsAdded;
                                 reloadCount.incrementAndGet();
@@ -1894,9 +1893,9 @@ public class TableReaderTest extends AbstractCairoTest {
         TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (TableReader reader = getReader(tableToken)) {
                 int partitionsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                try (TableWriter writer = getWriter(tableToken)) {
                     int symbolsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                     for (int i = 0; i < symbolsToAdd; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
@@ -1933,8 +1932,8 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                 };
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                try (TableReader reader = getReader(tableToken)) {
+                    try (TableWriter writer = getWriter(tableToken)) {
                         writer.addColumn("col10", ColumnType.SYMBOL);
                     }
                     engine.releaseAllWriters();
@@ -1988,8 +1987,8 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                 };
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+                try (TableReader reader = getReader(tableToken)) {
+                    try (TableWriter writer = getWriter(tableToken)) {
                         writer.addColumn("col10", ColumnType.SYMBOL);
                     }
                     engine.releaseAllWriters();
@@ -2012,8 +2011,8 @@ public class TableReaderTest extends AbstractCairoTest {
         spinLockTimeout = 10;
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+            try (TableReader reader = getReader(tableToken)) {
+                try (TableWriter writer = getWriter(tableToken)) {
                     writer.addColumn("col10", ColumnType.SYMBOL);
                 }
                 try (
@@ -2039,7 +2038,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             engine.releaseAllReaders();
-            try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (TableReader ignored = getReader(tableToken)) {
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
@@ -2416,7 +2415,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 int rowCount = 10;
                 try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
-                    try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                    try (TableReader ignore = getReader(tableToken)) {
                         for (int i = 0; i < rowCount; i++) {
                             TableWriter.Row row = writer.newRow();
                             row.putLong(0, i);
@@ -2426,7 +2425,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                 }
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                try (TableReader reader = getReader(tableToken)) {
                     Assert.assertEquals(rowCount, reader.size());
                 }
             }

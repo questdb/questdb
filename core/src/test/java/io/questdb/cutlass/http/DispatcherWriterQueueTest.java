@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -72,7 +71,7 @@ public class DispatcherWriterQueueTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         sqlExecutionContext.with(
-                AllowAllCairoSecurityContext.INSTANCE,
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 bindVariableService,
                 null,
                 -1,
@@ -424,8 +423,10 @@ public class DispatcherWriterQueueTest {
     }
 
     private TableReader getReader(CairoEngine engine, String tableName) {
-        TableToken tt = engine.getTableToken(tableName);
-        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt);
+        return engine.getReader(
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                engine.getTableToken(tableName)
+        );
     }
 
     private TableWriter getWriter(CairoEngine engine, String tableName) {

@@ -96,7 +96,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Before
     public void setUp() {
-        configOverrideO3ColumnMemorySize(512 * 1024);
+        configOverrideO3ColumnMemorySize();
         super.setUp();
     }
 

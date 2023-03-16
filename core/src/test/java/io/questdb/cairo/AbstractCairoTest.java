@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.QuestDBNode;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.QuestDBTestNode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -62,8 +61,6 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCairoTest {
-
-
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -95,13 +92,14 @@ public abstract class AbstractCairoTest {
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
-    protected static QuestDBNode node1;
-    protected static ObjList<QuestDBNode> nodes = new ObjList<>();
+    protected static QuestDBTestNode node1;
+    protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int queryCacheEventQueueCapacity = -1;
     protected static CharSequence root;
+    protected static CairoSecurityContext securityContext;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
@@ -196,6 +194,7 @@ public abstract class AbstractCairoTest {
         node1 = newNode(1, "dbRoot", new StaticOverrides());
         root = node1.getRoot();
         configuration = node1.getConfiguration();
+        securityContext = configuration.getCairoSecurityContextFactory().getInstance(null);
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();
@@ -212,7 +211,7 @@ public abstract class AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        forEachNode(QuestDBNode::closeCairo);
+        forEachNode(QuestDBTestNode::closeCairo);
         nodes.clear();
         backupDir = null;
         backupDirTimestampFormat = null;
@@ -223,7 +222,7 @@ public abstract class AbstractCairoTest {
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        forEachNode(QuestDBNode::setUpCairo);
+        forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
@@ -322,17 +321,16 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
     }
 
+    protected static void configOverrideO3ColumnMemorySize() {
+        node1.getConfigurationOverrides().setO3ColumnMemorySize(524288);
+    }
+
+    protected static void configOverrideO3MaxLag() {
+        node1.getConfigurationOverrides().setO3MaxLag(28291);
+    }
+
     protected static void configOverrideO3MinLag(long minLag) {
         node1.getConfigurationOverrides().setO3MinLag(minLag);
-    }
-
-
-    protected static void configOverrideO3ColumnMemorySize(int size) {
-        node1.getConfigurationOverrides().setO3ColumnMemorySize(size);
-    }
-
-    protected static void configOverrideO3MaxLag(int o3MaxLag) {
-        node1.getConfigurationOverrides().setO3MaxLag(o3MaxLag);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -381,7 +379,7 @@ public abstract class AbstractCairoTest {
         backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
     }
 
-    protected static ApplyWal2TableJob createWalApplyJob(QuestDBNode node) {
+    protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
         return new ApplyWal2TableJob(node.getEngine(), 1, 1, null);
     }
 
@@ -389,7 +387,7 @@ public abstract class AbstractCairoTest {
         return new ApplyWal2TableJob(engine, 1, 1, null);
     }
 
-    protected static void drainWalQueue(QuestDBNode node) {
+    protected static void drainWalQueue(QuestDBTestNode node) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(node)) {
             drainWalQueue(walApplyJob, node.getEngine());
         }
@@ -425,40 +423,63 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
-        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+        return engine.getReader(
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getTableToken(tableName)
+        );
     }
 
     protected static TableReader getReader(CharSequence tableName) {
-        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+        return engine.getReader(
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getTableToken(tableName)
+        );
+    }
+
+    protected static TableReader getReader(TableToken tt) {
+        return engine.getReader(securityContext, tt);
     }
 
     protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
-        return engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "test");
+        return engine.getTableWriterAPI(
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getTableToken(tableName),
+                "test"
+        );
     }
 
     @NotNull
     protected static WalWriter getWalWriter(CharSequence tableName) {
-        return engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+        return engine.getWalWriter(
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getTableToken(tableName)
+        );
     }
 
     protected static TableWriter getWriter(CharSequence tableName) {
-        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+        return engine.getWriter(
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getTableToken(tableName), "testing"
+        );
     }
 
     protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
-        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+        return engine.getWriter(
+                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getTableToken(tableName), "testing"
+        );
     }
 
     protected static TableWriter getWriter(TableToken tt) {
-        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt, "testing");
+        return engine.getWriter(securityContext, tt, "testing");
     }
 
-    protected static QuestDBNode newNode(int nodeId) {
+    protected static QuestDBTestNode newNode(int nodeId) {
         return newNode(nodeId, "dbRoot" + nodeId, new Overrides());
     }
 
-    protected static QuestDBNode newNode(int nodeId, String dbRoot, ConfigurationOverrides overrides) {
-        final QuestDBNode node = new QuestDBNode(nodeId);
+    protected static QuestDBTestNode newNode(int nodeId, String dbRoot, ConfigurationOverrides overrides) {
+        final QuestDBTestNode node = new QuestDBTestNode(nodeId);
         node.initCairo(dbRoot, overrides);
         nodes.add(node);
         return node;
@@ -480,7 +501,7 @@ public abstract class AbstractCairoTest {
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
 
-    protected static void replicate(String tableName, String wal, QuestDBNode srcNode, QuestDBNode dstNode) {
+    protected static void replicate(String tableName, String wal, QuestDBTestNode srcNode, QuestDBTestNode dstNode) {
         TableToken srcTableToken = srcNode.getEngine().getTableToken(tableName);
         TableToken dstTableToken = dstNode.getEngine().getTableToken(tableName);
 
@@ -508,7 +529,7 @@ public abstract class AbstractCairoTest {
 
     protected static void replicateAndApplyToAllNodes(String tableName, String walName) {
         for (int i = 1, n = nodes.size(); i < n; i++) {
-            final QuestDBNode node = nodes.get(i);
+            final QuestDBTestNode node = nodes.get(i);
             replicate(tableName, walName, node1, node);
             drainWalQueue(node);
         }
@@ -533,6 +554,10 @@ public abstract class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    protected static TableToken createTable(TableModel model) {
+        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
     }
 
     protected boolean isWalTable(CharSequence tableName) {
@@ -565,7 +590,7 @@ public abstract class AbstractCairoTest {
 
     @FunctionalInterface
     protected interface QuestDBNodeTask {
-        void run(QuestDBNode node);
+        void run(QuestDBTestNode node);
     }
 
     static {

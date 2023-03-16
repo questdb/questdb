@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -178,14 +177,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     .col("int", ColumnType.INT)
                     .timestamp("ts")
                     .wal()) {
-                engine.createTable(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        model.getMem(),
-                        model.getPath(),
-                        false,
-                        model,
-                        false
-                );
+                createTable(model);
             }
             ObjList<Thread> readerThreadList = new ObjList<>();
             for (int i = 0; i < readerThreads; i++) {
@@ -207,7 +199,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
-        try (WalWriter ww = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName))) {
+        try (WalWriter ww = engine.getWalWriter(securityContext, engine.getTableToken(tableName))) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {

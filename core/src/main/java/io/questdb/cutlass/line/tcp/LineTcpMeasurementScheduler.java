@@ -73,7 +73,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
-    private final CairoSecurityContext securityContext;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
@@ -90,7 +89,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     ) {
         this.engine = engine;
         this.telemetry = engine.getTelemetry();
-        this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
         MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
@@ -153,11 +151,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     q,
                     subSeq,
                     milliClock,
-                    commitInterval,
-                    this,
-                    engine.getMetrics(),
-                    assignedTables[i]
-            );
+                    commitInterval, this, engine.getMetrics(), assignedTables[i]);
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
         }
@@ -277,12 +271,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+    private void appendToWal(CairoSecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
-        ld.resetStateIfNecessary();
+        ld.resetStateIfNecessary(securityContext);
         ld.clearColumnTypes();
 
         WalWriter ww = (WalWriter) tud.getWriter();
@@ -591,7 +585,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         tudUtf16.clear();
     }
 
-    private boolean dispatchEvent(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) {
+    private boolean dispatchEvent(
+            CairoSecurityContext securityContext,
+            NetworkIOJob netIoJob,
+            LineTcpParser parser,
+            TableUpdateDetails tud
+    ) {
         final int writerThreadId = tud.getWriterThreadId();
         long seq = getNextPublisherEventSequence(writerThreadId);
         if (seq > -1) {
@@ -599,7 +598,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (tud.isWriterInError()) {
                     throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
                 }
-                queue[writerThreadId].get(seq).createMeasurementEvent(tud, parser, netIoJob.getWorkerId());
+                queue[writerThreadId].get(seq).createMeasurementEvent(securityContext, tud, parser, netIoJob.getWorkerId());
             } finally {
                 pubSeq[writerThreadId].done(seq);
             }
@@ -612,7 +611,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private TableUpdateDetails getTableUpdateDetailsFromSharedArea(
             @NotNull NetworkIOJob netIoJob,
             @NotNull LineTcpConnectionContext ctx,
-            @NotNull LineTcpParser parser
+            @NotNull LineTcpParser parser,
+            CairoSecurityContext securityContext
     ) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
@@ -665,7 +665,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         // Use actual table name from the "details" to avoid case mismatches in the
                         // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
                         // to identify the cause
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8(), securityContext);
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
@@ -691,7 +691,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         ctx.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
                         return tud;
                     } else {
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8), securityContext);
                     }
                 }
             }
@@ -710,7 +710,12 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     @NotNull
-    private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16, ByteCharSequence tableNameUtf8) {
+    private TableUpdateDetails unsafeAssignTableToWriterThread(
+            int tudKeyIndex,
+            CharSequence tableNameUtf16,
+            ByteCharSequence tableNameUtf8,
+            CairoSecurityContext securityContext
+    ) {
         unsafeCalcThreadLoad();
         long leastLoad = Long.MAX_VALUE;
         int threadId = 0;
@@ -766,7 +771,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         return seq;
     }
 
-    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpConnectionContext ctx, LineTcpParser parser) {
+    boolean scheduleEvent(
+            CairoSecurityContext securityContext,
+            NetworkIOJob netIoJob,
+            LineTcpConnectionContext ctx,
+            LineTcpParser parser
+    ) {
         DirectByteCharSequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
@@ -774,13 +784,13 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (tud == null) {
                 tud = netIoJob.getLocalTableDetails(measurementName);
                 if (tud == null) {
-                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser);
+                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
                 }
             } else if (tud.isWriterInError()) {
                 TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
                 assert tud == removed;
                 removed.close();
-                tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser);
+                tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
@@ -804,7 +814,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                appendToWal(netIoJob, parser, tud);
+                appendToWal(securityContext, netIoJob, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -820,6 +830,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
             return false;
         }
-        return dispatchEvent(netIoJob, parser, tud);
+        return dispatchEvent(securityContext, netIoJob, parser, tud);
     }
 }

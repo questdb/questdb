@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -78,7 +78,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
 
             try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, 0, metadata)) {
                 long count = 0;
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC)) {
+                try (DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
                     DataFrame frame;
                     while ((frame = cursor.next()) != null) {
                         count += frame.getRowHi() - frame.getRowLo();
@@ -87,12 +87,12 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(M, count);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
+                try (TableWriter writer = engine.getWriter(securityContext, tableToken, "testing")) {
                     writer.removeColumn("b");
                 }
 
                 try {
-                    factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC);
+                    factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }

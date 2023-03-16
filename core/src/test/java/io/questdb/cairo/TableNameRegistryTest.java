@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -407,7 +406,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .wal()
                     .timestamp()) {
-                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt1 = createTable(model);
             }
             Assert.assertTrue(engine.isWalTable(tt1));
 
@@ -417,7 +416,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .wal()
                     .timestamp()) {
-                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt2 = createTable(model);
             }
             Assert.assertTrue(engine.isWalTable(tt2));
 
@@ -441,7 +440,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .wal()
                     .timestamp()) {
-                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt1 = createTable(model);
             }
             Assert.assertTrue(engine.isWalTable(tt1));
 
@@ -451,7 +450,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .wal()
                     .timestamp()) {
-                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt2 = createTable(model);
             }
             Assert.assertTrue(engine.isWalTable(tt2));
 
@@ -461,13 +460,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .noWal()
                     .timestamp()) {
-                tt3 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt3 = createTable(model);
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 
             try (MemoryMARW mem = Vm.getMARWInstance()) {
                 tt2 = engine.rename(
-                        AllowAllCairoSecurityContext.INSTANCE,
+                        securityContext,
                         Path.getThreadLocal(""),
                         mem,
                         "tab2",
@@ -478,7 +477,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 tt3 = engine.rename(
-                        AllowAllCairoSecurityContext.INSTANCE,
+                        securityContext,
                         Path.getThreadLocal(""),
                         mem,
                         "tab3",
@@ -513,7 +512,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .wal()
                     .timestamp()) {
-                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt1 = createTable(model);
             }
             Assert.assertTrue(engine.isWalTable(tt1));
 
@@ -523,7 +522,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .wal()
                     .timestamp()) {
-                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt2 = createTable(model);
             }
             Assert.assertTrue(engine.isWalTable(tt2));
 
@@ -533,7 +532,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     .col("b", ColumnType.INT)
                     .noWal()
                     .timestamp()) {
-                tt3 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                tt3 = createTable(model);
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 

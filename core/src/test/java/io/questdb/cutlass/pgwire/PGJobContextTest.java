@@ -4107,7 +4107,7 @@ nodejs code:
                 }
 
                 // Pretend that the import was cancelled and try to cancel it one more time.
-                engine.getTextImportExecutionContext().resetActiveImportId();
+                engine.getTextImportExecutionContext().clear();
 
                 try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
                     cancelStatement.execute();

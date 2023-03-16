@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.QuestDBNode;
+import io.questdb.QuestDBTestNode;
 import org.junit.BeforeClass;
 
 public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
@@ -32,9 +32,9 @@ public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractGriffinTest.setUpStatic();
-        final QuestDBNode node2 = newNode(2);
+        final QuestDBTestNode node2 = newNode(2);
         node2.initGriffin();
-        final QuestDBNode node3 = newNode(3);
+        final QuestDBTestNode node3 = newNode(3);
         node3.initGriffin();
     }
 }

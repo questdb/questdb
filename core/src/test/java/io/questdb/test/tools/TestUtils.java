@@ -25,7 +25,7 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.QuestDBNode;
+import io.questdb.QuestDBTestNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -634,10 +634,10 @@ public final class TestUtils {
         }
     }
 
-    public static void assertSqlCursors(QuestDBNode node, ObjList<QuestDBNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
-                final QuestDBNode dbNode = nodes.get(i);
+                final QuestDBTestNode dbNode = nodes.get(i);
                 try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {

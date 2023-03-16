@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -194,15 +195,12 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testControlCharInColumnName() {
-        assertControlCharacterException(s -> {
-            s.table("mytable");
-            s.boolColumn("col\u0001", true);
-        });
+        assertControlCharacterException();
     }
 
     @Test
     public void testControlCharInTableName() {
-        assertControlCharacterException(s -> s.table("mytable\u0001"));
+        assertControlCharacterException();
     }
 
     @Test
@@ -293,7 +291,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), engine.getTableToken("mytable"))) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("mytable"))) {
                 TestUtils.assertReader("s\tu\ttimestamp\n" +
                         "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
@@ -333,7 +331,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), engine.getTableToken("mytable"))) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("mytable"))) {
                 TestUtils.assertReader("u1\tu2\tu3\ttimestamp\n" +
                         "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
@@ -464,7 +462,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testUseAfterClose_table() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION);
+        assertExceptionOnClosedSender();
     }
 
     @Test
@@ -524,7 +522,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-    private static void assertControlCharacterException(Consumer<Sender> senderAction) {
+    private static void assertControlCharacterException() {
         DummyLineChannel channel = new DummyLineChannel();
         try (Sender sender = new LineTcpSender(channel, 1000)) {
             sender.table("mytable");
@@ -537,9 +535,9 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private static void assertExceptionOnClosedSender(Consumer<Sender> afterCloseAction) {
+    private static void assertExceptionOnClosedSender() {
         assertExceptionOnClosedSender(s -> {
-        }, afterCloseAction);
+        }, LineTcpSenderTest.SET_TABLE_NAME_ACTION);
     }
 
     private static void assertExceptionOnClosedSender(Consumer<Sender> beforeCloseAction, Consumer<Sender> afterCloseAction) {
@@ -617,7 +615,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), engine.getTableToken("mytable"))) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("mytable"))) {
                 TestUtils.assertReader("u1\ttimestamp\n" +
                         "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }

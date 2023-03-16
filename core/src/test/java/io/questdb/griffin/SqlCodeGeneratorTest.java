@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
@@ -3743,7 +3744,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     false,
                                     false,
                                     // we need to pass the engine here, so the global test context won't do
-                                    AllowAllSqlSecurityContext.instance(engine)
+                                    new SqlExecutionContextStub(engine)
                             );
                             Assert.fail();
                         } catch (CairoException e) {

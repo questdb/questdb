@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -139,7 +138,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 try (SqlCompiler compiler = new SqlCompiler(engine);
                      SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                              .with(
-                                     AllowAllCairoSecurityContext.INSTANCE,
+                                     securityContext,
                                      new BindVariableServiceImpl(configuration),
                                      null,
                                      -1,
@@ -395,7 +394,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             try (SqlCompiler compiler = new SqlCompiler(engine);
                  SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                          .with(
-                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 securityContext,
                                  new BindVariableServiceImpl(configuration),
                                  null,
                                  -1,
@@ -730,7 +729,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 SqlCompiler compiler = new SqlCompiler(engine);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                         .with(
-                                AllowAllCairoSecurityContext.INSTANCE,
+                                securityContext,
                                 new BindVariableServiceImpl(configuration),
                                 null,
                                 -1,

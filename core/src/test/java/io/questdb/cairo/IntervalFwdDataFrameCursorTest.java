@@ -24,8 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
@@ -70,7 +71,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -92,7 +93,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -395,14 +396,17 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
             GenericRecordMetadata metadata;
             final int timestampIndex;
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, x)) {
+
+            final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
+            final CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+            try (TableReader reader = engine.getReader(securityContext, x)) {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TableReaderRecord record = new TableReaderRecord();
             try (
                     final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(x, -1, 0, new RuntimeIntervalModel(intervals), timestampIndex, metadata);
-                    final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC)
+                    final DataFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
             ) {
 
                 // assert that there is nothing to start with
@@ -449,7 +453,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC);
+                    factory.getCursor(executionContext, ORDER_ASC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }
