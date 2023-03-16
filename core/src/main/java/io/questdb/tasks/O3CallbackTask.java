@@ -80,8 +80,6 @@ public class O3CallbackTask {
             long row2Hi,
             TableWriter.O3ColumnUpdateMethod writerCallbackMethod
     ) {
-        this.writerCallbackMethod = writerCallbackMethod;
-        Os.pause();
         this.countDownLatchSPI = countDownLatchSPI;
         this.columnIndex = columnIndex;
         this.columnType = columnType;
@@ -89,5 +87,6 @@ public class O3CallbackTask {
         this.row1Count = row1Count;
         this.row2Lo = row2Lo;
         this.row2Hi = row2Hi;
+        this.writerCallbackMethod = writerCallbackMethod;
     }
 }
