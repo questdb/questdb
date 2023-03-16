@@ -3684,7 +3684,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private RecordCursorFactory generateTableQuery0(QueryModel model, SqlExecutionContext executionContext, ObjList<ExpressionNode> latestBy, boolean supportsRandomAccess, TableReader reader, TableRecordMetadata metadata) throws SqlException {
+    private RecordCursorFactory generateTableQuery0(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            ObjList<ExpressionNode> latestBy,
+            boolean supportsRandomAccess,
+            TableReader reader,
+            TableRecordMetadata metadata
+    ) throws SqlException {
         // create metadata based on top-down columns that are required
 
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
