@@ -25,14 +25,18 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
@@ -43,9 +47,8 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.Objects;
-import java.util.Properties;
-import java.util.UUID;
+import java.nio.file.Paths;
+import java.util.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -213,6 +216,55 @@ public abstract class AbstractBootstrapTest {
             Assert.fail();
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
+        }
+    }
+
+    void dropTable(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            TableToken tableToken,
+            boolean isWal,
+            @Nullable String otherVolume
+    ) throws Exception {
+        try (OperationFuture op = compiler.compile("DROP TABLE " + tableToken.getTableName(), context).execute(null)) {
+            op.await();
+        }
+        if (isWal) {
+            drainWalQueue(engine);
+        }
+        if (otherVolume != null) {
+            // drop simply unlinks, the folder remains, it is a feature
+            // delete the table's folder in the other volume
+            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true);
+        }
+    }
+
+    static void deleteFolder(String folderName, boolean mustExist) {
+        File directory = Paths.get(folderName).toFile();
+        if (directory.exists() && directory.isDirectory()) {
+            Deque<File> directories = new LinkedList<>();
+            directories.offer(directory);
+            while (!directories.isEmpty()) {
+                File root = directories.pop();
+                File[] content = root.listFiles();
+                if (content == null || content.length == 0) {
+                    root.delete();
+                } else {
+                    for (File f : content) {
+                        File target = f.getAbsoluteFile();
+                        if (target.isFile()) {
+                            target.delete();
+                        } else if (target.isDirectory()) {
+                            directories.offer(target);
+                        }
+                    }
+                    directories.offer(root);
+                }
+            }
+            Assert.assertFalse(directory.exists());
+        } else if (mustExist) {
+            Assert.fail("does not exist: " + folderName);
         }
     }
 

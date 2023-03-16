@@ -172,8 +172,8 @@ public final class Files {
 
     public static long getDirectoryContentSize(Path path) {
         int len = path.length();
-        long pathPtr = path.address();
-        long pFind = findFirst(pathPtr);
+        long pathUtf8Ptr = path.address();
+        long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
             try {
                 long totalSize = 0L;
@@ -182,7 +182,7 @@ public final class Files {
                     Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
                     path.$();
                     if (findType(pFind) == Files.DT_FILE) {
-                        totalSize += length0(pathPtr);
+                        totalSize += length0(pathUtf8Ptr);
                     } else if (notDots(nameUtf8Ptr)) {
                         totalSize += getDirectoryContentSize(path);
                     }

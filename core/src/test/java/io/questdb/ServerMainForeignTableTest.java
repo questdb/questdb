@@ -42,12 +42,9 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.sql.*;
-import java.util.Deque;
-import java.util.LinkedList;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -70,7 +67,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private static final String firstPartitionName = "2023-01-01";
     private static final String otherVolumeAlias = "SECONDARY VOLUME";
     private static final int partitionCount = 11;
-    private static final int pgPort = PG_PORT + 10;
+    private static final int pgPortDelta = 10;
+    private static final int pgPort = PG_PORT + pgPortDelta;
     private static String mainVolume;
     private static String otherVolume;
     private static Path path;
@@ -86,10 +84,10 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
             otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
             createDummyConfiguration(
-                    HTTP_PORT + 10,
-                    HTTP_MIN_PORT + 10,
+                    HTTP_PORT + pgPortDelta,
+                    HTTP_MIN_PORT + pgPortDelta,
                     pgPort,
-                    ILP_PORT + 10,
+                    ILP_PORT + pgPortDelta,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
                     PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
         } catch (Exception e) {
@@ -587,34 +585,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         java.nio.file.Files.createSymbolicLink(Paths.get(tablePath), Paths.get(foreignPath));
     }
 
-    private static void deleteFolder(String folderName, boolean mustExist) {
-        File directory = Paths.get(folderName).toFile();
-        if (directory.exists() && directory.isDirectory()) {
-            Deque<File> directories = new LinkedList<>();
-            directories.offer(directory);
-            while (!directories.isEmpty()) {
-                File root = directories.pop();
-                File[] content = root.listFiles();
-                if (content == null || content.length == 0) {
-                    root.delete();
-                } else {
-                    for (File f : content) {
-                        File target = f.getAbsoluteFile();
-                        if (target.isFile()) {
-                            target.delete();
-                        } else if (target.isDirectory()) {
-                            directories.offer(target);
-                        }
-                    }
-                    directories.offer(root);
-                }
-            }
-            Assert.assertFalse(directory.exists());
-        } else if (mustExist) {
-            Assert.fail("does not exist: " + folderName);
-        }
-    }
-
     private Thread concurrentTableCreator(
             String threadName,
             CairoEngine engine,
@@ -722,25 +692,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     private void dropTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken, boolean isInVolume) throws Exception {
-        dropTable(engine, compiler, context, tableToken, false, isInVolume);
-    }
-
-    private void dropTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken, boolean isWal, boolean isInVolume) throws Exception {
-        try (OperationFuture op = compiler.compile("DROP TABLE " + tableToken.getTableName(), context).execute(null)) {
-            op.await();
-        }
-        if (isWal) {
-            drainWalQueue(engine);
-        }
-        if (isInVolume) {
-            // drop simply unlinks, the folder remains, it is a feature
-            // delete the table's folder in the other volume
-            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true);
-        }
+        dropTable(engine, compiler, context, tableToken, false, isInVolume ? otherVolume : null);
     }
 
     private void dropWalTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken, boolean isInVolume) throws Exception {
-        dropTable(engine, compiler, context, tableToken, true, isInVolume);
+        dropTable(engine, compiler, context, tableToken, true, isInVolume ? otherVolume : null);
     }
 
     static {

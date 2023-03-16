@@ -132,13 +132,13 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public void close() {
-            tableReader = Misc.free(tableReader);
             detachedMetaReader = Misc.free(detachedMetaReader);
             detachedTxReader = Misc.free(detachedTxReader);
             attachablePartitions.clear();
             detachedPartitions.clear();
             partitionName.clear();
             partitionRecord.close();
+            tableReader = Misc.free(tableReader);
         }
 
         @Override
@@ -166,33 +166,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionIndex = -1;
         }
 
-        private void findDetachedAndAttachablePartitions() {
-            CairoConfiguration cairoConfig = executionContext.getCairoEngine().getConfiguration();
-            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
-            FilesFacade ff = cairoConfig.getFilesFacade();
-            long pFind = ff.findFirst(path);
-            if (pFind > 0L) {
-                try {
-                    attachablePartitions.clear();
-                    detachedPartitions.clear();
-                    do {
-                        partitionName.clear();
-                        Chars.utf8DecodeZ(ff.findName(pFind), partitionName);
-                        int type = ff.findType(pFind);
-                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
-                            attachablePartitions.add(Chars.toString(partitionName));
-                        } else if (type == Files.DT_DIR && Chars.endsWith(partitionName, TableUtils.DETACHED_DIR_MARKER)) {
-                            detachedPartitions.add(Chars.toString(partitionName));
-                        }
-                    } while (ff.findNext(pFind) > 0);
-                    attachablePartitions.sort(CHAR_COMPARATOR);
-                    detachedPartitions.sort(CHAR_COMPARATOR);
-                } finally {
-                    ff.findClose(pFind);
-                }
-            }
-        }
-
         private ShowPartitionsRecordCursor initialize() {
             if (tableReader != null) {
                 // this call is idempotent
@@ -205,7 +178,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 TableReaderMetadata meta = tableReader.getMetadata();
                 tsColName = meta.getColumnName(meta.getTimestampIndex());
             }
-            findDetachedAndAttachablePartitions();
+            scanDetachedAndAttachablePartitions();
             limit = tableReader.getTxFile().getPartitionCount() + attachablePartitions.size() + detachedPartitions.size();
             toTop();
             return this;
@@ -256,7 +229,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 assert partitionName.length() != 0;
 
-                // open meta files if they exist
+                // open detached meta files (_meta, _txn) if they exist
                 dynamicPartitionIndex = Integer.MIN_VALUE; // so that in absence of metadata is NaN
                 if (ff.exists(path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$())) {
                     try {
@@ -298,6 +271,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 path.parent();
             }
 
+            System.out.printf("PATH FOR SIZE: %s%n", path);
             partitionSize = ff.getDirectoryContentSize(path.$());
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                 TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
@@ -321,8 +295,34 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
 
-        private class PartitionsRecord implements Record, Closeable {
+        private void scanDetachedAndAttachablePartitions() {
+            CairoConfiguration cairoConfig = executionContext.getCairoEngine().getConfiguration();
+            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken).$();
+            FilesFacade ff = cairoConfig.getFilesFacade();
+            long pFind = ff.findFirst(path);
+            if (pFind > 0L) {
+                try {
+                    attachablePartitions.clear();
+                    detachedPartitions.clear();
+                    do {
+                        partitionName.clear();
+                        Chars.utf8DecodeZ(ff.findName(pFind), partitionName);
+                        int type = ff.findType(pFind);
+                        if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
+                            attachablePartitions.add(Chars.toString(partitionName));
+                        } else if (type == Files.DT_DIR && Chars.endsWith(partitionName, TableUtils.DETACHED_DIR_MARKER)) {
+                            detachedPartitions.add(Chars.toString(partitionName));
+                        }
+                    } while (ff.findNext(pFind) > 0);
+                    attachablePartitions.sort(CHAR_COMPARATOR);
+                    detachedPartitions.sort(CHAR_COMPARATOR);
+                } finally {
+                    ff.findClose(pFind);
+                }
+            }
+        }
 
+        private class PartitionsRecord implements Record, Closeable {
             @Override
             public void close() {
                 // no-op

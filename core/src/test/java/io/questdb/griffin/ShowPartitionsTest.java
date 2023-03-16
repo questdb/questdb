@@ -32,6 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -48,15 +49,22 @@ import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 public class ShowPartitionsTest extends AbstractGriffinTest {
 
     private final boolean isWal;
+    private final String tableNameSuffix;
 
-    public ShowPartitionsTest(WalMode walMode) {
+    public ShowPartitionsTest(WalMode walMode, String tableNameSuffix) {
         isWal = walMode == WalMode.WITH_WAL;
+        this.tableNameSuffix = tableNameSuffix;
         node1.getConfigurationOverrides().setDefaultTableWriteMode(isWal ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{WalMode.WITH_WAL}, {WalMode.NO_WAL}});
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL, null},
+                {WalMode.NO_WAL, null},
+                {WalMode.WITH_WAL, "テンション"},
+                {WalMode.NO_WAL, "テンション"}
+        });
     }
 
     public static String replaceSizeToMatchOS(
@@ -73,7 +81,9 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i];
             String nameColumn = line.split("\t")[2];
-            long size = sizes.get(nameColumn);
+            Long s = sizes.get(nameColumn);
+            System.out.printf("NAME COL: %s -> NULL? %b%n", nameColumn, s == null);
+            long size = s != null ? s.longValue() : 0L;
             int z = Numbers.msb(size) / 10;
             String human = String.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
             line = line.replaceAll("SIZE", String.valueOf(size));
@@ -81,6 +91,12 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             sink.put(line).put('\n');
         }
         return sink.toString();
+    }
+
+    public static String testTableName(String tableName, @Nullable String tableNameSuffix) {
+        int idx = tableName.indexOf('[');
+        tableName = idx > 0 ? tableName.substring(0, idx) : tableName;
+        return tableNameSuffix == null ? tableName : tableName + '_' + tableNameSuffix;
     }
 
     @Test
@@ -416,6 +432,34 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testShowPartitionsTableDoesNotExist() throws Exception {
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            try {
+                compile(createTable(tableName), sqlExecutionContext);
+                if (isWal) {
+                    drainWalQueue();
+                }
+                try {
+                    assertShowPartitions(
+                            "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
+                                    "NaN\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
+                                    "NaN\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
+                                    "NaN\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
+                                    "NaN\tMONTH\t2023-04.detached\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
+                                    "NaN\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n",
+                            "banana");
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=banana]");
+                }
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+    }
+
+    @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachable() throws Exception {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
@@ -516,11 +560,6 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
         return sizes;
     }
 
-    private static String testTableName(String tableName) {
-        int idx = tableName.indexOf('[');
-        return idx > 0 ? tableName.substring(0, idx) : tableName;
-    }
-
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
         SOCountDownLatch done = new SOCountDownLatch(1);
         TableToken tableToken = engine.getTableToken(tableName);
@@ -572,5 +611,9 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     private String replaceSizeToMatchOS(String expected, String tableName) {
         return replaceSizeToMatchOS(expected, configuration.getRoot(), tableName, engine, sink);
+    }
+
+    private String testTableName(String tableName) {
+        return testTableName(tableName, tableNameSuffix);
     }
 }

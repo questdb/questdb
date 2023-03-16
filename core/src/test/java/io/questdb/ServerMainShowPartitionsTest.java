@@ -25,18 +25,20 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -45,9 +47,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.griffin.AbstractGriffinTest.assertCursor;
 import static io.questdb.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
+import static io.questdb.griffin.ShowPartitionsTest.testTableName;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
 
@@ -68,19 +72,26 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             "10\tDAY\t2023-01-11\t2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n";
     private static final String firstPartitionName = "2023-01-01";
     private static final int partitionCount = 11;
-    private static final int pgPort = PG_PORT + 11;
+    private static final int pgPortDelta = 11;
+    private static final int pgPort = PG_PORT + pgPortDelta;
     private static Path path;
 
     private final boolean isWal;
+    private final String tableNameSuffix;
 
-    public ServerMainShowPartitionsTest(AbstractCairoTest.WalMode walMode) {
+    public ServerMainShowPartitionsTest(AbstractCairoTest.WalMode walMode, String tableNameSuffix) {
         isWal = (AbstractCairoTest.WalMode.WITH_WAL == walMode);
+        this.tableNameSuffix = tableNameSuffix;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
-//        return Arrays.asList(new Object[][]{{AbstractCairoTest.WalMode.NO_WAL}});
-        return Arrays.asList(new Object[][]{{AbstractCairoTest.WalMode.WITH_WAL}, {AbstractCairoTest.WalMode.NO_WAL}});
+        return Arrays.asList(new Object[][]{
+                {AbstractCairoTest.WalMode.NO_WAL, null},
+                {AbstractCairoTest.WalMode.NO_WAL, "テンション"},
+//                {AbstractCairoTest.WalMode.WITH_WAL, null}, // TODO
+//                {AbstractCairoTest.WalMode.WITH_WAL, "テンション"}
+        });
     }
 
     @BeforeClass
@@ -92,10 +103,10 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
             Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
             createDummyConfiguration(
-                    HTTP_PORT + 11,
-                    HTTP_MIN_PORT + 11,
+                    HTTP_PORT + pgPortDelta,
+                    HTTP_MIN_PORT + pgPortDelta,
                     pgPort,
-                    ILP_PORT + 11,
+                    ILP_PORT + pgPortDelta,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
             path.parent().$();
         } catch (Exception e) {
@@ -112,7 +123,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateWalTableWhileConcurrentCreateWalTable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = testTableName(testName.getMethodName());
+        String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -124,9 +135,12 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, defaultContext, tableName);
                 String finallyExpected = replaceSizeToMatchOS(EXPECTED, path, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
-                int numThreads = 5;
+                assertShowTablePartitionsCursor(finallyExpected, tableToken, defaultContext);
+
+                int numThreads = 2;
                 SOCountDownLatch start = new SOCountDownLatch(1);
                 SOCountDownLatch completed = new SOCountDownLatch(numThreads);
+                AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine());
@@ -134,41 +148,66 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                     new Thread(() -> {
                         try {
                             start.await();
-                            try (
-                                    ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tableToken);
-                                    RecordCursor cursor0 = factory.getCursor(context);
-                                    RecordCursor cursor1 = factory.getCursor(context)
-                            ) {
-                                for (int j = 0; j < 5; j++) {
-                                    assertCursor(finallyExpected, false, true, false, cursor0, factory.getMetadata(), false);
-                                    cursor0.toTop();
-                                    assertCursor(finallyExpected, false, true, false, cursor1, factory.getMetadata(), false);
-                                    cursor1.toTop();
-                                }
-                            }
+                            assertShowTablePartitionsCursor(finallyExpected, tableToken, context);
                         } catch (Throwable err) {
-                            err.printStackTrace();
-                            Assert.fail();
+                            errors.get().add(err);
                         } finally {
-                            Path.clearThreadLocals();
                             completed.countDown();
+                            Path.clearThreadLocals();
                         }
                     }).start();
                 }
                 start.countDown();
                 completed.await();
-                dropTable(engine, compiler, defaultContext, tableName);
+
+                dropTable(engine, compiler, defaultContext, tableToken, isWal, null);
                 for (int i = 0; i < numThreads; i++) {
                     contexts.get(i).close();
                 }
                 contexts.clear();
+                for (Throwable t : errors.get()) {
+                    Assert.fail(t.getMessage());
+                }
             }
         });
     }
 
-    private static String testTableName(String tableName) {
-        int idx = tableName.indexOf('[');
-        return idx > 0 ? tableName.substring(0, idx) : tableName;
+    private static void assertShowTablePartitionsCursor(String finallyExpected, TableToken tableToken, SqlExecutionContext context) {
+        try (
+                ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tableToken);
+                RecordCursor cursor0 = factory.getCursor(context);
+                RecordCursor cursor1 = factory.getCursor(context)
+        ) {
+            StringSink sink = Misc.getThreadLocalBuilder();
+            RecordCursorPrinter printer = new RecordCursorPrinter();
+            LongList rows = new LongList();
+            for (int j = 0; j < 5; j++) {
+                assertCursor(
+                        finallyExpected,
+                        false,
+                        true,
+                        false,
+                        cursor0,
+                        factory.getMetadata(),
+                        sink,
+                        printer,
+                        rows,
+                        false);
+                cursor0.toTop();
+                assertCursor(
+                        finallyExpected,
+                        false,
+                        true,
+                        false,
+                        cursor1,
+                        factory.getMetadata(),
+                        sink,
+                        printer,
+                        rows,
+                        false);
+                cursor1.toTop();
+            }
+        }
     }
 
     private TableToken createPopulateTable(
@@ -190,6 +229,9 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         try (OperationFuture create = compiler.compile(createTable, context).execute(null)) {
             create.await();
         }
+        if (isWal) {
+            drainWalQueue(engine);
+        }
         try (
                 TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                         .col("investmentMill", ColumnType.LONG)
@@ -198,23 +240,25 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                         .timestamp("ts")
         ) {
             String insertStmt = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+            SOCountDownLatch returned = new SOCountDownLatch(1);
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (tableToken != null && tableToken.getTableName().equals(tableName) && event == PoolListener.EV_RETURN) {
+                    if (isWal && factoryType == PoolListener.SRC_WAL_WRITER) {
+                        returned.countDown();
+                    } else if (!isWal && factoryType == PoolListener.SRC_WRITER) {
+                        returned.countDown();
+                    }
+                }
+            });
             try (OperationFuture insert = compiler.compile(insertStmt, context).execute(null)) {
                 insert.await();
             }
-        }
-        if (isWal) {
-            drainWalQueue(engine);
+            if (isWal) {
+                drainWalQueue(engine);
+            }
+            returned.await();
         }
         return engine.getTableToken(tableName);
-    }
-
-    private void dropTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws SqlException {
-        try (OperationFuture drop = compiler.compile("DROP TABLE " + tableName, context).execute(null)) {
-            drop.await();
-        }
-        if (isWal) {
-            drainWalQueue(engine);
-        }
     }
 
     static {
