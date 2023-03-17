@@ -28,19 +28,22 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -122,34 +125,38 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateWalTableWhileConcurrentCreateWalTable() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+    public void testServerMainShowPartitions() throws Exception {
         String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext defaultContext = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, defaultContext, tableName);
+
+                TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
+
                 String finallyExpected = replaceSizeToMatchOS(EXPECTED, path, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
-                assertShowTablePartitionsCursor(finallyExpected, tableToken, defaultContext);
+                assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
                 int numThreads = 2;
                 SOCountDownLatch start = new SOCountDownLatch(1);
                 SOCountDownLatch completed = new SOCountDownLatch(numThreads);
                 AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
+                List<SqlCompiler> compilers = new ArrayList<>(numThreads);
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine());
+                    compilers.add(compiler);
                     contexts.add(context);
                     new Thread(() -> {
                         try {
                             start.await();
-                            assertShowTablePartitionsCursor(finallyExpected, tableToken, context);
+                            assertShowPartitions(finallyExpected, tableToken, compiler, context);
                         } catch (Throwable err) {
                             errors.get().add(err);
                         } finally {
@@ -161,10 +168,12 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 start.countDown();
                 completed.await();
 
-                dropTable(engine, compiler, defaultContext, tableToken, isWal, null);
+                dropTable(engine, defaultCompiler, defaultContext, tableToken, isWal, null);
                 for (int i = 0; i < numThreads; i++) {
+                    compilers.get(i).close();
                     contexts.get(i).close();
                 }
+                compilers.clear();
                 contexts.clear();
 
                 // fail on first error found
@@ -175,12 +184,16 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void assertShowTablePartitionsCursor(String finallyExpected, TableToken tableToken, SqlExecutionContext context) {
+    private static void assertShowPartitions(
+            String finallyExpected,
+            TableToken tableToken,
+            SqlCompiler compiler,
+            SqlExecutionContext context
+    ) throws SqlException {
         try (
-                ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tableToken);
+                RecordCursorFactory factory = compiler.compile("SHOW PARTITIONS FROM " + tableToken.getTableName(), context).getRecordCursorFactory();
                 RecordCursor cursor0 = factory.getCursor(context);
-                RecordCursor cursor1 = factory.getCursor(context)
-        ) {
+                RecordCursor cursor1 = factory.getCursor(context)) {
             RecordMetadata meta = factory.getMetadata();
             StringSink sink = Misc.getThreadLocalBuilder();
             RecordCursorPrinter printer = new RecordCursorPrinter();
