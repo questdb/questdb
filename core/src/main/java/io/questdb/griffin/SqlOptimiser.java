@@ -362,6 +362,9 @@ class SqlOptimiser {
             return;
         }
 
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
         while (!this.sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.rhs != null) {
@@ -3771,7 +3774,7 @@ class SqlOptimiser {
 
                 if (node.type == LITERAL) {
                     if (Chars.endsWith(node.token, '*')) {
-                        throw SqlException.$(0, "'*' is not allowed in GROUP BY");
+                        throw SqlException.$(node.position, "'*' is not allowed in GROUP BY");
                     }
 
                     if (alias == null) {
@@ -3791,15 +3794,15 @@ class SqlOptimiser {
 
                     groupByNodes.add(node);
                     groupByAliases.add(groupByColumn.getAlias());
-                } else if (isEffectivelyConstantExpression(node) && i > 0) {
-                    // If there's at least one other group by column then we can ignore constant expressions, 
-                    // otherwise we've to include not to affect the outcome, e.g.
-                    // if table t is empty then 
-                    // select count(*) from t  returns 0  but  
-                    // select count(*) from t group by 12+3 returns empty result 
-                    //if we removed 12+3 then we'd affect result
-                    continue;
-                } else {//add expression 
+                }
+                // If there's at least one other group by column then we can ignore constant expressions, 
+                // otherwise we've to include not to affect the outcome, e.g.
+                // if table t is empty then 
+                // select count(*) from t  returns 0  but  
+                // select count(*) from t group by 12+3 returns empty result 
+                // if we removed 12+3 then we'd affect result
+                else if (!(isEffectivelyConstantExpression(node) && i > 0)) {
+                    //add expression
                     //if group by element is an expression then we've to use inner model to compute it 
                     useInnerModel = true;
 

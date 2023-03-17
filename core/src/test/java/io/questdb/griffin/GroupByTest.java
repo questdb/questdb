@@ -87,6 +87,33 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void test2FailOnExpressionWithAggFunctionNestedInFunctionInGroupByClause1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            String query = "select x, avg(y) from t group by x, concat('a', 'b', 'c', first(x)) ";
+            assertError(query, "[58] Aggregate function cannot be passed as an argument");
+        });
+    }
+
+    @Test
+    public void test2FailOnExpressionWithAggFunctionNestedInFunctionInGroupByClause2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            String query = "select x, avg(y) from t group by x, case when x > 0 then 1 else first(x) end ";
+            assertError(query, "[64] Aggregate function cannot be passed as an argument");
+        });
+    }
+
+    @Test
+    public void test2FailOnExpressionWithAggFunctionNestedInFunctionInGroupByClause3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            String query = "select x, avg(y) from t group by x, strpos('123', '1' || first(x)::string)";
+            assertError(query, "[57] Aggregate function cannot be passed as an argument");
+        });
+    }
+
+    @Test
     public void test2FailOnExpressionWithAggregateFunctionInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
@@ -126,6 +153,15 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void test2FailOnStarInGroupByClause() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            String query = "select x, avg(y) from t group by t.* ";
+            assertError(query, "[33] Invalid column: t.*");
+        });
+    }
+
+    @Test
     public void test2FailOnWindowFunctionAliasInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
@@ -149,6 +185,25 @@ public class GroupByTest extends AbstractGriffinTest {
             compile("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, row_number() ";
             assertError(query, "[36] window functions are not allowed in GROUP BY");
+        });
+    }
+
+
+    @Test
+    public void test2FailOnWindowFunctionNestedInFunctionAliasInGroupByClause1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            String query = "select x, avg(y), abs(row_number() ) z from t group by x, z";
+            assertError(query, "[58] window functions are not allowed in GROUP BY");
+        });
+    }
+
+    @Test
+    public void test2FailOnWindowFunctionNestedInFunctionAliasInGroupByClause2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            String query = "select x, avg(y), case when x > 0 then 1 else row_number() over (partition by x) end as z from t group by x, z";
+            assertError(query, "[75] Invalid column: by");
         });
     }
 
@@ -179,8 +234,58 @@ public class GroupByTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//expressions based on group by clause expressions should go to outer model 
+    @Test
     public void test2GroupByWithNonAggregateExpressionsOnKeyColumns2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            compile("insert into t values (1, 11), (1, 12);");
+
+            String query = "select case when x < 0 then -1 when x = 0 then 0 else 1 end, count(*) " +
+                    "from t " +
+                    "group by case when x < 0 then -1 when x = 0 then 0 else 1 end ";
+
+            assertPlan(query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [case]\n" +
+                            "  values: [count(*)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [case([x<0,-1,x=0,0,1])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+
+            assertQuery("case\tcount\n" +
+                    "1\t2\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void test2GroupByWithNonAggregateExpressionsOnKeyColumns3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x long, y long);");
+            compile("insert into t values (1, 11), (1, 12);");
+
+            String query = "select case when x+1 < 0 then -1 when x+1 = 0 then 0 else 1 end, count(*) " +
+                    "from t " +
+                    "group by x+1";
+
+            assertPlan(query,
+                    "GroupBy vectorized: false\n" +
+                            "  keys: [case]\n" +
+                            "  values: [count(*)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [case([x<0,-1,x=0,0,1])]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+
+            assertQuery("case\tcount\n" +
+                    "1\t2\n", query, null, true, true);
+        });
+    }
+
+    @Test//expressions based on group by clause expressions should go to outer model 
+    public void test2GroupByWithNonAggregateExpressionsOnKeyColumns4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
             compile("insert into t values (1, 11), (1, 12);");
