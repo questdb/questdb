@@ -47,7 +47,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -238,6 +237,76 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         Assert.assertFalse(tableName.getTableName(), engine.getTableSequencerAPI().isSuspended(tableName));
     }
 
+    @NotNull
+    private static Thread createWalWriteThread(
+            ObjList<FuzzTransaction> transactions,
+            String tableName,
+            ObjList<WalWriter> writers,
+            AtomicLong waitBarrierVersion,
+            AtomicLong doneCount,
+            AtomicInteger nextOperation,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        TableToken tableToken = engine.getTableToken(tableName);
+        final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "apply trans test");
+        writers.add(walWriter);
+
+        return new Thread(() -> {
+            int opIndex;
+
+            try {
+                Rnd tempRnd = new Rnd();
+                while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
+                    FuzzTransaction transaction = transactions.getQuick(opIndex);
+
+                    // wait until structure version, truncate is applied
+                    while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.size() == 0) {
+                        Os.sleep(1);
+                    }
+
+                    if (transaction.waitAllDone) {
+                        while (doneCount.get() != opIndex) {
+                            Os.sleep(1);
+                        }
+                    }
+
+                    if (!walWriter.goActive(transaction.structureVersion)) {
+                        throw CairoException.critical(0).put("cannot apply structure change");
+                    }
+                    if (walWriter.getStructureVersion() != transaction.structureVersion) {
+                        throw CairoException.critical(0)
+                                .put("cannot update wal writer to correct structure version");
+                    }
+
+                    boolean increment = false;
+                    for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                        FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                        increment |= operation.apply(tempRnd, walWriter, -1);
+                    }
+
+                    if (transaction.rollback) {
+                        walWriter.rollback();
+                    } else {
+                        walWriter.commit();
+                    }
+                    if (increment || transaction.waitAllDone) {
+                        waitBarrierVersion.incrementAndGet();
+                    }
+
+                    doneCount.incrementAndGet();
+
+                    // CREATE TABLE may release all inactive sequencers occasionally, so we do the same
+                    // to make sure that there are no races between WAL writers and the engine.
+                    engine.releaseInactiveTableSequencers();
+                }
+            } catch (Throwable e) {
+                errors.add(e);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+    }
+
     private static void forceReleaseTableWriter(Rnd applyRnd) {
         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
         // where it can be fully closed before continuing the WAL application Test TableWriter closures.
@@ -247,119 +316,66 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
     }
 
-    private void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase) throws SqlException {
+    private static String getWalParallelApplyTableName(String tableNameBase, int i) {
+        return tableNameBase + "_" + i + "_wal_parallel";
+    }
+
+    private void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable) {
         ObjList<WalWriter> writers = new ObjList<>();
         int tableCount = fuzzTransactions.size();
         AtomicInteger done = new AtomicInteger();
         ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
-        int parallelWalCount = Math.max(2, rnd.nextInt(5));
-        CountDownLatch latch = new CountDownLatch(tableCount * parallelWalCount);
-        Thread[] threads = new Thread[tableCount * parallelWalCount];
 
-        O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
-        sharedWorkerPool.start(LOG);
+        ObjList<Thread> threads = new ObjList<>();
 
-        try {
-            for (int i = 0; i < tableCount; i++) {
+        for (int i = 0; i < tableCount; i++) {
+            String tableName = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
+            AtomicLong waitBarrierVersion = new AtomicLong();
+            int parallelWalCount = Math.max(2, rnd.nextInt(5));
+            AtomicInteger nextOperation = new AtomicInteger(-1);
+            ObjList<FuzzTransaction> transactions = fuzzTransactions.get(i);
+            AtomicLong doneCount = new AtomicLong();
 
-                String tableName = tableNameBase + "_" + i + "_wal_parallel";
-                AtomicLong waitBarrierVersion = new AtomicLong();
-                AtomicInteger nextOperation = new AtomicInteger(-1);
-                TableToken token = engine.getTableToken(tableName);
-
-                ObjList<FuzzTransaction> transactions = fuzzTransactions.get(i);
-
-                for (int j = 0; j < parallelWalCount; j++) {
-                    final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(
-                            sqlExecutionContext.getCairoSecurityContext(), token, "apply trans test");
-                    writers.add(walWriter);
-
-                    Thread thread = new Thread(() -> {
-                        int opIndex;
-
-                        try {
-                            latch.countDown();
-                            Rnd rnd2 = new Rnd();
-                            while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
-                                FuzzTransaction transaction = transactions.getQuick(opIndex);
-
-                                // wait until structure version / truncate is applied
-                                while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.size() == 0) {
-                                    Os.sleep(1);
-                                }
-
-                                if (!walWriter.goActive(transaction.structureVersion)) {
-                                    throw CairoException.critical(0).put("cannot apply structure change");
-                                }
-                                if (walWriter.getStructureVersion() != transaction.structureVersion) {
-                                    throw CairoException.critical(0)
-                                            .put("cannot update wal writer to correct structure version");
-                                }
-
-                                boolean increment = false;
-                                for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                                    increment |= operation.apply(rnd2, walWriter, -1);
-                                }
-
-                                if (transaction.rollback) {
-                                    walWriter.rollback();
-                                } else {
-                                    walWriter.commit();
-                                }
-                                if (increment || transaction.waitAllDone) {
-                                    waitBarrierVersion.incrementAndGet();
-                                }
-                                Os.sleep(rnd2.nextInt(30));
-                            }
-                        } catch (Throwable e) {
-                            errors.add(e);
-                        } finally {
-                            Path.clearThreadLocals();
-                        }
-                    });
-                    threads[i * parallelWalCount + j] = thread;
-                    thread.start();
-                }
+            for (int j = 0; j < parallelWalCount; j++) {
+                threads.add(createWalWriteThread(transactions, tableName, writers, waitBarrierVersion, doneCount, nextOperation, errors));
+                threads.getLast().start();
             }
+        }
 
-            ObjList<Thread> applyThreads = new ObjList<>();
-            int applyThreadCount = fuzzTransactions.size();
-            for (int thread = 0; thread < applyThreadCount; thread++) {
-                final Rnd threadApplyRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
-                Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
-                applyThread.start();
-                applyThreads.add(applyThread);
-            }
+        ObjList<Thread> applyThreads = new ObjList<>();
+        int applyThreadCount = Math.max(fuzzTransactions.size(), 4);
+        for (int thread = 0; thread < applyThreadCount; thread++) {
+            final Rnd threadApplyRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
+            Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
+            applyThread.start();
+            applyThreads.add(applyThread);
+        }
 
-            Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
-            purgeJobThread.start();
-            applyThreads.add(purgeJobThread);
+        Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
+        purgeJobThread.start();
+        applyThreads.add(purgeJobThread);
 
-            for (int i = 0; i < threads.length; i++) {
-                try {
-                    threads[i].join();
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-
-            done.incrementAndGet();
-            Misc.freeObjList(writers);
-
-            for (Throwable e : errors) {
+        for (int i = 0; i < threads.size(); i++) {
+            try {
+                threads.get(i).join();
+            } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
+        }
 
-            for (int i = 0; i < applyThreads.size(); i++) {
-                try {
-                    applyThreads.get(i).join();
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
+        done.incrementAndGet();
+        Misc.freeObjList(writers);
+
+        for (Throwable e : errors) {
+            throw new RuntimeException(e);
+        }
+
+        for (int i = 0; i < applyThreads.size(); i++) {
+            try {
+                applyThreads.get(i).join();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
-        } finally {
-            sharedWorkerPool.halt();
         }
     }
 
@@ -391,113 +407,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         drainWalQueue(applyRnd);
     }
 
-    private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
-        ObjList<WalWriter> writers = new ObjList<>();
-
-        Thread[] threads = new Thread[walWriterCount];
-        AtomicLong waitBarrierVersion = new AtomicLong();
-        AtomicLong doneCount = new AtomicLong();
-        AtomicInteger nextOperation = new AtomicInteger(-1);
-        ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
-        CountDownLatch latch = new CountDownLatch(walWriterCount);
-        AtomicInteger done = new AtomicInteger();
-
-        for (int i = 0; i < walWriterCount; i++) {
-            TableToken tableToken = engine.getTableToken(tableName);
-            final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "apply trans test");
-            writers.add(walWriter);
-
-            Thread thread = new Thread(() -> {
-                int opIndex;
-
-                try {
-                    latch.countDown();
-                    Rnd tempRnd = new Rnd();
-                    while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
-                        FuzzTransaction transaction = transactions.getQuick(opIndex);
-
-                        // wait until structure version, truncate is applied
-                        while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.size() == 0) {
-                            Os.sleep(1);
-                        }
-
-                        if (transaction.waitAllDone) {
-                            while (doneCount.get() != opIndex) {
-                                Os.sleep(1);
-                            }
-                        }
-
-                        if (!walWriter.goActive(transaction.structureVersion)) {
-                            throw CairoException.critical(0).put("cannot apply structure change");
-                        }
-                        if (walWriter.getStructureVersion() != transaction.structureVersion) {
-                            throw CairoException.critical(0)
-                                    .put("cannot update wal writer to correct structure version");
-                        }
-
-                        boolean increment = false;
-                        for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                            FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                            increment |= operation.apply(tempRnd, walWriter, -1);
-                        }
-
-                        if (transaction.rollback) {
-                            walWriter.rollback();
-                        } else {
-                            walWriter.commit();
-                        }
-                        if (increment || transaction.waitAllDone) {
-                            waitBarrierVersion.incrementAndGet();
-                        }
-
-                        doneCount.incrementAndGet();
-
-                        // CREATE TABLE may release all inactive sequencers occasionally, so we do the same
-                        // to make sure that there are no races between WAL writers and the engine.
-                        engine.releaseInactiveTableSequencers();
-                    }
-                } catch (Throwable e) {
-                    errors.add(e);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            });
-            threads[i] = thread;
-            thread.start();
-        }
-
-        final Rnd threadApplyRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
-        Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
-        applyThread.start();
-
-        Thread walPurgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
-        walPurgeJobThread.start();
-
-        for (int i = 0; i < threads.length; i++) {
-            try {
-                threads[i].join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        done.incrementAndGet();
-        Misc.freeObjList(writers);
-
-        for (Throwable e : errors) {
-            throw new RuntimeException(e);
-        }
-
-        try {
-            applyThread.join();
-            walPurgeJobThread.join();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-
-        for (Throwable e : errors) {
-            throw new RuntimeException(e);
-        }
+    private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
+        ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
+        tablesTransactions.add(transactions);
+        applyManyWalParallel(tablesTransactions, applyRnd, tableName, false);
     }
 
     private void checkNoSuspendedTables(ObjList<TableToken> tableTokenBucket) {
@@ -716,7 +629,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
 
                 startMicro = System.nanoTime() / 1000;
-                applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd), rnd);
+                applyWalParallel(transactions, tableNameWal2, rnd);
                 endWalMicro = System.nanoTime() / 1000;
                 long totalWalParallel = endWalMicro - startMicro;
 
@@ -766,12 +679,18 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             // Can help to reduce memory consumption.
             engine.releaseInactive();
 
-            applyManyWalParallel(fuzzTransactions, rnd, tableNameBase);
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            sharedWorkerPool.start(LOG);
+            try {
+                applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true);
+            } finally {
+                sharedWorkerPool.halt();
+            }
 
             checkNoSuspendedTables(new ObjList<>());
             for (int i = 0; i < tableCount; i++) {
                 String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
-                String tableNameWal = tableNameBase + "_" + i + "_wal_parallel";
+                String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
                 LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
             }
