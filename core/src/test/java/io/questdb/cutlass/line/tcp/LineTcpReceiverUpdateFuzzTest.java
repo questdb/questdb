@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
@@ -155,7 +154,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
             compilers[i] = new SqlCompiler(engine, null, null);
             BindVariableServiceImpl bindService = new BindVariableServiceImpl(configuration);
             SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, bindService, null);
+            sqlExecutionContext.with(securityContext, bindService, null);
             executionContexts[i] = sqlExecutionContext;
         }
     }

@@ -292,7 +292,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRecoverVarIndex(createTableSql,
-                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"), "test lock"),
+                        tablePath -> tempWriter = CairoEngineTest.getWriter(engine,"xxx"),
                         rebuildIndex -> {
                             try {
                                 rebuildIndex.reindexColumn("str1");

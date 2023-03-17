@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -423,8 +422,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     "1\t2022-12-12T10:04:59.000000Z\n", "x");
 
             TableToken tableToken = engine.getTableToken(tableName);
-            TableReader rdr1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken);
-            try (TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
+            TableReader rdr1 = getReader(tableToken);
+            try (TableWriter tw = getWriter(tableToken)) {
 
                 TableWriter.Row row;
 

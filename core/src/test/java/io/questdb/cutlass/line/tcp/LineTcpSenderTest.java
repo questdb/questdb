@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -291,7 +290,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("mytable"))) {
+            try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("s\tu\ttimestamp\n" +
                         "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
@@ -331,7 +330,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("mytable"))) {
+            try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("u1\tu2\tu3\ttimestamp\n" +
                         "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
@@ -615,7 +614,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("mytable"))) {
+            try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("u1\ttimestamp\n" +
                         "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }

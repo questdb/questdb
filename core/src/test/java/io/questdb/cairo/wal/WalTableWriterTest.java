@@ -820,8 +820,8 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
     private int addRowsToWal(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         final int tableId;
         try (
-                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableCopyName), "copy");
-                TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName), "wal")
+                TableWriter copyWriter = getWriter(tableCopyName);
+                TableWriter tableWriter = getWriter(tableName)
         ) {
             tableId = tableWriter.getMetadata().getTableId();
             if (!inOrder) {

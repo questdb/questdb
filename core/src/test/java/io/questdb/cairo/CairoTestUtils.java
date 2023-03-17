@@ -232,24 +232,24 @@ public class CairoTestUtils {
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
-                .col("bool", ColumnType.BOOLEAN)
-                .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE)
-                .col("long256", ColumnType.LONG256)
-                .col("chr", ColumnType.CHAR)
-                .timestamp()
-                ;
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp();
 
     }
 
+    public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
+        return getWriter(engine, engine.getTableToken(tableName));
+    }
+
+    public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
+        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
+    }
+
+    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
+        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
+    }
+
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        return new TableModel(configuration, "allgeo", partitionBy)
-                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
-                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
-                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
-                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
-                .timestamp();
+        return new TableModel(configuration, "allgeo", partitionBy).col("hb", ColumnType.getGeoHashTypeWithBits(6)).col("hs", ColumnType.getGeoHashTypeWithBits(12)).col("hi", ColumnType.getGeoHashTypeWithBits(27)).col("hl", ColumnType.getGeoHashTypeWithBits(44)).timestamp();
     }
 
     public static int maxDayOfMonth(int month) {

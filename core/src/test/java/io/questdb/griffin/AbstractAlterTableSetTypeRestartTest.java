@@ -25,17 +25,11 @@
 package io.questdb.griffin;
 
 import io.questdb.AbstractBootstrapTest;
-import io.questdb.Bootstrap;
-import io.questdb.ServerMain;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -43,7 +37,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
-import org.jetbrains.annotations.Nullable;
 import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
@@ -85,7 +78,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static void setSeqTxn(CairoEngine engine, TableToken token, long seqTxn) {
-        try (final TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "test")) {
+        try (final TableWriter writer = CairoTestUtils.getWriter(engine, token)) {
             writer.commitSeqTxn(seqTxn);
         }
     }

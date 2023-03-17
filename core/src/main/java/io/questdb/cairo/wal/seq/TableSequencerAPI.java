@@ -323,7 +323,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
-    public void resumeTable(TableToken tableToken, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
+    public void resumeTable(CairoSecurityContext cairoSecurityContext, TableToken tableToken, long resumeFromTxn) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {

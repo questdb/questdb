@@ -127,7 +127,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropPartition(tableName, LastPartitionTs);
                         Assert.fail();
                     } catch (EntryUnavailableException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "table busy [reason=testing]");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "table busy [reason=test");
                         Misc.free(workerPool);
                     }
                 }

@@ -429,15 +429,6 @@ public class DispatcherWriterQueueTest {
         );
     }
 
-    private TableWriter getWriter(CairoEngine engine, String tableName) {
-        TableToken tt = engine.getTableToken(tableName);
-        return engine.getWriter(
-                sqlExecutionContext.getCairoSecurityContext(),
-                tt,
-                "test lock"
-        );
-    }
-
     private void runAlterOnBusyTable(
             AlterVerifyAction alterVerifyAction,
             int errorsExpected,
@@ -455,7 +446,7 @@ public class DispatcherWriterQueueTest {
                         " cast(x as timestamp) ts" +
                         " from long_sequence(10)" +
                         " )", sqlExecutionContext);
-                writer = getWriter(engine, tableName);
+                writer = CairoTestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
@@ -561,7 +552,7 @@ public class DispatcherWriterQueueTest {
                         " cast(x as timestamp) ts" +
                         " from long_sequence(9)" +
                         " )", sqlExecutionContext);
-                writer = getWriter(engine, tableName);
+                writer = CairoTestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpUpdateQueries.length);
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpUpdateQueries.length);

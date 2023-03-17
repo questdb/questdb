@@ -28,7 +28,6 @@ import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
@@ -186,7 +185,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
+                            qdb.getCairoEngine().getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,
@@ -209,6 +208,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Path path = new Path().of(cairoConfig.getRoot())
                 ) {
                     tableToken = engine.lockTableName(tableName, 1, false);
+                    Assert.assertNotNull(tableToken);
                     engine.registerTableToken(tableToken);
                     createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
@@ -217,7 +217,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 Assert.assertNotNull(tableToken);
 
                 // set partition read-only state
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-state")) {
+                try (TableWriter writer = CairoTestUtils.getWriter(engine, tableToken)) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
                     Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);

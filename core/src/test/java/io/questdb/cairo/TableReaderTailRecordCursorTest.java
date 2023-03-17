@@ -156,7 +156,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             final CountDownLatch latch = new CountDownLatch(2);
             TableToken tableToken = engine.getTableToken("xyz");
             new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "testing")) {
+                try (TableWriter writer = getWriter(tableToken)) {
                     barrier.await();
                     long ts = 0;
                     long addr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
@@ -244,7 +244,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             );
 
             TableToken tableToken = engine.getTableToken("xyz");
-            try (TableWriter writer = engine.getWriter(securityContext, tableToken, "testing")) {
+            try (TableWriter writer = getWriter(tableToken)) {
                 long ts = 0;
                 long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -307,7 +307,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             );
 
             TableToken tableToken = engine.getTableToken("xyz");
-            try (TableWriter writer = engine.getWriter(securityContext, tableToken, "testing")) {
+            try (TableWriter writer = getWriter(tableToken)) {
                 long ts = 0;
                 long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
                 try {

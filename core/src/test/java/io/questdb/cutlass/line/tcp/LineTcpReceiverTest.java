@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -627,7 +626,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
             try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
                 m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
-                engine.createTable(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), false, m, false);
+                createTable(m);
             }
 
             String lineData =
@@ -1005,7 +1004,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             try (SqlCompiler compiler = new SqlCompiler(engine);
                  SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                          .with(
-                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 securityContext,
                                  new BindVariableServiceImpl(configuration),
                                  null,
                                  -1,
@@ -1609,8 +1608,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        TableToken tt = engine.getTableToken("weather");
-        engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
+        engine.drop(securityContext, path, engine.getTableToken("weather"));
     }
 
     private void mayDrainWalQueue() {
@@ -1621,7 +1619,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void renameTable(CharSequence from, CharSequence to) {
         try (MemoryMARW mem = Vm.getMARWInstance(); Path otherPath = new Path()) {
-            engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, from, otherPath, to);
+            engine.rename(securityContext, path, mem, from, otherPath, to);
         }
     }
 

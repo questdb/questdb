@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
@@ -186,11 +185,12 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
+                            qdb.getCairoEngine().getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,
-                            null)
+                            null
+                    )
             ) {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();
@@ -218,7 +218,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
                 // set partition read-only state
                 final long[] partitionSizes = new long[partitionIsReadOnly.length];
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-state")) {
+                try (TableWriter writer = engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "read-only-state")) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
                     Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
@@ -248,7 +248,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 if (expectedNewEvents > 0) {
                     long start = System.currentTimeMillis();
                     while (System.currentTimeMillis() - start < 2000L) {
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                        try (TableReader reader = engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken)) {
                             if (1111 + expectedNewEvents <= reader.size()) {
                                 break;
                             }
@@ -256,7 +256,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Os.sleep(1L);
                     }
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                    try (TableReader reader = engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken)) {
                         int partitionCount = reader.getPartitionCount();
                         Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
                         for (int i = 0; i < partitionCount; i++) {

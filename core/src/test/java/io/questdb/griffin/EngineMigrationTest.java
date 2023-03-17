@@ -1385,7 +1385,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         compiler.compile("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("o3_0"), "test")) {
+        try (TableWriter w = getWriter("o3_0")) {
             TableWriter.Row r;
 
             // insert day 1

@@ -364,7 +364,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"), "test lock"),
+                        tablePath -> tempWriter = CairoTestUtils.getWriter(engine,"xxx"),
                         indexBuilder -> {
                             try {
                                 indexBuilder.reindexColumn("sym2");

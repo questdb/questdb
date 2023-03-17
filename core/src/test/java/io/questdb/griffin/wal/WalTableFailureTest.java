@@ -29,7 +29,10 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.MetadataService;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
@@ -52,7 +55,8 @@ import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 
@@ -730,7 +734,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     @Test
     public void testRenameColumnDoesNotExist() throws Exception {
         failToApplyDoubleAlter(
-                "cannot rename column, column does not exists",
                 tableToken -> {
                     AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
                             .ofRenameColumn(1, tableToken, 0);
@@ -785,11 +788,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
             drainWalQueue();
-            try (TableWriter writer = engine.getWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    tableName,
-                    "wal killer")
-            ) {
+            try (TableWriter writer = getWriter(tableName)) {
                 writer.addColumn("abcd", ColumnType.INT);
             }
 
@@ -809,11 +808,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
             drainWalQueue();
-            try (TableWriter writer = engine.getWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    tableName,
-                    "wal killer")
-            ) {
+            try (TableWriter writer = getWriter(tableName)) {
                 writer.removeColumn("x");
                 writer.removeColumn("sym");
             }
@@ -1126,8 +1121,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         }
     }
 
-    private TableToken createStandardNonWalTable(String tableName) throws SqlException {
-        return createStandardTable(tableName, false);
+    private void createStandardNonWalTable(String tableName) throws SqlException {
+        createStandardTable(tableName, false);
     }
 
     private TableToken createStandardTable(String tableName, boolean isWal) throws SqlException {
@@ -1167,7 +1162,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     }
 
-    private void failToApplyDoubleAlter(String error, Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
+    private void failToApplyDoubleAlter(Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             TableToken token = createStandardWalTable(tableName);
@@ -1183,7 +1178,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     alterWriter2.apply(alterOperation, true);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), error);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
                 }
             } finally {
                 Misc.free(alterOperation);

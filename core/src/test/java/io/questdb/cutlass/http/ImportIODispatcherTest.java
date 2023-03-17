@@ -556,7 +556,7 @@ public class ImportIODispatcherTest {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
-                                if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tt) == TableUtils.TABLE_RESERVED) {
+                                if (engine.getStatus(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), path, tt) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -859,11 +859,12 @@ public class ImportIODispatcherTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                        sqlExecutionContext.getCairoSecurityContext(),
+                        engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
         bindVariableService.clear();
     }
 

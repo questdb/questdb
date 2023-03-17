@@ -76,7 +76,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         TableToken tableToken = engine.getTableToken("all");
 
         Thread writerThread = new Thread(() -> {
-            try (TableWriter writer = engine.getWriter(securityContext, tableToken, "test")) {
+            try (TableWriter writer = getWriter(tableToken)) {
                 start.await();
                 for (int i = 0; i < totalColAddCount; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);

@@ -307,7 +307,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TableToken x = createX(engine);
-                try (TableReader reader = getReader(x.getTableName())) {
+                try (TableReader reader = CairoTestUtils.getReader(engine, x)) {
                     Assert.assertNotNull(reader);
                     try {
                         engine.drop(securityContext, path, x);

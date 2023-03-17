@@ -319,7 +319,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n"
                             );
 
-                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "write-rows")) {
+                            try (TableWriter writer = getWriter(tableToken)) {
                                 TableWriter.Row row = writer.newRow(activePartitionTimestamp);
                                 row.putLong(0, 2023);
                                 row.putInt(1, 12);
@@ -388,7 +388,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             TableToken tableToken = createPopulateTable(tableName, 5);
 
             // make all partitions, but last, read-only
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
+            try (TableWriter writer = getWriter(tableToken)) {
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionCount = txWriter.getPartitionCount();
                 Assert.assertEquals(5, partitionCount);
@@ -1043,11 +1043,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private static void makeAllPartitionsReadOnly(TableToken tableToken) {
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
+        try (TableWriter writer = getWriter(tableToken)) {
             TxWriter txWriter = writer.getTxWriter();
             int partitionCount = txWriter.getPartitionCount();
             Assert.assertEquals(5, partitionCount);
-            for (int i = 0, n = partitionCount; i < n; i++) {
+            for (int i = 0; i < partitionCount; i++) {
                 txWriter.setPartitionReadOnly(i, true);
             }
             txWriter.bumpTruncateVersion();
@@ -1059,7 +1059,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             TxReader txFile = reader.getTxFile();
             int partitionCount = txFile.getPartitionCount();
             Assert.assertEquals(5, partitionCount);
-            for (int i = 0, n = partitionCount; i < n; i++) {
+            for (int i = 0; i < partitionCount; i++) {
                 Assert.assertTrue(txFile.isPartitionReadOnly(i));
             }
         }
@@ -1182,7 +1182,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             TableToken tableToken = createPopulateTable(tableName, 2);
             // the read-only flag is only set when a partition is attached from soft link
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
+            try (TableWriter writer = getWriter(tableToken)) {
                 TxWriter txWriter = writer.getTxWriter();
                 txWriter.setPartitionReadOnlyByTimestamp(readOnlyPartitionTimestamp, true);
                 txWriter.bumpTruncateVersion();

@@ -25,10 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -145,20 +142,12 @@ public class AbstractO3Test {
                 sink2
         );
 
-        assertMaxTimestamp(engine, executionContext, sink2);
+        assertMaxTimestamp(engine, sink2);
     }
 
-    static void assertMaxTimestamp(
-            CairoEngine engine,
-            SqlExecutionContext executionContext,
-            CharSequence expected
-    ) {
+    static void assertMaxTimestamp(CairoEngine engine, CharSequence expected) {
         try (
-                final TableWriter w = engine.getWriter(
-                        executionContext.getCairoSecurityContext(),
-                        engine.getTableToken("x"),
-                        "test"
-                )
+                final TableWriter w = CairoTestUtils.getWriter(engine, "x")
         ) {
             sink.clear();
             sink.put("max\n");
@@ -390,11 +379,6 @@ public class AbstractO3Test {
                 TestUtils.execute(null, runnable, configuration, LOG);
             }
         });
-    }
-
-    protected static TableWriter getWriter(SqlExecutionContext sqlExecutionContext, String tableName, String test) {
-        CairoEngine engine = sqlExecutionContext.getCairoEngine();
-        return engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName), test);
     }
 
     protected static void printSqlResult(

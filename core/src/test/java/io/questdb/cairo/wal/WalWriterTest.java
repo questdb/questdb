@@ -2678,7 +2678,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 tableToken = createTable(model);
             }
 
-            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "symbolTest")) {
+            try (TableWriter tableWriter = getWriter(tableToken)) {
                 for (int i = 0; i < 5; i++) {
                     TableWriter.Row row = tableWriter.newRow(0);
                     row.putByte(0, (byte) i);

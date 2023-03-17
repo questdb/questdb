@@ -237,7 +237,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
-                    serialImporter.process();
+                    serialImporter.process(task.getSecurityContext());
                 }
             } catch (TextImportException e) {
                 updateStatus(

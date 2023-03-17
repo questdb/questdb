@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
@@ -96,7 +95,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         for (int i = 0; i < numOfDropThreads; i++) {
             compilers[i] = new SqlCompiler(engine, null, null);
             SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, numOfDropThreads);
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+            sqlExecutionContext.with(securityContext, null, null);
             executionContexts[i] = sqlExecutionContext;
         }
     }

@@ -77,26 +77,23 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         AbstractBootstrapTest.setUpStatic();
         path = new Path().of(root).concat("db").$();
         mainVolume = path.toString();
-        try {
-            int pathLen = path.length();
-            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
-            Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
-            otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
-            createDummyConfiguration(
-                    HTTP_PORT + 10,
-                    HTTP_MIN_PORT + 10,
-                    pgPort,
-                    ILP_PORT + 10,
-                    PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                    PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        int pathLen = path.length();
+        Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
+        Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
+        otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
+        createDummyConfiguration(
+                HTTP_PORT + 10,
+                HTTP_MIN_PORT + 10,
+                pgPort,
+                ILP_PORT + 10,
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
+                PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume
+        );
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        deleteFolder(otherVolume, false);
+        Files.rmdir(path.of(otherVolume));
         Misc.free(path);
         AbstractBootstrapTest.tearDownStatic();
     }
@@ -593,12 +590,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 File root = directories.pop();
                 File[] content = root.listFiles();
                 if (content == null || content.length == 0) {
-                    Assert.assertTrue(root.delete());
+                    root.delete();
                 } else {
                     for (File f : content) {
                         File target = f.getAbsoluteFile();
                         if (target.isFile()) {
-                            Assert.assertTrue(target.delete());
+                            target.delete();
                         } else if (target.isDirectory()) {
                             directories.offer(target);
                         }

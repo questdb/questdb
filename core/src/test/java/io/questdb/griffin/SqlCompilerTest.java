@@ -3626,10 +3626,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             public void run(CairoEngine engine) {
                 if (state++ == 1) {
                     // remove column from table X
-                    TableToken tt = engine.getTableToken("y");
-                    try (TableWriter writer = engine.getWriter(
-                            AllowAllCairoSecurityContext.INSTANCE, tt, "testing"
-                    )) {
+                    try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
                         writer.removeColumn("int1");
                         writer.addColumn("c", ColumnType.INT);
                     }

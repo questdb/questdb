@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.ByteCharSequence;
@@ -217,11 +216,11 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
     }
 
     @NotNull
-    private static TableUpdateDetails createTud(TableToken token, ByteCharSequence tableNameUtf8) {
+    private static TableUpdateDetails createTud(TableToken tableToken, ByteCharSequence tableNameUtf8) {
         return new TableUpdateDetails(
                 LINE_TCP_RECEIVER_CONFIGURATION,
                 engine,
-                engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, token, "test"),
+                engine.getTableWriterAPI(securityContext, tableToken, "test"),
                 -1,
                 new NetworkIOJob[0],
                 DEFAULT_COLUMN_TYPES,
