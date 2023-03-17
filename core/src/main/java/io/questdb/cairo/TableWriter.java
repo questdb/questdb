@@ -1458,7 +1458,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         o3Hi - 1,
                                         BinarySearch.SCAN_DOWN
                                 );
-                        lagRowCount = o3Hi - lagThresholdRow;
+                        lagRowCount = o3Hi - o3Lo - lagThresholdRow;
                         assert lagRowCount > 0 && lagRowCount < o3Hi - o3Lo;
                         o3Hi -= lagRowCount;
                         o3TimestampMax = getTimestampIndexValue(timestampAddr, o3Hi - 1);
@@ -1472,7 +1472,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         lagRowCount = 0;
                     }
 
-                    assert lagRowCount >= 0;
                     o3RowCount = o3Hi - o3Lo + lagRowCount;
                     processO3Block(
                             lagRowCount,
@@ -5676,7 +5675,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removeNonAttachedPartitions() {
-        LOG.info().$("purging non attached partitions [path=").$(path.$()).I$();
+        LOG.info().$("purging non-attached partitions [path=").$(path.$()).I$();
         try {
             ff.iterateDir(path.$(), removePartitionDirsNotAttached);
         } finally {
