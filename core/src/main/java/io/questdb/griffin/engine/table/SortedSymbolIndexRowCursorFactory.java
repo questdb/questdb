@@ -34,22 +34,28 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Comparator;
 
 public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     private final static ThreadLocal<SortHelper> TL_SORT_HELPER = new ThreadLocal<>(SortHelper::new);
     private final int columnIndex;
+    private final IntList columnIndexes;
     private final boolean columnOrderDirectionAsc;
     private final ListBasedSymbolIndexRowCursor cursor = new ListBasedSymbolIndexRowCursor();
     private final int indexDirection;
     private final IntList symbolKeys = new IntList();
     private int symbolKeyLimit;
 
-    public SortedSymbolIndexRowCursorFactory(int columnIndex, boolean columnOrderDirectionAsc, int indexDirection) {
+    public SortedSymbolIndexRowCursorFactory(int columnIndex,
+                                             boolean columnOrderDirectionAsc,
+                                             int indexDirection,
+                                             @NotNull IntList columnIndexes) {
         this.columnIndex = columnIndex;
         this.indexDirection = indexDirection;
         this.columnOrderDirectionAsc = columnOrderDirectionAsc;
+        this.columnIndexes = columnIndexes;
     }
 
     @Override
@@ -67,7 +73,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     public void prepareCursor(TableReader tableReader) {
         symbolKeys.clear();
 
-        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndex);
+        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndexes.get(columnIndex));
         int count = staticSymbolTable.getSymbolCount();
 
         final SortHelper sortHelper = TL_SORT_HELPER.get();
@@ -159,7 +165,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private boolean fetchNext() {
             while (index < symbolKeyLimit) {
                 current = dataFrame
-                        .getBitmapIndexReader(columnIndex, indexDirection)
+                        .getBitmapIndexReader(columnIndexes.get(columnIndex), indexDirection)
                         .getCursor(
                                 true,
                                 symbolKeys.getQuick(index++),

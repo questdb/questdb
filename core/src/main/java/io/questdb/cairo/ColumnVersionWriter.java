@@ -134,8 +134,20 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public void truncate(boolean isPartitioned) {
         if (cachedList.size() > 0) {
+
             if (isPartitioned) {
-                cachedList.clear();
+                int from = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, COL_TOP_DEFAULT_PARTITION + 1, BinarySearch.SCAN_UP);
+                if (from < 0) {
+                    from = -from - 1;
+                }
+                // Remove all partitions after COL_TOP_DEFAULT_PARTITION
+                if (from < cachedList.size()) {
+                    cachedList.setPos(from);
+                }
+                // Keep default column version but reset the added timestamp to min
+                for (int i = 0, n = cachedList.size(); i < n; i += BLOCK_SIZE) {
+                    cachedList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, COL_TOP_DEFAULT_PARTITION);
+                }
             } else {
                 //reset column tops
                 for (int i = 3, n = cachedList.size(); i < n; i += 4) {
@@ -210,7 +222,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             int defaultRecordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
             if (defaultRecordIndex >= 0) {
                 long columnNameTxn = cachedList.getQuick(defaultRecordIndex + COLUMN_NAME_TXN_OFFSET);
-                long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + COLUMN_TOP_OFFSET);
+                long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + TIMESTAMP_ADDED_PARTITION_OFFSET);
                 // Do not add 0 column top if the default partition
                 if (defaultPartitionTimestamp > partitionTimestamp || colTop > 0) {
                     upsert(partitionTimestamp, columnIndex, columnNameTxn, colTop);

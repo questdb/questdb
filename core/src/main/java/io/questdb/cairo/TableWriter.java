@@ -1670,7 +1670,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Remove all partition from txn file, column version file.
         txWriter.beginPartitionSizeUpdate();
 
-        for (int i = txWriter.getPartitionCount(); i > -1L; i--) {
+        closeActivePartition(false);
+        for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestamp(i);
             long partitionTxn = txWriter.getPartitionNameTxn(i);
             partitionRemoveCandidates.add(timestamp, partitionTxn);
