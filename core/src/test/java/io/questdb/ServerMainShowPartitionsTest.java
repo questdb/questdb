@@ -229,7 +229,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             String insertStmt = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
             SOCountDownLatch returned = new SOCountDownLatch(1);
             engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                System.out.printf("TOK:%s, FT:%d, E:%d%n", tableToken, factoryType, event);
                 if (tableToken != null && tableToken.getTableName().equals(tableName) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     returned.countDown();
                 }
