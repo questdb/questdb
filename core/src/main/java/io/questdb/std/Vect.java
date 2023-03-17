@@ -48,6 +48,10 @@ public final class Vect {
     }
 
     public static long boundedBinarySearchIndexT(long pData, long value, long low, long high, int scanDirection) {
+        // Negative values are not supported in timestamp index.
+        if (value < 0) {
+            return low - 1;
+        }
         // Note: high is inclusive!
         long index = binarySearchIndexT(pData, value, low, high, scanDirection);
         if (index < 0) {

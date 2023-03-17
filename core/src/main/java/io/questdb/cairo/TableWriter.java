@@ -81,7 +81,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
-    private final static int MAX_WAL_LAG_ROWS = 100_000_000;
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
@@ -1427,7 +1426,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
-                if (copyToLagOnly && totalUncommitted < MAX_WAL_LAG_ROWS) {
+                if (copyToLagOnly && totalUncommitted < configuration.getWalCommitSquashRowLimit()) {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
 
                     // Don't commit anything, move everything to memory instead.
@@ -1497,8 +1496,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     o3Hi - 1,
                                     BinarySearch.SCAN_DOWN
                             );
-                    walLagRowCount = Math.min(o3Hi - lagThresholdRow, MAX_WAL_LAG_ROWS);
-                    assert walLagRowCount > 0 && walLagRowCount < o3Hi - o3Lo;
+                    walLagRowCount = Math.min(o3Hi - o3Lo - lagThresholdRow, configuration.getWalCommitSquashRowLimit());
+                    assert walLagRowCount >= 0 && walLagRowCount < o3Hi - o3Lo;
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
                     commitMinTimestamp = txWriter.getLagMinTimestamp();
