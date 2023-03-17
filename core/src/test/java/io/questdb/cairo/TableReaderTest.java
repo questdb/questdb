@@ -2458,7 +2458,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
         try (TableReader reader = newTableReader(configuration, "x")) {
             Assert.assertEquals(expectedPartitions, reader.getPartitionCount());
-            Assert.assertEquals(0, reader.calculateOpenPartitionCount());
+            Assert.assertEquals(0, reader.getOpenPartitionCount());
             assertOpenPartitionCount(reader);
 
             final RecordCursor cursor = reader.getCursor();
@@ -2469,13 +2469,13 @@ public class TableReaderTest extends AbstractCairoTest {
                 count++;
             }
             Assert.assertEquals(rows, count);
-            Assert.assertEquals(expectedPartitions, reader.calculateOpenPartitionCount());
+            Assert.assertEquals(expectedPartitions, reader.getOpenPartitionCount());
             assertOpenPartitionCount(reader);
 
             reader.goPassive();
             Assert.assertFalse(reader.reload());
 
-            Assert.assertEquals(openPartitionsLimit, reader.calculateOpenPartitionCount());
+            Assert.assertEquals(openPartitionsLimit, reader.getOpenPartitionCount());
             assertOpenPartitionCount(reader);
 
             cursor.toTop();
@@ -2485,7 +2485,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 count++;
             }
             Assert.assertEquals(rows, count);
-            Assert.assertEquals(expectedPartitions, reader.calculateOpenPartitionCount());
+            Assert.assertEquals(expectedPartitions, reader.getOpenPartitionCount());
             assertOpenPartitionCount(reader);
         }
     }
