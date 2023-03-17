@@ -50,18 +50,21 @@ public class FuzzTransactionGenerator {
             double probabilityOfRemovingColumn,
             double probabilityOfRenamingColumn,
             double probabilityOfDataInsert,
+            double probabilityOfTruncate,
             int maxStrLenForStrColumns,
             String[] symbols
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int metaVersion = 0;
+        int waitBarrierVersion = 0;
         RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
 
         long lastTimestamp = minTimestamp;
-        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert;
+        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert + probabilityOfTruncate;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
+        probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
         transactionCount = Math.min(transactionCount, 10 * 1_000_000 / rowCount);
@@ -70,23 +73,28 @@ public class FuzzTransactionGenerator {
             double transactionType = rnd.nextDouble();
             if (transactionType < probabilityOfRemovingColumn) {
                 // generate column remove
-                RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, meta);
+                RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
                     metaVersion++;
+                    waitBarrierVersion++;
                     meta = newTableMetadata;
                 }
             } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn) {
                 // generate column rename
-                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, meta);
+                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
-                    // Sometimes there can be nothing to remove
+                    // Sometimes there can be nothing to rename
                     metaVersion++;
+                    waitBarrierVersion++;
                     meta = newTableMetadata;
                 }
-            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
+            } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate) {
+                // generate truncate table
+                meta = generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++, meta);
+            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 // generate column add
-                meta = generateAddColumn(transactionList, metaVersion++, rnd, meta);
+                meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
@@ -117,6 +125,7 @@ public class FuzzTransactionGenerator {
                         transactionList,
                         rnd,
                         metaVersion,
+                        waitBarrierVersion,
                         startTs,
                         stopTs,
                         blockRows,
@@ -172,7 +181,7 @@ public class FuzzTransactionGenerator {
         }
     }
 
-    private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {
+    private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
         FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
@@ -192,6 +201,7 @@ public class FuzzTransactionGenerator {
 
                 transaction.operationList.add(new FuzzRenameColumnOperation(columnName, newColName));
                 transaction.structureVersion = metadataVersion;
+                transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
 
                 FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
@@ -207,6 +217,16 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
+    private static RecordMetadata generateTruncateTable(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, RecordMetadata meta) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new TruncateTableOperation());
+        transactionList.add(transaction);
+        transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.forceWait();
+        return meta;
+    }
+
     private static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {
         if (tableMetadata instanceof FuzzTestColumnMeta) {
             return ((FuzzTestColumnMeta) tableMetadata).getLiveColumnCount();
@@ -218,6 +238,7 @@ public class FuzzTransactionGenerator {
     static RecordMetadata generateAddColumn(
             ObjList<FuzzTransaction> transactionList,
             int metadataVersion,
+            int waitBarrierVersion,
             Rnd rnd,
             RecordMetadata tableMetadata
     ) {
@@ -237,6 +258,7 @@ public class FuzzTransactionGenerator {
         }
         transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
         transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
 
         FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
@@ -258,6 +280,7 @@ public class FuzzTransactionGenerator {
             ObjList<FuzzTransaction> transactionList,
             Rnd rnd,
             int metadataVersion,
+            int waitBarrierVersion,
             long startTs,
             long stopTs,
             int rowCount,
@@ -289,12 +312,14 @@ public class FuzzTransactionGenerator {
 
         transaction.rollback = rnd.nextDouble() < rollback;
         transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
     }
 
     static RecordMetadata generateDropColumn(
             ObjList<FuzzTransaction> transactionList,
             int metadataVersion,
+            int waitBarrierVersion,
             Rnd rnd,
             RecordMetadata tableMetadata
     ) {
@@ -308,6 +333,7 @@ public class FuzzTransactionGenerator {
                 String columnName = tableMetadata.getColumnName(columnIndex);
                 transaction.operationList.add(new FuzzDropColumnOperation(columnName));
                 transaction.structureVersion = metadataVersion;
+                transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
                 FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
                 copyColumnsExcept(tableMetadata, newMeta, columnIndex);

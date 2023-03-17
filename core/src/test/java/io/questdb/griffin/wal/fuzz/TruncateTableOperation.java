@@ -24,16 +24,13 @@
 
 package io.questdb.griffin.wal.fuzz;
 
-import io.questdb.std.ObjList;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.Rnd;
 
-public class FuzzTransaction {
-    public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
-    public boolean rollback;
-    public int structureVersion;
-    public boolean waitAllDone;
-    public int waitBarrierVersion;
-
-    public void forceWait() {
-        waitAllDone = true;
+public class TruncateTableOperation implements FuzzTransactionOperation {
+    @Override
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+        tableWriter.truncate();
+        return true;
     }
 }
