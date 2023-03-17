@@ -40,10 +40,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.Worker;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.tasks.VectorAggregateTask;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
@@ -127,15 +124,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 VectorAggregateTask task = queue.get(cursor);
                 task.entry.run(workerId, subSeq, cursor);
                 reclaimed++;
-            }
-
-            if (cursor == -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCB.cancel();
-                }
-
-                log.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
+            } else if (cursor == -1) {
+                log.info().$("waiting for completion [queuedCount=").$(queuedCount).$(']').$();
                 doneLatch.await(queuedCount);
+            } else {
+                Os.pause();
             }
         }
         return reclaimed;

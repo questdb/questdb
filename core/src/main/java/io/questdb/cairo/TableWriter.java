@@ -3033,10 +3033,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long cursor = subSeq.next();
             if (cursor > -1) {
                 O3CallbackJob.runCallbackWithCol(queue.get(cursor), cursor, subSeq);
-            }
-
-            if (cursor == -1) {
+            } else if (cursor == -1) {
                 o3DoneLatch.await(queuedCount);
+            } else {
+                Os.pause();
             }
         }
         checkO3Errors();
@@ -3894,22 +3894,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (timestampIndex != i && type > 0) {
                 long cursor = pubSeq.next();
                 if (cursor > -1) {
-                    try {
-                        final O3CallbackTask task = queue.get(cursor);
-                        task.of(
-                                o3DoneLatch,
-                                i,
-                                type,
-                                mergedTimestamps,
-                                countInLag,
-                                mappedRowLo,
-                                mappedRoHi,
-                                ColumnType.isVariableLength(type) ? o3MergeLagVarColumnRef : o3MergeLagFixColumnRef
-                        );
-                    } finally {
-                        queuedCount++;
-                        pubSeq.done(cursor);
-                    }
+                    final O3CallbackTask task = queue.get(cursor);
+                    task.of(
+                            o3DoneLatch,
+                            i,
+                            type,
+                            mergedTimestamps,
+                            countInLag,
+                            mappedRowLo,
+                            mappedRoHi,
+                            ColumnType.isVariableLength(type) ? o3MergeLagVarColumnRef : o3MergeLagFixColumnRef
+                    );
+                    queuedCount++;
+                    pubSeq.done(cursor);
                 } else {
                     o3MergeIntoLagColumn(mergedTimestamps, i, type, countInLag, mappedRowLo, mappedRoHi);
                 }
@@ -4387,9 +4384,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             dispatchO3CallbackQueue(queue, queuedCount);
-        }
-        if (o3ErrorCount.get() > 0) {
-            throw CairoException.critical(0).put("o3 move uncommitted failed, see logs for details");
         }
         txWriter.resetToLastPartition(committedTransientRowCount);
         return transientRowsAdded;
