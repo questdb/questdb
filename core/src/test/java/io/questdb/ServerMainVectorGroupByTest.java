@@ -52,7 +52,7 @@ import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
  * Here we test edge cases around worker thread pool sizes and worker ids.
  * PGWire pool size is intentionally set to a higher value than the shared pool.
  */
-public class ServerMainVectGroupByTest extends AbstractBootstrapTest {
+public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
 
     private static final int PG_WIRE_POOL_SIZE = 4;
     private static final int SHARED_POOL_SIZE = 1;
@@ -187,6 +187,6 @@ public class ServerMainVectGroupByTest extends AbstractBootstrapTest {
     static {
         // log is needed to greedily allocate logger infra and
         // exclude it from leak detector
-        LogFactory.getLog(ServerMainVectGroupByTest.class);
+        LogFactory.getLog(ServerMainVectorGroupByTest.class);
     }
 }
