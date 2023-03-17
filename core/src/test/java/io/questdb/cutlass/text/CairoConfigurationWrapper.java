@@ -784,8 +784,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWalApplyMaxTimePerTable() {
-        return conf.getWalApplyMaxTimePerTable();
+    public long getWalApplyTableTimeQuota() {
+        return conf.getWalApplyTableTimeQuota();
     }
 
     @Override

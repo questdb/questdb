@@ -792,7 +792,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getWalApplyMaxTimePerTable() {
+    public long getWalApplyTableTimeQuota() {
         return 1000L;
     }
 

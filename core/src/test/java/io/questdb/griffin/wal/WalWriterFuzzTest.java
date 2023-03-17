@@ -756,7 +756,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     private void setFuzzProperties(long maxApplyTimePerTable) {
-        node1.getConfigurationOverrides().setWalApplyMaxTimePerTable(maxApplyTimePerTable);
+        node1.getConfigurationOverrides().setWalApplyTableTimeQuote(maxApplyTimePerTable);
     }
 
     private void setRandomAppendPageSize(Rnd rnd) {

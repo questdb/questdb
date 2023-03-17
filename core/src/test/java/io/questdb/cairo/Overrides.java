@@ -80,7 +80,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
     private int tableRegistryCompactionThreshold;
-    private long walApplyMaxTimePerTable = -1;
+    private long walApplyTableTimeQuote = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private int walTxnNotificationQueueCapacity = -1;
@@ -295,8 +295,8 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public long getWalApplyMaxTimePerTable() {
-        return walApplyMaxTimePerTable;
+    public long getWalApplyTableTimeQuote() {
+        return walApplyTableTimeQuote;
     }
 
     @Override
@@ -407,7 +407,7 @@ public class Overrides implements ConfigurationOverrides {
         mangleTableDirNames = true;
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
-        walApplyMaxTimePerTable = -1;
+        walApplyTableTimeQuote = -1;
     }
 
     @Override
@@ -645,8 +645,8 @@ public class Overrides implements ConfigurationOverrides {
         this.testMicrosClock = testMicrosClock;
     }
 
-    public void setWalApplyMaxTimePerTable(long walApplyMaxTimePerTable) {
-        this.walApplyMaxTimePerTable = walApplyMaxTimePerTable;
+    public void setWalApplyTableTimeQuote(long walApplyTableTimeQuote) {
+        this.walApplyTableTimeQuote = walApplyTableTimeQuote;
     }
 
     @Override

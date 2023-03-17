@@ -65,7 +65,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final int lookAheadTransactionCount;
-    private final long maxTimePerTableMicro;
+    private final long tableTimeQuotaMicros;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
@@ -88,7 +88,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         walEventReader = new WalEventReader(configuration.getFilesFacade());
         metrics = engine.getMetrics().getWalMetrics();
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
-        maxTimePerTableMicro = configuration.getWalApplyMaxTimePerTable() >= 0 ? configuration.getWalApplyMaxTimePerTable() * 1000L : Timestamps.DAY_MICROS;
+        tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
     }
 
     // returns transaction number, which is always > -1. Negative values are used as status code.
@@ -305,7 +305,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 transactionLogCursor.toTop();
 
                 isTerminating = runStatus.isTerminating();
-                final long timeLimit = microClock.getTicks() + maxTimePerTableMicro;
+                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 WHILE_TRANSACTION_CURSOR:
                 while (!isTerminating && (finishedAll = microClock.getTicks() <= timeLimit) && transactionLogCursor.hasNext()) {
                     final int walId = transactionLogCursor.getWalId();

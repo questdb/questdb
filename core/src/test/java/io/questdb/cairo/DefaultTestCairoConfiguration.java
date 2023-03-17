@@ -64,7 +64,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public long getWalApplyMaxTimePerTable() {
+    public long getWalApplyTableTimeQuota() {
         // Unrestricted.
         return -1L;
     }

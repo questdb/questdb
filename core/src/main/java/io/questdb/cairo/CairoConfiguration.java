@@ -412,7 +412,7 @@ public interface CairoConfiguration {
 
     int getWalApplyLookAheadTransactionCount();
 
-    long getWalApplyMaxTimePerTable();
+    long getWalApplyTableTimeQuota();
 
     int getWalCommitSquashRowLimit();
 
