@@ -55,6 +55,7 @@ public abstract class AbstractBootstrapTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
+    protected static final String CHARSET = "UTF8";
     protected static final int HTTP_MIN_PORT = 9011;
     protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
@@ -112,7 +113,7 @@ public abstract class AbstractBootstrapTest {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF_8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
 
             // enable services
             writer.println("http.enabled=true");
@@ -156,14 +157,14 @@ public abstract class AbstractBootstrapTest {
 
         // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF_8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
             writer.println("");
         }
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
-        try (PrintWriter writer = new PrintWriter(file, "UTF_8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
@@ -172,6 +173,34 @@ public abstract class AbstractBootstrapTest {
 
     protected static void createDummyConfiguration(String... extra) throws Exception {
         createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
+    }
+
+    static void deleteFolder(String folderName, boolean mustExist) {
+        File directory = Paths.get(folderName).toFile();
+        if (directory.exists() && directory.isDirectory()) {
+            Deque<File> directories = new LinkedList<>();
+            directories.offer(directory);
+            while (!directories.isEmpty()) {
+                File root = directories.pop();
+                File[] content = root.listFiles();
+                if (content == null || content.length == 0) {
+                    root.delete();
+                } else {
+                    for (File f : content) {
+                        File target = f.getAbsoluteFile();
+                        if (target.isFile()) {
+                            target.delete();
+                        } else if (target.isDirectory()) {
+                            directories.offer(target);
+                        }
+                    }
+                    directories.offer(root);
+                }
+            }
+            Assert.assertFalse(directory.exists());
+        } else if (mustExist) {
+            Assert.fail("does not exist: " + folderName);
+        }
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
@@ -236,34 +265,6 @@ public abstract class AbstractBootstrapTest {
             // drop simply unlinks, the folder remains, it is a feature
             // delete the table's folder in the other volume
             deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true);
-        }
-    }
-
-    static void deleteFolder(String folderName, boolean mustExist) {
-        File directory = Paths.get(folderName).toFile();
-        if (directory.exists() && directory.isDirectory()) {
-            Deque<File> directories = new LinkedList<>();
-            directories.offer(directory);
-            while (!directories.isEmpty()) {
-                File root = directories.pop();
-                File[] content = root.listFiles();
-                if (content == null || content.length == 0) {
-                    root.delete();
-                } else {
-                    for (File f : content) {
-                        File target = f.getAbsoluteFile();
-                        if (target.isFile()) {
-                            target.delete();
-                        } else if (target.isDirectory()) {
-                            directories.offer(target);
-                        }
-                    }
-                    directories.offer(root);
-                }
-            }
-            Assert.assertFalse(directory.exists());
-        } else if (mustExist) {
-            Assert.fail("does not exist: " + folderName);
         }
     }
 
