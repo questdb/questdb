@@ -82,7 +82,6 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             String line = lines[i];
             String nameColumn = line.split("\t")[2];
             Long s = sizes.get(nameColumn);
-            System.out.printf("NAME COL: %s -> NULL? %b%n", nameColumn, s == null);
             long size = s != null ? s.longValue() : 0L;
             int z = Numbers.msb(size) / 10;
             String human = String.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));

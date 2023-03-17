@@ -271,7 +271,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 path.parent();
             }
 
-            System.out.printf("PATH FOR SIZE: %s%n", path);
             partitionSize = ff.getDirectoryContentSize(path.$());
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                 TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
