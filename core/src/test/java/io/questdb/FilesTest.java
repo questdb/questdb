@@ -271,8 +271,18 @@ public class FilesTest {
     }
 
     @Test
-    public void testDirectoryContentSizeNonExistingFolder() {
+    public void testDirectoryContentSizeNonExistingDirectory() {
         try (Path path = new Path().of("banana").$()) {
+            Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
+        }
+    }
+
+    @Test
+    public void testDirectoryContentSizeOfFile() throws IOException {
+        String content = "nothing to report";
+        File dir = temporaryFolder.newFolder("banana");
+        try (Path path = new Path().of(dir.getAbsolutePath()).$()) {
+            createTempFile(path, "small.txt", content);
             Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
         }
     }

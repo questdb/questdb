@@ -171,10 +171,10 @@ public final class Files {
     public static native int fsync(int fd);
 
     public static long getDirectoryContentSize(Path path) {
-        int len = path.length();
         long pathUtf8Ptr = path.address();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
+            int len = path.length();
             try {
                 long totalSize = 0L;
                 do {

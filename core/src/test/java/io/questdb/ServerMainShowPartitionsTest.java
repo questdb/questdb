@@ -51,6 +51,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.griffin.AbstractGriffinTest.assertCursor;
@@ -142,8 +143,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 String finallyExpected = replaceSizeToMatchOS(EXPECTED, path, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
                 assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
-                int numThreads = 2;
-                SOCountDownLatch start = new SOCountDownLatch(1);
+                int numThreads = 5;
                 SOCountDownLatch completed = new SOCountDownLatch(numThreads);
                 AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
                 List<SqlCompiler> compilers = new ArrayList<>(numThreads);
@@ -155,19 +155,17 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                     contexts.add(context);
                     new Thread(() -> {
                         try {
-                            start.await();
                             assertShowPartitions(finallyExpected, tableToken, compiler, context);
                         } catch (Throwable err) {
                             errors.get().add(err);
                         } finally {
                             completed.countDown();
-                            Path.clearThreadLocals();
                         }
                     }).start();
                 }
-                start.countDown();
-                completed.await();
-
+                if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
+                    TestListener.dumpThreadStacks();
+                }
                 dropTable(engine, defaultCompiler, defaultContext, tableToken, isWal, null);
                 for (int i = 0; i < numThreads; i++) {
                     compilers.get(i).close();
@@ -193,7 +191,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         try (
                 RecordCursorFactory factory = compiler.compile("SHOW PARTITIONS FROM " + tableToken.getTableName(), context).getRecordCursorFactory();
                 RecordCursor cursor0 = factory.getCursor(context);
-                RecordCursor cursor1 = factory.getCursor(context)) {
+                RecordCursor cursor1 = factory.getCursor(context)
+        ) {
             RecordMetadata meta = factory.getMetadata();
             StringSink sink = Misc.getThreadLocalBuilder();
             RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -253,6 +252,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 drainWalQueue(engine);
             }
             returned.await();
+            engine.releaseAllWriters();
         }
         return engine.getTableToken(tableName);
     }

@@ -47,8 +47,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
     private static final RecordMetadata METADATA;
     private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
+    private final Path path = new Path();
     private final TableToken tableToken;
+    private CairoConfiguration cairoConfig;
     private SqlExecutionContext executionContext;
+    private FilesFacade ff;
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken) {
         super(METADATA);
@@ -58,6 +61,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
+        this.cairoConfig = executionContext.getCairoEngine().getConfiguration();
+        this.ff = cairoConfig.getFilesFacade();
         return cursor.initialize();
     }
 
@@ -73,7 +78,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
+        Misc.free(path);
         Misc.free(cursor);
+        executionContext = null;
+        cairoConfig = null;
+        ff = null;
     }
 
     private enum Column {
@@ -127,6 +136,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
+        private int rootLen;
         private TableReader tableReader;
         private CharSequence tsColName;
 
@@ -178,7 +188,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 TableReaderMetadata meta = tableReader.getMetadata();
                 tsColName = meta.getColumnName(meta.getTimestampIndex());
             }
-            scanDetachedAndAttachablePartitions();
+            path.of(cairoConfig.getRoot()).concat(tableToken).$();
+            rootLen = path.length();
+            scanDetachedAndAttachablePartitions(cairoConfig.getFilesFacade());
             limit = tableReader.getTxFile().getPartitionCount() + attachablePartitions.size() + detachedPartitions.size();
             toTop();
             return this;
@@ -196,13 +208,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
             CharSequence dynamicTsColName = tsColName;
+            path.trimTo(rootLen).$();
 
-            CairoConfiguration cairoConfig = executionContext.getCairoEngine().getConfiguration();
-            FilesFacade ff = cairoConfig.getFilesFacade();
-            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken.getDirName()).$();
             TxReader tableTxReader = tableReader.getTxFile();
             int partitionCount = tableTxReader.getPartitionCount();
-
             if (partitionIndex < partitionCount) {
                 // we are within the partition table
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
@@ -294,10 +303,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
 
-        private void scanDetachedAndAttachablePartitions() {
-            CairoConfiguration cairoConfig = executionContext.getCairoEngine().getConfiguration();
-            Path path = Path.getThreadLocal(cairoConfig.getRoot()).concat(tableToken).$();
-            FilesFacade ff = cairoConfig.getFilesFacade();
+        private void scanDetachedAndAttachablePartitions(FilesFacade ff) {
             long pFind = ff.findFirst(path);
             if (pFind > 0L) {
                 try {
