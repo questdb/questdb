@@ -29,14 +29,14 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.O3CallbackTask;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
     public O3CallbackJob(MessageBus messageBus) {
         super(messageBus.getO3CallbackQueue(), messageBus.getO3CallbackSubSeq());
     }
 
-    public static void runCallbackWithCol(O3CallbackTask task, long cursor, @Nullable Sequence subSeq) {
+    public static void runCallbackWithCol(O3CallbackTask task, long cursor, @NotNull Sequence subSeq) {
         final int columnIndex = task.getColumnIndex();
         final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
@@ -45,9 +45,7 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
         final long row2Hi = task.getRow2Hi();
         final TableWriter.O3ColumnUpdateMethod callbackMethod = task.getWriterCallbackMethod();
         final CountDownLatchSPI countDownLatchSPI = task.getCountDownLatchSPI();
-        if (subSeq != null) {
-            subSeq.done(cursor);
-        }
+        subSeq.done(cursor);
 
         try {
             callbackMethod.run(
@@ -66,16 +64,7 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         O3CallbackTask task = queue.get(cursor);
-        // copy task on stack so that publisher has fighting chance of
-        // publishing all it has to the queue
-
-        final boolean locked = task.tryLock();
-        if (locked) {
-            runCallbackWithCol(task, cursor, subSeq);
-        } else {
-            subSeq.done(cursor);
-        }
-
+        runCallbackWithCol(task, cursor, subSeq);
         return true;
     }
 }

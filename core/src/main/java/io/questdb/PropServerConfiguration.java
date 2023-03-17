@@ -1509,11 +1509,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3LagCalculationWindowsSize() {
-            return o3LagCalculationWindowsSize;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1809,8 +1804,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3LagCalculationWindowsSize() {
+            return o3LagCalculationWindowsSize;
+        }
+
+        @Override
         public long getO3MaxLag() {
             return o3MaxLag;
+        }
+
+        @Override
+        public int getO3MemMaxPages() {
+            return Integer.MAX_VALUE;
         }
 
         @Override
