@@ -1664,6 +1664,21 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'm';
     }
 
+    public static boolean isSymbolsKeyword(CharSequence tok) {
+        if (tok.length() != 7) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'y'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'b'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isSystemKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;

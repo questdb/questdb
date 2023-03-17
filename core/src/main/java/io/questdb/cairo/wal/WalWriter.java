@@ -496,7 +496,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void truncate() {
+    public void truncate(boolean purgeSymbolTables) {
         try {
             lastSegmentTxn = events.truncate();
             getSequencerTxn();

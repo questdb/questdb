@@ -85,10 +85,9 @@ public class TableReaderReloadBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
-
         TableToken tableToken = new TableToken("test", "test", 0, false);
         writer = new TableWriter(configuration, tableToken, Metrics.disabled());
-        writer.truncate();
+        writer.truncate(true);
         // create 10 partitions
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-01T00:00:00.000000Z"));
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-02T00:00:00.000000Z"));

@@ -38,52 +38,57 @@ public class TableReaderReloadTest extends AbstractCairoTest {
 
     @Test
     public void testReloadTruncateByDay() {
-        testReloadAfterTruncate(PartitionBy.DAY, 3000000000L);
+        testReloadAfterTruncate(PartitionBy.DAY, 3000000000L, false);
     }
 
     @Test
     public void testReloadTruncateByMonth() {
-        testReloadAfterTruncate(PartitionBy.MONTH, 50000000000L);
+        testReloadAfterTruncate(PartitionBy.MONTH, 50000000000L, false);
     }
 
     @Test
     public void testReloadTruncateByNone() {
-        testReloadAfterTruncate(PartitionBy.NONE, 1000000);
+        testReloadAfterTruncate(PartitionBy.NONE, 1000000, false);
     }
 
     @Test
     public void testReloadTruncateByWeek() {
-        testReloadAfterTruncate(PartitionBy.WEEK, 7 * 3000000000L);
+        testReloadAfterTruncate(PartitionBy.WEEK, 7 * 3000000000L, false);
     }
 
     @Test
     public void testReloadTruncateByYear() {
-        testReloadAfterTruncate(PartitionBy.YEAR, 365 * 50000000000L);
+        testReloadAfterTruncate(PartitionBy.YEAR, 365 * 50000000000L, false);
+    }
+
+    @Test
+    public void testReloadTruncatePurgeSymbolTables() {
+        testReloadAfterTruncate(PartitionBy.DAY, 3000000000L, true);
     }
 
     @Test
     public void testTruncateInsertReloadDay() {
-        testTruncateInsertReload(PartitionBy.DAY, 3000000000L);
+        testTruncateInsertReload(PartitionBy.DAY, 3000000000L, false);
     }
 
     @Test
     public void testTruncateInsertReloadMonth() {
-        testTruncateInsertReload(PartitionBy.MONTH, 50000000000L);
+        testTruncateInsertReload(PartitionBy.MONTH, 50000000000L, false);
     }
 
     @Test
     public void testTruncateInsertReloadNone() {
-        testTruncateInsertReload(PartitionBy.NONE, 1000000L);
+        testTruncateInsertReload(PartitionBy.NONE, 1000000L, false);
     }
 
     @Test
     public void testTruncateInsertReloadWeek() {
-        testTruncateInsertReload(PartitionBy.WEEK, 7 * 3000000000L);
+        testTruncateInsertReload(PartitionBy.WEEK, 7 * 3000000000L, false);
     }
 
     @Test
     public void testTruncateInsertReloadYear() {
-        testTruncateInsertReload(PartitionBy.YEAR, 365 * 50000000000L);
+        testTruncateInsertReload(PartitionBy.YEAR, 365 * 50000000000L, false);
     }
 
     private void assertTable(Rnd rnd, long buffer, RecordCursor cursor, Record record) {
@@ -124,7 +129,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         writer.commit();
     }
 
-    private void testReloadAfterTruncate(int partitionBy, long increment) {
+    private void testReloadAfterTruncate(int partitionBy, long increment, boolean purgeSymbolTables) {
         if (Os.isWindows()) {
             return;
         }
@@ -150,7 +155,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);
-                writer.truncate();
+                writer.truncate(purgeSymbolTables);
                 Assert.assertTrue(reader.reload());
                 cursor = reader.getCursor();
                 Assert.assertFalse(cursor.hasNext());
@@ -166,7 +171,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
     }
 
-    private void testTruncateInsertReload(int partitionBy, long increment) {
+    private void testTruncateInsertReload(int partitionBy, long increment, boolean purgeSymbolTables) {
         if (Os.isWindows()) {
             return;
         }
@@ -194,7 +199,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);
 
-                writer.truncate();
+                writer.truncate(purgeSymbolTables);
 
                 // Write different data
                 rnd.reset(123, 123);

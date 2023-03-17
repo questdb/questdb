@@ -132,5 +132,13 @@ public interface TableWriterAPI extends Closeable {
      */
     boolean supportsMultipleWriters();
 
-    void truncate();
+    /**
+     * Truncates table.
+     *
+     * @param purgeSymbolTables defines whether the operation does or does not truncate symbol tables,
+     *                          i.e. internal symbol string to int symbol code mappings. Sometimes the symbols should
+     *                          be kept to make sure that DETACH/ATTACH PARTITION does not lose data for symbol columns.
+     *                          WAL tables ignore this parameter and always retain the symbol tables.
+     */
+    void truncate(boolean purgeSymbolTables);
 }

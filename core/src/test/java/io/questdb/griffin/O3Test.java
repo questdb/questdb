@@ -7570,11 +7570,10 @@ public class O3Test extends AbstractO3Test {
             }
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
-                    "count\n" + (2 * idBatchSize + 1) + "\n"
-            );
+                    "count\n" + (2 * idBatchSize + 1) + "\n");
             engine.releaseAllReaders();
             try (TableWriter o3 = getWriter(sqlExecutionContext, "x", "testing")) {
-                o3.truncate();
+                o3.truncate(true);
             }
         }
     }

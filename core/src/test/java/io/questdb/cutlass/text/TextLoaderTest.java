@@ -3041,7 +3041,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         textLoader.clear();
 
         try (TableWriter writer = getWriter(engine, "test")) {
-            writer.truncate();
+            writer.truncate(true);
         }
 
         textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);

@@ -1958,14 +1958,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
+     * <p>
+     * This operation does not truncate symbol tables, i.e. internal symbol string to int symbol code mappings,
+     * to make sure that DETACH/ATTACH PARTITION does not lose data for symbol columns.
      */
     @Override
-    public final void truncate() {
+    public final void truncate(boolean purgeSymbolTables) {
         rollback();
 
-        // we do this before size check so that "old" corrupt symbol tables are brought back in line
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-            denseSymbolMapWriters.getQuick(i).truncate();
+        if (purgeSymbolTables) {
+            // we do this before size check so that "old" corrupt symbol tables are brought back in line
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                denseSymbolMapWriters.getQuick(i).truncate();
+            }
         }
 
         if (size() == 0) {
@@ -3049,7 +3054,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void finishMetaSwapUpdate() {
-
         // rename _meta to _meta.prev
         this.metaPrevIndex = rename(fileOperationRetryCount);
         writeRestoreMetaTodo();

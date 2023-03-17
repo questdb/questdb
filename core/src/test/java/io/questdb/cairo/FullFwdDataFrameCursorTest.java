@@ -2083,8 +2083,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = createTableReader(configuration, "x")) {
-
-                    writer.truncate();
+                    writer.truncate(true);
                     writer.addColumn(
                             "c",
                             ColumnType.SYMBOL,

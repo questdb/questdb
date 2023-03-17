@@ -276,7 +276,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                             count++;
                         }
 
-                        writer.truncate();
+                        writer.truncate(true);
                         Assert.assertTrue(cursor.reload());
                         Assert.assertFalse(cursor.hasNext());
 
@@ -344,7 +344,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                             count++;
                         }
 
-                        writer.truncate();
+                        writer.truncate(true);
                         Assert.assertTrue(cursor.reload());
                         Assert.assertFalse(cursor.hasNext());
 

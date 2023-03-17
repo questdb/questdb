@@ -229,7 +229,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             int tableId = rec.getInt(TABLE_ID_COLUMN);
                             long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
-                            int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
+                            int partitionBy = rec.getInt(PARTITION_BY_COLUMN);
                             long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
                             TableToken token = engine.getTableTokenByDirName(tableName, tableId);
 
@@ -244,7 +244,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                     tableId,
                                     truncateVersion,
                                     columnType,
-                                    partitionBY,
+                                    partitionBy,
                                     updateTxn,
                                     retryDelay,
                                     microTime
@@ -267,7 +267,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
             if (writer != null) {
                 try {
-                    writer.truncate();
+                    writer.truncate(true);
                 } catch (Throwable th) {
                     LOG.error().$("failed to truncate column version purge log table").$(th).$();
                 }

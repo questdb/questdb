@@ -849,7 +849,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 sendAndWait(lineData, tableIndex, 2);
                 mayDrainWalQueue();
                 try (TableWriterAPI w = getTableWriterAPI("weather")) {
-                    w.truncate();
+                    w.truncate(true);
                 }
                 // drainWalQueue() call opens TableWriter one more time
                 int expectedReleases = walEnabled ? 5 : 4;
@@ -1488,7 +1488,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             mayDrainWalQueue();
             try (TableWriterAPI w = getTableWriterAPI("weather")) {
-                w.truncate();
+                w.truncate(true);
             }
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +

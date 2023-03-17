@@ -849,7 +849,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void truncate() {
+        public void truncate(boolean purgeSymbolTables) {
         }
     }
 }

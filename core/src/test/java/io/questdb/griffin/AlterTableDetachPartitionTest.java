@@ -250,6 +250,92 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                // It's important to have a symbol column here to make sure
+                // that we don't wipe symbol tables on TRUNCATE.
+                createPopulateTable(
+                        src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
+                        3,
+                        "2020-01-01",
+                        1
+                );
+
+                executeInsert("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
+
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n" +
+                                "2020-01-02T23:59:59.000000Z\tfoobar\n"
+                );
+
+                compile("alter table " + tableName + " detach partition list '2020-01-01'");
+
+                compile("truncate table " + tableName);
+
+                renameDetachedToAttachable(tableName, "2020-01-01");
+                compile("alter table " + tableName + " attach partition list '2020-01-01'");
+
+                // All symbols are kept.
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionAfterTruncateWithSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
+                        3,
+                        "2020-01-01",
+                        1
+                );
+
+                executeInsert("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
+
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n" +
+                                "2020-01-02T23:59:59.000000Z\tfoobar\n"
+                );
+
+                compile("alter table " + tableName + " detach partition list '2020-01-01'");
+
+                compile("truncate table " + tableName + " with symbols");
+
+                renameDetachedToAttachable(tableName, "2020-01-01");
+                compile("alter table " + tableName + " attach partition list '2020-01-01'");
+
+                // No symbols are present.
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\t\n" +
+                                "2020-01-01T15:59:59.333332Z\t\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAttachPartitionCommits() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -1147,39 +1233,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testDetachPartitionLongerName() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(
-                        1,
-                        tab.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        5,
-                        "2022-06-01",
-                        4);
-
-                String timestampDay = "2022-06-02";
-                try (TableWriter writer = getWriter(tableName)) {
-                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
-                }
-                renameDetachedToAttachable(tableName, timestampDay);
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
-                assertContent(
-                        "l\ti\tts\n" +
-                                "1\t1\t2022-06-01T19:11:59.800000Z\n" +
-                                "2\t2\t2022-06-02T14:23:59.600000Z\n" +
-                                "3\t3\t2022-06-03T09:35:59.400000Z\n" +
-                                "4\t4\t2022-06-04T04:47:59.200000Z\n" +
-                                "5\t5\t2022-06-04T23:59:59.000000Z\n",
-                        tableName
-                );
-            }
-        });
-    }
-
-    @Test
     public void testDetachPartitionIndexFilesGetIndexed() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabIndexFilesIndex";
@@ -1424,6 +1477,39 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionLongerName() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-02";
+                try (TableWriter writer = getWriter(tableName)) {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                }
+                renameDetachedToAttachable(tableName, timestampDay);
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
+                assertContent(
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\n" +
+                                "2\t2\t2022-06-02T14:23:59.600000Z\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\n",
+                        tableName
+                );
             }
         });
     }

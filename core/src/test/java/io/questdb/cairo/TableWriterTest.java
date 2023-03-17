@@ -1685,7 +1685,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     ts = populateProducts(writer, rnd, ts, N, increment);
                     writer.commit();
                     Assert.assertEquals(N, writer.size());
-                    writer.truncate();
+                    writer.truncate(false);
                 }
             }
 
@@ -1709,6 +1709,41 @@ public class TableWriterTest extends AbstractCairoTest {
                     throw CairoException.critical(0).put("FindNext failed");
                 }
                 return super.findNext(findPtr);
+            }
+        });
+    }
+
+    @Test
+    public void testDayPartitionTruncatePurgeSymbolTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+            Rnd rnd = new Rnd();
+            long increment = 60000L * 1000;
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public long getDataAppendPageSize() {
+                    return 1024 * 1024; //1MB
+                }
+            };
+            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
+
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                for (int k = 0; k < 3; k++) {
+                    ts = populateProducts(writer, rnd, ts, N, increment);
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                    writer.truncate(true);
+                }
+            }
+
+            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
+                long ts = TimestampFormatUtils.parseTimestamp("2014-03-04T00:00:00.000Z");
+                Assert.assertEquals(0, writer.size());
+                populateProducts(writer, rnd, ts, N, increment);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
             }
         });
     }
@@ -1825,7 +1860,7 @@ public class TableWriterTest extends AbstractCairoTest {
             w.commit();
 
             // truncate writer
-            w.truncate();
+            w.truncate(true);
 
             // add a couple of indexes
             w.addIndex("sym1", 1024);
@@ -1849,7 +1884,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 assertIndex(reader, record, 1);
 
                 // check if we can still truncate the writer
-                w.truncate();
+                w.truncate(true);
                 Assert.assertEquals(0, w.size());
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(0, reader.size());
@@ -2797,7 +2832,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.YEAR, 4);
 
             try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-                writer.truncate();
+                writer.truncate(true);
                 Assert.assertEquals(0, writer.size());
             }
 
@@ -4176,7 +4211,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 modifier.modify(w, rnd, t1, increment);
 
                 // truncate writer mid-row-append
-                w.truncate();
+                w.truncate(true);
 
                 // add a couple of indexes
                 w.addIndex("sym1", 1024);
@@ -4201,14 +4236,14 @@ public class TableWriterTest extends AbstractCairoTest {
                     assertIndex(reader, record, 1);
 
                     // check if we can still truncate the writer
-                    w.truncate();
+                    w.truncate(true);
                     Assert.assertEquals(0, w.size());
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(0, reader.size());
                 }
 
                 // truncate again with indexers present
-                w.truncate();
+                w.truncate(true);
 
                 // add the same data again and check indexes
                 rnd.reset();
@@ -4225,7 +4260,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     assertIndex(reader, record, 1);
 
                     // check if we can still truncate the writer
-                    w.truncate();
+                    w.truncate(true);
                     Assert.assertEquals(0, w.size());
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(0, reader.size());
@@ -4265,13 +4300,13 @@ public class TableWriterTest extends AbstractCairoTest {
                     // truncate has to be repeated
                     try {
                         ff.count = 6;
-                        writer.truncate();
+                        writer.truncate(true);
                         Assert.fail();
                     } catch (CairoException e) {
                         LOG.info().$((Sinkable) e).$();
                     }
 
-                    writer.truncate();
+                    writer.truncate(true);
                 }
             }
 

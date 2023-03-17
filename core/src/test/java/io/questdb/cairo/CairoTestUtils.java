@@ -121,7 +121,7 @@ public class CairoTestUtils {
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
                 try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("x"), Metrics.disabled())) {
-                    writer.truncate();
+                    writer.truncate(true);
                 }
             } else {
                 throw e;

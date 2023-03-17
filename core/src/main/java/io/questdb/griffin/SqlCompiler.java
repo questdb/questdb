@@ -775,7 +775,6 @@ public class SqlCompiler implements Closeable {
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
-
         } while (true);
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
@@ -2491,65 +2490,82 @@ public class SqlCompiler implements Closeable {
             tok = SqlUtil.fetchNext(lexer);
         }
 
+        if (tok != null && isWithKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "table name expected");
+        }
+
         tableWriters.clear();
         try {
-            try {
-                do {
-                    if (tok == null || Chars.equals(tok, ',')) {
-                        throw SqlException.$(lexer.getPosition(), "table name expected");
-                    }
-
-                    if (Chars.isQuoted(tok)) {
-                        tok = GenericLexer.unquote(tok);
-                    }
-                    TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-
-                    try {
-                        tableWriters.add(engine.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "truncateTables"));
-                    } catch (CairoException e) {
-                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
-                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
-                    }
-                    tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null || Chars.equals(tok, ';')) {
-                        break;
-                    }
-                    if (Chars.equalsNc(tok, ',')) {
-                        tok = SqlUtil.fetchNext(lexer);
-                    }
-
-                } while (true);
-            } catch (SqlException e) {
-                for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                    tableWriters.getQuick(i).close();
+            do {
+                if (tok == null || Chars.equals(tok, ',')) {
+                    throw SqlException.$(lexer.getPosition(), "table name expected");
                 }
-                throw e;
+
+                if (Chars.isQuoted(tok)) {
+                    tok = GenericLexer.unquote(tok);
+                }
+                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
+                try {
+                    tableWriters.add(engine.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "truncateTables"));
+                } catch (CairoException e) {
+                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
+                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || Chars.equals(tok, ';') || isWithKeyword(tok)) {
+                    break;
+                }
+                if (!Chars.equalsNc(tok, ',')) {
+                    throw SqlException.$(lexer.getPosition(), "',' or 'with' expected");
+                }
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isWithKeyword(tok)) {
+                    throw SqlException.$(lexer.getPosition(), "table name expected");
+                }
+            } while (true);
+
+            boolean purgeSymbolTables = false;
+            if (tok != null && isWithKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isSymbolsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'symbols' expected");
+                }
+                purgeSymbolTables = true;
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                try (TableWriterAPI writer = tableWriters.getQuick(i)) {
-                    try {
-                        if (writer.getMetadata().isWalEnabled()) {
-                            writer.truncate();
-                        } else {
-                            TableToken tableToken = writer.getTableToken();
-                            if (engine.lockReaders(tableToken)) {
-                                try {
-                                    writer.truncate();
-                                } finally {
-                                    engine.unlockReaders(tableToken);
-                                }
-                            } else {
-                                throw SqlException.$(0, "there is an active query against '").put(tableToken).put("'. Try again.");
+                final TableWriterAPI writer = tableWriters.getQuick(i);
+                try {
+                    if (writer.getMetadata().isWalEnabled()) {
+                        writer.truncate(purgeSymbolTables);
+                    } else {
+                        TableToken tableToken = writer.getTableToken();
+                        if (engine.lockReaders(tableToken)) {
+                            try {
+                                writer.truncate(purgeSymbolTables);
+                            } finally {
+                                engine.unlockReaders(tableToken);
                             }
+                        } else {
+                            throw SqlException.$(0, "there is an active query against '").put(tableToken).put("'. Try again.");
                         }
-                    } catch (CairoException | CairoError e) {
-                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
-                        throw e;
                     }
+                } catch (CairoException | CairoError e) {
+                    LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
+                    throw e;
                 }
             }
         } finally {
+            for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                tableWriters.getQuick(i).close();
+            }
             tableWriters.clear();
         }
         return compiledQuery.ofTruncate();
