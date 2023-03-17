@@ -211,6 +211,8 @@ public interface CairoConfiguration {
      */
     long getO3MaxLag();
 
+    int getO3MemMaxPages();
+
     long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
