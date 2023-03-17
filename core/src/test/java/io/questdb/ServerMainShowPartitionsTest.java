@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -89,8 +90,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         return Arrays.asList(new Object[][]{
                 {AbstractCairoTest.WalMode.NO_WAL, null},
                 {AbstractCairoTest.WalMode.NO_WAL, "テンション"},
-//                {AbstractCairoTest.WalMode.WITH_WAL, null}, // TODO
-//                {AbstractCairoTest.WalMode.WITH_WAL, "テンション"}
+                {AbstractCairoTest.WalMode.WITH_WAL, null},
+                {AbstractCairoTest.WalMode.WITH_WAL, "テンション"}
         });
     }
 
@@ -165,6 +166,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                     contexts.get(i).close();
                 }
                 contexts.clear();
+
+                // fail on first error found
                 for (Throwable t : errors.get()) {
                     Assert.fail(t.getMessage());
                 }
@@ -178,33 +181,14 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 RecordCursor cursor0 = factory.getCursor(context);
                 RecordCursor cursor1 = factory.getCursor(context)
         ) {
+            RecordMetadata meta = factory.getMetadata();
             StringSink sink = Misc.getThreadLocalBuilder();
             RecordCursorPrinter printer = new RecordCursorPrinter();
             LongList rows = new LongList();
             for (int j = 0; j < 5; j++) {
-                assertCursor(
-                        finallyExpected,
-                        false,
-                        true,
-                        false,
-                        cursor0,
-                        factory.getMetadata(),
-                        sink,
-                        printer,
-                        rows,
-                        false);
+                assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, printer, rows, false);
                 cursor0.toTop();
-                assertCursor(
-                        finallyExpected,
-                        false,
-                        true,
-                        false,
-                        cursor1,
-                        factory.getMetadata(),
-                        sink,
-                        printer,
-                        rows,
-                        false);
+                assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
                 cursor1.toTop();
             }
         }
@@ -239,15 +223,15 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                         .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
                         .timestamp("ts")
         ) {
+            if (isWal) {
+                tableModel.wal();
+            }
             String insertStmt = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
             SOCountDownLatch returned = new SOCountDownLatch(1);
             engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                if (tableToken != null && tableToken.getTableName().equals(tableName) && event == PoolListener.EV_RETURN) {
-                    if (isWal && factoryType == PoolListener.SRC_WAL_WRITER) {
-                        returned.countDown();
-                    } else if (!isWal && factoryType == PoolListener.SRC_WRITER) {
-                        returned.countDown();
-                    }
+                System.out.printf("TOK:%s, FT:%d, E:%d%n", tableToken, factoryType, event);
+                if (tableToken != null && tableToken.getTableName().equals(tableName) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    returned.countDown();
                 }
             });
             try (OperationFuture insert = compiler.compile(insertStmt, context).execute(null)) {
