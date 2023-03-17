@@ -274,7 +274,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public void initRO(MemoryMR txnFile, int partitionBy) {
-        roTxMemBase = txnFile;
+        this.roTxMemBase = txnFile;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
         this.partitionBy = partitionBy;
     }

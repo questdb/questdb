@@ -137,7 +137,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.valueCountCollector = valueCountCollector;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
-                    .$(", fd=").$(this.offsetMem.getFd())
+                    .$(", fd=").$(offsetMem.getFd())
                     .$(", cache=").$(cache != null)
                     .$(", capacity=").$(symbolCapacity)
                     .I$();
@@ -172,8 +172,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public void close() {
         Misc.free(indexWriter);
         Misc.free(charMem);
-        if (this.offsetMem != null) {
-            int fd = this.offsetMem.getFd();
+        if (offsetMem != null) {
+            int fd = offsetMem.getFd();
             Misc.free(offsetMem);
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
@@ -263,9 +263,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            this.charMem.jumpTo(this.offsetMem.getLong(keyToOffset(symbolCount)));
+            charMem.jumpTo(offsetMem.getLong(keyToOffset(symbolCount)));
         } else {
-            this.charMem.jumpTo(0);
+            charMem.jumpTo(0);
         }
     }
 
@@ -282,8 +282,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
-        int result;
-        result = lookupAndPut(symbol, countCollector);
+        final int result = lookupAndPut(symbol, countCollector);
         cache.putAt(index, symbol.toString(), result);
         return result;
     }

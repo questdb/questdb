@@ -7573,7 +7573,7 @@ public class O3Test extends AbstractO3Test {
                     "count\n" + (2 * idBatchSize + 1) + "\n");
             engine.releaseAllReaders();
             try (TableWriter o3 = getWriter(sqlExecutionContext, "x", "testing")) {
-                o3.truncate(true);
+                o3.truncate();
             }
         }
     }

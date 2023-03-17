@@ -709,8 +709,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             engine.releaseAllReaders();
             try (TableWriter o3 = getWriter(engine, "o3");
                  TableWriter ordered = getWriter(engine, "ordered")) {
-                o3.truncate(true);
-                ordered.truncate(true);
+                o3.truncate();
+                ordered.truncate();
             }
         }
     }

@@ -81,7 +81,7 @@ public class PerformanceTest extends AbstractCairoTest {
                     if (i == 0) {
                         t = System.nanoTime();
                     }
-                    w.truncate(true);
+                    w.truncate();
                     long timestamp = DateFormatUtils.parseUTCDate("2013-10-05T10:00:00.000Z");
                     Rnd r = new Rnd();
                     int n = symbols.length - 1;

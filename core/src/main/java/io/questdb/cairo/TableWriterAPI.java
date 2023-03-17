@@ -133,7 +133,8 @@ public interface TableWriterAPI extends Closeable {
     boolean supportsMultipleWriters();
 
     /**
-     * Truncates table.
+     * Truncates table. For non-WAL tables, this method has to be called when the
+     * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
      *
      * @param purgeSymbolTables defines whether the operation does or does not truncate symbol tables,
      *                          i.e. internal symbol string to int symbol code mappings. Sometimes the symbols should

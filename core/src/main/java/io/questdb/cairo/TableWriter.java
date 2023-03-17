@@ -1537,7 +1537,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.commit();
             txWriter.setSeqTxn(seqTxn);
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             // Bookmark masterRef to track how many rows is in uncommitted state
             this.committedMasterRef = masterRef;
@@ -1582,7 +1582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.critical(0).put("cannot remove partitions from non-partitioned table");
         }
 
-        // Remove all partition from txn file, column version file.
+        // Remove all partitions from txn file, column version file.
         txWriter.beginPartitionSizeUpdate();
 
         closeActivePartition(false);
@@ -1958,9 +1958,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
-     * <p>
-     * This operation does not truncate symbol tables, i.e. internal symbol string to int symbol code mappings,
-     * to make sure that DETACH/ATTACH PARTITION does not lose data for symbol columns.
+     */
+    public final void truncate() {
+        truncate(true);
+    }
+
+    /**
+     * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
+     * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
+     * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     @Override
     public final void truncate(boolean purgeSymbolTables) {
@@ -2012,7 +2018,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         txWriter.resetTimestamp();
         columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
-        txWriter.truncate(columnVersionWriter.getVersion());
+        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         try {
             clearTodoLog();
         } catch (CairoException e) {
@@ -2798,7 +2804,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void configureColumnMemory() {
-        this.symbolMapWriters.setPos(columnCount);
+        symbolMapWriters.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
@@ -3013,7 +3019,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void doClose(boolean truncate) {
-        // destroy() may already closed everything
+        // destroy() may have already closed everything
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
@@ -5925,7 +5931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             removePartitionDirectories();
         }
-        txWriter.truncate(columnVersionWriter.getVersion());
+        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         clearTodoLog();
     }
 

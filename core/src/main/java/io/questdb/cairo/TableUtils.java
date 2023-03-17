@@ -413,11 +413,32 @@ public final class TableUtils {
         return pTransitionIndex;
     }
 
-    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+    public static void createTxn(
+            MemoryMW txMem,
+            int symbolMapCount,
+            long txn,
+            long seqTxn,
+            long dataVersion,
+            long partitionTableVersion,
+            long structureVersion,
+            long columnVersion,
+            long truncateVersion
+    ) {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
-        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, seqTxn, dataVersion, partitionTableVersion, structureVersion, columnVersion, truncateVersion);
+        resetTxn(
+                txMem,
+                TX_BASE_HEADER_SIZE,
+                symbolMapCount,
+                txn,
+                seqTxn,
+                dataVersion,
+                partitionTableVersion,
+                structureVersion,
+                columnVersion,
+                truncateVersion
+        );
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
@@ -439,18 +460,6 @@ public final class TableUtils {
 
     public static int existsInVolume(FilesFacade ff, Path volumePath, CharSequence name) {
         return exists(ff, volumePath.concat(name).$());
-    }
-
-    private static int exists(FilesFacade ff, Path path) {
-        if (ff.exists(path)) { // it can also be a file, for example created with touch
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return TABLE_EXISTS;
-            } else {
-                return TABLE_RESERVED;
-            }
-        } else {
-            return TABLE_DOES_NOT_EXIST;
-        }
     }
 
     public static void freeTransitionIndex(long address) {
@@ -505,7 +514,7 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;
+        return TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + (long) index * Long.BYTES;
     }
 
     public static long getSymbolWriterTransientIndexOffset(int index) {
@@ -959,7 +968,18 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+    public static void resetTxn(
+            MemoryMW txMem,
+            long baseOffset,
+            int symbolMapCount,
+            long txn,
+            long seqTxn,
+            long dataVersion,
+            long partitionTableVersion,
+            long structureVersion,
+            long columnVersion,
+            long truncateVersion
+    ) {
         // txn to let readers know table is being reset
         txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
@@ -1362,6 +1382,18 @@ public final class TableUtils {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    private static int exists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) { // it can also be a file, for example created with touch
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return TABLE_EXISTS;
+            } else {
+                return TABLE_RESERVED;
+            }
+        } else {
+            return TABLE_DOES_NOT_EXIST;
+        }
     }
 
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {

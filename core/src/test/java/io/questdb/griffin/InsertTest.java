@@ -954,7 +954,7 @@ public class InsertTest extends AbstractGriffinTest {
             assertReaderCheckWal(expected1, "trades");
 
             try (TableWriter w = getWriter("trades")) {
-                w.truncate(true);
+                w.truncate();
             }
 
             executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");

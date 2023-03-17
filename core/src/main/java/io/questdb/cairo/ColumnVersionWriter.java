@@ -134,7 +134,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public void truncate(boolean isPartitioned) {
         if (cachedList.size() > 0) {
-
             if (isPartitioned) {
                 int from = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, COL_TOP_DEFAULT_PARTITION + 1, BinarySearch.SCAN_UP);
                 if (from < 0) {
@@ -149,7 +148,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     cachedList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, COL_TOP_DEFAULT_PARTITION);
                 }
             } else {
-                //reset column tops
+                // Reset column tops
                 for (int i = 3, n = cachedList.size(); i < n; i += 4) {
                     cachedList.setQuick(i, 0);
                 }
