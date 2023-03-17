@@ -84,7 +84,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testCountAggregations() throws Exception {
         try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
             tt1.col("tts", ColumnType.LONG);
-            CairoTestUtils.create(tt1);
+            CreateTableTestUtils.create(tt1);
         }
 
         String expected = "max\tcount\n" +
@@ -1484,12 +1484,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         });
     }
 
-    private static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
         try (OperationFuture future = cc.execute(null)) {
             future.await();
         }
-        return cc;
     }
 
     private static String getColumnName(int type) {
@@ -1740,7 +1739,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 tt1.col(colType.colName, colType.columnType);
             }
 
-            CairoTestUtils.create(tt1);
+            CreateTableTestUtils.create(tt1);
         }
 
         for (TypeVal colType : aggregateColTypes) {
@@ -1772,25 +1771,24 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
+        ) {
+            try {
+                if (pool != null) {
+                    GroupByJob job = new GroupByJob(engine.getMessageBus());
+                    pool.assign(job);
+                    pool.start(LOG);
+                }
 
-        try (final CairoEngine engine = new CairoEngine(configuration);
-             final SqlCompiler compiler = new SqlCompiler(engine)) {
-            //workerCount - 1
-            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
-                try {
-                    if (pool != null) {
-                        GroupByJob job = new GroupByJob(engine.getMessageBus());
-                        pool.assign(job);
-                        pool.start(LOG);
-                    }
-
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
-                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
-                } finally {
-                    if (pool != null) {
-                        pool.halt();
-                    }
+                runnable.run(engine, compiler, sqlExecutionContext);
+                Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+            } finally {
+                if (pool != null) {
+                    pool.halt();
                 }
             }
         }

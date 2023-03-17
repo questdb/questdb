@@ -78,7 +78,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static void setSeqTxn(CairoEngine engine, TableToken token, long seqTxn) {
-        try (final TableWriter writer = CairoTestUtils.getWriter(engine, token)) {
+        try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
             writer.commitSeqTxn(seqTxn);
         }
     }

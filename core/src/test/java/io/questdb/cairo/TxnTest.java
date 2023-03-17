@@ -63,7 +63,7 @@ public class TxnTest extends AbstractCairoTest {
                         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                 ) {
                     model.timestamp();
-                    CairoTestUtils.create(model);
+                    CreateTableTestUtils.create(model);
                 }
 
                 try (Path path = new Path()) {
@@ -129,7 +129,7 @@ public class TxnTest extends AbstractCairoTest {
 
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
                 model.timestamp();
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
             int truncateIteration = 33;
             Thread writerThread = createWriterThread(
@@ -226,7 +226,7 @@ public class TxnTest extends AbstractCairoTest {
 
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
                 model.timestamp();
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
             Thread writerThread = createWriterThread(
                     start,

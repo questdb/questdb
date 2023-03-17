@@ -536,8 +536,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            try (SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile("alter table " + tt2.getTableName() + " set type bypass wal", sqlExecutionContext);
                 compiler.compile("alter table " + tt3.getTableName() + " set type wal", sqlExecutionContext);
             }

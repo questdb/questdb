@@ -25,11 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -57,7 +55,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                tableToken = CairoTestUtils.create(model);
+                tableToken = CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -114,8 +112,10 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             columnSizes,
                             true
                     );
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    try (
+                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
                         Record record = cursor.getRecord();
                         while (cursor.hasNext()) {
                             TestUtils.assertEquals(value, record.getSym(1));
@@ -188,7 +188,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
-                tableToekn = CairoTestUtils.create(model);
+                tableToekn = CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -252,20 +252,15 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            null,
-                            null,
-                            -1,
-                            null
-                    );
-
                     Assert.assertTrue(factory.supportPageFrameCursor());
 
                     long ts = (rowCount + 1) * increment;
                     int rowIndex = rowCount - 1;
                     final DirectCharSequence dcs = new DirectCharSequence();
-                    try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
+                    try (
+                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)
+                    ) {
                         PageFrame frame;
                         while ((frame = cursor.next()) != null) {
 
@@ -311,7 +306,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
-                tt = CairoTestUtils.create(model);
+                tt = CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -367,21 +362,16 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            null,
-                            null,
-                            -1,
-                            null
-                    );
-
                     Assert.assertTrue(factory.supportPageFrameCursor());
 
                     rnd.reset();
                     long ts = 0;
                     int rowIndex = 0;
                     final DirectCharSequence dcs = new DirectCharSequence();
-                    try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    try (
+                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+                    ) {
                         PageFrame frame;
                         while ((frame = cursor.next()) != null) {
 

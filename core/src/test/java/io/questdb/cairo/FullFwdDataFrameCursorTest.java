@@ -58,7 +58,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("b", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             TableReader reader = newTableReader(configuration, "x");
@@ -79,7 +79,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("b", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             long timestamp;
@@ -1758,7 +1758,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -1834,7 +1834,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -1905,7 +1905,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -1983,7 +1983,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp().
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4)
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2060,7 +2060,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2163,7 +2163,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp().
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4)
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2241,7 +2241,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp().
                     col("c", ColumnType.SYMBOL)
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2315,7 +2315,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("a", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2365,7 +2365,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("a", ColumnType.SYMBOL).indexed(false, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2418,7 +2418,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("a", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2470,7 +2470,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             try (TableModel model = new TableModel(configuration, "x", partitionBy).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -2603,7 +2603,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     .col("c", ColumnType.SYMBOL).indexed(true, indexBlockSize)
                     .col("d", ColumnType.DOUBLE)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
         }
 

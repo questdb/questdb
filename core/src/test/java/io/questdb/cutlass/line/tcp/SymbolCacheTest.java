@@ -189,7 +189,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                      }
                  })
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.getTableToken(tableName);
@@ -370,7 +370,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                      }
                  })
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.getTableToken(tableName);
@@ -434,7 +434,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                      }
                  })
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 TableToken tableToken = engine.getTableToken(tableName);
@@ -593,7 +593,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                      }
                  })
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 TableToken tableToken = engine.getTableToken(tableName);
@@ -676,7 +676,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                      }
                  })
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 TableToken tableToken = engine.getTableToken(tableName);
@@ -742,7 +742,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
         ) {
             model.timestamp();
-            CairoTestUtils.create(model, engine);
+            TestUtils.create(model, engine);
         }
     }
 

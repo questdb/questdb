@@ -73,7 +73,7 @@ public class PerformanceTest extends AbstractCairoTest {
                     .col("askSize", ColumnType.INT)
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter w = newTableWriter(configuration, "quote", Metrics.disabled())) {
@@ -159,7 +159,7 @@ public class PerformanceTest extends AbstractCairoTest {
                 .col("askSize", ColumnType.INT)
                 .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
                 .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         CountDownLatch stopLatch = new CountDownLatch(2);

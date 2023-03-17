@@ -35,7 +35,6 @@ import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -1468,8 +1467,10 @@ public class IODispatcherTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                            try (
+                                    SqlCompiler compiler = new SqlCompiler(engine);
+                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                            ) {
                                 compiler.compile("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
 
                                 sendAndReceive(
@@ -1692,8 +1693,10 @@ public class IODispatcherTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                            try (
+                                    SqlCompiler compiler = new SqlCompiler(engine);
+                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                            ) {
                                 compiler.compile("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
 
                                 sendAndReceive(
@@ -1774,8 +1777,10 @@ public class IODispatcherTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                            try (
+                                    SqlCompiler compiler = new SqlCompiler(engine);
+                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                            ) {
                                 sendAndReceive(
                                         NetworkFacadeImpl.INSTANCE,
                                         "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
@@ -2574,7 +2579,7 @@ public class IODispatcherTest {
 
                 try {
                     // create table with all column types
-                    CairoTestUtils.createTestTable(
+                    CreateTableTestUtils.createTestTable(
                             engine,
                             30,
                             new Rnd(),
@@ -3720,10 +3725,11 @@ public class IODispatcherTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                        compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", sqlExecutionContext);
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                    ) {
+                        compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", executionContext);
 
                         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                         final CountDownLatch latch = new CountDownLatch(threadCount);
@@ -4036,7 +4042,7 @@ public class IODispatcherTest {
     public void testJsonQueryRenameTable() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
-            CairoTestUtils.createTestTable(
+            CreateTableTestUtils.createTestTable(
                     engine,
                     20,
                     new Rnd(),
@@ -4490,7 +4496,7 @@ public class IODispatcherTest {
                 try {
 
                     // create table with all column types
-                    CairoTestUtils.createTestTable(
+                    CreateTableTestUtils.createTestTable(
                             engine,
                             20,
                             new Rnd(),
@@ -4544,8 +4550,10 @@ public class IODispatcherTest {
                 .withTelemetry(false)
                 .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
                 .run((engine) -> {
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                    ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         // We expect header only to be sent and then a disconnect.
                         new SendAndReceiveRequestBuilder()
@@ -4574,8 +4582,10 @@ public class IODispatcherTest {
                 .withTelemetry(false)
                 .withQueryTimeout(timeout)
                 .run((engine) -> {
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                    ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -4653,7 +4663,7 @@ public class IODispatcherTest {
     public void testJsonQueryTopLimitHttp1() throws Exception {
         testJsonQuery0(2, engine -> {
                     // create table with all column types
-                    CairoTestUtils.createTestTable(
+                    CreateTableTestUtils.createTestTable(
                             engine,
                             20,
                             new Rnd(),
@@ -4697,7 +4707,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQueryVacuumTable() throws Exception {
         testJsonQuery0(2, engine -> {
-            CairoTestUtils.createTestTable(
+            CreateTableTestUtils.createTestTable(
                     engine,
                     20,
                     new Rnd(),
@@ -4774,7 +4784,7 @@ public class IODispatcherTest {
 
                 try {
                     // create table with all column types
-                    CairoTestUtils.createTestTable(
+                    CreateTableTestUtils.createTestTable(
                             engine,
                             30,
                             new Rnd(),
@@ -4851,7 +4861,7 @@ public class IODispatcherTest {
 
                 try {
                     // create table with all column types
-                    CairoTestUtils.createTestTable(
+                    CreateTableTestUtils.createTestTable(
                             engine,
                             1000,
                             new Rnd(),
@@ -4954,7 +4964,7 @@ public class IODispatcherTest {
 
                 try {
                     // create table with all column types
-                    CairoTestUtils.createTestTable(
+                    CreateTableTestUtils.createTestTable(
                             engine,
                             tableRowCount,
                             new Rnd(),
@@ -7257,8 +7267,10 @@ public class IODispatcherTest {
                 .withTelemetry(false)
                 .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
                 .run((engine) -> {
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                    ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         // We expect header only to be sent and then a disconnect.
                         new SendAndReceiveRequestBuilder()
@@ -7288,8 +7300,10 @@ public class IODispatcherTest {
                 .withTelemetry(false)
                 .withQueryTimeout(timeout)
                 .run((engine) -> {
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                    ) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
@@ -7648,7 +7662,7 @@ public class IODispatcherTest {
     private static void createTestTable(CairoEngine engine) {
         try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
             model.col("j", ColumnType.SYMBOL);
-            CairoTestUtils.create(model, engine);
+            TestUtils.create(model, engine);
         }
 
         try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
@@ -7890,7 +7904,7 @@ public class IODispatcherTest {
                     try (TableModel model = new TableModel(configuration, tableName, partitionBy)
                             .timestamp("ts")
                             .col("int", ColumnType.INT)) {
-                        CairoTestUtils.create(model, engine);
+                        TestUtils.create(model, engine);
                     }
                 }
         );
@@ -8036,8 +8050,10 @@ public class IODispatcherTest {
                 )
                 .withTempFolder(temp)
                 .run(engine -> {
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                    ) {
                         compiler.compile("create table y as (\n" +
                                 "select\n" +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
@@ -8056,7 +8072,7 @@ public class IODispatcherTest {
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
-            CairoTestUtils.createTestTable(
+            CreateTableTestUtils.createTestTable(
                     engine,
                     recordCount,
                     new Rnd(),

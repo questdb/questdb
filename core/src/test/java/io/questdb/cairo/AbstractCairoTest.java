@@ -457,11 +457,11 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableWriter getWriter(CharSequence tableName) {
-        return CairoTestUtils.getWriter(engine, tableName);
+        return TestUtils.getWriter(engine, tableName);
     }
 
     protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
-        return CairoTestUtils.getWriter(engine, tableName);
+        return TestUtils.getWriter(engine, tableName);
     }
 
     protected static TableWriter getWriter(TableToken tt) {

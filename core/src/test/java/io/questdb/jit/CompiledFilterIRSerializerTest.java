@@ -94,7 +94,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     .col("auuid", ColumnType.UUID)
                     .col("along128", ColumnType.LONG128)
                     .timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
@@ -437,7 +437,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testOptionsScalarFlag() throws Exception {
         int options = serialize("abyte = 0", true, false, false);
-        assertOptionsHint(options, OptionsHint.SCALAR);
+        assertOptionsHint(options);
     }
 
     @Test
@@ -680,8 +680,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(expectedFlag ? 1 : 0, f);
     }
 
-    private void assertOptionsHint(int options, OptionsHint expectedHint) {
-        assertOptionsHint(null, options, expectedHint);
+    private void assertOptionsHint(int options) {
+        assertOptionsHint(null, options, OptionsHint.SCALAR);
     }
 
     private void assertOptionsHint(String msg, int options, OptionsHint expectedHint) {

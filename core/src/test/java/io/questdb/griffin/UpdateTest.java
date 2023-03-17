@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
@@ -532,28 +531,26 @@ public class UpdateTest extends AbstractGriffinTest {
         //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
         Assume.assumeFalse(walEnabled);
 
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
-            @Override
-            public Rnd getAsyncRandom() {
-                throw new RuntimeException("test error");
-            }
-        }.with(AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService,
-                null, -1, null);
+        final SqlExecutionContext oldContext = sqlExecutionContext;
+        try {
+            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
+                @Override
+                public Rnd getAsyncRandom() {
+                    throw new RuntimeException("test error");
+                }
+            };
 
-        testUpdateAsyncMode(tableWriter -> {
-                }, "[43] test error",
-                "ts\tx\n" +
-                        "1970-01-01T00:00:00.000000Z\t1\n" +
-                        "1970-01-01T00:00:01.000000Z\t2\n" +
-                        "1970-01-01T00:00:02.000000Z\t3\n" +
-                        "1970-01-01T00:00:03.000000Z\t4\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n");
-
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null, -1, null);
+            testUpdateAsyncMode(tableWriter -> {
+                    }, "[43] test error",
+                    "ts\tx\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\n" +
+                            "1970-01-01T00:00:01.000000Z\t2\n" +
+                            "1970-01-01T00:00:02.000000Z\t3\n" +
+                            "1970-01-01T00:00:03.000000Z\t4\n" +
+                            "1970-01-01T00:00:04.000000Z\t5\n");
+        } finally {
+            sqlExecutionContext = oldContext;
+        }
     }
 
     @Test

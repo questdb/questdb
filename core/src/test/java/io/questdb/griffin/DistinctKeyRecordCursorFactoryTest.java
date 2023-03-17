@@ -55,7 +55,7 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
         );
 
         // override worker count to allocate multiple Rosti instances
-        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount);
 
         assertMemoryLeak(() -> {
             compiler.compile(

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -48,7 +49,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                tableToken = CairoTestUtils.create(model);
+                tableToken = CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -87,7 +88,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(M, count);
 
-                try (TableWriter writer = CairoTestUtils.getWriter(engine, tableToken)) {
+                try (TableWriter writer = TestUtils.getWriter(engine, tableToken)) {
                     writer.removeColumn("b");
                 }
 

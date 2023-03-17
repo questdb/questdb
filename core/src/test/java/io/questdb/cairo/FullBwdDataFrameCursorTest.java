@@ -68,7 +68,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     col("b", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
 

@@ -100,7 +100,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                 if (walEnabled) {
                     model.wal();
                 }
-                CairoTestUtils.create(engine, model);
+                CreateTableTestUtils.create(engine, model);
             }
             if (walEnabled) {
                 Assert.assertTrue(isWalTable(tableName));

@@ -146,7 +146,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .timestamp()) {
-            CairoTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
+            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
         }
 
         try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
@@ -161,7 +161,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 .col("category", ColumnType.SYMBOL)
 
                 .timestamp()) {
-            CairoTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
+            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
         }
 
         try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
@@ -175,7 +175,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .timestamp()) {
-            CairoTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
+            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
         }
     }
 

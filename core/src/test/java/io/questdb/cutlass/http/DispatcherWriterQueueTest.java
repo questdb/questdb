@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
@@ -64,19 +64,11 @@ public class DispatcherWriterQueueTest {
             .build();
     private SqlCompiler compiler;
     private Error error = null;
-    private SqlExecutionContextImpl sqlExecutionContext;
+    private SqlExecutionContext sqlExecutionContext;
 
     public void setupSql(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
-        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        sqlExecutionContext.with(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                bindVariableService,
-                null,
-                -1,
-                null);
-        bindVariableService.clear();
+        sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
     }
 
     @Test
@@ -446,7 +438,7 @@ public class DispatcherWriterQueueTest {
                         " cast(x as timestamp) ts" +
                         " from long_sequence(10)" +
                         " )", sqlExecutionContext);
-                writer = CairoTestUtils.getWriter(engine, tableName);
+                writer = TestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
@@ -552,7 +544,7 @@ public class DispatcherWriterQueueTest {
                         " cast(x as timestamp) ts" +
                         " from long_sequence(9)" +
                         " )", sqlExecutionContext);
-                writer = CairoTestUtils.getWriter(engine, tableName);
+                writer = TestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpUpdateQueries.length);
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpUpdateQueries.length);

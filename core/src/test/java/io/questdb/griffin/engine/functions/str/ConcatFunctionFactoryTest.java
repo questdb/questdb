@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
@@ -34,7 +34,7 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE);
 
             compiler.compile("insert into all2 select * from (" +
                             "select" +

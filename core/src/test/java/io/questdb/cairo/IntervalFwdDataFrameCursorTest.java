@@ -164,7 +164,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("b", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             TableReader reader = newTableReader(configuration, "x");
@@ -248,7 +248,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4)
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
         });
     }
@@ -388,7 +388,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
                     timestamp()
             ) {
-                x = CairoTestUtils.create(model);
+                x = CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -612,7 +612,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();

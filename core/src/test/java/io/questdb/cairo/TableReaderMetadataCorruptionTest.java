@@ -298,7 +298,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+                CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
                 String tableName = "all";
                 TableToken tableToken = engine.getTableToken(tableName);

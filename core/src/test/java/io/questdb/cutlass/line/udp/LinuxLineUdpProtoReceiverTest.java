@@ -245,7 +245,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                             .col("shape", ColumnType.SYMBOL)
                             .col("size", ColumnType.DOUBLE)
                             .timestamp()) {
-                        CairoTestUtils.create(model, engine);
+                        TestUtils.create(model, engine);
                     }
 
                     // warm writer up

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableToken;
@@ -51,7 +51,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
             assertMemoryLeak(() -> {
                 try {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
-                        CairoTestUtils.create(tableModels[i]);
+                        CreateTableTestUtils.create(tableModels[i]);
                     }
                     compiler.compile(query, sqlExecutionContext);
                     Assert.fail("Exception expected");
@@ -127,7 +127,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
     private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
+                CreateTableTestUtils.create(tableModels[i]);
             }
             runnable.run();
         } finally {

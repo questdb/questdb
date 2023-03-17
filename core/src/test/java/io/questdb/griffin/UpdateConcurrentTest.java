@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -172,14 +171,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                 Thread writer = new Thread(() -> {
                     try {
                         final SqlCompiler updateCompiler = new SqlCompiler(engine, null, snapshotAgent);
-                        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                                .with(
-                                        AllowAllCairoSecurityContext.INSTANCE,
-                                        bindVariableService,
-                                        null,
-                                        -1,
-                                        null);
-
+                        final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
                             CompiledQuery cc = updateCompiler.compile("UPDATE up SET x = " + i, sqlExecutionContext);

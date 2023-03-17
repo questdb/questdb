@@ -154,7 +154,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testDuplicateTableCreation() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
                 try {
                     createTable(model);
                     fail("duplicated tables should not be permitted!");
@@ -222,7 +222,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                TableToken x = CairoTestUtils.create(model);
+                TableToken x = CreateTableTestUtils.create(model);
                 try {
                     engine.lockWriter(readOnlyContext, x, "testing");
                     fail("acquiring a write lock in read-only context should not be permitted!");
@@ -307,7 +307,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TableToken x = createX(engine);
-                try (TableReader reader = CairoTestUtils.getReader(engine, x)) {
+                try (TableReader reader = TestUtils.getReader(engine, x)) {
                     Assert.assertNotNull(reader);
                     try {
                         engine.drop(securityContext, path, x);
@@ -429,7 +429,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (CairoEngine engine = new CairoEngine(configuration); MemoryMARW mem = Vm.getMARWInstance()) {
@@ -471,7 +471,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                TableToken x = CairoTestUtils.create(model);
+                TableToken x = CreateTableTestUtils.create(model);
                 engine.lockWriter(securityContext, x, "testing");
                 try {
                     engine.unlockWriter(readOnlyContext, x);
@@ -521,13 +521,13 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     private TableToken createX(CairoEngine engine) {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-            return CairoTestUtils.create(model, engine);
+            return TestUtils.create(model, engine);
         }
     }
 
     private TableToken createY(CairoEngine engine) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("b", ColumnType.INT)) {
-            return CairoTestUtils.create(model, engine);
+            return TestUtils.create(model, engine);
         }
     }
 }

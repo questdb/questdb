@@ -33,9 +33,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testReAddColumn() throws Exception {
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)) {
+        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)) {
             model.timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -71,7 +71,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("bin", ColumnType.BINARY)
                 .col("date", ColumnType.DATE)) {
 
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final String expected = "int:INT\n" +
@@ -90,9 +90,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveColumnBeforeTimestamp() throws Exception {
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)) {
+        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)) {
             model.timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -124,7 +124,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("bin", ColumnType.BINARY)
                 .col("date", ColumnType.DATE)) {
 
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         assertThat(0);
     }
@@ -145,7 +145,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("bin", ColumnType.BINARY)
                 .col("date", ColumnType.DATE)) {
 
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         assertThat(5);
@@ -153,9 +153,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveTailTimestamp() throws Exception {
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)
+        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)
                 .timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         assertThat(11);
     }

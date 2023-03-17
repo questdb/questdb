@@ -1767,7 +1767,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "500\t8068645982235546347\t1970-01-07T08:45:00.000000Z\tNaN\n" +
                 "10\t3500000\t1970-01-07T08:45:00.000000Z\t10.2\n";
 
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
 
             // Adding column is essential, columns open in writer's constructor will have
             // mapped memory, whereas newly added column does not
@@ -1858,7 +1858,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
 
             // stash copy of X, in case X is corrupt
             compiler.compile("create table y as (select * from x)", executionContext);
@@ -3753,7 +3753,7 @@ public class O3FailureTest extends AbstractO3Test {
         int batches = 0;
         int batchCount = 75;
         while (batches < batchCount) {
-            try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+            try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 for (int i = 0; i < batchCount; i++) {
                     batches++;
                     for (int k = 0; k < 1000; k++) {

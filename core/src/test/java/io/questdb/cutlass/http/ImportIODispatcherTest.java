@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,6 +42,7 @@ import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -292,7 +293,7 @@ public class ImportIODispatcherTest {
             .build();
 
     private SqlCompiler compiler;
-    private SqlExecutionContextImpl sqlExecutionContext;
+    private SqlExecutionContext sqlExecutionContext;
 
     @Test
     public void testImportDesignatedTsFromSchema() throws Exception {
@@ -856,16 +857,7 @@ public class ImportIODispatcherTest {
 
     private void setupSql(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
-        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                        bindVariableService,
-                        null,
-                        -1,
-                        null
-                );
-        bindVariableService.clear();
+        sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
     }
 
     private void testImportMisDetectsTimestampColumn(HttpServerConfigurationBuilder serverConfigBuilder, int rowCount) throws Exception {

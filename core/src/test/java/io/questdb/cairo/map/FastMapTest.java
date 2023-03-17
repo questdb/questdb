@@ -577,7 +577,7 @@ public class FastMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
                 model.col("a", ColumnType.LONG).col("b", geohashType);
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
@@ -1319,7 +1319,7 @@ public class FastMapTest extends AbstractCairoTest {
                     .col("k", ColumnType.BOOLEAN)
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID);
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {

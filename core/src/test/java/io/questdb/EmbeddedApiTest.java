@@ -24,12 +24,15 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -60,7 +63,7 @@ public class EmbeddedApiTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 // Create table upfront, so that reader sees it
                 try (
-                        final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                        final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                         final SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
@@ -98,13 +101,15 @@ public class EmbeddedApiTest {
                 workerPool.start(log);
                 try {
                     // number of cores is current thread + workers in the pool
-                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try (
+                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 2)
+                    ) {
 
                         compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
                         long timestamp = 0;
-                        try (TableWriter writer = CairoTestUtils.getWriter(engine, "abc")) {
+                        try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                             for (int i = 0; i < 10_000_000; i++) {
                                 TableWriter.Row row = writer.newRow(timestamp);
                                 row.putDouble(0, rnd.nextDouble());
@@ -139,11 +144,11 @@ public class EmbeddedApiTest {
             // write part
             try (
                     final CairoEngine engine = new CairoEngine(configuration);
-                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                    final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                     final SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
-                try (TableWriter writer = CairoTestUtils.getWriter(engine,"abc")) {
+                try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                     for (int i = 0; i < 10; i++) {
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
                         row.putInt(0, 123);
@@ -196,7 +201,7 @@ public class EmbeddedApiTest {
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
                     try (
-                            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                            final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                             final SqlCompiler compiler = new SqlCompiler(engine);
                             final RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory();
                             final RecordCursor cursor = factory.getCursor(ctx)
@@ -239,11 +244,11 @@ public class EmbeddedApiTest {
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
                     try (
-                            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                            final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                             final SqlCompiler compiler = new SqlCompiler(engine)
                     ) {
                         compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
-                        try (TableWriter writer = CairoTestUtils.getWriter(engine, "abc")) {
+                        try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                             for (int j = 0; j < 100; j++) {
                                 TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
                                 row.putInt(0, j);

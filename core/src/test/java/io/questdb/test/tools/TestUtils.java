@@ -726,6 +726,25 @@ public final class TestUtils {
         }
     }
 
+    public static TableToken create(TableModel model, CairoEngine engine) {
+        int tableId = (int) engine.getTableIdGenerator().getNextId();
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        if (tableToken == null) {
+            throw new RuntimeException("table already exists: " + model.getTableName());
+        }
+        TableUtils.createTable(
+                model.getConfiguration(),
+                model.getMem(),
+                model.getPath(),
+                model,
+                ColumnType.VERSION,
+                tableId,
+                tableToken.getDirName()
+        );
+        engine.registerTableToken(tableToken);
+        return tableToken;
+    }
+
     public static void createPopulateTable(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -852,6 +871,20 @@ public final class TestUtils {
         return sql.toString();
     }
 
+    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1);
+    }
+
+    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
+        SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+        ctx.with(bindVariableService);
+        return ctx;
+    }
+
+    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount);
+    }
+
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
@@ -950,6 +983,10 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
+    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
+        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
+    }
+
     @NotNull
     public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
         return new NetworkFacadeImpl() {
@@ -975,6 +1012,14 @@ public final class TestUtils {
                 return 0;
             }
         };
+    }
+
+    public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
+        return getWriter(engine, engine.getTableToken(tableName));
+    }
+
+    public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
+        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
@@ -1056,6 +1101,28 @@ public final class TestUtils {
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
         return insertFromSelect.toString();
+    }
+
+    public static int maxDayOfMonth(int month) {
+        switch (month) {
+            case 1:
+            case 3:
+            case 5:
+            case 7:
+            case 8:
+            case 10:
+            case 12:
+                return 31;
+            case 2:
+                return 28;
+            case 4:
+            case 6:
+            case 9:
+            case 11:
+                return 30;
+            default:
+                throw new IllegalArgumentException("[1..12]");
+        }
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
@@ -1192,6 +1259,15 @@ public final class TestUtils {
         } finally {
             Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    public static StringSink putWithLeadingZeroIfNeeded(StringSink seq, int len, int value) {
+        seq.clear(len);
+        if (value < 10) {
+            seq.put('0');
+        }
+        seq.put(value);
+        return seq;
     }
 
     public static String readStringFromFile(File file) {

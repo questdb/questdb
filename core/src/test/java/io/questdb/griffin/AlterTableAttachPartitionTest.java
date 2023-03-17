@@ -54,7 +54,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-01",
                         12);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -78,7 +78,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-01",
                         12);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -103,7 +103,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-01",
                         12);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -126,7 +126,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         10000,
                         "2020-01-01",
                         12);
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
                 attachFromSrcIntoDst(src, dst, "2020-01-09.10", "2020-01-10T19", "2020-01-01T20:22:24.262829Z");
@@ -149,7 +149,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-01",
                         11);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -163,7 +163,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst5", PartitionBy.MONTH)) {
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -183,7 +183,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst6a", PartitionBy.YEAR)) {
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -203,7 +203,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst6b", PartitionBy.YEAR)) {
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -223,7 +223,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst7a", PartitionBy.MONTH)) {
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -243,7 +243,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst7b", PartitionBy.MONTH)) {
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -263,7 +263,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst8", PartitionBy.MONTH)) {
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -282,7 +282,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     public void testAttachMissingPartition() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst9", PartitionBy.DAY)) {
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -301,7 +301,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     public void testAttachNonExisting() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst10", PartitionBy.DAY)) {
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -334,7 +334,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-01",
                         1);
 
-                CairoTestUtils.create(
+                CreateTableTestUtils.create(
                         dst.col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
                                 .timestamp("ts"));
@@ -510,7 +510,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-08-01",
                         10);
 
-                CairoTestUtils.create(dst.timestamp("ts1")
+                CreateTableTestUtils.create(dst.timestamp("ts1")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -575,7 +575,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     writer.removeColumn("i");
                 }
 
-                TableToken dstTableToken = CairoTestUtils.create(dst.timestamp("ts")
+                TableToken dstTableToken = CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG)
                         .col("s", ColumnType.SYMBOL).indexed(true, 128)
@@ -618,7 +618,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-08-01",
                         4);
 
-                TableToken dstTableToken = CairoTestUtils.create(dst.timestamp("ts")
+                TableToken dstTableToken = CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -671,7 +671,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-08-01",
                         10);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -701,7 +701,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-08-01",
                         1);
 
-                TableToken dstTableToken = CairoTestUtils.create(dst.timestamp("ts")
+                TableToken dstTableToken = CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -780,7 +780,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-08-01",
                         3);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
                         .col("l", ColumnType.LONG));
@@ -927,7 +927,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2022-08-01",
                         10);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -1131,7 +1131,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         .timestamp("ts");
                 tm.add(dst);
 
-                CairoTestUtils.create(dst);
+                CreateTableTestUtils.create(dst);
                 attachFromSrcIntoDst(src, dst, "2022-08-01");
             }
         });
@@ -1180,7 +1180,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
             // apply transform to dst and create table
             dstTransform.add(dst);
-            CairoTestUtils.create(dst);
+            CreateTableTestUtils.create(dst);
             try {
                 attachFromSrcIntoDst(src, dst, "2022-08-01");
                 Assert.fail("Expected exception with '" + errorMessage + "' message");
@@ -1356,7 +1356,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         "2020-01-01",
                         3);
 
-                CairoTestUtils.create(dst.timestamp("ts")
+                CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 

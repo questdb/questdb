@@ -26,14 +26,12 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -462,10 +460,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
                 BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
                 bindService2.setStr("sym", "C");
-                SqlExecutionContextImpl context2 = new SqlExecutionContextImpl(engine, 1);
-                context2.with(AllowAllCairoSecurityContext.INSTANCE, bindService2, new Rnd());
-
-                try (RecordCursor cursor = factory.getCursor(context2)) {
+                try (
+                        SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
+                        RecordCursor cursor = factory.getCursor(context2)
+                ) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                 }
                 TestUtils.assertEquals("ts\tsym\n" +
@@ -497,11 +495,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
             bindService2.setInt(0, 2);
             bindService2.setInt(1, 1002);
-
-            SqlExecutionContextImpl context2 = new SqlExecutionContextImpl(engine, 1);
-            context2.with(AllowAllCairoSecurityContext.INSTANCE, bindService2, new Rnd());
-
-            try (RecordCursor cursor = factory.getCursor(context2)) {
+            try (
+                    SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
+                    RecordCursor cursor = factory.getCursor(context2)
+            ) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
             }
             TestUtils.assertEquals("a\tl\n" +
@@ -532,10 +529,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             bindService2.setInt("v1", 2);
             bindService2.setInt("v2", 1002);
 
-            SqlExecutionContextImpl context2 = new SqlExecutionContextImpl(engine, 1);
-            context2.with(AllowAllCairoSecurityContext.INSTANCE, bindService2, new Rnd());
-
-            try (RecordCursor cursor = factory.getCursor(context2)) {
+            try (
+                    SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
+                    RecordCursor cursor = factory.getCursor(context2)
+            ) {
                 TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
             }
             TestUtils.assertEquals("a\tl\n" +

@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -195,7 +194,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             try (
                     LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {

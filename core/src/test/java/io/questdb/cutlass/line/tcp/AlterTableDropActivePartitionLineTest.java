@@ -34,7 +34,6 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -224,7 +223,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // check size
                 try (
-                        SqlExecutionContext context = createSqlExecutionContext(engine);
+                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
                         SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     TestUtils.assertSql(
@@ -238,16 +237,6 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 }
             }
         });
-    }
-
-    private static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                null,
-                null,
-                -1,
-                null
-        );
     }
 
     private static String rndOf(Rnd rnd, String[] array) {

@@ -32,10 +32,11 @@ import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -188,12 +189,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 }
                 assertCursorTwoPass(expected, cursor, metadata);
             } else {
-                try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
-                    final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-                    sqlExecutionContext.with(securityContext, null, null);
+                try (
+                        SqlCompiler compiler = new SqlCompiler(engine);
+                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                ) {
                     final String sql = tableName + " where timestamp > " + timestampMark;
-                    try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
                             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                                     .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                             assertCursorTwoPass(expected, cursor, metadata);
@@ -329,12 +331,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             }
         }
 
-        try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
-            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            sqlExecutionContext.with(securityContext, null, null);
+        try (
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+        ) {
             final String sql = tableName + " where timestamp > " + timestampMark;
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                             .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                     return table.size() <= cursor.size();

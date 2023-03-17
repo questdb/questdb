@@ -25,10 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.test.tools.TestUtils;
@@ -37,19 +34,16 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
+public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
 
-    protected static BindVariableService bindVariableService;
-    private static SqlCompiler compiler;
     private static RecordMetadata metadata;
     private static TableReader reader;
-    private static SqlExecutionContext sqlExecutionContext;
     private final WhereClauseSymbolEstimator e = new WhereClauseSymbolEstimator();
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
 
     @BeforeClass
     public static void setUpStatic() {
-        AbstractCairoTest.setUpStatic();
+        AbstractGriffinTest.setUpStatic();
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL).symbolCapacity(1)
@@ -60,22 +54,11 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(4)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(5)
                     .timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         reader = newTableReader(configuration, "x");
         metadata = reader.getMetadata();
-
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null
-                );
     }
 
     @AfterClass

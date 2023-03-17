@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -37,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -49,26 +49,18 @@ public class MemoryLeakTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             int N = 1_000_000;
             populateUsersTable(engine, N);
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-                bindVariableService.setLong("low", 0L);
-                bindVariableService.setLong("high", 0L);
-                try (
-                        final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
-                                engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
-                                bindVariableService,
-                                null
-                        )
-                ) {
-                    StringSink sink = new StringSink();
-                    sink.clear();
-                    sink.put("users");
-                    sink.put(" where sequence > :low and sequence < :high latest on timestamp partition by id");
-                    try (RecordCursorFactory rcf = compiler.compile(sink, executionContext).getRecordCursorFactory()) {
-                        bindVariableService.setLong("low", 0);
-                        bindVariableService.setLong("high", N + 1);
-                        Misc.free(rcf.getCursor(executionContext));
-                    }
+            final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
+            bindVariableService.setLong("low", 0L);
+            bindVariableService.setLong("high", 0L);
+            try (final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService)) {
+                StringSink sink = new StringSink();
+                sink.clear();
+                sink.put("users");
+                sink.put(" where sequence > :low and sequence < :high latest on timestamp partition by id");
+                try (RecordCursorFactory rcf = compiler.compile(sink, executionContext).getRecordCursorFactory()) {
+                    bindVariableService.setLong("low", 0);
+                    bindVariableService.setLong("high", N + 1);
+                    Misc.free(rcf.getCursor(executionContext));
                 }
             } finally {
                 Assert.assertEquals(Unsafe.getMemUsed(), getUsed());
@@ -89,13 +81,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
     private void populateUsersTable(CairoEngine engine, int n) throws SqlException {
         try (
                 final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
-                        engine,
-                        1).with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        new BindVariableServiceImpl(configuration),
-                        null
-                )
+                final SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);

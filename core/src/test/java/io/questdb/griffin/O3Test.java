@@ -101,14 +101,14 @@ public class O3Test extends AbstractO3Test {
                     .col("supplier", ColumnType.SYMBOL)
             ) {
 
-                CairoTestUtils.create(model, engine);
+                TestUtils.create(model, engine);
             }
 
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
 
-            try (TableWriter writer = CairoTestUtils.getWriter(engine, tableName)) {
+            try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
                 Thread writerT = new Thread(() -> {
                     try {
                         int i = 0;
@@ -1617,7 +1617,7 @@ public class O3Test extends AbstractO3Test {
                 "500\t8068645982235546347\t1970-01-07T08:45:00.000000Z\tNaN\n" +
                 "10\t3500000\t1970-01-07T08:45:00.000000Z\t10.2\n";
 
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
 
             TableWriter.Row row;
             // lets add column
@@ -1671,7 +1671,7 @@ public class O3Test extends AbstractO3Test {
 
         // insert some records in order
         final Rnd rnd = new Rnd();
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             long t = 0;
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r = w.newRow(t++);
@@ -1740,7 +1740,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
@@ -3687,7 +3687,7 @@ public class O3Test extends AbstractO3Test {
         TestUtils.assertEquals(sink2, sink);
 
         try (
-                final TableWriter w = CairoTestUtils.getWriter(engine, "привет от штиблет")
+                final TableWriter w = TestUtils.getWriter(engine, "привет от штиблет")
         ) {
             sink.clear();
             sink.put("max\n");
@@ -6351,7 +6351,7 @@ public class O3Test extends AbstractO3Test {
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
             throws SqlException, NumericException {
         compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             TableWriter.Row r;
 
             r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
@@ -6391,7 +6391,7 @@ public class O3Test extends AbstractO3Test {
         final int commits = 4;
         final int rows = 1_000;
         compiler.compile("create table x (s string, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             TableWriter.Row r;
 
             // Here we're trying to make sure that null setters write to the currently active O3 memory.
@@ -6816,7 +6816,7 @@ public class O3Test extends AbstractO3Test {
         long expectedMaxTimestamp = Long.MIN_VALUE;
         int step = 100;
         int rowCount = 10;
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             for (int i = 0; i < 20; i++) {
                 for (int j = 0; j < rowCount; j++) {
                     long t = ts + (rowCount - j) * step;
@@ -7529,7 +7529,7 @@ public class O3Test extends AbstractO3Test {
 
             // Add 2 batches
             int iterations = 2;
-            try (TableWriter o3 = CairoTestUtils.getWriter(engine, "x")) {
+            try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
                 for (int i = 0; i < iterations; i++) {
                     for (int id = 0; id < idBatchSize; id++) {
                         // We leave start + idBatchSize out to insert it O3 later
@@ -7562,7 +7562,7 @@ public class O3Test extends AbstractO3Test {
                     "count\n" + (2 * idBatchSize + 1) + "\n"
             );
             engine.releaseAllReaders();
-            try (TableWriter o3 = CairoTestUtils.getWriter(engine, "x")) {
+            try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
                 o3.truncate();
             }
         }

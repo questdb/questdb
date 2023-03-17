@@ -26,8 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -129,13 +127,7 @@ public class TableBackupTest {
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1)
-                .with(AllowAllCairoSecurityContext.INSTANCE,
-                        new BindVariableServiceImpl(mainConfiguration),
-                        null,
-                        -1,
-                        null);
-
+        mainSqlExecutionContext = TestUtils.createSqlExecutionCtx(mainEngine);
         File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
         Assert.assertTrue(confRoot.mkdirs());
         Assert.assertTrue(new File(confRoot, "server.conf").createNewFile());
@@ -575,16 +567,12 @@ public class TableBackupTest {
     private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
         CairoEngine engine = null;
         SqlCompiler compiler = null;
-        SqlExecutionContext sqlExecutionContext;
+        SqlExecutionContext sqlExecutionContext = null;
         try {
             if (backup) {
                 final CairoConfiguration backupConfiguration = new DefaultTestCairoConfiguration(finalBackupPath.toString());
                 engine = new CairoEngine(backupConfiguration);
-                sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
-                        new BindVariableServiceImpl(backupConfiguration),
-                        null,
-                        -1,
-                        null);
+                sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                 compiler = new SqlCompiler(engine);
             } else {
                 engine = mainEngine;
@@ -601,6 +589,7 @@ public class TableBackupTest {
             if (backup) {
                 Misc.free(engine);
                 Misc.free(compiler);
+                Misc.free(sqlExecutionContext);
             }
         }
     }

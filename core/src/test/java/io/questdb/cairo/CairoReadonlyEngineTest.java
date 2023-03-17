@@ -193,7 +193,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
             table1.timestamp("ts")
                     .col("x", ColumnType.INT)
                     .col("y", ColumnType.STRING);
-            return CairoTestUtils.create(table1, cairoEngine);
+            return TestUtils.create(table1, cairoEngine);
         }
     }
 }

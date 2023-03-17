@@ -871,7 +871,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
         // tableName is WAL enabled
         try (TableModel model = createTableModel(tableName).wal()) {
             forEachNode(node ->
-                    tableToken.set(CairoTestUtils.create(node.getEngine(), model))
+                    tableToken.set(CreateTableTestUtils.create(node.getEngine(), model))
             );
         }
 

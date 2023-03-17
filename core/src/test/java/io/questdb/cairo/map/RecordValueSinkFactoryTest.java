@@ -50,7 +50,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
         ) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final int N = 1024;
@@ -134,7 +134,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
         ) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final int N = 1024;

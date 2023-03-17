@@ -89,7 +89,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine, null, null);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 createTablesToJoin(compiler, sqlExecutionContext);
                 compiler.setFullFatJoins(true);

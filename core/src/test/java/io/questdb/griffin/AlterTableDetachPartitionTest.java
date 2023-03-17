@@ -1945,7 +1945,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     public void testNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel tab = new TableModel(configuration, "tab0", PartitionBy.DAY)) {
-                CairoTestUtils.create(tab
+                CreateTableTestUtils.create(tab
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG)
                 );

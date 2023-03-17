@@ -26,13 +26,14 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -41,10 +42,8 @@ import org.junit.Test;
 
 import java.util.ServiceLoader;
 
-public class WhereClauseParserTest extends AbstractCairoTest {
+public class WhereClauseParserTest extends AbstractGriffinTest {
 
-    protected static BindVariableService bindVariableService;
-    private static SqlCompiler compiler;
     private static RecordMetadata metadata;
     private static RecordMetadata noDesignatedTimestampNorIdxMetadata;
     private static TableReader noDesignatedTimestampNorIdxReader;
@@ -53,7 +52,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static RecordMetadata nonEmptyMetadata;
     private static TableReader nonEmptyReader;
     private static TableReader reader;
-    private static SqlExecutionContext sqlExecutionContext;
     private static RecordMetadata unindexedMetadata;
     private static TableReader unindexedReader;
     private final WhereClauseParser e = new WhereClauseParser();
@@ -68,7 +66,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        AbstractCairoTest.setUpStatic();
+        AbstractGriffinTest.setUpStatic();
 
         // same as x but with different number of values in symbol maps
         try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
@@ -80,7 +78,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
                     .timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE)) {
@@ -92,7 +90,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL)
                     .col("ex", ColumnType.SYMBOL)
                     .col("timestamp", ColumnType.TIMESTAMP);
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
@@ -104,7 +102,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
                     .timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -115,7 +113,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("askSize", ColumnType.INT)
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE)) {
@@ -127,7 +125,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
                     .timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableWriter writer = newTableWriter(configuration, "v", Metrics.disabled())) {
@@ -158,17 +156,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
         nonEmptyReader = newTableReader(configuration, "v");
         nonEmptyMetadata = nonEmptyReader.getMetadata();
-
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null
-                );
     }
 
     @AfterClass
@@ -2913,14 +2900,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
         }
-    }
-
-    private static IntList intList(Integer... values) {
-        IntList list = new IntList(values.length);
-        for (int value : values) {
-            list.add(value);
-        }
-        return list;
     }
 
     private static void swap(String[] arr, int i, int j) {

@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -829,7 +830,7 @@ public class RetryIODispatcherTest {
         TableWriter writer = null;
         for (int i = 0; i < 10; i++) {
             try {
-                writer = CairoTestUtils.getWriter(engine, tableName);
+                writer = TestUtils.getWriter(engine, tableName);
                 break;
             } catch (EntryUnavailableException e) {
                 Os.sleep(10);

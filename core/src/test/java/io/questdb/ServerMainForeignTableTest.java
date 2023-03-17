@@ -105,27 +105,30 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoEngine engine = qdb.getCairoEngine();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                TableToken tableToken = createTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
-                assertTableExists(tableToken, true, false);
-                createTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
-                dropTable(engine, compiler, context, tableToken, true);
+                    TableToken tableToken = createTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
+                    assertTableExists(tableToken, true, false);
+                    createTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
+                    dropTable(engine, compiler, context, tableToken, true);
 
-                tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
-                assertTableExists(tableToken, false, false);
-                dropTable(engine, compiler, context, tableToken, false);
-
-                try {
+                    tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
+                    assertTableExists(tableToken, false, false);
                     dropTable(engine, compiler, context, tableToken, false);
-                    Assert.fail();
-                } catch (SqlException err) {
-                    TestUtils.assertContains(err.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
+
+                    try {
+                        dropTable(engine, compiler, context, tableToken, false);
+                        Assert.fail();
+                    } catch (SqlException err) {
+                        TestUtils.assertContains(err.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
+                    }
                 }
             }
         });
@@ -138,32 +141,35 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                    CairoEngine engine = qdb.getCairoEngine();
 
-                TableToken tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, false, false);
-                dropTable(engine, compiler, context, tableToken, false);
+                    TableToken tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, false, false);
+                    dropTable(engine, compiler, context, tableToken, false);
 
-                tableToken = createTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createTable(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    tableToken = createTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createTable(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, true, false);
+                    dropTable(engine, compiler, context, tableToken, true);
                 }
-                assertTableExists(tableToken, true, false);
-                dropTable(engine, compiler, context, tableToken, true);
             }
         });
     }
@@ -175,32 +181,35 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                    CairoEngine engine = qdb.getCairoEngine();
 
-                TableToken tableToken = createTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createTable(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, true, false);
-                dropTable(engine, compiler, context, tableToken, true);
+                    TableToken tableToken = createTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createTable(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, true, false);
+                    dropTable(engine, compiler, context, tableToken, true);
 
-                tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, false, false);
+                    dropTable(engine, compiler, context, tableToken, false);
                 }
-                assertTableExists(tableToken, false, false);
-                dropTable(engine, compiler, context, tableToken, false);
             }
         });
     }
@@ -213,19 +222,22 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // create table with some data
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                TableToken tableToken = createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), engine, compiler, context, tableName);
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        new StringSink(),
-                        TABLE_START_CONTENT);
-                assertTableExists(tableToken, true, false);
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoEngine engine = qdb.getCairoEngine();
+                    TableToken tableToken = createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), engine, compiler, context, tableName);
+                    assertSql(
+                            compiler,
+                            context,
+                            "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                            new StringSink(),
+                            TABLE_START_CONTENT);
+                    assertTableExists(tableToken, true, false);
+                }
             }
 
             // copy the table to a foreign location, remove it, then symlink it
@@ -257,19 +269,22 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // check content of table after sym-linking it
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        new StringSink(),
-                        TABLE_START_CONTENT);
-                TableToken tableToken = qdb.getCairoEngine().getTableToken(tableName);
-                assertTableExists(tableToken, true, false);
-                dropTable(qdb.getCairoEngine(), compiler, context, tableToken, true);
+                CairoEngine engine = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)
+                ) {
+                    qdb.start();
+                    assertSql(
+                            compiler,
+                            context,
+                            "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                            new StringSink(),
+                            TABLE_START_CONTENT);
+                    TableToken tableToken = qdb.getCairoEngine().getTableToken(tableName);
+                    assertTableExists(tableToken, true, false);
+                    dropTable(qdb.getCairoEngine(), compiler, context, tableToken, true);
+                }
             }
         });
     }
@@ -282,50 +297,56 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context0 = executionContext(qdb.getCairoEngine());
-                    SqlExecutionContext context1 = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CyclicBarrier startBarrier = new CyclicBarrier(3);
-                SOCountDownLatch haltLatch = new SOCountDownLatch();
-                AtomicBoolean isInVolume = new AtomicBoolean();
-                for (int i = 0; i < 4; i++) {
-                    isInVolume.set(false);
-                    startBarrier.reset();
-                    haltLatch.setCount(2);
-                    concurrentTableCreator(
-                            "createTable",
-                            engine,
-                            cairoConfig,
-                            compiler0,
-                            context0,
-                            startBarrier,
-                            haltLatch,
-                            tableName,
-                            false,
-                            false,
-                            isInVolume
-                    ).start();
-                    concurrentTableCreator(
-                            "createTableInVolume",
-                            engine,
-                            cairoConfig,
-                            compiler1,
-                            context1,
-                            startBarrier,
-                            haltLatch,
-                            tableName,
-                            false,
-                            true,
-                            isInVolume
-                    ).start();
-                    startBarrier.await();
-                    haltLatch.await();
-                    dropTable(engine, compiler0, context0, engine.getTableToken(tableName), isInVolume.get());
-                    Path.clearThreadLocals();
+                CairoEngine engine2 = qdb.getCairoEngine();
+                try (SqlExecutionContext context0 = TestUtils.createSqlExecutionCtx(engine2)
+                ) {
+                    CairoEngine engine1 = qdb.getCairoEngine();
+                    try (SqlExecutionContext context1 = TestUtils.createSqlExecutionCtx(engine1)
+                    ) {
+                        qdb.start();
+                        CairoEngine engine = qdb.getCairoEngine();
+                        CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                        CyclicBarrier startBarrier = new CyclicBarrier(3);
+                        SOCountDownLatch haltLatch = new SOCountDownLatch();
+                        AtomicBoolean isInVolume = new AtomicBoolean();
+                        for (int i = 0; i < 4; i++) {
+                            isInVolume.set(false);
+                            startBarrier.reset();
+                            haltLatch.setCount(2);
+                            concurrentTableCreator(
+                                    "createTable",
+                                    engine,
+                                    cairoConfig,
+                                    compiler0,
+                                    context0,
+                                    startBarrier,
+                                    haltLatch,
+                                    tableName,
+                                    false,
+                                    false,
+                                    isInVolume
+                            ).start();
+                            concurrentTableCreator(
+                                    "createTableInVolume",
+                                    engine,
+                                    cairoConfig,
+                                    compiler1,
+                                    context1,
+                                    startBarrier,
+                                    haltLatch,
+                                    tableName,
+                                    false,
+                                    true,
+                                    isInVolume
+                            ).start();
+                            startBarrier.await();
+                            haltLatch.await();
+                            dropTable(engine, compiler0, context0, engine.getTableToken(tableName), isInVolume.get());
+                            Path.clearThreadLocals();
+                        }
+                    }
                 }
             }
         });
@@ -338,21 +359,24 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                    CairoEngine engine = qdb.getCairoEngine();
 
-                TableToken tableToken = createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                assertTableExists(tableToken, true, true);
-                tableToken = createWalTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
-                dropWalTable(engine, compiler, context, tableToken, true);
+                    TableToken tableToken = createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                    assertTableExists(tableToken, true, true);
+                    tableToken = createWalTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
+                    dropWalTable(engine, compiler, context, tableToken, true);
 
-                tableToken = createWalTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
-                assertTableExists(tableToken, true, true);
-                dropWalTable(engine, compiler, context, tableToken, true);
+                    tableToken = createWalTableInVolumeIfNotExists(cairoConfig, engine, compiler, context, tableName);
+                    assertTableExists(tableToken, true, true);
+                    dropWalTable(engine, compiler, context, tableToken, true);
+                }
             }
         });
     }
@@ -364,20 +388,23 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                TableToken tableToken = createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), engine, compiler, context, tableName);
-                assertTableExists(tableToken, true, true);
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        new StringSink(),
-                        TABLE_START_CONTENT);
-                dropWalTable(engine, compiler, context, tableToken, true);
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoEngine engine = qdb.getCairoEngine();
+                    TableToken tableToken = createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), engine, compiler, context, tableName);
+                    assertTableExists(tableToken, true, true);
+                    assertSql(
+                            compiler,
+                            context,
+                            "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                            new StringSink(),
+                            TABLE_START_CONTENT);
+                    dropWalTable(engine, compiler, context, tableToken, true);
+                }
             }
         });
     }
@@ -389,31 +416,34 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                TableToken tableToken = createWalTable(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, false, true);
-                dropWalTable(engine, compiler, context, tableToken, false);
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoEngine engine = qdb.getCairoEngine();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                    TableToken tableToken = createWalTable(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, false, true);
+                    dropWalTable(engine, compiler, context, tableToken, false);
 
-                tableToken = createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createWalTable(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    tableToken = createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createWalTable(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, true, true);
+                    dropWalTable(engine, compiler, context, tableToken, true);
                 }
-                assertTableExists(tableToken, true, true);
-                dropWalTable(engine, compiler, context, tableToken, true);
             }
         });
     }
@@ -425,32 +455,35 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                CairoEngine engine1 = qdb.getCairoEngine();
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
+                ) {
+                    qdb.start();
+                    CairoEngine engine = qdb.getCairoEngine();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                TableToken tableToken = createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createWalTable(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, true, true);
-                dropWalTable(engine, compiler, context, tableToken, true);
+                    TableToken tableToken = createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createWalTable(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, true, true);
+                    dropWalTable(engine, compiler, context, tableToken, true);
 
-                tableToken = createWalTable(cairoConfig, engine, compiler, context, tableName);
-                try {
-                    createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    tableToken = createWalTable(cairoConfig, engine, compiler, context, tableName);
+                    try {
+                        createWalTableInVolume(cairoConfig, engine, compiler, context, tableName);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, false, true);
+                    dropWalTable(engine, compiler, context, tableToken, false);
                 }
-                assertTableExists(tableToken, false, true);
-                dropWalTable(engine, compiler, context, tableToken, false);
             }
         });
     }
@@ -463,51 +496,57 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context0 = executionContext(qdb.getCairoEngine());
-                    SqlExecutionContext context1 = executionContext(qdb.getCairoEngine())
+                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CyclicBarrier startBarrier = new CyclicBarrier(3);
-                SOCountDownLatch haltLatch = new SOCountDownLatch();
-                AtomicBoolean isInVolume = new AtomicBoolean();
+                CairoEngine engine2 = qdb.getCairoEngine();
+                try (SqlExecutionContext context0 = TestUtils.createSqlExecutionCtx(engine2)
+                ) {
+                    CairoEngine engine1 = qdb.getCairoEngine();
+                    try (SqlExecutionContext context1 = TestUtils.createSqlExecutionCtx(engine1)
+                    ) {
+                        qdb.start();
+                        CairoEngine engine = qdb.getCairoEngine();
+                        CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                        CyclicBarrier startBarrier = new CyclicBarrier(3);
+                        SOCountDownLatch haltLatch = new SOCountDownLatch();
+                        AtomicBoolean isInVolume = new AtomicBoolean();
 
-                for (int i = 0; i < 4; i++) {
-                    isInVolume.set(false);
-                    startBarrier.reset();
-                    haltLatch.setCount(2);
-                    concurrentTableCreator(
-                            "createWalTable",
-                            engine,
-                            cairoConfig,
-                            compiler0,
-                            context0,
-                            startBarrier,
-                            haltLatch,
-                            tableName,
-                            true,
-                            false,
-                            isInVolume
-                    ).start();
-                    concurrentTableCreator(
-                            "createWalTableInVolume",
-                            engine,
-                            cairoConfig,
-                            compiler1,
-                            context1,
-                            startBarrier,
-                            haltLatch,
-                            tableName,
-                            true,
-                            true,
-                            isInVolume
-                    ).start();
-                    startBarrier.await();
-                    haltLatch.await();
-                    dropWalTable(engine, compiler0, context0, engine.getTableToken(tableName), isInVolume.get());
-                    Path.clearThreadLocals();
+                        for (int i = 0; i < 4; i++) {
+                            isInVolume.set(false);
+                            startBarrier.reset();
+                            haltLatch.setCount(2);
+                            concurrentTableCreator(
+                                    "createWalTable",
+                                    engine,
+                                    cairoConfig,
+                                    compiler0,
+                                    context0,
+                                    startBarrier,
+                                    haltLatch,
+                                    tableName,
+                                    true,
+                                    false,
+                                    isInVolume
+                            ).start();
+                            concurrentTableCreator(
+                                    "createWalTableInVolume",
+                                    engine,
+                                    cairoConfig,
+                                    compiler1,
+                                    context1,
+                                    startBarrier,
+                                    haltLatch,
+                                    tableName,
+                                    true,
+                                    true,
+                                    isInVolume
+                            ).start();
+                            startBarrier.await();
+                            haltLatch.await();
+                            dropWalTable(engine, compiler0, context0, engine.getTableToken(tableName), isInVolume.get());
+                            Path.clearThreadLocals();
+                        }
+                    }
                 }
             }
         });
@@ -607,15 +646,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         } else if (mustExist) {
             Assert.fail("does not exist: " + folderName);
         }
-    }
-
-    private static SqlExecutionContext executionContext(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
-                null,
-                null,
-                -1,
-                null);
     }
 
     private Thread concurrentTableCreator(

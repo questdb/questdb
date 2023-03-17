@@ -46,7 +46,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() {
-        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
     }
 
     @Test
@@ -398,7 +398,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             engine.drop(securityContext, path, engine.getTableToken("all"));
         }
-        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
 
         // Test in one go
         runWithManipulators(expected, w -> {

@@ -162,8 +162,7 @@ public class SecurityTest extends AbstractGriffinTest {
 
         readOnlyExecutionContext = new SqlExecutionContextImpl(memoryRestrictedEngine, 1)
                 .with(
-                        new CairoSecurityContextImpl(
-                                false),
+                        new CairoSecurityContextImpl(false),
                         bindVariableService,
                         null,
                         -1,

@@ -30,8 +30,8 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
-import static io.questdb.cairo.CairoTestUtils.maxDayOfMonth;
-import static io.questdb.cairo.CairoTestUtils.putWithLeadingZeroIfNeeded;
+import static io.questdb.test.tools.TestUtils.maxDayOfMonth;
+import static io.questdb.test.tools.TestUtils.putWithLeadingZeroIfNeeded;
 
 public class WeekOfYearFunctionFactoryTest extends AbstractGriffinTest {
     @Test

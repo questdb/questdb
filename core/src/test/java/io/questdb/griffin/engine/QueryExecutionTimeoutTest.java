@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -572,27 +571,24 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
 
-        try (final CairoEngine engine = new CairoEngine(configuration);
-             final SqlCompiler compiler = new SqlCompiler(engine)) {
-            //workerCount - 1
-            try (final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
-                sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, circuitBreaker);
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+        ) {
+            sqlExecutionContext.with(circuitBreaker);
+            if (pool != null) {
+                pool.assign(new GroupByJob(engine.getMessageBus()));
+                pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                pool.start(LOG);
+            }
 
-                try {
-                    if (pool != null) {
-                        pool.assign(new GroupByJob(engine.getMessageBus()));
-                        pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
-                        pool.start(LOG);
-                    }
-
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
-                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
-                } finally {
-                    if (pool != null) {
-                        pool.halt();
-                    }
-                }
+            runnable.run(engine, compiler, sqlExecutionContext);
+            Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+            Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+        } finally {
+            if (pool != null) {
+                pool.halt();
             }
         }
     }

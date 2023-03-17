@@ -886,7 +886,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         txn = 0;
         //noinspection ForLoopReplaceableByForEach

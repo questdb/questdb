@@ -27,8 +27,10 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -129,15 +131,9 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     Os.pause();
                 }
                 LOG.info().$("ABOUT TO DROP PARTITIONS").$();
-                try (SqlCompiler compiler = new SqlCompiler(engine);
-                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                             .with(
-                                     securityContext,
-                                     new BindVariableServiceImpl(configuration),
-                                     null,
-                                     -1,
-                                     null
-                             )
+                try (
+                        SqlCompiler compiler = new SqlCompiler(engine);
+                        SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
                     try (OperationFuture result = cc.execute(scSequence)) {
@@ -173,7 +169,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
 
-                CairoTestUtils.create(tm);
+                CreateTableTestUtils.create(tm);
             }
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
@@ -540,14 +536,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (
                 SqlCompiler compiler = new SqlCompiler(engine);
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                        .with(
-                                securityContext,
-                                new BindVariableServiceImpl(configuration),
-                                null,
-                                -1,
-                                null
-                        )
+                SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterOperation alterOp = cc.getAlterOperation();

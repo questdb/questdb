@@ -680,7 +680,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final int N = 1000;
@@ -722,7 +722,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final int N = 1000;
@@ -1763,7 +1763,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGetColumnIndex() {
-        CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
         try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
             Assert.assertEquals(1, writer.getColumnIndex("short"));
             try {
@@ -1777,7 +1777,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testIncorrectTodoCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             String all = "all";
             TableToken tableToken = engine.getTableToken(all);
             try (
@@ -1812,7 +1812,7 @@ public class TableWriterTest extends AbstractCairoTest {
             model.col("sym3", ColumnType.SYMBOL);
             model.timestamp();
 
-            tableToken = CairoTestUtils.create(model);
+            tableToken = CreateTableTestUtils.create(model);
         }
 
         // insert data
@@ -1892,7 +1892,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testNulls() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             ts = testAppendNulls(rnd, ts);
@@ -1903,7 +1903,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testO3AfterReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithTimestamp(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTableWithTimestamp(engine, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             testAppendNulls(rnd, ts);
@@ -1921,7 +1921,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
 
@@ -1971,7 +1971,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("productId", ColumnType.LONG256)
                 .timestamp()
         ) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
 
             try (TableWriter writer = newTableWriter(configuration, model.getName(), Metrics.disabled())) {
                 // Add 46 rows in partition 2020-07-13T00
@@ -2025,7 +2025,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             long[] tss = new long[]{
@@ -2079,7 +2079,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.STRING)
                     .col("c", ColumnType.STRING).indexed(true, 1024)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try {
@@ -2094,7 +2094,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testOpenWriterMissingTxFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             try (Path path = new Path()) {
                 String all = "all";
                 TableToken tableToken = engine.getTableToken(all);
@@ -2330,7 +2330,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .timestamp()
                 .col("supplier", ColumnType.SYMBOL)
         ) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
@@ -2364,7 +2364,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()
                 .col("supplier", ColumnType.SYMBOL)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
@@ -2564,7 +2564,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .timestamp()
                 .col("supplier", ColumnType.SYMBOL)
         ) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
@@ -2598,7 +2598,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()
                 .col("supplier", ColumnType.SYMBOL)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
@@ -2912,7 +2912,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 () -> {
                     TableToken tableToken;
                     try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.HOUR).col("x", ColumnType.LONG).timestamp()) {
-                        tableToken = CairoTestUtils.create(model, engine);
+                        tableToken = TestUtils.create(model, engine);
                     }
 
                     final Rnd rnd = new Rnd();
@@ -2966,7 +2966,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTableLock() {
-        CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
         try (TableWriter ignored = newTableWriter(configuration, "all", metrics)) {
             try {
@@ -3037,7 +3037,7 @@ public class TableWriterTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                 .col("секьюрити", ColumnType.STRING)
                 .timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         Rnd rnd = new Rnd();
@@ -3114,7 +3114,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("str", ColumnType.STRING)
                 .col("sym", ColumnType.SYMBOL)
                 .timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         String something = "Щось";
         String boring = "Таке-Сяке";
@@ -3284,7 +3284,7 @@ public class TableWriterTest extends AbstractCairoTest {
         final String tableName = "geo1";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
             model.col("g", ColumnType.getGeoHashTypeWithBits(tableBits));
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
@@ -3355,7 +3355,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("locationInt", ColumnType.getGeoHashTypeWithBits(30))
                 .col("locationLong", ColumnType.getGeoHashTypeWithBits(60))
                 .timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
     }
 
@@ -3439,7 +3439,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("category", ColumnType.SYMBOL)
                     .col("price", ColumnType.DOUBLE)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -3485,7 +3485,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("category", ColumnType.SYMBOL)
                     .col("price", ColumnType.DOUBLE)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -3867,7 +3867,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testRemoveColumn(TableModel model) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
@@ -3944,7 +3944,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testRenameColumn(TableModel model) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
@@ -4065,7 +4065,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testSetAppendPositionFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
             class X extends FilesFacadeImpl {
                 int fd = -1;
@@ -4107,7 +4107,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("b", ColumnType.STRING)
                 .col("c", ColumnType.SYMBOL).cached(!cacheFlag)
                 .timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         int N = 1000;
@@ -4150,7 +4150,7 @@ public class TableWriterTest extends AbstractCairoTest {
             model.col("sym3", ColumnType.SYMBOL);
             model.timestamp();
 
-            TableToken tableToken = CairoTestUtils.create(model);
+            TableToken tableToken = CreateTableTestUtils.create(model);
 
             // insert data
             final Rnd rnd = new Rnd();

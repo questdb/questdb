@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -551,7 +550,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             .col("byte1", ColumnType.BYTE)
                             .timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i\n" +
@@ -572,7 +571,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             try (
                     TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG)
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 l=843530699759026177i\n" +
@@ -768,7 +767,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile(
                         "create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);",
                         sqlExecutionContext);
@@ -806,7 +806,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile(
                         "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
                         sqlExecutionContext);
@@ -1018,7 +1019,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile(
                         "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
                         sqlExecutionContext);
@@ -1056,7 +1058,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile(
                         "create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
                         sqlExecutionContext);
@@ -1651,7 +1654,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         disconnectOnError = true;
         try (
                 SqlCompiler compiler = new SqlCompiler(engine);
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+        ) {
             compiler.compile(
                     "create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);",
                     sqlExecutionContext);
@@ -1708,20 +1712,20 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
 
             try (
-                    final SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1);
-                    SqlCompiler compiler = new SqlCompiler(engine)
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
                     // must not create table
                     TestUtils.assertSql(
                             compiler,
-                            context,
+                            sqlExecutionContext,
                             "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n"
                     );
                     // should be able to create table after this (e.g. no debris left by ILP)
-                    compiler.compile("create table vbw(a int)", context);
+                    compiler.compile("create table vbw(a int)", sqlExecutionContext);
 
                 } catch (SqlException e) {
                     Assert.fail();
@@ -1963,7 +1967,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile(
                         "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;",
                         sqlExecutionContext);
@@ -2039,7 +2044,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                         .col("temperature", ColumnType.DOUBLE)
                         .timestamp()
         ) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
     }
 

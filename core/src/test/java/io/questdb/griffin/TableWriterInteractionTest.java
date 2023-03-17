@@ -36,7 +36,7 @@ public class TableWriterInteractionTest extends AbstractGriffinTest {
             try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.DAY)) {
                 model.timestamp();
                 model.col("x", ColumnType.SYMBOL).indexed(true, 256);
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             long ts = TimestampFormatUtils.parseTimestamp("2019-04-29T12:00:04.877721Z");

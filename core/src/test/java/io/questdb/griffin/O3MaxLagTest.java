@@ -260,7 +260,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                         ") timestamp(ts) partition by DAY " +
                         " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
 
-                try (TableWriter writer = CairoTestUtils.getWriter(engine, tableName)) {
+                try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
                     for (int i = 0; i < length; i++) {
                         long ts = IntervalUtils.parseFloorPartialTimestamp(dates[i]);
                         Row r = writer.newRow(ts);
@@ -479,8 +479,8 @@ public class O3MaxLagTest extends AbstractO3Test {
         int txCount = Math.max(1, rnd.nextInt(50));
         int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
         try (
-                TableWriter w = CairoTestUtils.getWriter(engine, "x");
-                TableWriter w2 = CairoTestUtils.getWriter(engine, "y")
+                TableWriter w = TestUtils.getWriter(engine, "x");
+                TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
                     w.getMetadata(),
@@ -655,8 +655,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00", "12345678901234578"};
 
             // Add 2 batches
-            try (TableWriter o3 = CairoTestUtils.getWriter(engine, "o3")) {
-                try (TableWriter ordered = CairoTestUtils.getWriter(engine, "ordered")) {
+            try (TableWriter o3 = TestUtils.getWriter(engine, "o3")) {
+                try (TableWriter ordered = TestUtils.getWriter(engine, "ordered")) {
                     for (int i = 0; i < iterations; i++) {
                         long backwards = iterations - i - 1;
                         final Rnd rnd = new Rnd();
@@ -698,8 +698,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             TestUtils.assertEquals(compiler, sqlExecutionContext, "ordered", "o3");
 
             engine.releaseAllReaders();
-            try (TableWriter o3 = CairoTestUtils.getWriter(engine, "o3")) {
-                try (TableWriter ordered = CairoTestUtils.getWriter(engine, "ordered")) {
+            try (TableWriter o3 = TestUtils.getWriter(engine, "o3")) {
+                try (TableWriter ordered = TestUtils.getWriter(engine, "ordered")) {
                     o3.truncate();
                     ordered.truncate();
                 }
@@ -758,7 +758,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
 
         int nCommitsWithLag = 0;
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             int nHeadBatch = 1;
             int nRowsAppended = 0;
             while (nHeadBatch < batchRowEnd.size()) {
@@ -834,7 +834,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -874,7 +874,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -922,7 +922,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>150 and i<=495 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
@@ -970,7 +970,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>150 and i<=184 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
@@ -1016,7 +1016,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>250 and i<=375 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
@@ -1078,7 +1078,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -1126,7 +1126,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -1221,7 +1221,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x1 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -1274,7 +1274,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>250 and i<300";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             sql = "select * from x where i>=300 order by f";
@@ -1321,7 +1321,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>250 or (i>50 and i<100) order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -1362,7 +1362,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x where i>490 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
@@ -1427,7 +1427,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         // table "z" is our target table, where we exercise O3 and rollbacks
         compiler.compile("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
 
-        try (TableWriter w = CairoTestUtils.getWriter(engine, "y")) {
+        try (TableWriter w = TestUtils.getWriter(engine, "y")) {
 
             insertUncommitted(compiler, sqlExecutionContext, "z limit " + lim, w);
 
@@ -1538,7 +1538,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                         aaCount + "\n");
         compiler.compile("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
-        try (TableWriter tw = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
             int halfCount = appendCount / 2;
             appendRows(tw, halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);
@@ -1612,7 +1612,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
 
         Rnd rnd = new Rnd();
-        try (TableWriter tw = CairoTestUtils.getWriter(engine, "x")) {
+        try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
             int halfCount = appendCount / 2;
             appendRowsWithDroppedColumn(tw, halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);

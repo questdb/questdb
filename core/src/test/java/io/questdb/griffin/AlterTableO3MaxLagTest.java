@@ -150,7 +150,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataOnce() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CairoTestUtils.create(tbl.timestamp("ts")
+                CreateTableTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -191,7 +191,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             spinLockTimeout = 1;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CairoTestUtils.create(tbl.timestamp("ts")
+                CreateTableTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
@@ -233,7 +233,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             spinLockTimeout = 1;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CairoTestUtils.create(tbl.timestamp("ts")
+                CreateTableTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 

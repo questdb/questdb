@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -81,13 +80,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         AbstractGriffinTest.setUpStatic();
         compiler2 = new SqlCompiler(engine, null, snapshotAgent);
-        sqlExecutionContext2 = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        null,
-                        null,
-                        -1,
-                        null);
+        sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
         CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(dirName);
         tablePathLen = path.length();

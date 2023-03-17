@@ -76,7 +76,7 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
     public void testExplosion() throws SqlException {
         final String tableName = "exploding";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
@@ -153,9 +153,9 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
     }
 
     private void createTable() {
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.DAY)) {
+        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.DAY)) {
             model.timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
     }
 

@@ -75,7 +75,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (
@@ -204,7 +204,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(FilesFacade ff) throws Exception {
-        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
                 newTableReader(new DefaultTestCairoConfiguration(root) {

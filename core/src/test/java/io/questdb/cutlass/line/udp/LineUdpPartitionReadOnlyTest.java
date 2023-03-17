@@ -33,13 +33,13 @@ import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -184,13 +184,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
-                            qdb.getCairoEngine().getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                            null,
-                            null,
-                            -1,
-                            null
-                    )
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getCairoEngine())
             ) {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();

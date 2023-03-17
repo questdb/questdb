@@ -27,31 +27,12 @@ package io.questdb.cairo;
 import io.questdb.Metrics;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 
-public class CairoTestUtils {
+public class CreateTableTestUtils {
 
     public static TableToken create(TableModel model) {
-        return create(model, AbstractCairoTest.engine);
-    }
-
-    public static TableToken create(TableModel model, CairoEngine engine) {
-        int tableId = (int) engine.getTableIdGenerator().getNextId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
-        if (tableToken == null) {
-            throw new RuntimeException("table already exists: " + model.getTableName());
-        }
-        TableUtils.createTable(
-                model.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                ColumnType.VERSION,
-                tableId,
-                tableToken.getDirName()
-        );
-        engine.registerTableToken(tableToken);
-        return tableToken;
+        return TestUtils.create(model, AbstractCairoTest.engine);
     }
 
     public static TableToken create(CairoEngine engine, TableModel model) {
@@ -67,19 +48,19 @@ public class CairoTestUtils {
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {
         try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy)) {
-            create(model, engine);
+            TestUtils.create(model, engine);
         }
     }
 
     public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
         try (TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy)) {
-            create(model, engine);
+            TestUtils.create(model, engine);
         }
     }
 
     public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
         try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
-            create(model, engine);
+            TestUtils.create(model, engine);
         }
     }
 
@@ -121,7 +102,7 @@ public class CairoTestUtils {
                         .col("k", ColumnType.BOOLEAN)
                         .col("l", ColumnType.BINARY)
                         .col("m", ColumnType.UUID);
-                create(model, engine);
+                TestUtils.create(model, engine);
             }
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
@@ -236,50 +217,7 @@ public class CairoTestUtils {
 
     }
 
-    public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
-        return getWriter(engine, engine.getTableToken(tableName));
-    }
-
-    public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
-        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
-    }
-
-    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
-        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
-    }
-
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "allgeo", partitionBy).col("hb", ColumnType.getGeoHashTypeWithBits(6)).col("hs", ColumnType.getGeoHashTypeWithBits(12)).col("hi", ColumnType.getGeoHashTypeWithBits(27)).col("hl", ColumnType.getGeoHashTypeWithBits(44)).timestamp();
-    }
-
-    public static int maxDayOfMonth(int month) {
-        switch (month) {
-            case 1:
-            case 3:
-            case 5:
-            case 7:
-            case 8:
-            case 10:
-            case 12:
-                return 31;
-            case 2:
-                return 28;
-            case 4:
-            case 6:
-            case 9:
-            case 11:
-                return 30;
-            default:
-                throw new IllegalArgumentException("[1..12]");
-        }
-    }
-
-    public static StringSink putWithLeadingZeroIfNeeded(StringSink seq, int len, int value) {
-        seq.clear(len);
-        if (value < 10) {
-            seq.put('0');
-        }
-        seq.put(value);
-        return seq;
     }
 }

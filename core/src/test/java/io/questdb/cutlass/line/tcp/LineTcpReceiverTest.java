@@ -36,8 +36,10 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -176,7 +178,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
-            CairoTestUtils.create(m);
+            CreateTableTestUtils.create(m);
         }
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
@@ -237,7 +239,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
                 m.timestamp("ts").wal();
-                CairoTestUtils.create(engine, m);
+                CreateTableTestUtils.create(engine, m);
             }
 
             // Send non-partitioned table rows before the partitioned table ones.
@@ -305,7 +307,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 m.timestamp("ts").col("dt", ColumnType.DATE).noWal();
-                CairoTestUtils.create(m);
+                CreateTableTestUtils.create(m);
             }
 
             final String lineData = tableName + " dt=631150000000000t 631150000000000000\n" +
@@ -398,7 +400,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
-            CairoTestUtils.create(m);
+            CreateTableTestUtils.create(m);
         }
 
         String lineData =
@@ -1001,14 +1003,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                         .with(
-                                 securityContext,
-                                 new BindVariableServiceImpl(configuration),
-                                 null,
-                                 -1,
-                                 null)) {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile("create table weather as (" +
                         "select x as windspeed," +
                         "x*2 as timetocycle, " +
@@ -1150,7 +1148,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            CairoTestUtils.create(engine, m);
+            CreateTableTestUtils.create(engine, m);
         }
 
         engine.releaseInactive();
@@ -1204,7 +1202,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CairoTestUtils.create(engine, m);
+                CreateTableTestUtils.create(engine, m);
             }
 
             sendLinger(lineData, "table_a");
@@ -1332,7 +1330,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CairoTestUtils.create(engine, m);
+                CreateTableTestUtils.create(engine, m);
             }
 
             send(lineData, "messages");
@@ -1365,7 +1363,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                         .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                         .col("Length", ColumnType.INT);
-                CairoTestUtils.create(m);
+                CreateTableTestUtils.create(m);
             }
 
             String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
@@ -1389,7 +1387,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
             try (TableModel m = new TableModel(configuration, tableName, PartitionBy.MONTH)) {
                 m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
-                CairoTestUtils.create(m);
+                CreateTableTestUtils.create(m);
             }
 
             // Next, start inserting symbols on a background thread.

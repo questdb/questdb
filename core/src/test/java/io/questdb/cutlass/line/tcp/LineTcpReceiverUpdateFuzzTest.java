@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -152,10 +151,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         executionContexts = new SqlExecutionContext[numOfUpdateThreads];
         for (int i = 0; i < numOfUpdateThreads; i++) {
             compilers[i] = new SqlCompiler(engine, null, null);
-            BindVariableServiceImpl bindService = new BindVariableServiceImpl(configuration);
-            SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
-            sqlExecutionContext.with(securityContext, bindService, null);
-            executionContexts[i] = sqlExecutionContext;
+            executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfUpdateThreads);
         }
     }
 

@@ -147,7 +147,7 @@ public class AbstractO3Test {
 
     static void assertMaxTimestamp(CairoEngine engine, CharSequence expected) {
         try (
-                final TableWriter w = CairoTestUtils.getWriter(engine, "x")
+                final TableWriter w = TestUtils.getWriter(engine, "x")
         ) {
             sink.clear();
             sink.put("max\n");

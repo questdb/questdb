@@ -163,7 +163,7 @@ public class CompactMapTest extends AbstractCairoTest {
     public void testConstructorRecovery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            CairoTestUtils.createTestTable(10, new Rnd(), binarySequence);
+            CreateTableTestUtils.createTestTable(10, new Rnd(), binarySequence);
             SingleColumnType columnTypes = new SingleColumnType();
 
             try (TableReader reader = newTableReader(configuration, "x")) {
@@ -186,7 +186,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 model
                         .col("a", ColumnType.LONG)
                         .col("b", geohashType);
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             BytecodeAssembler asm = new BytecodeAssembler();
@@ -308,7 +308,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            CairoTestUtils.createTestTable(N, rnd, binarySequence);
+            CreateTableTestUtils.createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
@@ -447,7 +447,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, mem -> new MockHash(mem), 1, Integer.MAX_VALUE)) {
+                (long) (N * loadFactor), loadFactor, MockHash::new, 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -526,7 +526,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            CairoTestUtils.createTestTable(N, rnd, binarySequence);
+            CreateTableTestUtils.createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
@@ -603,7 +603,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            CairoTestUtils.createTestTable(N, rnd, binarySequence);
+            CreateTableTestUtils.createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 

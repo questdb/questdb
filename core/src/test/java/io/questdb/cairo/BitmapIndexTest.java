@@ -454,22 +454,26 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentForwardCursorReadBreadth() throws Exception {
-        testConcurrentForwardCursor(1000000, 1024);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        testConcurrentForwardCursor(rnd.nextInt(1000000), 1024);
     }
 
     @Test
     public void testConcurrentForwardCursorReadHeight() throws Exception {
-        testConcurrentForwardCursor(1000000, 10000);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        testConcurrentForwardCursor(rnd.nextInt(1000000), 10000);
     }
 
     @Test
     public void testConcurrentWriterAndBackwardReadBreadth() throws Exception {
-        testConcurrentBackwardRW(10000000, 1024);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        testConcurrentBackwardRW(rnd.nextInt(10000000), 1024);
     }
 
     @Test
     public void testConcurrentWriterAndBackwardReadHeight() throws Exception {
-        testConcurrentBackwardRW(1000000, 100000);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        testConcurrentBackwardRW(rnd.nextInt(1000000), 100000);
     }
 
     @Test
@@ -699,7 +703,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();

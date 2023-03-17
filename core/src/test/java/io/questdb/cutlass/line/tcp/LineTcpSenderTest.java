@@ -273,7 +273,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("s", ColumnType.STRING)
                     .col("u", ColumnType.UUID)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (Sender sender = Sender.builder()
@@ -312,7 +312,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("u2", ColumnType.UUID)
                     .col("u3", ColumnType.UUID)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (Sender sender = Sender.builder()
@@ -583,7 +583,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
                     .col("u1", ColumnType.UUID)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             // this sender fails as the string is not UUID

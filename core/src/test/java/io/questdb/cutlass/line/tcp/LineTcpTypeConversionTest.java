@@ -27,7 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -261,7 +261,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile(createTableCmd, sqlExecutionContext);
             } catch (SqlException ex) {

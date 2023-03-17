@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
@@ -82,6 +81,50 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAutoIncrementUniqueId_FirstColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)", sqlExecutionContext);
+
+            executeInsert("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
+            assertSql("currencies", "id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
+                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
+                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n" +
+                    "3\tGBP\t2019-03-10T02:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testAutoIncrementUniqueId_NotFirstColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+
+            executeInsert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            assertSql("currencies", "ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
+                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
+                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n" +
+                    "GBP\t3\t2019-03-10T02:00:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testGeoHash() throws Exception {
         final TimestampFunction timestampFunction = new TimestampFunction() {
             private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
@@ -93,8 +136,8 @@ public class InsertTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(() -> {
-            try (TableModel model = CairoTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
-                CairoTestUtils.create(model, engine);
+            try (TableModel model = CreateTableTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
+                TestUtils.create(model, engine);
             }
             Rnd rnd = new Rnd();
 
@@ -382,16 +425,13 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(AllowAllCairoSecurityContext.INSTANCE,
-                            bindVariableService,
-                            null,
-                            -1,
-                            null);
-
             bindVariableService.setDouble("bal", 56.4);
 
-            try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
+
+            try (
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService);
+                    InsertMethod method = insertOperation.createMethod(sqlExecutionContext)
+            ) {
                 method.execute();
                 method.commit();
             }
@@ -590,50 +630,6 @@ public class InsertTest extends AbstractGriffinTest {
                 ImplicitCastException.class,
                 true
         );
-    }
-
-    @Test
-    public void testAutoIncrementUniqueId_NotFirstColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-
-            executeInsert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
-            assertSql("currencies", "ccy\tid\tts\n" +
-                    "USD\t1\t2019-03-10T00:00:00.000000Z\n");
-
-            compiler.compile("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies", sqlExecutionContext);
-            assertSql("currencies", "ccy\tid\tts\n" +
-                    "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
-                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n");
-
-            compiler.compile("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies", sqlExecutionContext);
-            assertSql("currencies", "ccy\tid\tts\n" +
-                    "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
-                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n" +
-                    "GBP\t3\t2019-03-10T02:00:00.000000Z\n");
-        });
-    }
-
-    @Test
-    public void testAutoIncrementUniqueId_FirstColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)", sqlExecutionContext);
-
-            executeInsert("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
-            assertSql("currencies", "id\tccy\tts\n" +
-                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n");
-
-            compiler.compile("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies", sqlExecutionContext);
-            assertSql("currencies", "id\tccy\tts\n" +
-                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
-                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n");
-
-            compiler.compile("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies", sqlExecutionContext);
-            assertSql("currencies", "id\tccy\tts\n" +
-                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
-                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n" +
-                    "3\tGBP\t2019-03-10T02:00:00.000000Z\n");
-        });
     }
 
     @Test
@@ -1201,7 +1197,7 @@ public class InsertTest extends AbstractGriffinTest {
             boolean columnSet
     ) throws Exception {
         assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithNewTypes(engine, partitionBy);
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, partitionBy);
             // this is BLOB
             byte[] blob = new byte[500];
             TestBinarySequence bs = new TestBinarySequence();

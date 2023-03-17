@@ -3626,7 +3626,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             public void run(CairoEngine engine) {
                 if (state++ == 1) {
                     // remove column from table X
-                    try (TableWriter writer = CairoTestUtils.getWriter(engine, "y")) {
+                    try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
                         writer.removeColumn("int1");
                         writer.addColumn("c", ColumnType.INT);
                     }
@@ -3642,9 +3642,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     return super.getReader(cairoSecurityContext, tableName, version);
                 }
             }) {
-                try (SqlCompiler compiler = new SqlCompiler(engine);
-                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                             .with(AllowAllCairoSecurityContext.INSTANCE, null, null)
+                try (
+                        SqlCompiler compiler = new SqlCompiler(engine);
+                        SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
 
                     compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
@@ -4509,15 +4509,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         }) {
 
-            try (SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                         .with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null)
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
-                    compiler.compile(sql, executionContext);
-
+                    compiler.compile(sql, sqlExecutionContext);
                     Assert.assertTrue(fiddler.isHappy());
-
                     try (TableReader reader = getReader(engine, "Y")) {
                         sink.clear();
                         reader.getMetadata().toJson(sink);
@@ -4526,7 +4523,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 }
-            }
         }
     }
 

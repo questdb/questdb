@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,7 +33,10 @@ import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -680,8 +682,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                            .with(AllowAllCairoSecurityContext.INSTANCE, null, null)
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
@@ -3719,8 +3720,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             try (CairoEngine engine = new CairoEngine(configuration);
                  SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                         .with(AllowAllCairoSecurityContext.INSTANCE, null, null)
+                 SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
                     compiler.compile(("create table x as " +
@@ -7914,8 +7914,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                            .with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, new Rnd())
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService)
             ) {
                 compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
                 AbstractGriffinTest.refreshTablesInBaseEngine();

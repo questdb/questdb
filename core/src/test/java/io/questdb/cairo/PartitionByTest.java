@@ -35,8 +35,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.cairo.CairoTestUtils.maxDayOfMonth;
-import static io.questdb.cairo.CairoTestUtils.putWithLeadingZeroIfNeeded;
+import static io.questdb.test.tools.TestUtils.maxDayOfMonth;
+import static io.questdb.test.tools.TestUtils.putWithLeadingZeroIfNeeded;
 
 public class PartitionByTest {
     private static final StringSink sink = new StringSink();

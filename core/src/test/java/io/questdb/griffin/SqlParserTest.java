@@ -7449,7 +7449,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 try {
                     try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            CairoTestUtils.create(tableModels[i], engine);
+                            TestUtils.create(tableModels[i], engine);
                         }
                         compiler.compile("select * from tab", ctx);
                         Assert.fail("Exception expected");
@@ -7491,7 +7491,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 try {
                     try {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            CairoTestUtils.create(tableModels[i]);
+                            CreateTableTestUtils.create(tableModels[i]);
                         }
                         compiler.compile("select * from tab", sqlExecutionContext);
                         Assert.fail("Exception expected");
@@ -7616,7 +7616,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
                 model.col("f" + i, ColumnType.INT);
             }
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         StringBuilder b = new StringBuilder();

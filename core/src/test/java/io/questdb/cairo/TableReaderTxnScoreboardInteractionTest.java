@@ -160,7 +160,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
             model
                     .col("a", ColumnType.BYTE)
                     .col("b", ColumnType.SHORT);
-            return CairoTestUtils.create(model);
+            return CreateTableTestUtils.create(model);
         }
     }
 }

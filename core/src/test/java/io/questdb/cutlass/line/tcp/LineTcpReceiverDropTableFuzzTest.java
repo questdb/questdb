@@ -26,7 +26,10 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -59,12 +62,11 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
     @Test
     public void testInsertDropParallel() throws Exception {
         Assume.assumeTrue(walEnabled);
-
         Rnd rnd = TestUtils.generateRandom(LOG);
         maintenanceInterval = rnd.nextLong(200);
         minIdleMsBeforeWriterRelease = rnd.nextLong(200);
         initLoadParameters(1 + rnd.nextInt(5000), 1 + rnd.nextInt(10), 1 + rnd.nextInt(3), 1 + rnd.nextInt(4), 1 + rnd.nextLong(500));
-        initDropParameters(5, 3);
+        initDropParameters(rnd.nextInt(8), rnd.nextInt(4));
         initFuzzParameters(-1, -1, -1, -1, -1, false, false, false, false);
         runTest();
     }
@@ -94,9 +96,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         executionContexts = new SqlExecutionContext[numOfDropThreads];
         for (int i = 0; i < numOfDropThreads; i++) {
             compilers[i] = new SqlCompiler(engine, null, null);
-            SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, numOfDropThreads);
-            sqlExecutionContext.with(securityContext, null, null);
-            executionContexts[i] = sqlExecutionContext;
+            executionContexts[i] = TestUtils.createSqlExecutionCtx(engine, numOfDropThreads);
         }
     }
 

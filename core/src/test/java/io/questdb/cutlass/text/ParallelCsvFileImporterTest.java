@@ -2772,7 +2772,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         try (final CairoEngine engine = new CairoEngine(configuration);
              final SqlCompiler compiler = new SqlCompiler(engine)) {
 
-            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
+            try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                 try {
                     if (pool != null) {
                         TextImportJob.assignToPool(engine.getMessageBus(), pool);

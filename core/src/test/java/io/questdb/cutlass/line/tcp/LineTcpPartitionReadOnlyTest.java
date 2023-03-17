@@ -34,12 +34,12 @@ import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -184,12 +184,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
-                            qdb.getCairoEngine().getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                            null,
-                            null,
-                            -1,
-                            null)
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getCairoEngine())
             ) {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();
@@ -217,7 +212,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 Assert.assertNotNull(tableToken);
 
                 // set partition read-only state
-                try (TableWriter writer = CairoTestUtils.getWriter(engine, tableToken)) {
+                try (TableWriter writer = getWriter(engine, tableToken)) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
                     Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);

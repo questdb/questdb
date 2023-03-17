@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.TestFilesFacadeImpl;
@@ -65,7 +64,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     TelemetryJob ignored = new TelemetryJob(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
                     compiler.compile("drop table " + TELEMETRY, sqlExecutionContext);
@@ -83,7 +82,8 @@ public class TelemetryTest extends AbstractCairoTest {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 compiler.compile(
                         "CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)",
                         sqlExecutionContext);
@@ -189,7 +189,8 @@ public class TelemetryTest extends AbstractCairoTest {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 refVersion.set("1.0");
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 String os = System.getProperty(TelemetryConfigLogger.OS_NAME);

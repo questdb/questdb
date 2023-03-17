@@ -51,7 +51,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Before
     public void setUpInstance() {
         try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
         zTableToken = engine.getTableToken("z");
     }
@@ -116,7 +116,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     public void testBasicCharSequence() throws Exception {
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         assertWithPool(pool -> {
@@ -263,7 +263,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     public void testGetAndCloseRace() throws Exception {
 
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         TableToken xyzTableToken = engine.getTableToken("xyz");
@@ -317,7 +317,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     public void testGetAndReleaseRace() throws Exception {
 
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         TableToken xyzTableName = engine.getTableToken("xyz");
@@ -389,11 +389,11 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Test
     public void testLockUnlock() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         TableToken xTableToken = engine.getTableToken("x");
@@ -463,7 +463,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     public void testLockUnlockAndReleaseRace() throws Exception {
 
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         TableToken xyzTableToken = engine.getTableToken("xyz");
@@ -516,7 +516,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Test
     public void testLockWorkflow() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         assertWithPool(pool -> {
@@ -648,7 +648,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             String x = "x";
             try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             TableToken tableToken = engine.getTableToken(x);

@@ -35,7 +35,7 @@ public class DoubleReloadTest extends AbstractCairoTest {
                 "int_test",
                 PartitionBy.NONE
         ).col("x", ColumnType.INT)) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
 

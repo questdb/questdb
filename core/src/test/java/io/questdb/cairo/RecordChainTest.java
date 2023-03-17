@@ -41,7 +41,7 @@ public class RecordChainTest extends AbstractCairoTest {
     @Test
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createTestTable(10000, new Rnd(), new TestRecord.ArrayBinarySequence());
+            CreateTableTestUtils.createTestTable(10000, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newTableReader(configuration, "x")) {
                 entityColumnFilter.of(reader.getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
@@ -62,7 +62,7 @@ public class RecordChainTest extends AbstractCairoTest {
     public void testPseudoRandomAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
-            CairoTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
+            CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newTableReader(configuration, "x")) {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
@@ -195,7 +195,7 @@ public class RecordChainTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(
                 () -> {
                     final int N = 10000 * 2;
-                    CairoTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
+                    CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
                     try (TableReader reader = newTableReader(configuration, "x")) {
                         entityColumnFilter.of(reader.getMetadata().getColumnCount());
                         RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
@@ -304,7 +304,7 @@ public class RecordChainTest extends AbstractCairoTest {
             // in a spirit of using only what's available in this package
             // we create temporary table the hard way
 
-            CairoTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
+            CreateTableTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newTableReader(configuration, "x")) {
 
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());

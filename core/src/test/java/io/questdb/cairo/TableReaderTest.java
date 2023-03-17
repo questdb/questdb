@@ -1657,7 +1657,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 .col("int", ColumnType.INT)
 //                .timestamp("t") // cannot insert null as a timestamp on designated columns
         ) {
-            CairoTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
+            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
 
             TestUtils.assertMemoryLeak(() -> {
                 try (TableWriter w = newTableWriter(configuration, "all", metrics)) {
@@ -1686,7 +1686,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     "char_test",
                     PartitionBy.NONE
             ).col("cc", ColumnType.STRING)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
             char[] data = {'a', 'b', 'f', 'g'};
             try (TableWriter writer = newTableWriter(configuration, "char_test", metrics)) {
@@ -1787,7 +1787,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final int threads = 2;
@@ -1859,7 +1859,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.LONG256)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter w = newTableWriter(configuration, "x", metrics)) {
@@ -2052,7 +2052,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
 
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
             try (TableWriter w = newTableWriter(configuration, "all", metrics)) {
                 TableWriter.Row r = w.newRow(1000000); // <-- higher timestamp
@@ -2083,7 +2083,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.LONG)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             long N = 280000000;
@@ -2113,7 +2113,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testPartialString() {
-        CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
         int N = 10000;
         Rnd rnd = new Rnd();
         try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
@@ -2156,32 +2156,32 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadByDay() throws Exception {
-        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReadByMonth() throws Exception {
-        CairoTestUtils.createAllTable(engine, PartitionBy.MONTH);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.MONTH);
         TestUtils.assertMemoryLeak(() -> testTableCursor(60 * 60 * 60000));
     }
 
     @Test
     public void testReadByWeek() throws Exception {
-        CairoTestUtils.createAllTable(engine, PartitionBy.WEEK);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.WEEK);
         TestUtils.assertMemoryLeak(() -> testTableCursor(7 * 60 * 60000L));
     }
 
     @Test
     public void testReadByYear() throws Exception {
-        CairoTestUtils.createAllTable(engine, PartitionBy.YEAR);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.YEAR);
         TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L));
     }
 
     @Test
     public void testReadEmptyTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             try (TableWriter ignored1 = newTableWriter(configuration, "all", metrics)) {
 
                 // open another writer, which should fail
@@ -2202,7 +2202,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadLong256Four() {
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final int N = 1_000_000;
@@ -2236,7 +2236,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadLong256One() {
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final int N = 1_000_000;
@@ -2270,7 +2270,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadLong256Three() {
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final int N = 1_000_000;
@@ -2304,7 +2304,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadLong256Two() {
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         final int N = 1_000_000;
@@ -2337,7 +2337,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadNonPartitioned() throws Exception {
-        CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
         TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
@@ -2346,7 +2346,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                CairoTestUtils.create(model.timestamp());
+                CreateTableTestUtils.create(model.timestamp());
             }
 
             CountDownLatch stopLatch = new CountDownLatch(2);
@@ -2411,7 +2411,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "testReaderGoesToPoolWhenCommitHappen";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("l", ColumnType.LONG)) {
-                TableToken tableToken = CairoTestUtils.create(model);
+                TableToken tableToken = CreateTableTestUtils.create(model);
 
                 int rowCount = 10;
                 try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
@@ -2439,7 +2439,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 () -> {
                     // model table
                     try (TableModel model = new TableModel(configuration, "w", PartitionBy.HOUR).col("l", ColumnType.LONG).timestamp()) {
-                        CairoTestUtils.create(model);
+                        CreateTableTestUtils.create(model);
                     }
 
                     try (
@@ -2523,7 +2523,7 @@ public class TableReaderTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             model.col("str", ColumnType.STRING);
             model.timestamp();
-            CairoTestUtils.create(model);
+            CreateTableTestUtils.create(model);
         }
 
         try (TableReader reader = newTableReader(configuration, tableName)) {
@@ -2598,7 +2598,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testReloadWithoutData() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY).col("x", ColumnType.SYMBOL).col("y", ColumnType.LONG)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, "tab", metrics)) {
@@ -2650,7 +2650,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, "w", metrics)) {
@@ -2805,7 +2805,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, "w", metrics)) {
@@ -2909,7 +2909,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     .col("a", ColumnType.SYMBOL).indexed(true, 2)
                     .col("b", ColumnType.INT)
                     .timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             int N = 1000;
@@ -2943,7 +2943,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3033,7 +3033,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.STRING)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3152,7 +3152,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3251,7 +3251,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3360,7 +3360,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3465,7 +3465,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3570,7 +3570,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
@@ -3922,7 +3922,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private TableToken createTable(String tableName, int partitionBy) {
         try (TableModel model = new TableModel(configuration, tableName, partitionBy)) {
             model.timestamp();
-            return CairoTestUtils.create(model);
+            return CreateTableTestUtils.create(model);
         }
     }
 
@@ -3991,7 +3991,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long blob = allocBlob();
         try {
             TestUtils.assertMemoryLeak(() -> {
-                CairoTestUtils.createAllTable(engine, partitionBy);
+                CreateTableTestUtils.createAllTable(engine, partitionBy);
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
                 CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -4023,7 +4023,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             final int threads = 2;
@@ -4109,7 +4109,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void testReload(int partitionBy, int count, long inct, final int testPartitionSwitch) throws Exception {
         final long increment = inct * 1000;
 
-        CairoTestUtils.createAllTable(engine, partitionBy);
+        CreateTableTestUtils.createAllTable(engine, partitionBy);
 
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -4317,7 +4317,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, tableName, partitionBy).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
@@ -4387,7 +4387,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, "w", metrics)) {
@@ -4457,7 +4457,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
+                CreateTableTestUtils.create(model);
             }
 
             try (TableWriter writer = newTableWriter(configuration, "w", metrics)) {
