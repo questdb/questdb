@@ -22,26 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.wal.fuzz;
 
-public abstract class AbstractLockable {
-    private static final long TARGET_SEQUENCE_OFFSET;
-    private int srcSequence;
-    @SuppressWarnings({"FieldCanBeLocal", "unused"})
-    // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
-    // to "srcSequence+1". Executing thread must not be changing value of "srcSequence"
-    private int tgtSequence;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.Rnd;
 
-    public boolean tryLock() {
-        return Unsafe.cas(this, TARGET_SEQUENCE_OFFSET, srcSequence, srcSequence + 1);
-    }
-
-    protected void of(int initialSequence) {
-        this.tgtSequence = initialSequence;
-        this.srcSequence = initialSequence;
-    }
-
-    static {
-        TARGET_SEQUENCE_OFFSET = Unsafe.getFieldOffset(AbstractLockable.class, "tgtSequence");
+public class TruncateTableOperation implements FuzzTransactionOperation {
+    @Override
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+        tableWriter.truncate();
+        return true;
     }
 }

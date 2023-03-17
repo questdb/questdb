@@ -499,6 +499,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     rnd.nextDouble(),
                     1, // insert only
+                    0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"}
             );

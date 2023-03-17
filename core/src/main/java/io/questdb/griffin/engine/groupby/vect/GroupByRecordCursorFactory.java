@@ -52,7 +52,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
-    private final ObjList<VectorAggregateEntry> activeEntries;
     private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
@@ -80,7 +79,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         this.workerCount = workerCount;
         entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
-        activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
         // columnTypes[0] is the type of key, for now single key is supported
         // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
@@ -331,7 +329,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             sharedCircuitBreaker.reset();
             entryPool.clear();
-            activeEntries.clear();
             int queuedCount = 0;
             int ownCount = 0;
             int reclaimed = 0;
@@ -393,9 +390,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             }
                         } else {
                             final VectorAggregateEntry entry = entryPool.next();
+                            queuedCount++;
                             if (keyAddress == 0) {
                                 entry.of(
-                                        queuedCount++,
                                         vaf,
                                         null,
                                         0,
@@ -410,7 +407,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 );
                             } else {
                                 entry.of(
-                                        queuedCount++,
                                         vaf,
                                         pRosti,
                                         keyAddress,
@@ -424,7 +420,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         sharedCircuitBreaker
                                 );
                             }
-                            activeEntries.add(entry);
                             queue.get(seq).entry = entry;
                             pubSeq.done(seq);
                         }
@@ -446,12 +441,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
                 // tasks in flight.
 
-                // start at the back to reduce chance of clashing
                 reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(
+                        bus.getVectorAggregateSubSeq(),
+                        queue,
                         queuedCount,
                         reclaimed,
                         workerId,
-                        activeEntries,
                         doneLatch,
                         LOG,
                         circuitBreaker,
