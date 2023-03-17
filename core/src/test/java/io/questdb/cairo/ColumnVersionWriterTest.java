@@ -154,6 +154,36 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(TestFilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(TestFilesFacadeImpl.INSTANCE, path)
+            ) {
+                Rnd rnd = TestUtils.generateRandom(LOG);
+                int columnCount = 27;
+                for (int i = 0; i < columnCount; i++) {
+                    w.upsertDefaultTxnName(i, i, Timestamps.DAY_MICROS * i);
+                    w.upsertColumnTop(Timestamps.DAY_MICROS * i, i, i * 100);
+                }
+
+                w.commit();
+                w.truncate(true);
+                r.readUnsafe();
+
+                for (int i = 0; i < columnCount; i++) {
+                    for (int j = 0; j < 100; j++) {
+                        Assert.assertEquals(0, r.getColumnTop(rnd.nextLong(), i));
+                        Assert.assertEquals(i, r.getDefaultColumnNameTxn(i));
+                        Assert.assertEquals(Long.MIN_VALUE, r.getColumnTopPartitionTimestamp(i));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testColumnVersionReaderReuse() throws Exception {
         assertMemoryLeak(() -> {
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
