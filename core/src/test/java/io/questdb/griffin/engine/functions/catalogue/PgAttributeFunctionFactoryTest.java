@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
@@ -70,7 +70,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x(a int)",
                 null,
                 false,
-                false,
                 false
         );
     }
@@ -108,13 +107,12 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "WHERE A_ATTNUM = (result.KEYS).x  \n" +
                 "ORDER BY result.table_name, result.PK_NAME, result.KEY_SEQ;";
 
-        assertQuery(
+        assertQuery9(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\n",
                 query,
                 "create table x(a int)",
                 null,
-                true,
-                false
+                true
         );
     }
 
@@ -160,7 +158,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x(a int)",
                 null,
                 true,
-                false,
                 false
         );
     }
@@ -223,7 +220,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                     "create table x(a int)",
                     null,
                     true,
-                    false,
                     false
             );
         });
@@ -283,7 +279,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                     "create table x(a int)",
                     null,
                     true,
-                    false,
                     false
             );
         });
@@ -291,44 +286,41 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgAttributeFunc() throws Exception {
-        assertQuery(
+        assertQuery9(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
                         "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute;",
                 "create table x(a int)",
                 null,
-                false,
                 false
         );
     }
 
     @Test
     public void testPgAttributeFuncNoPrefix() throws Exception {
-        assertQuery(
+        assertQuery9(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
                 "pg_attribute;",
                 null,
                 null,
-                false,
                 false
         );
     }
 
     @Test
     public void testPgAttributeFuncNoTables() throws Exception {
-        assertQuery(
+        assertQuery9(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
                 "pg_catalog.pg_attribute;",
                 null,
                 null,
-                false,
                 false
         );
     }
 
     @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
                         "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute order by 1;",
@@ -340,14 +332,13 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                         "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
                         "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n",
                 true,
-                false,
                 false
         );
     }
 
     @Test
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
                         "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute order by 1 limit 1;",
@@ -357,7 +348,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
                         "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 true,
-                false,
                 false
         );
     }
@@ -396,14 +386,13 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "WHERE true  \n" +
                 "ORDER BY nspname,c.relname --,attnum";
 
-        assertQuery(
+        assertQuery9(
                 "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
                         "public\tx\ta\t23\tfalse\t0\t4\t0\t\t\t\t0\tb\n",
                 query,
                 "create table x(a int)",
                 null,
-                true,
-                false
+                true
         );
     }
 }

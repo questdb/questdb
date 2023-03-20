@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
@@ -444,14 +445,13 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     compiler.compile("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
                     compiler.compile("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
 
-                    assertQuery(
+                    assertQuery6(
                             compiler,
                             "count\n20000\n",
                             query,
                             null,
                             sqlExecutionContext,
                             false,
-                            true,
                             true);
                 },
                 configuration,

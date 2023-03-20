@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
@@ -960,13 +961,12 @@ public class SecurityTest extends AbstractGriffinTest {
                     true
             );
             try {
-                assertQuery(
+                assertQuery6(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, count() from tb1 order by sym1",
                         null,
                         readOnlyExecutionContext, true,
-                        true,
                         true
                 );
                 Assert.fail();
@@ -1049,14 +1049,13 @@ public class SecurityTest extends AbstractGriffinTest {
                                boolean supportsRandomAccess,
                                SqlExecutionContext sqlExecutionContext) throws SqlException {
         memoryRestrictedEngine.reloadTableNames();
-        assertQuery(
+        assertQuery6(
                 compiler,
                 expected,
                 query,
                 expectedTimestamp,
                 sqlExecutionContext,
                 supportsRandomAccess,
-                true,
                 false);
     }
 }

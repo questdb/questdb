@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

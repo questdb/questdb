@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;

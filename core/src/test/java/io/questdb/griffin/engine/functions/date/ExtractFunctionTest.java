@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class ExtractFunctionTest extends AbstractGriffinTest {
@@ -38,7 +38,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
 
@@ -48,7 +47,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract('millennium' from '1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -63,7 +61,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
 
@@ -73,7 +70,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract('doy' from '2022-12-30T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -88,7 +84,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -101,7 +96,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(century from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -126,7 +120,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -139,7 +132,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(decade from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -154,7 +146,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -167,7 +158,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(doy from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -182,7 +172,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -195,7 +184,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(doy from '2022-12-31T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -210,7 +198,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -223,7 +210,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(century from '0001-01-01T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -238,7 +224,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -251,7 +236,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(isodow from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -266,7 +250,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -279,7 +262,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(isoyear from '2022-01-03T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -294,7 +276,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -307,7 +288,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(isoyear from '2022-01-01T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -322,7 +302,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -335,7 +314,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(millennium from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -350,7 +328,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -363,7 +340,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(milliseconds from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -378,7 +354,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -391,7 +366,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(minute from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -415,7 +389,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(month from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -470,7 +443,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -483,7 +455,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(quarter from '2022-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -498,7 +469,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -511,7 +481,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(quarter from '2022-12-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -526,7 +495,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -539,7 +507,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(second from null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -554,7 +521,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -567,7 +533,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(doy from '2022-01-01T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -592,7 +557,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -605,7 +569,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(day from '2022-03-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -620,7 +583,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -633,7 +595,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(dow from '2022-04-16T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -648,7 +609,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -661,7 +621,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(doy from '2022-04-22T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -676,7 +635,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -689,7 +647,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(hour from '2022-03-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -704,7 +661,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -717,7 +673,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(isodow from '2022-04-10T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -732,7 +687,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -745,7 +699,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(microseconds from '1917-03-11T22:00:40.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -760,7 +713,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -773,7 +725,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(minute from '2022-03-11T22:45:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -788,7 +739,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -801,7 +751,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(second from '2022-03-11T22:45:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -816,7 +765,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -829,7 +777,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(year from '2022-03-11T22:45:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -844,7 +791,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -857,7 +803,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(week from '2022-01-03T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -872,7 +817,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -885,7 +829,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(week from '2022-01-16T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -900,7 +843,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -913,7 +855,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(week from '2022-01-01T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -928,7 +869,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -942,7 +882,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -955,7 +894,6 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(century from '0000-01-01T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );

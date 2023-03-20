@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -52,7 +52,7 @@ public class CastNullTypeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSignature() throws Exception {
+    public void testSignature() {
         Assert.assertEquals("cast(oV)", new CastNullTypeFunctionFactory().getSignature());
     }
 }

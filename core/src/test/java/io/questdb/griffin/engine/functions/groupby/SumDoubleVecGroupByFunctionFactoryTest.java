@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -49,7 +49,6 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 null,
                 "alter table tab add column b double",
                 expected,
-                false,
                 true);
 
         Record[] expected2 = new Record[]{
@@ -64,13 +63,12 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select round(avg(f),6) avg, sum(b) sum from tab",
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,
-                false,
                 true);
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "sum\n" +
                         "NaN\n",
                 "select sum(f) from tab",
@@ -80,7 +78,6 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "sum\n" +
                         "0.9822\n",
                 false,
-                true,
                 true
         );
     }
@@ -94,7 +91,6 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
                 false,
-                true,
                 true
         );
     }

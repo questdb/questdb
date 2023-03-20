@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest {

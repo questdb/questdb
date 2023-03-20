@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

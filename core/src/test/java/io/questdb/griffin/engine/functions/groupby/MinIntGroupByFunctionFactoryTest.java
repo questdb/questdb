@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
@@ -87,7 +87,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testMaxIntOrNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\tmin\n" +
                         "1\tNaN\n",
                 "select a, min(f) from tab",
@@ -96,7 +96,6 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into tab select 1, 2147483647 from long_sequence(1)",
                 "a\tmin\n" +
                         "1\t2147483647\n",
-                true,
                 true,
                 true
         );
@@ -128,7 +127,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tmin\tk\n" +
+        assertQuery13("b\tmin\tk\n" +
                         "\t-1792928964\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -294,7 +293,6 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CPSW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
                         "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true,
                 true,
                 true
         );

@@ -35,6 +35,7 @@ import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
@@ -1158,7 +1159,7 @@ public class CopyTest extends AbstractGriffinTest {
             boolean expectSize
     ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, expectSize);
+            assertFactoryCursor5(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize);
         }
     }
 

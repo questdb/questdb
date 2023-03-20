@@ -24,7 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;

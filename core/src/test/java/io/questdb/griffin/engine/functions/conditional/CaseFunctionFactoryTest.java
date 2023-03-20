@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractGriffinTest {
@@ -79,7 +79,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -146,7 +145,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -190,7 +188,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -237,7 +234,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -281,7 +277,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -328,7 +323,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -372,7 +366,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -419,7 +412,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -463,7 +455,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -510,7 +501,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -554,7 +544,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -601,7 +590,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -645,7 +633,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -692,7 +679,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -736,7 +722,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -782,7 +767,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -852,7 +836,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -898,7 +881,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -943,7 +925,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -1009,7 +990,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1053,7 +1033,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1100,7 +1079,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1145,7 +1123,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1213,7 +1190,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1259,7 +1235,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1303,7 +1278,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1350,7 +1324,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1394,7 +1367,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1440,7 +1412,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );

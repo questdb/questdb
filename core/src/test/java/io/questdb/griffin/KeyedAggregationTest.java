@@ -33,6 +33,8 @@ import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
@@ -59,7 +61,6 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         " from long_sequence(1) ) " +
                         " timestamp(ts) ",
                 null,
-                true,
                 true,
                 true);
     }
@@ -213,7 +214,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t11641.765471468498\t11641.76547146845\t11641.765471468458\t1.8566421983501336E-5\t0.9999768905891359\t0.500376750256533\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
                 "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val), max(ts), min(ts) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double(2) val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -225,7 +226,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t14056\n",
                 "select hour(ts), count() from tab where val < 0.5",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -276,7 +277,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "(select * from tab where ts in '1970-01-01' union all  select * from tab where ts in '1970-04-26')" +
                         "where val < 0.5 order by 1",
                 "create table tab as (select timestamp_sequence(0, 1000000000) ts, rnd_double() val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -289,7 +290,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t28000\t10420189893\t-914\t889980\t444528.3858623779\n",
                 "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_int(-998, 889991, 2) val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -302,7 +303,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t28000\t10444993989\t-992\t889982\t445586.53594129946\n",
                 "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -315,7 +316,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t28000\t0x36afffffffffffff92a0\n",
                 "select hour(ts), count(), sum(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, cast(9223372036854775807 as long256) val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -328,7 +329,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t1.0444993989E10\t1.0444993989E10\n",
                 "select hour(ts), ksum(val), nsum(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -341,7 +342,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t10444993989\t1.0444993989E10\t1.0444993989E10\t-992\t889982\t445586.53594129946\n",
                 "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -880,7 +881,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "a3\t104341.28852517322\n",
                 "select s2, sum(val) from tab order by s2",
                 "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -1329,7 +1330,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "count\tcount1\n1\t1\n",
                     sql,
                     ddl,
-                    null, true, true, false
+                    null, true, false
             );
         });
     }
@@ -1403,7 +1404,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "bazbaz\t37\t1\n",
                 "select replace(s, 'bar', 'baz'), count(), count_distinct(s) from tab",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -1416,7 +1417,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "1\t37\tbazbaz\n",
                 "select count_distinct(s), count(), replace(s, 'bar', 'baz') from tab",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
-                null, true, true, true
+                null, true, true
         );
     }
 
@@ -1510,13 +1511,18 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "from x order by k", sqlExecutionContext);
         try {
             assertCursor("k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts\n" +
-                    "NaN\t3\t3\t0\t0\t0\t0\t0\n" +
-                    "0\t1\t1\t0\t0\t0\t0\t0\n" +
-                    "1\t1\t1\t0\t0\t0\t0\t0\n" +
-                    "2\t1\t1\t1\t1\t1\t1\t1\n" +
-                    "3\t2\t2\t0\t0\t0\t0\t0\n" +
-                    "4\t2\t2\t1\t1\t1\t1\t1\n" +
-                    "5\t1\t1\t0\t0\t0\t0\t0\n", query.getRecordCursorFactory(), true, true, false, sqlExecutionContext);
+                            "NaN\t3\t3\t0\t0\t0\t0\t0\n" +
+                            "0\t1\t1\t0\t0\t0\t0\t0\n" +
+                            "1\t1\t1\t0\t0\t0\t0\t0\n" +
+                            "2\t1\t1\t1\t1\t1\t1\t1\n" +
+                            "3\t2\t2\t0\t0\t0\t0\t0\n" +
+                            "4\t2\t2\t1\t1\t1\t1\t1\n" +
+                            "5\t1\t1\t0\t0\t0\t0\t0\n",
+                    query.getRecordCursorFactory(),
+                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
+                    true,
+                    false,
+                    sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1531,11 +1537,17 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "order by 1", sqlExecutionContext);
         try {
             assertCursor("hour\tc1\tcstar\tci\tcl\n" +
-                    "0\t2\t2\t0\t0\n" +
-                    "1\t2\t2\t0\t0\n" +
-                    "2\t2\t2\t0\t0\n" +
-                    "3\t3\t3\t1\t1\n" +
-                    "4\t2\t2\t1\t1\n", query.getRecordCursorFactory(), true, true, false, sqlExecutionContext);
+                            "0\t2\t2\t0\t0\n" +
+                            "1\t2\t2\t0\t0\n" +
+                            "2\t2\t2\t0\t0\n" +
+                            "3\t3\t3\t1\t1\n" +
+                            "4\t2\t2\t1\t1\n",
+                    query.getRecordCursorFactory(),
+                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
+                    true,
+                    false,
+                    sqlExecutionContext
+            );
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1605,7 +1617,14 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "sum(l256), count(i), count(l) from tab group by i )", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
+            assertCursor(
+                    "cnt\n1000\n",
+                    query.getRecordCursorFactory(),
+                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
+                    true,
+                    false,
+                    sqlExecutionContext
+            );
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1617,7 +1636,14 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
+            assertCursor(
+                    "cnt\n1000000\n",
+                    query.getRecordCursorFactory(),
+                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
+                    true,
+                    false,
+                    sqlExecutionContext
+            );
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1643,7 +1669,14 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "sum(l256), count(i), count(l) from tab )", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
+            assertCursor(
+                    "cnt\n1\n",
+                    query.getRecordCursorFactory(),
+                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
+                    true,
+                    false,
+                    sqlExecutionContext
+            );
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }

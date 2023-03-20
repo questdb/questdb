@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,7 +40,7 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
                     "select * from " +
                             "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
                             "where ts between '2022-03-20' AND id <> '0x05ab6d9fabdabb00066a5db735d17a' AND id <> '0x05aba84839b9c7000006765675e630' AND id <> '0x05abc58d80ba1f000001ed05351873'",
-                    null, null, true, false, true);
+                    null, null, true, true);
             Assert.fail();
         } catch (SqlException e) {
             MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: between"));
@@ -53,7 +54,7 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
         try {
             assertQuery("",
                     "select abs(ln(1,2), 4) + 10+'asdf' from long_sequence(1);",
-                    null, null, true, false, true);
+                    null, null, true, true);
             Assert.fail();
         } catch (SqlException e) {
             MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: ln"));
@@ -67,7 +68,7 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
         try {
             assertQuery("",
                     "select abs(1,2,3,4) from long_sequence(1)",
-                    null, null, true, false, true);
+                    null, null, true, true);
             Assert.fail();
         } catch (SqlException e) {
             MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: abs"));
@@ -79,6 +80,6 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
     private void runTestQuery() throws Exception {
         assertQuery("x\n1\n",
                 "select x from long_sequence(1) where x < 10 and x > 0",
-                null, null, true, false, false);
+                null, null, true, false);
     }
 }

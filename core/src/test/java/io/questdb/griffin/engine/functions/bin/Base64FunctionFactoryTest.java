@@ -56,7 +56,6 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
                     "create table t as (select rnd_bin(16,16,0) x from long_sequence(5))",
                     null,
                     true,
-                    true,
                     true
             );
         } finally {
@@ -80,7 +79,6 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
                 "select x, base64(x, 100) y from t",
                 "create table t as (select rnd_bin(6,6,1) x from long_sequence(10))",
                 null,
-                true,
                 true,
                 true
         );

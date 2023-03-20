@@ -24,14 +24,14 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -49,14 +49,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -74,14 +73,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1\n" +
                         "1\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -99,14 +97,13 @@ public class CastTest extends AbstractGriffinTest {
                         "T\n" +
                         "T\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -124,14 +121,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.001Z\n" +
                         "1970-01-01T00:00:00.001Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -148,7 +144,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1.0\n" +
                         "1.0\n" +
                         "1.0\n",
-                true,
                 true,
                 true
         );
@@ -177,7 +172,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -194,7 +189,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1.0000\n" +
                         "1.0000\n" +
                         "1.0000\n",
-                true,
                 true,
                 true
         );
@@ -223,7 +217,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -240,7 +234,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1\n" +
                         "1\n" +
                         "1\n",
-                true,
                 true,
                 true
         );
@@ -278,7 +271,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -296,14 +289,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1\n" +
                         "1\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -320,7 +312,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x01\n" +
                         "0x01\n" +
                         "0x01\n",
-                true,
                 true,
                 true
         );
@@ -354,14 +345,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_boolean() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -379,14 +369,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1\n" +
                         "1\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -404,14 +393,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -428,7 +416,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -462,14 +449,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_boolean() a from long_sequence(20))",
                 null,
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testBooleanToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -487,14 +473,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -511,7 +496,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -545,14 +529,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_boolean() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -570,14 +553,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000001Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -594,7 +576,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -619,7 +600,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testByteToBooleanConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -637,14 +618,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -662,14 +642,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90\n" +
                         "76\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -687,14 +666,13 @@ public class CastTest extends AbstractGriffinTest {
                         "Z\n" +
                         "L\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -712,14 +690,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.090Z\n" +
                         "1970-01-01T00:00:00.076Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -737,14 +714,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90.0\n" +
                         "76.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -762,14 +738,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90.0000\n" +
                         "76.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -787,14 +762,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90\n" +
                         "76\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -812,14 +786,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90\n" +
                         "76\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -836,7 +809,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x53\n" +
                         "0x5a\n" +
                         "0x4c\n",
-                true,
                 true,
                 true
         );
@@ -870,14 +842,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_byte() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -895,14 +866,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90\n" +
                         "76\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -920,14 +890,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90\n" +
                         "76\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -944,7 +913,6 @@ public class CastTest extends AbstractGriffinTest {
                         "34\n" +
                         "34\n" +
                         "34\n",
-                true,
                 true,
                 true
         );
@@ -978,14 +946,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_byte() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -1003,14 +970,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90\n" +
                         "76\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -1027,7 +993,6 @@ public class CastTest extends AbstractGriffinTest {
                         "14\n" +
                         "14\n" +
                         "14\n",
-                true,
                 true,
                 true
         );
@@ -1061,14 +1026,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_byte() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -1086,14 +1050,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000090Z\n" +
                         "1970-01-01T00:00:00.000076Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -1111,14 +1074,13 @@ public class CastTest extends AbstractGriffinTest {
                         "false\n" +
                         "false\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToBooleanTrue() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -1136,14 +1098,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -1161,14 +1122,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "9\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -1186,14 +1146,13 @@ public class CastTest extends AbstractGriffinTest {
                         "H\n" +
                         "Y\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -1211,14 +1170,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.009Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -1236,14 +1194,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.0\n" +
                         "9.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -1261,14 +1218,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.0000\n" +
                         "9.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -1286,14 +1242,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "9\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -1311,14 +1266,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "9\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -1335,7 +1289,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x57\n" +
                         "0x48\n" +
                         "0x59\n",
-                true,
                 true,
                 true
         );
@@ -1369,14 +1322,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_char() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -1394,14 +1346,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "9\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -1419,14 +1370,13 @@ public class CastTest extends AbstractGriffinTest {
                         "H\n" +
                         "Y\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -1443,7 +1393,6 @@ public class CastTest extends AbstractGriffinTest {
                         "A\n" +
                         "A\n" +
                         "A\n",
-                true,
                 true,
                 true
         );
@@ -1477,14 +1426,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_char() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -1502,14 +1450,13 @@ public class CastTest extends AbstractGriffinTest {
                         "H\n" +
                         "Y\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -1526,7 +1473,6 @@ public class CastTest extends AbstractGriffinTest {
                         "X\n" +
                         "X\n" +
                         "X\n",
-                true,
                 true,
                 true
         );
@@ -1560,14 +1506,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_char() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testCharToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -1585,14 +1530,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000009Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -1610,14 +1554,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToBooleanConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -1635,14 +1578,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -1660,14 +1602,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "96\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -1685,14 +1626,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "-\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -1710,14 +1650,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "1970-01-01T00:42:01.595Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -1735,14 +1674,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "111.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -1760,14 +1698,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "111.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -1785,14 +1722,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "129724714\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -1809,7 +1745,6 @@ public class CastTest extends AbstractGriffinTest {
                         "5361808\n" +
                         "NaN\n" +
                         "8600061\n",
-                true,
                 true,
                 true
         );
@@ -1843,14 +1778,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_date(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -1868,14 +1802,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "51\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -1893,14 +1826,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.045Z\n" +
                         "1970-01-01T00:00:00.061Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -1917,7 +1849,6 @@ public class CastTest extends AbstractGriffinTest {
                         "334\n" +
                         "334\n" +
                         "334\n",
-                true,
                 true,
                 true
         );
@@ -1951,14 +1882,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_date(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -1976,14 +1906,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "111\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -2000,7 +1929,6 @@ public class CastTest extends AbstractGriffinTest {
                         "601\n" +
                         "601\n" +
                         "601\n",
-                true,
                 true,
                 true
         );
@@ -2034,14 +1962,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_date(10, 20, 2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDateToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -2058,7 +1985,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:02:23.935000Z\n" +
                         "\n" +
                         "1970-01-01T00:01:15.474000Z\n",
-                true,
                 true,
                 true
         );
@@ -2086,7 +2012,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testDoubleToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -2104,14 +2030,13 @@ public class CastTest extends AbstractGriffinTest {
                         "4\n" +
                         "0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -2129,14 +2054,13 @@ public class CastTest extends AbstractGriffinTest {
                         "7\n" +
                         "!\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -2154,14 +2078,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:04.217Z\n" +
                         "\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -2179,14 +2102,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.4217768841969397\n" +
                         "NaN\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -2204,14 +2126,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.4218\n" +
                         "NaN\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -2229,14 +2150,13 @@ public class CastTest extends AbstractGriffinTest {
                         "22\n" +
                         "50\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -2254,14 +2174,13 @@ public class CastTest extends AbstractGriffinTest {
                         "421\n" +
                         "NaN\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -2278,7 +2197,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x0b9d0e\n" +
                         "0x066f90\n" +
                         "\n",
-                true,
                 true,
                 true
         );
@@ -2312,14 +2230,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_double(2)*1090000 a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -2337,14 +2254,13 @@ public class CastTest extends AbstractGriffinTest {
                         "4\n" +
                         "0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -2362,14 +2278,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.22452340856088226\n" +
                         "0.5093827001617407\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -2386,7 +2301,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1.34\n" +
                         "1.34\n" +
                         "1.34\n",
-                true,
                 true,
                 true
         );
@@ -2420,14 +2334,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_double(2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -2445,14 +2358,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.4217768841969397\n" +
                         "\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -2469,7 +2381,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1.5\n" +
                         "1.5\n" +
                         "1.5\n",
-                true,
                 true,
                 true
         );
@@ -2503,14 +2414,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_double(2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDoubleToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -2527,7 +2437,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:01:16.110295Z\n" +
                         "1970-01-01T00:00:42.177688Z\n" +
                         "\n",
-                true,
                 true,
                 true
         );
@@ -2555,7 +2464,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testFloatToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -2573,14 +2482,13 @@ public class CastTest extends AbstractGriffinTest {
                         "20\n" +
                         "93\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -2598,14 +2506,13 @@ public class CastTest extends AbstractGriffinTest {
                         "5\n" +
                         "3\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -2623,14 +2530,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "1970-01-01T00:03:44.523Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -2648,14 +2554,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "0.2245233654975891\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -2673,14 +2578,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "0.2245\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -2698,7 +2602,6 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "2245\n",
                 true,
-                true,
                 true
         );
     }
@@ -2709,7 +2612,7 @@ public class CastTest extends AbstractGriffinTest {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
-        assertQuery(
+        assertQuery13(
                 "fl\ta\n",
                 "tab",
                 "create table tab (fl DOUBLE, a LONG)",
@@ -2727,14 +2630,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\tNaN\n" +
                         "0.2245233654975891\t2245233654\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -2751,7 +2653,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x0c1027\n" +
                         "\n" +
                         "0x036d0b\n",
-                true,
                 true,
                 true
         );
@@ -2785,14 +2686,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_float(2)*1090000 a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -2810,14 +2710,13 @@ public class CastTest extends AbstractGriffinTest {
                         "204\n" +
                         "934\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -2835,14 +2734,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0.2045\n" +
                         "0.9345\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -2859,7 +2757,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1.3400\n" +
                         "1.3400\n" +
                         "1.3400\n",
-                true,
                 true,
                 true
         );
@@ -2893,14 +2790,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_float(2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -2918,14 +2814,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "0.2245\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -2942,7 +2837,6 @@ public class CastTest extends AbstractGriffinTest {
                         "1.5000\n" +
                         "1.5000\n" +
                         "1.5000\n",
-                true,
                 true,
                 true
         );
@@ -2976,14 +2870,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_float(2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testFloatToTimestampViaDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -3001,14 +2894,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "1970-01-01T00:00:22.452336Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testInfinity() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3032,14 +2924,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testInfinityNonConstant() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "column\n",
                 "select a = b from tab ",
                 "create table tab (a double, b float)",
@@ -3047,7 +2938,6 @@ public class CastTest extends AbstractGriffinTest {
                 "insert into tab values (cast('Infinity' as double), cast('Infinity' as float))",
                 "column\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -3067,7 +2957,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testIntToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3085,14 +2975,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToBooleanConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3110,14 +2999,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -3135,14 +3023,13 @@ public class CastTest extends AbstractGriffinTest {
                         "53\n" +
                         "50\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -3160,14 +3047,13 @@ public class CastTest extends AbstractGriffinTest {
                         "4\n" +
                         "1\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -3185,14 +3071,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.067Z\n" +
                         "1970-01-01T00:00:00.106Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -3210,14 +3095,13 @@ public class CastTest extends AbstractGriffinTest {
                         "67.0\n" +
                         "106.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -3235,14 +3119,13 @@ public class CastTest extends AbstractGriffinTest {
                         "67.0000\n" +
                         "106.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -3260,14 +3143,13 @@ public class CastTest extends AbstractGriffinTest {
                         "52\n" +
                         "49\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -3285,14 +3167,13 @@ public class CastTest extends AbstractGriffinTest {
                         "67\n" +
                         "106\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -3309,7 +3190,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x38\n" +
                         "0x34\n" +
                         "0x31\n",
-                true,
                 true,
                 true
         );
@@ -3343,14 +3223,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_int(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -3368,14 +3247,13 @@ public class CastTest extends AbstractGriffinTest {
                         "23\n" +
                         "34\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -3393,14 +3271,13 @@ public class CastTest extends AbstractGriffinTest {
                         "52\n" +
                         "49\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -3417,7 +3294,6 @@ public class CastTest extends AbstractGriffinTest {
                         "334\n" +
                         "334\n" +
                         "334\n",
-                true,
                 true,
                 true
         );
@@ -3451,14 +3327,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_int(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -3476,14 +3351,13 @@ public class CastTest extends AbstractGriffinTest {
                         "67\n" +
                         "106\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -3500,7 +3374,6 @@ public class CastTest extends AbstractGriffinTest {
                         "601\n" +
                         "601\n" +
                         "601\n",
-                true,
                 true,
                 true
         );
@@ -3534,14 +3407,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_int(10, 20, 2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testIntToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -3559,14 +3431,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000067Z\n" +
                         "1970-01-01T00:00:00.000106Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLong256ToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3583,7 +3454,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -3607,7 +3477,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testLong256ToBooleanConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3625,14 +3495,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLong256ToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -3650,14 +3519,13 @@ public class CastTest extends AbstractGriffinTest {
                         "-1101822104\n" +
                         "-1125169127\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLong256ToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -3675,14 +3543,13 @@ public class CastTest extends AbstractGriffinTest {
                         "-4485747798769957016\n" +
                         "375856366519011353\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3700,14 +3567,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToBooleanConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -3725,14 +3591,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -3750,14 +3615,13 @@ public class CastTest extends AbstractGriffinTest {
                         "96\n" +
                         "97\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -3775,14 +3639,13 @@ public class CastTest extends AbstractGriffinTest {
                         "-\n" +
                         "=\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -3800,14 +3663,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.111Z\n" +
                         "1970-01-01T00:00:00.112Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -3825,14 +3687,13 @@ public class CastTest extends AbstractGriffinTest {
                         "111.0\n" +
                         "112.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -3850,14 +3711,13 @@ public class CastTest extends AbstractGriffinTest {
                         "111.0000\n" +
                         "112.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -3875,14 +3735,13 @@ public class CastTest extends AbstractGriffinTest {
                         "45\n" +
                         "61\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -3900,14 +3759,13 @@ public class CastTest extends AbstractGriffinTest {
                         "111\n" +
                         "112\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -3924,7 +3782,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x3a\n" +
                         "0x2d\n" +
                         "0x3d\n",
-                true,
                 true,
                 true
         );
@@ -3958,14 +3815,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_long(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -3983,14 +3839,13 @@ public class CastTest extends AbstractGriffinTest {
                         "51\n" +
                         "46\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -4008,14 +3863,13 @@ public class CastTest extends AbstractGriffinTest {
                         "45\n" +
                         "61\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -4032,7 +3886,6 @@ public class CastTest extends AbstractGriffinTest {
                         "334\n" +
                         "334\n" +
                         "334\n",
-                true,
                 true,
                 true
         );
@@ -4066,14 +3919,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_long(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -4091,14 +3943,13 @@ public class CastTest extends AbstractGriffinTest {
                         "111\n" +
                         "112\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -4115,7 +3966,6 @@ public class CastTest extends AbstractGriffinTest {
                         "601\n" +
                         "601\n" +
                         "601\n",
-                true,
                 true,
                 true
         );
@@ -4149,14 +3999,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_long(10, 20, 2) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -4174,14 +4023,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000111Z\n" +
                         "1970-01-01T00:00:00.000112Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testNullToBinary() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a binary)",
@@ -4199,14 +4047,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -4223,7 +4070,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -4248,7 +4094,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testShortToBooleanTrue() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -4266,14 +4112,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -4291,14 +4136,13 @@ public class CastTest extends AbstractGriffinTest {
                         "-6\n" +
                         "-40\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -4316,14 +4160,13 @@ public class CastTest extends AbstractGriffinTest {
                         ")\n" +
                         "<\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -4341,14 +4184,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:30.202Z\n" +
                         "1969-12-31T23:59:40.504Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -4366,14 +4208,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202.0\n" +
                         "-19496.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -4391,14 +4232,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202.0000\n" +
                         "-19496.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -4416,14 +4256,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202\n" +
                         "-19496\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -4441,14 +4280,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202\n" +
                         "-19496\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToLong256() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long256)",
@@ -4465,7 +4303,6 @@ public class CastTest extends AbstractGriffinTest {
                         "0x5217\n" +
                         "0x75fa\n" +
                         "0xffffffffffffb3d8\n",
-                true,
                 true,
                 true
         );
@@ -4499,14 +4336,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_short() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -4524,14 +4360,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202\n" +
                         "-19496\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -4549,14 +4384,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202\n" +
                         "-19496\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -4573,7 +4407,6 @@ public class CastTest extends AbstractGriffinTest {
                         "10\n" +
                         "10\n" +
                         "10\n",
-                true,
                 true,
                 true
         );
@@ -4607,14 +4440,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_short() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -4632,14 +4464,13 @@ public class CastTest extends AbstractGriffinTest {
                         "30202\n" +
                         "-19496\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -4656,7 +4487,6 @@ public class CastTest extends AbstractGriffinTest {
                         "99\n" +
                         "99\n" +
                         "99\n",
-                true,
                 true,
                 true
         );
@@ -4690,14 +4520,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_short() a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -4715,14 +4544,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.030202Z\n" +
                         "1969-12-31T23:59:59.980504Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrConstZeroToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -4739,7 +4567,6 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n",
-                true,
                 true,
                 true
         );
@@ -4765,14 +4592,13 @@ public class CastTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -4790,14 +4616,13 @@ public class CastTest extends AbstractGriffinTest {
                         "100\n" +
                         "23\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -4815,14 +4640,13 @@ public class CastTest extends AbstractGriffinTest {
                         "K\n" +
                         "A\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -4840,14 +4664,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "2019-03-11T10:20:33.123Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -4870,14 +4693,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "988.223\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToDouble_doubleParserTakingSlowPath() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select cast(a as double) as a from tab",
                 "create table tab (a string)",
@@ -4886,14 +4708,13 @@ public class CastTest extends AbstractGriffinTest {
                 "a\n" +
                         "4.9E-324\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -4916,14 +4737,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "4.1500\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -4941,14 +4761,13 @@ public class CastTest extends AbstractGriffinTest {
                         "90092\n" +
                         "2203\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -4965,7 +4784,6 @@ public class CastTest extends AbstractGriffinTest {
                         "99002\n" +
                         "2334\n" +
                         "99002\n",
-                true,
                 true,
                 true
         );
@@ -4999,14 +4817,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_str('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -5023,7 +4840,6 @@ public class CastTest extends AbstractGriffinTest {
                         "56\n" +
                         "56\n" +
                         "0\n",
-                true,
                 true,
                 true
         );
@@ -5057,7 +4873,6 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_str(4,5,100) a from long_sequence(20))",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -5089,7 +4904,6 @@ public class CastTest extends AbstractGriffinTest {
                 "select cast(a as symbol) b, a from tab",
                 "create table tab as (select rnd_str(4,5,100) a from long_sequence(20))",
                 null,
-                true,
                 true,
                 true
         );
@@ -5123,14 +4937,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_str('a','b','c', null) a from long_sequence(20))",
                 null,
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testStrToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -5147,7 +4960,6 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "2019-03-11T10:20:33.123897Z\n",
-                true,
                 true,
                 true
         );
@@ -5166,14 +4978,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_symbol('pg_namespace', 'pg_class') a from long_sequence(5))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolNocacheToLong256Sort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "x\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt (a symbol nocache)",
@@ -5201,14 +5012,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0x8802ff90\n" +
                         "0x8802ff90\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolNocacheToStrSort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "x\n",
                 "select cast(a as string) x from tt order by x",
                 "create table tt (a symbol nocache)",
@@ -5236,14 +5046,13 @@ public class CastTest extends AbstractGriffinTest {
                         "221\n" +
                         "221\n",
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testSymbolToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -5261,14 +5070,13 @@ public class CastTest extends AbstractGriffinTest {
                         "100\n" +
                         "23\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -5286,14 +5094,13 @@ public class CastTest extends AbstractGriffinTest {
                         "K\n" +
                         "A\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -5311,14 +5118,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "2019-03-11T10:20:33.123Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -5341,14 +5147,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "988.223\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -5371,14 +5176,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "4.1500\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -5396,14 +5200,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "100\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -5420,7 +5223,6 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "NaN\n" +
                         "100\n",
-                true,
                 true,
                 true
         );
@@ -5454,14 +5256,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -5479,14 +5280,13 @@ public class CastTest extends AbstractGriffinTest {
                         "56\n" +
                         "0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -5504,14 +5304,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "abc\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -5528,7 +5327,6 @@ public class CastTest extends AbstractGriffinTest {
                         "334\n" +
                         "334\n" +
                         "334\n",
-                true,
                 true,
                 true
         );
@@ -5562,14 +5360,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_symbol('1','200','221', null) a from long_sequence(20))",
                 null,
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testSymbolToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -5587,14 +5384,13 @@ public class CastTest extends AbstractGriffinTest {
                         "56\n" +
                         "\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSymbolToTimestamp() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a timestamp)",
@@ -5612,14 +5408,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "2019-03-11T10:20:33.123897Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToBoolean() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -5636,7 +5431,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
                 true,
                 true
         );
@@ -5661,7 +5455,7 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampToBooleanConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a boolean)",
@@ -5679,14 +5473,13 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a byte)",
@@ -5704,14 +5497,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "96\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToChar() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a char)",
@@ -5729,14 +5521,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "-\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToDate() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a date)",
@@ -5754,14 +5545,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "1970-01-01T00:00:02.521Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToDouble() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a double)",
@@ -5779,14 +5569,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "111.0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToFloat() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a float)",
@@ -5804,14 +5593,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "111.0000\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a int)",
@@ -5829,14 +5617,13 @@ public class CastTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "129724714\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a long)",
@@ -5853,7 +5640,6 @@ public class CastTest extends AbstractGriffinTest {
                         "9100840\n" +
                         "8600061\n" +
                         "478012\n",
-                true,
                 true,
                 true
         );
@@ -5887,14 +5673,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_timestamp(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToShort() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a short)",
@@ -5912,14 +5697,13 @@ public class CastTest extends AbstractGriffinTest {
                         "0\n" +
                         "51\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToStr() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -5937,14 +5721,13 @@ public class CastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000045Z\n" +
                         "1970-01-01T00:00:00.000061Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToStrConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a string)",
@@ -5961,7 +5744,6 @@ public class CastTest extends AbstractGriffinTest {
                         "334\n" +
                         "334\n" +
                         "334\n",
-                true,
                 true,
                 true
         );
@@ -5995,14 +5777,13 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_timestamp(1,200,1) a from long_sequence(20))",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToSymbol() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -6020,14 +5801,13 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "111\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampToSymbolConst() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\n",
                 "select a from tab",
                 "create table tab (a symbol)",
@@ -6044,7 +5824,6 @@ public class CastTest extends AbstractGriffinTest {
                         "601\n" +
                         "601\n" +
                         "601\n",
-                true,
                 true,
                 true
         );
@@ -6077,7 +5856,6 @@ public class CastTest extends AbstractGriffinTest {
                 "select cast(a as symbol) b, a from tab",
                 "create table tab as (select rnd_timestamp(10, 20, 2) a from long_sequence(20))",
                 null,
-                true,
                 true,
                 true
         );

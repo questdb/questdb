@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -34,7 +34,7 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
 
-        assertQuery(
+        assertQuery13(
                 "avg\n" +
                         "0.511848387\n",
                 "select round(avg(f),9) avg from tab",
@@ -44,7 +44,6 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "avg\n" +
                         "0.511848387\n",
                 false,
-                true,
                 true
         );
 
@@ -55,14 +54,13 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "avg\n" +
                         "NaN\n",
                 "select avg(f) from tab",
@@ -72,7 +70,6 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "avg\n" +
                         "123.0\n",
                 false,
-                true,
                 true
         );
     }
@@ -90,7 +87,6 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
                 false,
-                true,
                 true
         );
     }

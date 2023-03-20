@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
@@ -32,7 +32,7 @@ public class CountTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnAlias() throws Exception {
-        assertQuery("cnt\n" +
+        assertQuery13("cnt\n" +
                         "20\n",
                 "select count() cnt from x",
                 "create table x as " +
@@ -66,7 +66,6 @@ public class CountTest extends AbstractGriffinTest {
                 "cnt\n" +
                         "25\n",
                 false,
-                true,
                 true
         );
     }
@@ -88,14 +87,13 @@ public class CountTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testKnownSize() throws Exception {
-        assertQuery("count\n" +
+        assertQuery13("count\n" +
                         "20\n",
                 "select count() from x",
                 "create table x as " +
@@ -129,14 +127,13 @@ public class CountTest extends AbstractGriffinTest {
                 "count\n" +
                         "25\n",
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testLongConst() throws Exception {
-        assertQuery("cnt_1\tcnt_42\n" +
+        assertQuery13("cnt_1\tcnt_42\n" +
                         "20\t20\n",
                 "select count(1) cnt_1, count(42) cnt_42 from x",
                 "create table x as " +
@@ -162,14 +159,13 @@ public class CountTest extends AbstractGriffinTest {
                 "cnt_1\tcnt_42\n" +
                         "25\t25\n",
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testUnknownSize() throws Exception {
-        assertQuery("count\n" +
+        assertQuery13("count\n" +
                         "4919\n",
                 "select count() from x where g > 0",
                 "create table x as " +
@@ -203,7 +199,6 @@ public class CountTest extends AbstractGriffinTest {
                 "count\n" +
                         "5319\n",
                 false,
-                true,
                 true
         );
     }

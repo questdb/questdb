@@ -33,6 +33,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -869,7 +871,7 @@ public class InsertTest extends AbstractGriffinTest {
                 "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
                 "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
 
-        assertQuery(
+        assertQuery13(
                 "sym\tid\tts\n",
                 "x",
                 "create table x (\n" +
@@ -883,7 +885,6 @@ public class InsertTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
-                true,
                 true,
                 true
         );
@@ -1072,14 +1073,13 @@ public class InsertTest extends AbstractGriffinTest {
         if (walEnabled) {
             drainWalQueue();
         }
-        assertQuery(
+        assertQuery13(
                 "seq\tts\n",
                 "tab",
                 "create table tab(seq long, ts timestamp) timestamp(ts);",
                 "ts",
                 "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
                 expected,
-                true,
                 true,
                 true
         );

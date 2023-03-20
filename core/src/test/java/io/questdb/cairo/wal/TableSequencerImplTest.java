@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;

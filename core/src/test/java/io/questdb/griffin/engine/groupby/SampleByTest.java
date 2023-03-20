@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.cutlass.text.SqlExecutionContextStub;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -162,7 +162,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByAllTypes() throws Exception {
-        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+        assertQuery13("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
                         "\t680.7651\t771.0922622028395\t15020424080\t333\t197423\t-5259855777509188759\n" +
                         "CPSW\t101.2276\t111.11358403739061\t2567523370\t33\t43254\t7594916031131877487\n" +
@@ -207,7 +207,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
                         "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true,
                 true,
                 true
         );
@@ -305,7 +304,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByAllTypesAndTimestampSameLevel() throws Exception {
-        assertQuery("k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+        assertQuery13("k\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "1970-01-03T00:00:00.000000Z\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\n" +
                         "1970-01-03T01:00:00.000000Z\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\n" +
                         "1970-01-03T02:00:00.000000Z\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\n" +
@@ -382,14 +381,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-04T08:00:00.000000Z\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
                         "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testGroupByCount() throws Exception {
-        assertQuery("c\tcount\n" +
+        assertQuery13("c\tcount\n" +
                         "\t5\n" +
                         "UU\t4\n" +
                         "XY\t6\n" +
@@ -419,14 +417,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "XY\t6\n" +
                         "ZP\t5\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testGroupByCountFromSubQuery() throws Exception {
-        assertQuery("c\tcount\n" +
+        assertQuery13("c\tcount\n" +
                         "UU\t1\n" +
                         "XY\t1\n" +
                         "ZP\t1\n" +
@@ -456,14 +453,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "KK\t1\n" +
                         "PL\t1\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testGroupByEmpty() throws Exception {
-        assertQuery("c\tsum_t\n",
+        assertQuery13("c\tsum_t\n",
                 "select c, sum_t(d) from x",
                 "create table x as " +
                         "(" +
@@ -486,7 +482,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "c\tsum_t\n" +
                         "PL\t1.088880189118224\n" +
                         "KK\t2.614956708935964\n",
-                true,
                 true,
                 true
         );
@@ -550,7 +545,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByFreesFunctions() throws Exception {
-        assertQuery("c\tsum_t\n" +
+        assertQuery13("c\tsum_t\n" +
                         "UU\t4.192763851971972\n" +
                         "XY\t5.326379743132296\n" +
                         "\t1.8586710189229834\n" +
@@ -582,7 +577,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "KK\t1.6435699091508287\n" +
                         "PL\t1.1627169669458202\n",
                 true,
-                true,
                 true
         );
     }
@@ -602,7 +596,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -643,7 +636,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true);
 
@@ -715,7 +707,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true);
 
@@ -1311,7 +1302,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 4096) timestamp(k) partition by DAY",
                 "k",
                 false,
-                false,
                 true);
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
@@ -1371,7 +1361,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "), index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                false,
                 false);
 
         assertWithSymbolColumnTop("k\ts\tlat\tlon\n",
@@ -1392,7 +1381,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true
         );
@@ -1447,7 +1435,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true);
 
@@ -1507,7 +1494,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "from\n" +
                         "long_sequence(180)\n",
                 null,
-                false,
                 false,
                 false);
 
@@ -1574,7 +1560,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                false,
                 true);
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
@@ -1617,7 +1602,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true);
 
@@ -1786,7 +1770,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
                 false,
-                false,
                 true);
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
@@ -1841,7 +1824,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat long, lon long, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true);
 
@@ -1907,7 +1889,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
-                false,
                 false,
                 true);
 
@@ -2393,7 +2374,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, false);
+                        ") timestamp(k) partition by NONE", "k", false, false);
     }
 
     @Test
@@ -2450,7 +2431,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, false);
+                        ") timestamp(k) partition by NONE", "k", false, false);
     }
 
     @Test
@@ -2666,7 +2647,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -2693,7 +2673,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3024,7 +3003,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "A\t1970-01-01T00:30:00.000000Z\tyyyyyy\t40.0\t40.0\n" +
                         "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
-                false, false, false, false);
+                false, false, false);
     }
 
     @Test
@@ -3181,7 +3160,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3217,7 +3195,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3252,7 +3229,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3286,7 +3262,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3329,7 +3304,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3357,7 +3331,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -3475,7 +3448,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 "k",
                 false,
-                true,
                 false
         );
     }
@@ -3503,7 +3475,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 "k",
                 false,
-                true,
                 false
         );
     }
@@ -3555,7 +3526,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                false,
                 false);
     }
 
@@ -3599,7 +3569,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleCountFillLinear() throws Exception {
-        assertQuery("b\tcount\tk\n" +
+        assertQuery13("b\tcount\tk\n" +
                         "\t15\t1970-01-03T02:00:00.000000Z\n" +
                         "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
                         "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
@@ -3701,14 +3671,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t1\t1970-01-03T14:00:00.000000Z\n" +
                         "CPSW\t14\t1970-01-03T14:00:00.000000Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSampleCountFillLinearFromSubQuery() throws Exception {
-        assertQuery("b\tcount\tk\n" +
+        assertQuery13("b\tcount\tk\n" +
                         "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
                         "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
                         "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
@@ -3853,14 +3822,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
                         "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSampleFillAllTypesLinear() throws Exception {
-        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+        assertQuery13("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "HYRX\t11.4280\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
                         "\t42.2436\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t33.6083\t76.75673070796104\t422941535\t27\t32312\t4442449726822927731\t1970-01-03T00:00:00.000000Z\n" +
@@ -4036,7 +4004,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "LOPJ\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "VDKF\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n",
                 true,
-                true,
                 true
         );
     }
@@ -4044,7 +4011,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillAllTypesLinearNoData() throws Exception {
         // sum_t tests memory leak
-        assertQuery("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n",
+        assertQuery13("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n",
                 "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)",
                 "create table x as " +
                         "(" +
@@ -4082,14 +4049,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
                         "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery("b\tsum\tk\n" +
+        assertQuery13("b\tsum\tk\n" +
                         "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -4231,7 +4197,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n",
                 true,
-                true,
                 true
         );
     }
@@ -4298,7 +4263,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10000)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true,
                 true,
                 true
         );
@@ -6989,7 +6953,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillPrevEmptyBase() throws Exception {
-        assertQuery(null,
+        assertQuery((CharSequence) null,
                 "select a,b,c,d,e,f,g,i,j,l,m,p,sum(o), k from x where 0!=0 sample by 3h fill(prev)",
                 "create table x as " +
                         "(" +
@@ -8664,9 +8628,9 @@ public class SampleByTest extends AbstractGriffinTest {
                         "RXGZ\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n";
 
-                assertCursor(expected, factory, false, true, false, false);
+                assertCursor(expected, factory, false, false, false);
                 // make sure we get the same outcome when we get factory to create new cursor
-                assertCursor(expected, factory, false, true, false, false);
+                assertCursor(expected, factory, false, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, sqlExecutionContext);
 
@@ -10047,7 +10011,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 insert,
                 "k",
                 false,
-                false,
                 false
         );
 
@@ -10055,7 +10018,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 query,
                 null,
                 "k",
-                false,
                 false,
                 false
         );

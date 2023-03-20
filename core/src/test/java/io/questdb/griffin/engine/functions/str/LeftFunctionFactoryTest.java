@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class LeftFunctionFactoryTest extends AbstractGriffinTest {
@@ -46,7 +46,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "select k, left(k,50) from x", // 50 > than max string len
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
-                true,
                 true,
                 true
         );
@@ -70,7 +69,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -92,7 +90,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "select k, left(k,-40) from x",
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
-                true,
                 true,
                 true
         );
@@ -116,7 +113,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -138,7 +134,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "select k, left(k,2) from x",
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
-                true,
                 true,
                 true
         );
@@ -162,7 +157,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select rnd_str(10,20,1) k, rnd_int(-1, 20, 1) n from long_sequence(10))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -179,7 +173,6 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                 "select k, left(k,0) from x",
                 "create table x as (select rnd_str(3,5,1) k from long_sequence(5))",
                 null,
-                true,
                 true,
                 true
         );

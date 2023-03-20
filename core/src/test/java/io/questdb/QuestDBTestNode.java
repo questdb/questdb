@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 
 import java.io.IOException;

@@ -35,6 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

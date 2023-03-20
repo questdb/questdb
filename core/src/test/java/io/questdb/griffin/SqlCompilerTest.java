@@ -34,6 +34,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -1839,7 +1841,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectCharToGeoHash() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "geohash\n",
                 "select geohash from geohash",
                 "create table geohash (geohash geohash(1c))",
@@ -1857,7 +1859,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "u\n" +
                         "q\n" +
                         "u\n",
-                true,
                 true,
                 true
         );
@@ -1887,7 +1888,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectCharToNarrowGeoByte() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "geohash\n",
                 "select geohash from geohash",
                 "create table geohash (geohash geohash(4b))",
@@ -1905,7 +1906,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "1101\n" +
                         "1011\n" +
                         "1101\n",
-                true,
                 true,
                 true
         );
@@ -1955,7 +1955,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "create table geohash (geohash geohash(6b))",
                     null,
                     true,
-                    true,
                     true
             );
             try {
@@ -1976,7 +1975,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(6b))",
                     null,
-                    true,
                     true,
                     true
             );
@@ -2018,7 +2016,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage5() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertMemoryLeak(() -> assertQuery13(
                 "geohash\n",
                 "select geohash from geohash",
                 "create table geohash (geohash geohash(1c))",
@@ -2037,7 +2035,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "q\n" +
                         "u\n",
                 true,
-                true,
                 true
         ));
     }
@@ -2050,7 +2047,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(5b))",
                     null,
-                    true,
                     true,
                     true
             );
@@ -2072,7 +2068,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(11b))",
                 null,
                 true,
-                true,
                 true
         );
         try {
@@ -2091,7 +2086,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "select geohash from geohash",
                 "create table geohash (geohash geohash(12c))",
                 null,
-                true,
                 true,
                 true
         );
@@ -2112,7 +2106,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(6c))",
                     null,
-                    true,
                     true,
                     true
             );
@@ -2265,7 +2258,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     @Test
     public void testCreateAsSelectInVolumeFail() throws Exception {
         try {
-            assertQuery(
+            assertQuery13(
                     "geohash\n",
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(1c)) in volume 'niza'",
@@ -2283,7 +2276,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                             "u\n" +
                             "q\n" +
                             "u\n",
-                    true,
                     true,
                     true
             );
@@ -2330,7 +2322,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         };
         try {
             configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
-            assertQuery(
+            assertQuery13(
                     "geohash\n",
                     "select geohash from " + tableName,
                     "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'",
@@ -2348,7 +2340,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                             "u\n" +
                             "q\n" +
                             "u\n",
-                    true,
                     true,
                     true);
             Assert.fail();
@@ -2375,7 +2366,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
             Assert.assertTrue(volume.delete());
-            assertQuery(
+            assertQuery13(
                     "geohash\n",
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'",
@@ -2393,7 +2384,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                             "u\n" +
                             "q\n" +
                             "u\n",
-                    true,
                     true,
                     true);
             Assert.fail();
@@ -3719,7 +3709,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "create table geohash (geohash geohash(5b))",
                     null,
                     true,
-                    true,
                     true
             );
             try {
@@ -3740,7 +3729,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(6b))",
                     null,
-                    true,
                     true,
                     true
             );
@@ -4207,7 +4195,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "k",
                 true,
-                true,
                 true
         );
 
@@ -4265,7 +4252,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " long_sequence(5)" +
                         ") timestamp(k)",
                 "k",
-                true,
                 true,
                 false
         );
@@ -4594,7 +4580,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     String.format("create table geohash (geohash geohash(%s))", columnSize),
                     null,
-                    true,
                     true,
                     true
             );

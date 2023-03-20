@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

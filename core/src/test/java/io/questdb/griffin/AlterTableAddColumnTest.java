@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -516,16 +517,14 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     createX();
                     engine.clear();
 
-                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
-                        Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
 
-                        try (TableReader reader = getReader("x")) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                        }
+                    try (TableReader reader = getReader("x")) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                        Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                        Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
                     }
                 }
         );

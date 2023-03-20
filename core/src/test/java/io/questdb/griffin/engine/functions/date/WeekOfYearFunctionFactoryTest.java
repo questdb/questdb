@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -43,7 +43,6 @@ public class WeekOfYearFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -56,7 +55,6 @@ public class WeekOfYearFunctionFactoryTest extends AbstractGriffinTest {
                 "select week_of_year('1901-07-11T22:00:30.555998Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -93,7 +91,6 @@ public class WeekOfYearFunctionFactoryTest extends AbstractGriffinTest {
                                 "  select to_str(ts, 'YYYY-Www') week_partition_dir_name, week_of_year(ts) week from timestamp",
                         null,
                         null,
-                        true,
                         true,
                         true
                 );

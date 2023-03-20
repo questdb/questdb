@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -139,7 +140,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -159,7 +159,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -181,7 +180,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -201,7 +199,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -240,7 +237,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -260,7 +256,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -282,7 +277,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(2000000)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -323,7 +317,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -343,7 +336,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -365,7 +357,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -385,7 +376,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -458,7 +448,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -478,7 +467,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -500,7 +488,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -520,7 +507,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -559,7 +545,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -597,7 +582,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -617,7 +601,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -639,7 +622,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -659,7 +641,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -681,7 +662,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -701,7 +681,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -740,7 +719,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -760,7 +738,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -782,7 +759,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -803,7 +779,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -823,7 +798,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " long_sequence(200)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -873,7 +847,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by day",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -893,7 +866,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -912,7 +884,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -931,7 +902,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -2998,7 +2968,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -3017,7 +2986,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -3036,7 +3004,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -3049,7 +3016,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(42))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -3068,7 +3034,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -3088,7 +3053,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -3108,7 +3072,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by DAY",
                 null,
                 false,
-                true,
                 true
         );
     }

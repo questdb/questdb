@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -515,7 +516,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
 
         assertQuery("record_Type\tCREATED_on\n" + DATA,
                 "select record_Type, CREATED_on from trips order by created_ON desc limit 5",
-                null, "CREATED_on###DESC", true, false, false);
+                null, "CREATED_on###DESC", true, false);
     }
 
     @Test
@@ -524,20 +525,19 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
 
         assertQuery("record_Type\tCREATED_ON\n" + DATA,
                 "select record_Type, CREATED_ON from trips order by created_on desc limit 5",
-                null, "CREATED_ON###DESC", true, false, false);
+                null, "CREATED_ON###DESC", true, false);
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByWithAlias() throws Exception {
         preparePartitionPerRowTableWithLongNames();
 
-        assertQuery(
+        assertQuery6(
                 compiler,
                 "record_Type\tcre_on\n" + DATA,
                 "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
                 "cre_on###DESC",
                 sqlExecutionContext,
-                true,
                 true,
                 false
         );
@@ -549,7 +549,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
 
         assertQuery("record_Type\tcre_on\n" + DATA,
                 "select record_Type, CREATED_ON cre_on from trips order by created_on desc limit 5",
-                null, "cre_on###DESC", true, false, false);
+                null, "cre_on###DESC", true, false);
     }
 
     @Test
@@ -559,7 +559,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         assertQuery(EXPECTED,
                 "select rectype, creaton from " +
                         "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)",
-                null, "creaton###DESC", true, false, false);
+                null, "creaton###DESC", true, false);
     }
 
     @Test
@@ -572,7 +572,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                         "from trips " +
                         "order by created_on desc) " +
                         "limit 5",
-                null, "creaton###DESC", true, false, false);
+                null, "creaton###DESC", true, false);
     }
 
     @Test
@@ -587,7 +587,6 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 null,
                 "creaton###DESC",
                 true,
-                false,
                 true
         );
     }
@@ -741,7 +740,6 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 false
         );
     }
@@ -753,7 +751,6 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }

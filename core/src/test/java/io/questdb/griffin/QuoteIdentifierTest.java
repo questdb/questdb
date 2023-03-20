@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class QuoteIdentifierTest extends AbstractGriffinTest {
@@ -35,7 +36,6 @@ public class QuoteIdentifierTest extends AbstractGriffinTest {
                 "quoted_table",
                 "create table \"quoted_table\"(\"id\" long,\"name\" string)",
                 null,
-                true,
                 true,
                 true
         );

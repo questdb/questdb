@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
@@ -36,7 +36,7 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery(sink.toString(), "pg_get_keywords;", null, false, sqlExecutionContext, false, true);
+        assertQuery12(sink.toString(), "pg_get_keywords;", null, false, sqlExecutionContext, true);
     }
 
     @Test
@@ -46,6 +46,6 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
+        assertQuery12(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, true);
     }
 }

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -57,7 +57,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -80,7 +79,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(5)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -111,7 +109,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -136,7 +133,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -159,7 +155,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(5)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -223,7 +218,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -247,7 +241,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(5)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -273,7 +266,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -298,7 +290,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -322,14 +313,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testStrCoalesceSymbolNocacheSorted() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "coalesce\tx\ta\n",
                 "select coalesce(x, a) as coalesce, x, a\n" +
                         "from t\n" +
@@ -347,7 +337,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "Y\tY\tB\n" +
                         "Y\tY\t\n",
                 true,
-                false,
                 true
         );
     }
@@ -371,7 +360,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -395,7 +383,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -419,7 +406,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -442,7 +428,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -466,14 +451,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testSymbolNocache3ArgsSorted() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "coalesce\tx\ta\tb\n",
                 "select coalesce(x, a, b) coalesce, x, a, b " +
                         "from t\n" +
@@ -492,14 +476,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "Y\tY\tAA\tBB\n" +
                         "Y\tY\tAA\t\n",
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testSymbolNocacheCoalesceSorted() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "coalesce\tx\ta\n",
                 "select coalesce(a, x) as coalesce, x, a\n" +
                         "from t\n" +
@@ -522,14 +505,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "Z\tZ\t\n" +
                         "Z\tZ\t\n",
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testSymbolNocacheCoalesceStrSorted() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "coalesce\tx\ta\n",
                 "select coalesce(a, x) as coalesce, x, a\n" +
                         "from t\n" +
@@ -547,7 +529,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "AA\t\tAA\n" +
                         "AA\t\tAA\n",
                 true,
-                false,
                 true
         );
     }
@@ -571,7 +552,6 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(5)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );

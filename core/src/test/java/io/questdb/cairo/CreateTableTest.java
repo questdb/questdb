@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -56,7 +56,6 @@ public class CreateTableTest extends AbstractGriffinTest {
                         "), INDEX(x)",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -71,7 +70,6 @@ public class CreateTableTest extends AbstractGriffinTest {
                         "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
                         "), CAST(x as SYMBOL), INDEX(x)",
                 null,
-                true,
                 true,
                 true
         );

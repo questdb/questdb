@@ -28,6 +28,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.test.AbstractGriffinTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 

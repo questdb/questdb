@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,9 +37,6 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
             createSrcTable();
 
             assertFailure(
-                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
-                    "Could not create table. See log for details.",
-                    13
             );
         });
     }
@@ -58,13 +56,13 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
         testCreatePartitionedTableAsSelectWithOrderBy("");
     }
 
-    private void assertFailure(String sql, String message, int position) {
+    private void assertFailure() {
         try {
-            compiler.compile(sql, sqlExecutionContext);
+            compiler.compile("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);", sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
-            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table. See log for details.");
+            Assert.assertEquals(13, e.getPosition());
         }
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

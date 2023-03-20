@@ -24,6 +24,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 /**
@@ -116,7 +117,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
                         "6\tDEF\t2022-01-08T18:53:20.000000Z\n",
                 "select l, s, ts from trips where s = 'DEF' order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -142,7 +143,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -165,7 +166,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and test_match() order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -184,7 +185,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\tABC\t2022-01-04T03:46:40.000000Z\n" +
                         "1\tABC\t2022-01-03T00:00:00.000000Z\n",
                 "select l, s, ts from trips where s in (select 'DEF' union all select 'ABC' ) and length(s) = 3 order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -203,7 +204,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s in ('A2', 'A0') and length(s) = 2 order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -233,7 +234,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -278,7 +279,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "8\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "1010\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
@@ -286,7 +287,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "1008\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "1010\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
@@ -294,7 +295,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "9\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
                         "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n",
                 "select l, ts, col1, col2 from trips where l > 8 order by ts",
-                null, "ts", true, false, false);
+                null, "ts", true, false);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "4\t2022-01-02T20:20:00.000000Z\t40\t400\n" +
@@ -303,7 +304,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "8\t2022-01-01T19:26:40.000000Z\tNaN\t\n" +
                         "7\t2022-01-01T16:40:00.000000Z\tNaN\t\n",
                 "select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -319,7 +320,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 1",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -336,7 +337,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 3, 5",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -355,7 +356,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < '2022-01-04T04' " +
                         "order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -374,7 +375,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "4\t2022-01-06T11:20:00.000000Z\n" +
                         "5\t2022-01-07T15:06:40.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts asc limit 5",
-                null, "ts###ASC", true, false, false);
+                null, "ts###ASC", true, false);
     }
 
     @Test
@@ -393,7 +394,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     @Test
@@ -419,7 +420,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                             "2\t2022-01-04T03:46:40.000000Z\n" +
                             "1\t2022-01-03T00:00:00.000000Z\n",
                     "select l, ts from trips where l <=5 order by ts desc limit 5",
-                    null, "ts###DESC", true, false, false);
+                    null, "ts###DESC", true, false);
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
         }
@@ -473,7 +474,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <= 5 order by ts desc",
-                null, "ts###DESC", true, false, false);
+                null, "ts###DESC", true, false);
     }
 
     private void testOrderByWithFilter(String type, int order) throws Exception {
@@ -537,15 +538,15 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
         if ("string".equals(type) || "symbol".equals(type)) {
             assertQuery(expectedResult,
                     ("select x from test where x in ('1', '2', '3') and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false, false);
+                    null, null, true, false);
         } else if ("char".equals(type)) {
             assertQuery(expectedResult,
                     ("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false, false);
+                    null, null, true, false);
         } else {
             assertQuery(expectedResult,
                     ("select x from test where x <= 3 and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false, false);
+                    null, null, true, false);
         }
     }
 }

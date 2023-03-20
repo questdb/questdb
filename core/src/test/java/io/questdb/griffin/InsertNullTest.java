@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -65,14 +66,13 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
+                assertQuery13(
                         "value\n",
                         "x",
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, true),
-                        true,
                         true,
                         true
                 );
@@ -86,14 +86,13 @@ public class InsertNullTest extends AbstractGriffinTest {
     public void testInsertNullFromSelectOnDesignatedColumnMustFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQuery(
+                assertQuery13(
                         "sym\ty\n",
                         "xx",
                         "create table xx (sym symbol, y timestamp) timestamp(y)",
                         "y",
                         "insert into xx select 'AA', null from long_sequence(1)",
                         "y\n",
-                        true,
                         true,
                         false
                 );
@@ -108,14 +107,13 @@ public class InsertNullTest extends AbstractGriffinTest {
     public void testInsertNullFromValuesOnDesignatedColumnMustFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQuery(
+                assertQuery13(
                         "sym\ty\n",
                         "xx",
                         "create table xx (sym symbol, y timestamp) timestamp(y)",
                         "y",
                         "insert into xx values('AA', null)",
                         "y\n",
-                        true,
                         true,
                         false
                 );
@@ -134,7 +132,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
+                assertQuery13(
                         "value\n",
                         "x where value = null",
                         String.format("create table x (value %s)", type[0]),
@@ -142,7 +140,6 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        true,
                         type[0].equals("long256")
                 );
             } finally {
@@ -159,7 +156,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
+                assertQuery13(
                         "value\n",
                         "x where value is not null",
                         String.format("create table x (value %s)", type[0]),
@@ -167,7 +164,6 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
-                        true,
                         isNotNullable(type[0])
                 );
             } finally {
@@ -184,7 +180,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
+                assertQuery13(
                         "value\n",
                         "x where value is null",
                         String.format("create table x (value %s)", type[0]),
@@ -192,7 +188,6 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        true,
                         type[0].equals("long256")
                 );
             } finally {
@@ -209,7 +204,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
+                assertQuery13(
                         "value\n",
                         "x where value != null",
                         String.format("create table x (value %s)", type[0]),
@@ -217,7 +212,6 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
-                        true,
                         isNotNullable(type[0])
                 );
             } finally {

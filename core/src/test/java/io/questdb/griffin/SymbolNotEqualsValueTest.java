@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
@@ -64,7 +65,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     public void testNotEquals1SymbolsWithConstantFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n";
 
-        assertQuery(
+        assertQuery13(
                 "k\tj\tprice\tts\n",
                 "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1",
                 "create table x (\n" +
@@ -81,7 +82,6 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "        from long_sequence(10)) timestamp (ts)",
                 expected,
                 false,
-                true,
                 true
         );
     }
@@ -206,7 +206,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                 "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
                 "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
-        assertQuery(
+        assertQuery11(
                 "k\tprice\tts\n",
                 "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
                 "create table x (\n" +
@@ -618,7 +618,6 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(300)) timestamp (ts)",
                 expected,
-                true,
                 true,
                 false,
                 true

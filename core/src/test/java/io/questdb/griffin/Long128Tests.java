@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class Long128Tests extends AbstractGriffinTest {
@@ -89,7 +90,6 @@ public class Long128Tests extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -117,7 +117,6 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -238,12 +237,12 @@ public class Long128Tests extends AbstractGriffinTest {
                         "2020-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000000\t0\n" +
                         "2020-01-02T00:01:00.000000Z\t00000000-0000-0001-0000-000000000001\t2\n" +
                         "2020-01-02T00:01:00.000000Z\t00000000-0000-0002-0000-000000000002\t0\n",
-                "select ts, l, i from x latest on ts partition by l", null, "ts", true, true, true);
+                "select ts, l, i from x latest on ts partition by l", null, "ts", true, true);
     }
 
     @Test
     public void testLong128ValueNotSet() throws Exception {
-        assertQuery("ts\tcount\n" +
+        assertQuery13("ts\tcount\n" +
                         "\t10\n" +
                         "00000000-0000-0004-0000-000000000002\t1\n" +
                         "00000000-0000-0008-0000-000000000004\t1\n" +
@@ -278,7 +277,6 @@ public class Long128Tests extends AbstractGriffinTest {
                         "00000000-0000-0024-0000-000000000012\t1\n" +
                         "00000000-0000-0028-0000-000000000014\t1\n",
                 true,
-                true,
                 true
         );
     }
@@ -306,7 +304,6 @@ public class Long128Tests extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -333,7 +330,6 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -396,7 +392,7 @@ public class Long128Tests extends AbstractGriffinTest {
 
     @Test
     public void testWhereEquals() throws Exception {
-        assertQuery(
+        assertQuery9(
                 "uuid\tts1\ti\n" +
                         "00000000-0000-0009-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n",
                 "testWhereEquals where uuid = to_long128(-9, 9)",
@@ -407,7 +403,6 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ")",
                 null,
-                true,
                 true
         );
     }

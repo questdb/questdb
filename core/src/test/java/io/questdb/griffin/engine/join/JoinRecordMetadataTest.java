@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;

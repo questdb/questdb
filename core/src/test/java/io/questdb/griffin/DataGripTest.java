@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.engine.functions.catalogue.TxIDCurrentFunctionFactory;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -33,7 +34,7 @@ public class DataGripTest extends AbstractGriffinTest {
 
     @Test
     public void testGetCurrentDatabase() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
                         "1\tquestdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
@@ -48,14 +49,13 @@ public class DataGripTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false,
                 false
         );
     }
 
     @Test
     public void testGetDatabaseOwner() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "id\tstate_number\tname\tdescription\towner\n" +
                         "2200\t0\tpublic\t\tpublic\n" +
                         "11\t0\tpg_catalog\t\tpublic\n",
@@ -71,14 +71,13 @@ public class DataGripTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false,
                 false
         );
     }
 
     @Test
     public void testGetDatabases() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
                         "1\tquestdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
@@ -92,7 +91,6 @@ public class DataGripTest extends AbstractGriffinTest {
                 null,
                 false,
                 sqlExecutionContext,
-                false,
                 false
         );
     }
@@ -129,14 +127,13 @@ public class DataGripTest extends AbstractGriffinTest {
 
     @Test
     public void testShowDateStyles() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "DateStyle\n" +
                         "ISO,YMD\n",
                 "show datestyle",
                 null,
                 false,
                 sqlExecutionContext,
-                false,
                 true
         );
     }
@@ -144,7 +141,7 @@ public class DataGripTest extends AbstractGriffinTest {
     @Test
     @Ignore
     public void testStartUpUnknownDBMS() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "",
                 "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM," +
                         "   ct.relname AS TABLE_NAME," +
@@ -185,7 +182,6 @@ public class DataGripTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false,
                 false
         );
     }

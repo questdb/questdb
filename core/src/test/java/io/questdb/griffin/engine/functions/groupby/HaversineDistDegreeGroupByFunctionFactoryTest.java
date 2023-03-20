@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -307,7 +307,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
     @Test
     public void testAggregationWithSampleFill1() throws Exception {
 
-        assertQuery("s\tlat\tlon\tk\n" +
+        assertQuery13("s\tlat\tlon\tk\n" +
                         "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
                         "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
                         "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
@@ -345,7 +345,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                         "RXGZ\t-39.0\t6.0\t1970-01-03T15:06:40.000000Z\n" +
                         "RXGZ\t-38.0\t7.0\t1970-01-03T15:38:20.000000Z\n" +
                         "RXGZ\t-37.0\t8.0\t1970-01-03T16:10:00.000000Z\n",
-                true, true, true);
+                true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
                         "VTJW\t297.5825998454617\t1970-01-03T00:31:40.000000Z\n" +
@@ -383,7 +383,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
                 null,
                 "k",
-                true, true, true);
+                true, true);
 
     }
 
@@ -419,14 +419,14 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                         " timestamp_sequence(0, 600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", true, false, true);
+                        ") timestamp(k) partition by NONE", "k", true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
                         "AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z\n" +
                         "AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z\n" +
                         "AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z\n" +
                         "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
-                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)", null, "k", true, true, true);
+                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)", null, "k", true, true);
     }
 
     @Test
@@ -465,7 +465,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true, true, true);
+                true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
                         "AAA\t1131.6942599455483\t1970-01-01T00:00:01.000000Z\n" +
@@ -474,7 +474,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
                 null,
                 "k",
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -501,7 +501,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                         " long_sequence(8)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true, true, true);
+                true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
                         "AAA\t314.1202784911236\t1970-01-01T00:00:00.000000Z\n" +
@@ -511,7 +511,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
                 null,
                 "k",
-                true, true, true);
+                true, true);
     }
 
     // TODO Fix, see branch fix-haversine-test-attempt and run
@@ -745,7 +745,6 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                         " long_sequence(35)" +
                         ") timestamp(k)",
                 expected2,
-                true,
                 true
         );
 
@@ -1117,7 +1116,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
                 null,
                 "k",
-                true, true);
+                true);
     }
 
     @Test

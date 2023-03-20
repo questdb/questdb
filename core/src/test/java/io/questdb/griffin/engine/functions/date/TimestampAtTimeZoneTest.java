@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
@@ -37,7 +37,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -52,7 +51,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -106,7 +104,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -124,7 +121,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -137,7 +133,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 "select '2022-03-11T22:00:30.555555Z'::timestamp time",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -152,7 +147,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -165,7 +159,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'",
                 null,
                 null,
-                true,
                 true,
                 true
         );

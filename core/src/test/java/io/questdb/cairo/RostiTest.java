@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.Rosti;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 

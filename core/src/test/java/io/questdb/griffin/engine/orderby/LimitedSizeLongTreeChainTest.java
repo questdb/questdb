@@ -2,7 +2,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.LongList;
 import io.questdb.std.str.StringSink;

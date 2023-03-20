@@ -22,11 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.QuestDBTestNode;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;

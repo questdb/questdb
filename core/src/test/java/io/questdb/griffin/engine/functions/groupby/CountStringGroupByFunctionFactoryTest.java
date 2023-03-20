@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -39,7 +39,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, count_distinct('42') from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -56,7 +55,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, count_distinct(concat(s, s)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -79,7 +77,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -93,7 +90,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -107,7 +103,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol(null, 'xx2', '00s', '544', 'rraa', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -122,7 +117,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, count_distinct(cast(null as STRING)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -145,7 +139,6 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                true,
                 true,
                 true
         );

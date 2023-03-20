@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -112,7 +112,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tmax\tk\n" +
+        assertQuery13("b\tmax\tk\n" +
                         "\t0.975019885372507\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -279,7 +279,6 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "HYRX\t-2.362042754952945\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t3.379954054510219\t1970-01-04T06:00:00.000000Z\n",
                 true,
-                true,
                 true
         );
     }
@@ -309,7 +308,6 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true,
                 true,
                 true
         );

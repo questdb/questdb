@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -112,7 +112,7 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tmin\tk\n" +
+        assertQuery13("b\tmin\tk\n" +
                         "\t0.09750574414434399\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.4217768841969397\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.2390529010846525\t1970-01-03T00:00:00.000000Z\n" +
@@ -278,7 +278,6 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-3.7763943098045716\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-0.7913659771297854\t1970-01-04T06:00:00.000000Z\n",
-                true,
                 true,
                 true);
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class UnionAllCastTest extends AbstractGriffinTest {
@@ -2044,7 +2045,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                 "(x union all y) where a = '27'", "create table x as (select rnd_double() u, rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
                 null,
                 false,
-                true,
                 false
         );
     }
@@ -2265,7 +2265,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     private void testUnion(String expected) throws Exception {
-        assertQuery(expected, "x union y", null, null, false, true, false);
+        assertQuery(expected, "x union y", null, null, false, false);
     }
 
     private void testUnionAll(String expected, String ddlX, String ddlY) throws Exception {
@@ -2288,6 +2288,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
         compile(ddlY);
         engine.releaseAllWriters();
-        assertQuery(expected, sql, ddlX, null, false, true, true);
+        assertQuery(expected, sql, ddlX, null, false, true);
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -63,7 +64,7 @@ public class WithClauseTest extends AbstractGriffinTest {
 
     @Test
     public void testWithAliasOverridingTable3() throws Exception {
-        assertMemoryLeak(() -> assertQuery("address\tbalance\n",
+        assertMemoryLeak(() -> assertQuery13("address\tbalance\n",
                 "WITH balance as ( SELECT * FROM balance WHERE address = 1 ) \n" +
                         "SELECT * FROM ( " +
                         "WITH balance_other AS ( SELECT * FROM balance )\n" +
@@ -76,12 +77,12 @@ public class WithClauseTest extends AbstractGriffinTest {
                 null,
                 "insert into balance values ( 1, 1.0 ), (2, 2.0);",
                 "address\tbalance\n1\t1.0\n",
-                true, true, false));
+                true, false));
     }
 
     @Test
     public void testWithAliasOverridingTable4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("address\tbalance\taddress1\tbalance1\n",
+        assertMemoryLeak(() -> assertQuery13("address\tbalance\taddress1\tbalance1\n",
                 "WITH balance2 as ( SELECT * FROM balance WHERE address = 2 ) " +
                         "SELECT * FROM (" +
                         "(" +
@@ -102,7 +103,7 @@ public class WithClauseTest extends AbstractGriffinTest {
                 null,
                 "insert into balance values ( 1, 1.0 ), (2, 2.0);",
                 "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n",
-                false, true, false));
+                false, false));
     }
 
     @Test
@@ -118,7 +119,13 @@ public class WithClauseTest extends AbstractGriffinTest {
 
             // this is deliberately shuffled column in select to check that correct metadata is used on filtering
             // latest by queries
-            String expected = select("select groupId, _id, contactid, timestamp, _id from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp");
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select groupId, _id, contactid, timestamp, _id from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp",
+                    sink
+            );
+            String expected = sink.toString();
             Assert.assertTrue(expected.length() > 100);
 
             assertQuery(expected,
@@ -130,13 +137,4 @@ public class WithClauseTest extends AbstractGriffinTest {
         });
     }
 
-    private String select(CharSequence selectSql) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                selectSql,
-                sink
-        );
-        return sink.toString();
-    }
 }

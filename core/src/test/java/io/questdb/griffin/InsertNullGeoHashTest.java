@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -149,7 +150,6 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
                                 expectedEmptyLines),
                         expectedNullInserts("geohash\n", "", expectedEmptyLines, true),
                         supportsRandomAccess,
-                        true,
                         expectedEmptyLines > 0,
                         expectedEmptyLines > 0
                 );

@@ -25,7 +25,7 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.TelemetryJob;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import org.junit.BeforeClass;

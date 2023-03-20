@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -39,7 +39,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "select a, count_distinct(42L) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -56,7 +55,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "select a, count_distinct(s * 42) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -79,7 +77,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -93,7 +90,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -108,7 +104,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
                 null,
                 false,
-                true,
                 true
         );
 
@@ -127,7 +122,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "select a, count_distinct(cast(null as LONG)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -150,7 +144,6 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                true,
                 true,
                 true
         );

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;

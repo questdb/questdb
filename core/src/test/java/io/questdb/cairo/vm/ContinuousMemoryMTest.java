@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
@@ -911,11 +911,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     }
 
     private void withMem(MemTestCode code) throws Exception {
-        withMem(_4M, code);
-    }
-
-    private void withMem(long sz, MemTestCode code) throws Exception {
-        withMem(sz, sz, code);
+        withMem(_4M, _4M, code);
     }
 
     private void withMem(long appendSz, long sz, MemTestCode code) throws Exception {

@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
@@ -193,7 +193,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,
-                        getAdapter("yyyy-MM-ddTHH:mm:ss.SSSZ", sink),
+                        getAdapter(sink),
                         true, Atomicity.SKIP_COL,
                         null
                 );
@@ -217,10 +217,10 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
         });
     }
 
-    private TimestampAdapter getAdapter(String format, DirectCharSink sink) {
+    private TimestampAdapter getAdapter(DirectCharSink sink) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         TypeManager typeManager = new TypeManager(textConfiguration, sink);
-        DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(format);
+        DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
         return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
                 configuration.getTextConfiguration().getDefaultDateLocale());
     }

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -66,7 +67,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "except\n" +
                     "select '2020-04-22', 2";
             try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, true, false, false);
+                assertCursor(expected1, rcf, true, false);
             }
 
             final String expected2 = "a\tb\n" +
@@ -75,7 +76,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "except\n" +
                     "select '2020-04-22', 2";
             try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, true, false, false);
+                assertCursor(expected2, rcf, true, false);
             }
         });
     }
@@ -179,7 +180,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "intersect\n" +
                     "select '2020-04-21', 1";
             try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, true, false, false);
+                assertCursor(expected1, rcf, true, false);
             }
 
             final String expected2 = "a\tb\n" +
@@ -188,7 +189,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "intersect\n" +
                     "select '2020-04-21', 1";
             try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, true, false, false);
+                assertCursor(expected2, rcf, true, false);
             }
         });
     }
@@ -220,7 +221,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "union all " +
                         "select 1  " +
                         "intersect " +
-                        "select 1 from long_sequence(1)", null, null, false, true, false);
+                        "select 1 from long_sequence(1)", null, null, false, false);
     }
 
     @Test
@@ -230,7 +231,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "except " +
                         "select 1  " +
                         "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, true, false);
+                        "select 3 from long_sequence(1) limit 1", null, null, false, false);
     }
 
     @Test
@@ -250,7 +251,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 
     @Test
@@ -260,7 +261,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 
     @Test
@@ -273,7 +274,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 
     @Test
@@ -290,7 +291,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -309,7 +310,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -324,7 +325,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -341,7 +342,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -360,7 +361,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, false, true, true);
+                null, false, true);
     }
 
 
@@ -382,7 +383,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, false, true, true);
+                null, false, true);
     }
 
     @Test
@@ -401,7 +402,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, false, true, false);
+                null, false, false);
     }
 
     @Test
@@ -422,7 +423,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "  select x, rnd_symbol(4, 10, 10, 0) sym " +
                         "  from long_sequence(100) );",
-                null, false, true, false);
+                null, false, false);
     }
 
     @Test
@@ -433,9 +434,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "#SET# " +
                 "select * from (select 2 from t #CLAUSE2# ) ";
 
-        assertMemoryLeak(() -> {
-            compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext);
-        });
+        assertMemoryLeak(() -> compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext));
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 2; i++) {
@@ -465,9 +464,7 @@ public class UnionTest extends AbstractGriffinTest {
                 "#SET# " +
                 "select 2 from t ";
 
-        assertMemoryLeak(() -> {
-            compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext);
-        });
+        assertMemoryLeak(() -> compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext));
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 1; i++) {
@@ -588,7 +585,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -617,7 +614,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, true);
+                assertCursor(expected2, factory, false, true);
             }
         });
     }
@@ -632,7 +629,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "union all\n" +
                     "select '2020-04-22', 2";
             try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, false, false, true);
+                assertCursor(expected1, rcf, false, true);
             }
 
             final String expected2 = "a\tb\n" +
@@ -642,7 +639,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "union all\n" +
                     "select '2020-04-22', 2";
             try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, false, false, true);
+                assertCursor(expected2, rcf, false, true);
             }
         });
     }
@@ -681,7 +678,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -695,7 +692,7 @@ public class UnionTest extends AbstractGriffinTest {
             );//produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y order by t", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, true, true, true);
+                assertCursor(expected2, factory, true, true);
             }
         });
     }
@@ -747,7 +744,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -775,7 +772,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "union all " +
                     "z " +
                     ")", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, true);
+                assertCursor(expected2, factory, false, true);
             }
         });
     }
@@ -947,7 +944,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "union all " +
                     "z " +
                     ")  order by 1", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, true, true, true);
+                assertCursor(expected2, factory, true, true);
             }
         });
     }
@@ -1040,7 +1037,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -1093,7 +1090,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, false);
+                assertCursor(expected2, factory, false, false);
             }
         });
     }
@@ -1188,7 +1185,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -1243,7 +1240,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, false);
+                assertCursor(expected2, factory, false, false);
             }
         });
     }
@@ -1309,6 +1306,6 @@ public class UnionTest extends AbstractGriffinTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
     }
 }

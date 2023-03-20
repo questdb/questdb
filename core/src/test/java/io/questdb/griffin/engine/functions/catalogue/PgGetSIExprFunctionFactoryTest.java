@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PgGetSIExprFunctionFactoryTest extends AbstractGriffinTest {
@@ -38,7 +38,6 @@ public class PgGetSIExprFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -52,7 +51,6 @@ public class PgGetSIExprFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }

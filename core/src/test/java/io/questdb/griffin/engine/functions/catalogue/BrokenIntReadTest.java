@@ -25,9 +25,10 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.TestFilesFacadeImpl;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Test;
 
 public class BrokenIntReadTest extends AbstractGriffinTest {
@@ -183,14 +184,13 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         ff = new BrokenIntRead(i);
         assertMemoryLeak(ff, () -> {
             createTables(ff);
-            printSqlResult(
+            printSqlResult3(
                     expected,
                     "pg_catalog.pg_attrdef order by 1",
                     null,
                     null,
                     null,
                     true,
-                    false,
                     false,
                     false,
                     null

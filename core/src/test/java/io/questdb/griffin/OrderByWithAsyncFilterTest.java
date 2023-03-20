@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -70,7 +71,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true);
     }
 
     @Test
@@ -87,7 +88,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit -5",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true);
     }
 
     @Test
@@ -104,7 +105,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  desc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time###DESC", true, true, true);
+                "sensor_time###DESC", true, true);
     }
 
     @Test
@@ -120,7 +121,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-07-31:07:25:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "order by sensor_time  asc \n",
                 DDL,
-                "sensor_time", true, true, false);
+                "sensor_time", true, false);
     }
 
     @Test
@@ -136,7 +137,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where sensor_time >= dateadd( 's', rnd_int(0,1,0)*0, to_timestamp('2022-07-31:23:56:00', 'yyyy-MM-dd:HH:mm:ss'))  \n" +
                         "order by sensor_time  desc \n",
                 DDL,
-                "sensor_time###DESC", true, true, false);
+                "sensor_time###DESC", true, false);
     }
 
     @Test
@@ -152,7 +153,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time", true, true, false);
+                "sensor_time", true, false);
     }
 
     @Test
@@ -169,7 +170,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time", true, true, false);
+                "sensor_time", true, false);
     }
 
     @Test
@@ -186,7 +187,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  desc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time###DESC", true, true, false);
+                "sensor_time###DESC", true, false);
     }
 
     @Test
@@ -202,7 +203,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where temperature_out <= 10000 \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true);
     }
 
     @Test
@@ -219,7 +220,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true);
     }
 
     @Test
@@ -236,7 +237,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  desc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time###DESC", true, true, true);
+                "sensor_time###DESC", true, true);
     }
 
     @Test
@@ -256,7 +257,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where temperature_out > 990 \n" +
                         "order by sensor_time  asc \n",
                 DDL,
-                "sensor_time", true, true, false);
+                "sensor_time", true, false);
     }
 
     @Test
@@ -277,7 +278,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where temperature_out < 10 \n" +
                         "order by sensor_time desc \n",
                 DDL,
-                "sensor_time###DESC", true, true, false);
+                "sensor_time###DESC", true, false);
     }
 
     @Test
@@ -293,7 +294,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "where temperature_out <= 10000 \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time", true, true, false);
+                "sensor_time", true, false);
     }
 
     @Test
@@ -310,7 +311,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time", true, true, false);
+                "sensor_time", true, false);
     }
 
     @Test
@@ -327,6 +328,6 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time desc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time###DESC", true, true, false);
+                "sensor_time###DESC", true, false);
     }
 }

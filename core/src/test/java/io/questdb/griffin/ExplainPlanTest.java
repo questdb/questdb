@@ -53,6 +53,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -532,7 +533,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testCrossJoin0Output() throws Exception {
         assertQuery("cnt\n9\n",
                 "select count(*) cnt from a cross join a b where length(a.s1) = length(b.s2)",
-                "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))", null, false, true, true);
+                "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))", null, false, true);
     }
 
     @Test
@@ -1256,7 +1257,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "        } ]\n" +
                 "    }\n" +
                 "  }\n" +
-                "]\n", "explain (format json) select count (*) from long_sequence(10)", null, null, false, true, true);
+                "]\n", "explain (format json) select count (*) from long_sequence(10)", null, null, false, true);
     }
 
     @Test
@@ -1321,7 +1322,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
         try {
             assertQuery(expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
-                    "create table a ( l long)", null, false, true, true);
+                    "create table a ( l long)", null, false, true);
         } finally {
             compiler.setFullFatJoins(false);
         }
@@ -1367,7 +1368,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    }\n" +
                         "  }\n" +
                         "]\n", "explain (format json) select d, max(i) from (select * from a union select * from a)",
-                "create table a ( i int, d double)", null, false, true, true);
+                "create table a ( i int, d double)", null, false, true);
     }
 
     @Test
@@ -1410,7 +1411,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    }\n" +
                         "  }\n" +
                         "]\n",
-                " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2", null, null, false, true, true);
+                " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2", null, null, false, true);
     }
 
     @Test

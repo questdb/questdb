@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bool;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
@@ -37,7 +37,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "select * from long_sequence(1) where 'aaa' <> all('{abc,xyz}'::text[])",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -56,7 +55,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -74,7 +72,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -86,7 +83,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "select * from tab where a <> all('{aaa,bbb,ccc}'::text[])",
                 "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
                 null,
-                true,
                 true,
                 false
         );
@@ -100,7 +96,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select cast(null as string) a from long_sequence(5));",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -113,7 +108,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 false,
-                true,
                 true
         );
     }

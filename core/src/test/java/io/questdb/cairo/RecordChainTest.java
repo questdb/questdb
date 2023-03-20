@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.*;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

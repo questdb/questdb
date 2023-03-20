@@ -24,7 +24,9 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -83,7 +85,7 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
                     "select * from (select " + numStr + " as val)",
                     sink
             );
-            if (((CharSequence) sink).equals(expected)) {
+            if (Chars.equals(sink, expected)) {
                 pass++;
             }
         }

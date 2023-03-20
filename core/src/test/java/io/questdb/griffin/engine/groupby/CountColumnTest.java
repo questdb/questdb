@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CountColumnTest extends AbstractGriffinTest {
@@ -98,7 +98,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -143,7 +142,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -176,7 +174,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         " select 0, null, null, null, null, null, null, null, null, null, null, null, null, null from long_sequence(1)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -212,7 +209,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -245,7 +241,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         " select 0, null, null , null, null, null, null, null, null, null, null, null, null, null from long_sequence(1000)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -302,7 +297,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -345,7 +339,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -378,7 +371,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -411,7 +403,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -457,7 +448,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -494,7 +484,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -527,7 +516,7 @@ public class CountColumnTest extends AbstractGriffinTest {
                         "count(i) ci, " +
                         "count(l) cl " +
                         "from x order by k",
-                null, null, true, true, true);
+                null, null, true, true);
 
         assertQuery("hour\tc1\tcstar\tci\tcl\n" +
                         "0\t2\t2\t0\t0\n" +
@@ -542,7 +531,7 @@ public class CountColumnTest extends AbstractGriffinTest {
                         "count(l) cl " +
                         "from x " +
                         "order by 1",
-                null, null, true, true, true);
+                null, null, true, true);
     }
 
     @Test
@@ -570,7 +559,6 @@ public class CountColumnTest extends AbstractGriffinTest {
                         ")",
                 null,
                 false,
-                true,
                 true
         );
     }

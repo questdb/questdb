@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.CreateTableTestUtils;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class ConcatFunctionFactoryTest extends AbstractGriffinTest {

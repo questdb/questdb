@@ -29,6 +29,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
@@ -47,7 +48,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
     public void testConvertNonPartitionedToWal() throws Exception {
         final String tableName = "table_non_partitioned";
         assertMemoryLeak(() -> {
-            createNonPartitionedTable(tableName);
+            createNonPartitionedTable();
             try {
                 executeOperation("alter table " + tableName + " set type wal", CompiledQuery.TABLE_SET_TYPE);
                 fail("Expected exception is not thrown");
@@ -107,8 +108,8 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         return path;
     }
 
-    private void createNonPartitionedTable(String tableName) throws SqlException {
-        compile("create table " + tableName + " (ts TIMESTAMP, x long)");
+    private void createNonPartitionedTable() throws SqlException {
+        compile("create table table_non_partitioned (ts TIMESTAMP, x long)");
     }
 
     private void createTable(String tableName, String walMode) throws SqlException {

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PgRolesFunctionFactoryTest extends AbstractGriffinTest {
@@ -37,7 +37,6 @@ public class PgRolesFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 false,
-                false,
                 true
         );
     }
@@ -49,7 +48,6 @@ public class PgRolesFunctionFactoryTest extends AbstractGriffinTest {
                 "pg_catalog.pg_roles;",
                 null,
                 null,
-                false,
                 false,
                 true
         );

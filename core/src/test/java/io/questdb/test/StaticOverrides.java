@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test;
 
+import io.questdb.cairo.Overrides;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;

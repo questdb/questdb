@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import org.junit.Test;
 

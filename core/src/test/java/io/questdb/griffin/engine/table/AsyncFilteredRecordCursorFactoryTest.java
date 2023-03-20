@@ -36,6 +36,7 @@ import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.core.StringContains;
@@ -227,7 +228,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by DAY",
                 "k",
                 true,
-                true,
                 true
         );
     }
@@ -246,7 +246,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                true,
                 true,
                 true
         );
@@ -437,7 +436,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
 
-            assertQuery(compiler,
+            assertQuery5(compiler,
                     "c1\tc2\tc3\tc4\n" +
                             "foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163\n" +
                             "foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911\n" +
@@ -447,7 +446,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     sql,
                     "c2",
                     sqlExecutionContext,
-                    true,
                     true,
                     false,
                     true

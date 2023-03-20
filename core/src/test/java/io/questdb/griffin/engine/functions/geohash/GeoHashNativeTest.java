@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.BitmapIndexFwdReader;
 import io.questdb.cairo.BitmapIndexTest;
 import io.questdb.cairo.BitmapIndexWriter;

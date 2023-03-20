@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 

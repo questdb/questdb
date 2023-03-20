@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class MinuteFunctionFactoryTest extends AbstractGriffinTest {
@@ -36,7 +36,6 @@ public class MinuteFunctionFactoryTest extends AbstractGriffinTest {
                 "select minute(null)",
                 null,
                 null,
-                true,
                 true,
                 true
         );
@@ -51,7 +50,6 @@ public class MinuteFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -64,7 +62,6 @@ public class MinuteFunctionFactoryTest extends AbstractGriffinTest {
                 "select minute('1997-04-11T22:08:30.555555Z'::timestamp)",
                 null,
                 null,
-                true,
                 true,
                 true
         );

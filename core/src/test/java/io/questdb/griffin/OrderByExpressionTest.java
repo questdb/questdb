@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -47,7 +48,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "  )\n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, false);
+                        "limit 3", null, null, true, false);
     }
 
     // fails with duplicate column : column because alias created for 'x*x' clashes with one created for x+rnd_int(1,10,0)*0
@@ -68,7 +69,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "    select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2  asc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true);
     }
 
     @Test
@@ -79,7 +80,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "  select x from long_sequence(10) order by x/2 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true);
     }
 
     @Test
@@ -94,7 +95,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc, ext desc\n" +
-                        "limit 3", null, null, true, true, false);
+                        "limit 3", null, null, true, false);
     }
 
     @Test
@@ -105,7 +106,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true);
     }
 
     @Test
@@ -114,13 +115,13 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                 "with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 ) \n" +
                         "select * from q\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true);
     }
 
     @Test
     public void testOrderByTwoExpressions() throws Exception {
         assertQuery("x\n10\n9\n8\n7\n6\n",
-                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true, true);
+                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true);
     }
 
     @Test
@@ -131,6 +132,6 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true);
     }
 }

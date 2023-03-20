@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PositionFunctionFactoryTest extends AbstractGriffinTest {
@@ -55,7 +55,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -76,7 +75,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -90,7 +88,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -104,7 +101,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -126,7 +122,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -158,7 +153,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -179,7 +173,6 @@ public class PositionFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }

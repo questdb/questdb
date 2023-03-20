@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 
@@ -117,7 +118,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "AA\t339631474\t339631474\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:54:00.000000Z\n";
 
 
-        assertQuery(
+        assertQuery13(
                 "tag\thi\tlo\tts\tts1\n",
                 "select a.tag, a.seq hi, b.seq lo,  a.ts, b.ts from tab a asof join tab b on (tag)",
                 "create table tab (\n" +
@@ -132,7 +133,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 false,
-                true,
                 true
         );
     }
@@ -152,7 +152,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "AA\t339631474\t339631474\n";
 
 
-        assertQuery(
+        assertQuery13(
                 "tag\thi\tlo\n",
                 "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
                 "create table tab (\n" +
@@ -167,7 +167,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 false,
-                true,
                 true
         );
     }
@@ -306,7 +305,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
                 "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:48:00.000000Z\n";
 
-        assertQuery(
+        assertQuery13(
                 "tag\thi\tlo\tts\tts1\n",
                 "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
                 "create table tab (\n" +
@@ -321,7 +320,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 false,
-                true,
                 true
         );
     }
@@ -582,7 +580,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "AA\t1573662097\t-847531048\n" +
                 "AA\t339631474\t1573662097\n";
 
-        assertQuery(
+        assertQuery13(
                 "tag\thi\tlo\n",
                 "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)",
                 "create table tab (\n" +
@@ -597,7 +595,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 false,
-                true,
                 true
         );
     }

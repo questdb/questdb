@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SumTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -33,7 +33,7 @@ public class SumTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery(
+        assertQuery13(
                 "avg\n" +
                         "5261.376146789\n",
                 "select round(avg(f),9) avg from tab",
@@ -43,7 +43,6 @@ public class SumTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "avg\n" +
                         "5261.376146789\n",
                 false,
-                true,
                 true
         );
 
@@ -54,14 +53,13 @@ public class SumTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "sum\n" +
                         "\n",
                 "select sum(f) from tab",
@@ -71,7 +69,6 @@ public class SumTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "sum\n" +
                         "1970-01-01T00:00:00.000123Z\n",
                 false,
-                true,
                 true
         );
     }
@@ -85,7 +82,6 @@ public class SumTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "create table tab as (select cast(rnd_long(-55, 9009, 2) as timestamp) f from long_sequence(131))",
                 null,
                 false,
-                true,
                 true
         );
     }

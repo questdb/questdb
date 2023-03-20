@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.Uuid;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -62,7 +63,7 @@ public class UuidTest extends AbstractGriffinTest {
     public void testCastingConstNullUUIDtoString() throws Exception {
         assertQuery("column\n" +
                         "true\n",
-                "select cast (cast (null as uuid) as string) is null from long_sequence(1)", null, null, true, true, true);
+                "select cast (cast (null as uuid) as string) is null from long_sequence(1)", null, null, true, true);
     }
 
     @Test
@@ -73,14 +74,14 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into y select cast (u as string) from x");
         assertQuery("column\n" +
                         "true\n",
-                "select s is null from y", null, null, true, true, true);
+                "select s is null from y", null, null, true, true);
     }
 
     @Test
     public void testCompareConstantNullStringWithUuid() throws Exception {
         assertQuery("column\n" +
                         "true\n",
-                "select cast (null as string) = cast (null as uuid) from long_sequence(1)", null, null, true, true, true);
+                "select cast (null as string) = cast (null as uuid) from long_sequence(1)", null, null, true, true);
     }
 
     @Test
@@ -100,7 +101,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "true\n" +
                         "false\n" +
                         "false\n",
-                "select u = s from x", null, null, true, true, true);
+                "select u = s from x", null, null, true, true);
     }
 
     @Test
@@ -116,18 +117,18 @@ public class UuidTest extends AbstractGriffinTest {
                         "11111111-1111-1111-1111-111111111111\n" +
                         "\n" +
                         "11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-222222222222\n",
-                "select concat(u1, u2, u3) from x", null, null, true, true, true);
+                "select concat(u1, u2, u3) from x", null, null, true, true);
     }
 
     @Test
     public void testConstantComparison() throws Exception {
         assertQuery("column\n" +
                         "true\n",
-                "select '11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)", null, null, true, true, true);
+                "select '11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)", null, null, true, true);
 
         assertQuery("column\n" +
                         "false\n",
-                "select '11111111-1111-1111-1111-111111111111' = cast ('22222222-2222-2222-2222-222222222222' as uuid) from long_sequence(1)", null, null, true, true, true);
+                "select '11111111-1111-1111-1111-111111111111' = cast ('22222222-2222-2222-2222-222222222222' as uuid) from long_sequence(1)", null, null, true, true);
     }
 
     @Test
@@ -142,7 +143,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("i\tcount\n" +
                         "0\t2\n" +
                         "1\t3\n",
-                "select i, count() from x group by i order by i", null, null, true, true, true);
+                "select i, count() from x group by i order by i", null, null, true, true);
     }
 
     @Test
@@ -157,7 +158,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("i\tcount_distinct\n" +
                         "0\t2\n" +
                         "1\t1\n",
-                "select i, count_distinct(u) from x group by i order by i", null, null, true, true, true);
+                "select i, count_distinct(u) from x group by i order by i", null, null, true, true);
     }
 
     @Test
@@ -171,7 +172,7 @@ public class UuidTest extends AbstractGriffinTest {
 
         assertQuery("count_distinct\n" +
                         "3\n",
-                "select count_distinct(u) from x", null, null, false, true, true);
+                "select count_distinct(u) from x", null, null, false, true);
     }
 
     @Test
@@ -184,7 +185,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "'11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
                         "'not a uuid' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
                         "'11111111-1111-1111-1111-111111111111' = rnd_uuid4()" +
-                        "from long_sequence(1)", null, null, true, true, true);
+                        "from long_sequence(1)", null, null, true, true);
     }
 
     @Test
@@ -193,7 +194,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values ('not a uuid', null)");
         assertQuery("column\n" +
                         "false\n",
-                "select s = u from x", null, null, true, true, true);
+                "select s = u from x", null, null, true, true);
     }
 
     @Test
@@ -209,7 +210,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "s3 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
                         "s4 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
                         "s5 = rnd_uuid4() " +
-                        "from x", null, null, true, true, true);
+                        "from x", null, null, true, true);
     }
 
     @Test
@@ -218,7 +219,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x where 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' = u", null, null, true, true, false);
+                "select * from x where 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' = u", null, null, true, false);
     }
 
     @Test
@@ -227,7 +228,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)", null, null, true, true, false);
+                "select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)", null, null, true, false);
     }
 
     @Test
@@ -236,7 +237,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", null, null, true, true, false);
+                "select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", null, null, true, false);
     }
 
     @Test
@@ -245,7 +246,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (cast('' as uuid))");
         assertQuery("u\n" +
                         "\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -254,7 +255,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (cast(null as string))");
         assertQuery("u\n" +
                         "\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -268,7 +269,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\tsum\n" +
                         "11111111-1111-1111-1111-111111111111\t1\n" +
                         "22222222-2222-2222-2222-222222222222\t5\n",
-                "select u, sum(i) from x group by u", null, null, true, true, true);
+                "select u, sum(i) from x group by u", null, null, true, true);
     }
 
     @Test
@@ -335,7 +336,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (null)");
         assertQuery("u\n" +
                         "\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -356,7 +357,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x (i, i2) values (42, 0)");
         assertQuery("i\tu\ti2\n" +
                         "42\t\t0\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -367,7 +368,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into y select u from x");
         assertQuery("column\n" +
                         "true\n",
-                "select s is null from y", null, null, true, true, true);
+                "select s is null from y", null, null, true, true);
     }
 
     @Test
@@ -386,7 +387,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into y select cast (u as string) from x");
         assertQuery("s\n" +
                         "11111111-1111-1111-1111-111111111111\n",
-                "select * from y", null, null, true, true, true);
+                "select * from y", null, null, true, true);
     }
 
     @Test
@@ -397,7 +398,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into y select u from x");
         assertQuery("s\n" +
                         "11111111-1111-1111-1111-111111111111\n",
-                "select * from y", null, null, true, true, true);
+                "select * from y", null, null, true, true);
     }
 
     @Test
@@ -406,7 +407,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -415,7 +416,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values ('a0eebc11-110b-11f8-116d-11b9bd380a11')");
         assertQuery("u\n" +
                         "a0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -428,7 +429,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("ts\tu\ti\n" +
                         "2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000001\t2\n" +
                         "2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000002\t0\n",
-                "select ts, u, i from x latest on ts partition by u", null, "ts", true, true, true);
+                "select ts, u, i from x latest on ts partition by u", null, "ts", true, true);
     }
 
     @Test
@@ -446,7 +447,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x where u != cast('11111111-1111-1111-1111-111111111111' as uuid)", null, null, true, true, false);
+                "select * from x where u != cast('11111111-1111-1111-1111-111111111111' as uuid)", null, null, true, false);
     }
 
     @Test
@@ -455,7 +456,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x where u != '11111111-1111-1111-1111-111111111111'", null, null, true, true, false);
+                "select * from x where u != '11111111-1111-1111-1111-111111111111'", null, null, true, false);
     }
 
     @Test
@@ -466,7 +467,7 @@ public class UuidTest extends AbstractGriffinTest {
 
         assertQuery("first\n" +
                         "54710940-38c0-4d93-92db-43b7cad84228\n",
-                "select first(u) from xxx", null, null, false, true, true);
+                "select first(u) from xxx", null, null, false, true);
     }
 
     @Test
@@ -477,7 +478,7 @@ public class UuidTest extends AbstractGriffinTest {
 
         assertQuery("last\n" +
                         "\n",
-                "select last(u) from xxx", null, null, false, true, true);
+                "select last(u) from xxx", null, null, false, true);
     }
 
     @Test
@@ -489,7 +490,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("ts\tu\n" +
                         "2010-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11\n" +
                         "2018-01-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                "select * from x", null, "ts", true, true, true);
+                "select * from x", null, "ts", true, true);
     }
 
     @Test
@@ -501,7 +502,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("ts\tu\n" +
                         "2018-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11\n" +
                         "2018-06-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                "select * from x", null, "ts", true, true, true);
+                "select * from x", null, "ts", true, true);
     }
 
     @Test
@@ -575,7 +576,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "1\t00100000-0000-0000-0000-000000000000\n" +
                         "1\t01000000-0000-0000-0000-000000000000\n" +
                         "1\t10000000-0000-0000-0000-000000000000\n",
-                "select * from x order by u", null, null, true, true, true);
+                "select * from x order by u", null, null, true, true);
 
         assertQuery("i\tu\n" +
                         "1\t10000000-0000-0000-0000-000000000000\n" +
@@ -611,14 +612,14 @@ public class UuidTest extends AbstractGriffinTest {
                         "1\t00000000-0000-0000-0000-000000000010\n" +
                         "1\t00000000-0000-0000-0000-000000000001\n" +
                         "2\t00000000-0000-0000-0000-000000000000\n",
-                "select * from x order by u desc", null, null, true, true, true);
+                "select * from x order by u desc", null, null, true, true);
     }
 
     @Test
     public void testPostgresStyleLiteralCasting() throws Exception {
         assertQuery("column\n" +
                         "true\n",
-                "select (uuid '11111111-1111-1111-1111-111111111111') = cast('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)", null, null, true, true, true);
+                "select (uuid '11111111-1111-1111-1111-111111111111') = cast('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)", null, null, true, true);
 
     }
 
@@ -640,14 +641,14 @@ public class UuidTest extends AbstractGriffinTest {
         for (int i = 0; i < count; i++) {
             expected.append(uuids[i]).append("\n");
         }
-        assertQuery(expected.toString(), "select * from x order by u", null, null, true, true, true);
+        assertQuery(expected.toString(), "select * from x order by u", null, null, true, true);
 
         // test descending
         expected = new StringBuilder("u\n");
         for (int i = count - 1; i >= 0; i--) {
             expected.append(uuids[i]).append("\n");
         }
-        assertQuery(expected.toString(), "select * from x order by u desc", null, null, true, true, true);
+        assertQuery(expected.toString(), "select * from x order by u desc", null, null, true, true);
     }
 
     @Test
@@ -664,7 +665,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "c1e63128-5c1a-4288-872b-fc5230158059\n" +
                         "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
                         "4b0f595f-143e-4d72-af1a-8266e7921e3b\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -675,7 +676,7 @@ public class UuidTest extends AbstractGriffinTest {
 
         assertQuery("length\n" +
                         "36\n",
-                "select length(u) from x", null, null, true, true, true);
+                "select length(u) from x", null, null, true, true);
     }
 
     @Test
@@ -684,7 +685,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values (null)");
         assertQuery("length\n" +
                         "-1\n",
-                "select length(u) from x", null, null, true, true, true);
+                "select length(u) from x", null, null, true, true);
     }
 
     @Test
@@ -694,14 +695,14 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111')");
         assertQuery("u1\tu2\n" +
                         "11111111-1111-1111-1111-111111111111\t11111111-1111-1111-1111-111111111111\n",
-                "select * from x where u1 = u2", null, null, true, true, false);
+                "select * from x where u1 = u2", null, null, true, false);
     }
 
     @Test
     public void testTypeOf() throws Exception {
         assertQuery("typeOf\n" +
                         "UUID\n",
-                "select typeOf(uuid '11111111-1111-1111-1111-111111111111') from long_sequence(1)", null, null, true, true, true);
+                "select typeOf(uuid '11111111-1111-1111-1111-111111111111') from long_sequence(1)", null, null, true, true);
     }
 
     @Test
@@ -715,7 +716,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "totally not a uuid\n" +
                         "22222222-2222-2222-2222-222222222222\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -729,7 +730,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "11111111-1111-1111-1111-111111111111\n",
-                "select * from x union all select * from y", null, null, false, true, true);
+                "select * from x union all select * from y", null, null, false, true);
     }
 
     @Test
@@ -745,7 +746,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "11111111-1111-1111-1111-111111111111\n" +
                         "\n" +
                         "\n",
-                "select * from x union all select * from y", null, null, false, true, true);
+                "select * from x union all select * from y", null, null, false, true);
     }
 
     @Test
@@ -759,7 +760,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n",
-                "select * from x union all select * from y", null, null, false, true, true);
+                "select * from x union all select * from y", null, null, false, true);
     }
 
     @Test
@@ -773,7 +774,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -787,7 +788,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "22222222-2222-2222-2222-222222222222\n" +
                         "totally not a uuid\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -801,7 +802,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -814,7 +815,7 @@ public class UuidTest extends AbstractGriffinTest {
 
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -830,7 +831,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -844,7 +845,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n",
-                "select * from x union select * from y", null, null, false, true, false);
+                "select * from x union select * from y", null, null, false, false);
     }
 
     @Test
@@ -854,7 +855,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
         assertQuery("i\tu\n" +
                         "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -864,7 +865,7 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("update x set u = 'a0eebc11-4242-11f8-116d-11b9bd380a11' where i = 0");
         assertQuery("i\tu\n" +
                         "0\ta0eebc11-4242-11f8-116d-11b9bd380a11\n",
-                "select * from x", null, null, true, true, true);
+                "select * from x", null, null, true, true);
     }
 
     @Test
@@ -873,6 +874,6 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
         assertQuery("cast\n" +
                         "NaN\n",
-                "select cast(u as long) from x", null, null, true, true, true);
+                "select cast(u as long) from x", null, null, true, true);
     }
 }

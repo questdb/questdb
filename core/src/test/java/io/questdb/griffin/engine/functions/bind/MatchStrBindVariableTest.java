@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

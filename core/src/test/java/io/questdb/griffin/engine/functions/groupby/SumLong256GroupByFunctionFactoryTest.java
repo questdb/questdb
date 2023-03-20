@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SumLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -41,7 +41,7 @@ public class SumLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery("sm\n0x06\n",
                 "select * from ( select sum(x) as sm from (select * from test union all select * from test ) )",
                 "create table test as (select cast(x as long256) x from long_sequence(2))",
-                null, false, true, true);
+                null, false, true);
     }
 
     @Test

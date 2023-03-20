@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.std.Unsafe;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;

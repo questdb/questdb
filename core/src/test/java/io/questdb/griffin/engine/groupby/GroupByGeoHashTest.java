@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 /**
@@ -40,7 +40,7 @@ public class GroupByGeoHashTest extends AbstractGriffinTest {
                         "2\t20\t29\n",
                 "select geo, min(x) as minx, max(x) as maxx from geotest group by geo",
                 "create table geotest as ( select cast(x/10 as geohash(1c)) as geo, x from long_sequence(29)) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -51,7 +51,7 @@ public class GroupByGeoHashTest extends AbstractGriffinTest {
                         "2\t00zb\t1020\t1029\n",
                 "select g1c,g4c, min(x) as minx, max(x) as maxx from geotest group by g1c,g4c",
                 "create table geotest as ( select cast(x/10 as geohash(1c)) as g1c, cast( 1000+x/10 as geohash(4c)) as g4c, 1000+x as x from long_sequence(29)) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -63,7 +63,7 @@ public class GroupByGeoHashTest extends AbstractGriffinTest {
                         "2\t1\t20\n",
                 "select geo, (x/15) as x15, min(y) as miny from geotest group by geo, (x/15)",
                 "create table geotest as ( select cast(x/10 as geohash(1c)) as geo, x, x as y from long_sequence(29)) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -74,7 +74,7 @@ public class GroupByGeoHashTest extends AbstractGriffinTest {
                         "00zb\t1020\t1029\n",
                 "select geo, min(x) as minx, max(x) as maxx from geotest group by geo",
                 "create table geotest as ( select cast( 1000+x/10 as geohash(4c)) as geo, 1000+x as x from long_sequence(29)) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -85,7 +85,7 @@ public class GroupByGeoHashTest extends AbstractGriffinTest {
                         "02te0rh2\t1020\t1029\n",
                 "select geo, min(x) as minx, max(x) as maxx from geotest group by geo",
                 "create table geotest as ( select cast( 3000000000+x/10 as geohash(8c)) as geo, 1000+x as x from long_sequence(29)) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -96,7 +96,7 @@ public class GroupByGeoHashTest extends AbstractGriffinTest {
                         "0d\t120\t129\n",
                 "select geo, min(x) as minx, max(x) as maxx from geotest group by geo",
                 "create table geotest as ( select cast( 10+x/10 as geohash(2c)) as geo, 100+x as x from long_sequence(29)) ",
-                null, true, true, true);
+                null, true, true);
     }
 
 }

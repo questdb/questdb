@@ -23,6 +23,7 @@
  ******************************************************************************/
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SymbolTest extends AbstractGriffinTest {

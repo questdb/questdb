@@ -34,6 +34,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
@@ -2048,7 +2050,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     private static void assertContent(String expected, String tableName) throws Exception {
         engine.clear();
-        assertQuery(expected, tableName, null, "ts", true, false, true);
+        assertQuery(expected, tableName, null, "ts", true, true);
     }
 
     private void assertCannotCopyMeta(String tableName, int copyCallId) throws Exception {

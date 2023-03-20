@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
@@ -61,7 +61,6 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -75,7 +74,6 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -96,7 +94,6 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -123,7 +120,6 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }

@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 

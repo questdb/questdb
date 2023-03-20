@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.std.Misc;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

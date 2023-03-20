@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.QuestDBTestNode;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.BeforeClass;
 
 public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {

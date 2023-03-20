@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;

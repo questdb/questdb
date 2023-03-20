@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -33,7 +33,7 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery(
+        assertQuery13(
                 "avg\n" +
                         "5261.376146789\n",
                 "select round(avg(f),9) avg from tab",
@@ -43,7 +43,6 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "avg\n" +
                         "5261.376146789\n",
                 false,
-                true,
                 true
         );
 
@@ -54,14 +53,13 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\n" +
                         "\n",
                 "select min(f) from tab",
@@ -71,14 +69,13 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "min\n" +
                         "5138-11-16T09:46:39.999999Z\n",
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testKeyedMaxTimestampOrNullThenMaxLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "i\tmin\n" +
                         "1\t\n",
                 "select i, min(f) from tab",
@@ -88,14 +85,13 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "i\tmin\n" +
                         "1\t294247-01-10T04:00:54.775807Z\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testMaxTimestampOrNullThenMaxLong() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\n" +
                         "\n",
                 "select min(f) from tab",
@@ -105,7 +101,6 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "min\n" +
                         "294247-01-10T04:00:54.775807Z\n",
                 false,
-                true,
                 true
         );
     }
@@ -119,7 +114,6 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 "create table tab as (select cast(rnd_long(-55, 9009, 2) as timestamp) f from long_sequence(131))",
                 null,
                 false,
-                true,
                 true
         );
     }

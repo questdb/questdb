@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class InformationSchemaFunctionFactoryTest extends AbstractGriffinTest {
@@ -36,7 +36,6 @@ public class InformationSchemaFunctionFactoryTest extends AbstractGriffinTest {
                 "information_schema._pg_expandarray(5);",
                 "create table x(a int)",
                 null,
-                false,
                 false,
                 true
         );

@@ -26,7 +26,7 @@ package io.questdb.griffin.wal;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;

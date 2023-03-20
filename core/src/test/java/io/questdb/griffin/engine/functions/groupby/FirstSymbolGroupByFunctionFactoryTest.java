@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class FirstSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -40,7 +40,6 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
                 null,
                 true,
-                true,
                 true
         ));
     }
@@ -54,7 +53,6 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
                 null,
                 false,
-                true,
                 true
         ));
     }

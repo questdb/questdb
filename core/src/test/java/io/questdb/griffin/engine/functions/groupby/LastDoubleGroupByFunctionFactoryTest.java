@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -68,7 +68,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select cast(x as double) x from long_sequence(10))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -82,7 +81,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -113,7 +111,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tlast\tk\n" +
+        assertQuery13("b\tlast\tk\n" +
                         "\t0.44804689668613573\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -279,7 +277,6 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n",
-                true,
                 true,
                 true
         );

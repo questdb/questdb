@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.tools.TestUtils;
@@ -308,7 +308,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         String expected1 = "name\n";
         String expected2 = "name\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
     }
 
     @Test
@@ -320,7 +320,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         String expected1 = "name\n";
         String expected2 = "name\nThe path is \\_ignore\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
     }
 
     @Test
@@ -332,7 +332,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         String expected1 = "name\n";
         String expected2 = "name\nThe path is \\_ignore\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
     }
 
     @Test
@@ -344,20 +344,18 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         String expected1 = "name\n";
         String expected2 = "name\n\\\\?\\D:\\path\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
     }
 
     @Test
-    public void testLikeEscapeAtEnd() throws Exception {
+    public void testLikeEscapeAtEnd() {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
 
         String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
         String expected1 = "name\n";
         String expected2 = "";
-        Exception e = assertThrows(SqlException.class, () -> {
-            assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
-        });
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
 
         String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
         String actualMessage = e.getMessage();

@@ -26,7 +26,7 @@ package io.questdb.griffin.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;

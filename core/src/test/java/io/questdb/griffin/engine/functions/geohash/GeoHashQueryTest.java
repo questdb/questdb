@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -72,7 +72,6 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             String.format("insert into gh select rnd_geohash(%s) from long_sequence(5)", i),
                             String.format("count\n%s\n", 10),
                             false,
-                            true,
                             true,
                             true
                     );

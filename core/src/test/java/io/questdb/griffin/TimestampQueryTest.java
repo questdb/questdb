@@ -30,6 +30,7 @@ import io.questdb.cairo.TableModel;
 import io.questdb.std.Chars;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -78,7 +79,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\tdk\tk\n" +
                         "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
                         "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
@@ -87,7 +88,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "k",
                 null,
                 null,
-                true,
                 true,
                 false
         );
@@ -749,7 +749,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampDifferentThanFixedValue() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "t\n" +
                         "1970-01-01T00:00:01.000000Z\n" +
                         "1970-01-01T00:00:02.000000Z\n",
@@ -759,14 +759,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testTimestampDifferentThanNonFixedValue() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "t\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:01.000000Z\n",
@@ -776,14 +775,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true,
                 false
         );
     }
 
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
@@ -794,14 +792,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
                 false,
-                false,
                 true
         );
     }
 
     @Test
     public void testTimestampMin() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "nts\tmin\n" +
                         "nts\t\n",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
@@ -813,14 +810,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "nts\tmin\n" +
                         "nts\t2020-01-01T00:00:00.000010Z\n",
                 false,
-                false,
                 true
         );
     }
 
     @Test
     public void testTimestampOpSymbolColumns() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "a\tk\n" +
                         "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
                         "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
@@ -829,7 +825,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "k",
                 null,
                 null,
-                true,
                 true,
                 false
         );
@@ -882,7 +877,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampStringComparison() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts = '2020-01-01'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
@@ -892,7 +887,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                         "from long_sequence(48L)",
                 "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
-                false,
                 false,
                 true
         );
@@ -1248,7 +1242,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampStringDateAdd() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "dateadd\n" +
                         "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, '2020-01-01')",
@@ -1257,14 +1251,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
 
     @Test
     public void testTimestampSymbolComparison() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
@@ -1274,7 +1267,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                         "from long_sequence(48L)",
                 "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
-                false,
                 false,
                 true
         );
@@ -1347,7 +1339,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampSymbolDateAdd() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "dateadd\n" +
                         "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, cast('2020-01-01' as symbol))",
@@ -1356,7 +1348,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -1509,7 +1500,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, true, false, null);
+        printSqlResult3(expected, query, "ts", null, null, true, true, false, null);
         return (int) expectedCount;
     }
 }

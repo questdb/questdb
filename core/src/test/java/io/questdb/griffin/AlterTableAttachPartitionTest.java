@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -594,7 +595,6 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         null,
                         "ts",
                         true,
-                        false,
                         true
                 );
             }
@@ -649,7 +649,6 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         null,
                         "ts",
                         true,
-                        false,
                         true
                 );
             }

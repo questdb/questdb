@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.test.tools.TestUtils;

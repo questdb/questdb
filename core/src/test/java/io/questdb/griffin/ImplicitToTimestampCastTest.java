@@ -1,5 +1,6 @@
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -17,7 +18,7 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
                             "    cust_id SYMBOL, " +
                             "    ts TIMESTAMP " +
                             ") TIMESTAMP(ts) PARTITION BY DAY;",
-                    "k", false, true, true
+                    "k", false, true
             );
             Assert.fail("error should be thrown");
         } catch (SqlException e) {
@@ -34,7 +35,7 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
                     "CREATE TABLE balances as (" +
                             "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                             ");",
-                    null, true, true, false);
+                    null, true, false);
             Assert.fail("Exception should be thrown");
         } catch (SqlException e) {
             Assert.assertEquals(e.getMessage(), "[32] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (TIMESTAMP,SYMBOL)");
@@ -48,7 +49,7 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
                 "select * from balances where ts = '2022-03-23' || ' 00:00'",
                 "CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, true, false);
+                        ");", null, true, false);
     }
 
     @Test
@@ -58,7 +59,7 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
                 "select * from balances where ts = '2022-03-23'",
                 "CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, true, false);
+                        ");", null, true, false);
     }
 
     @Test
@@ -68,7 +69,7 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
                 "select * from balances where ts = cast(('2022-03-23' || ' 00:00') as symbol)",
                 "CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, true, false);
+                        ");", null, true, false);
     }
 
     @Test
@@ -78,7 +79,7 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
                 "select * from balances where ts = cast('2022-03-23' as symbol)",
                 "CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, true, false);
+                        ");", null, true, false);
     }
 
 }

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PgAttrDefFunctionFactoryTest extends AbstractGriffinTest {
@@ -37,14 +37,13 @@ public class PgAttrDefFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 false,
-                false,
                 false
         );
     }
 
     @Test
     public void testPgAttrDefFuncWith2Tables() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "adrelid\tadnum\tadbin\n" +
                         "1\t1\t\n",
                 "pg_catalog.pg_attrdef order by 1, 2;",
@@ -56,7 +55,6 @@ public class PgAttrDefFunctionFactoryTest extends AbstractGriffinTest {
                         "2\t1\t\n" +
                         "2\t2\t\n",
                 true,
-                false,
                 false
         );
     }
@@ -69,7 +67,6 @@ public class PgAttrDefFunctionFactoryTest extends AbstractGriffinTest {
                 "pg_catalog.pg_attrdef;",
                 "create table x(a int)",
                 null,
-                false,
                 false,
                 false
         );

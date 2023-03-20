@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
@@ -56,7 +56,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -77,7 +76,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -91,7 +89,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -105,7 +102,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -127,7 +123,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -159,7 +154,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -180,7 +174,6 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }

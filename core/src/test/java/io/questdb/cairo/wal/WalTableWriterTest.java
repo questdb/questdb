@@ -33,6 +33,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.tasks.WalTxnNotificationTask;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;

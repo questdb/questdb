@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;

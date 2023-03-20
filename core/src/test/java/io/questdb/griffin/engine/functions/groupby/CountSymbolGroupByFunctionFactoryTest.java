@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -39,7 +39,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, count_distinct(cast('foobar' as SYMBOL)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -59,7 +58,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -73,7 +71,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -87,7 +84,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol(null, '344', 'xx2', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -102,7 +98,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, count_distinct(cast(null as SYMBOL)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -125,7 +120,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                true,
                 true,
                 true
         );

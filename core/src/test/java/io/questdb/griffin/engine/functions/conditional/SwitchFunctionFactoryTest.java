@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
@@ -145,7 +145,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -193,7 +192,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -241,7 +239,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -289,7 +286,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -337,7 +333,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -387,7 +382,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -435,7 +429,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -488,7 +481,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -538,7 +530,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -587,7 +578,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -663,7 +653,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -738,7 +727,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -868,7 +856,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -916,7 +903,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1019,7 +1005,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1089,7 +1074,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1138,7 +1122,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1189,7 +1172,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -1238,7 +1220,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );
@@ -1289,7 +1270,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false,
                 true
         );
     }
@@ -1365,7 +1345,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1415,7 +1394,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -1464,7 +1442,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true,
                 true,
                 true
         );

@@ -29,6 +29,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;

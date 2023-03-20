@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.analytic;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -109,7 +109,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -138,7 +137,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -169,7 +167,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -198,7 +195,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -229,7 +225,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -258,7 +253,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -289,7 +283,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -318,7 +311,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -349,7 +341,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -379,7 +370,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -408,7 +398,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -456,7 +445,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -477,7 +465,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                 "select *, row_number() over (order by y asc, x desc) as rn from tab order by x asc",
                 "create table tab as (select x, x%2 y from long_sequence(10))",
                 null,
-                true,
                 true,
                 false
         );
@@ -507,7 +494,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -535,7 +521,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -565,7 +550,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -593,7 +577,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         "), index(s) timestamp(ts) partition by month",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -620,7 +603,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by month",
                 null,
-                true,
                 true,
                 false
         );
@@ -650,7 +632,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -678,7 +659,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );
@@ -708,7 +688,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                true,
                 false
         );
     }
@@ -736,7 +715,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
-                true,
                 true,
                 false
         );

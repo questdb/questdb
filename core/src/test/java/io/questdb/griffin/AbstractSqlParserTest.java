@@ -24,7 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CreateTableTestUtils;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableToken;

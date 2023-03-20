@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

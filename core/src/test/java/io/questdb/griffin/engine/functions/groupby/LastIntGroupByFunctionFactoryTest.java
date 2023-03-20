@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
@@ -85,7 +85,7 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tlast\tk\n" +
+        assertQuery13("b\tlast\tk\n" +
                         "\t1627393380\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t-2002373666\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -251,7 +251,6 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CPSW\t-1258204039\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
                         "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true,
                 true,
                 true
         );

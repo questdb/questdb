@@ -33,8 +33,6 @@ open module io.questdb {
     requires static java.management;
 
     uses io.questdb.griffin.FunctionFactory;
-    exports io.questdb.std.fastdouble;
-
     exports io.questdb;
     exports io.questdb.cairo;
     exports io.questdb.cairo.vm;

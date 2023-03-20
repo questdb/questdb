@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 /**
@@ -37,7 +38,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "SELECT * from ( select DISTINCT id FROM limtest ORDER BY id asc ) LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9)), index(id)",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -47,7 +48,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE limtest as (" +
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9)), index(id)",
                 null,
-                true, true, false);
+                true, false);
     }
 
     @Test
@@ -57,7 +58,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as (" +
                         "select cast(x as symbol) as id, rnd_double() as reading  from long_sequence(9)), index(id)",
                 null,
-                true, true, false);
+                true, false);
     }
 
     @Test
@@ -67,7 +68,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as (" +
                         "select cast(x as symbol) as id, rnd_double() as reading  from long_sequence(9) order by 2), index(id)",
                 null,
-                true, true, false);
+                true, false);
     }
 
     @Test
@@ -77,7 +78,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as (" +
                         "select cast(x as symbol) as id, rnd_double() as reading  from long_sequence(9) order by 2), index(id)",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -104,7 +105,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "SELECT * from ( select DISTINCT id FROM limtest ORDER BY id asc ) LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -114,7 +115,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE limtest as (" +
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
-                true, true, false);
+                true, false);
     }
 
     @Test//values in symbol key file aren't sorted and usually reflect first insert order
@@ -122,7 +123,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
         assertQuery("id\n1\n2\n3\n4\n5\n",
                 "SELECT * from ( select DISTINCT id FROM limtest ) order by id limit 5",
                 "CREATE TABLE limtest as (select cast(x as symbol) as id from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -130,7 +131,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
         assertQuery("id\n5\n4\n3\n2\n1\n0\n",
                 "SELECT * from ( select DISTINCT id FROM limtest ) ORDER BY id desc",
                 "CREATE TABLE limtest as (select cast((x%6) as symbol) as id from long_sequence(20))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -138,7 +139,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
         assertQuery("id\n9\n8\n",
                 "SELECT * from ( select DISTINCT id FROM limtest ) ORDER BY id desc LIMIT 2 ",
                 "CREATE TABLE limtest as (select cast((x%10) as symbol) as id from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -147,7 +148,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id FROM limtest order by id desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -172,7 +173,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id FROM limtest order by id asc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select cast(x as symbol) as id, rnd_double() as reading  from long_sequence(9) order by 2)",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -187,7 +188,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as (" +
                         "select x%5 as id, cast(x%3 as double) as reading, 's' || x%2 as st  " +
                         "from long_sequence(9) order by 2)",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -198,7 +199,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id, reading FROM limtest order by id asc, reading asc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -209,7 +210,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id, reading FROM limtest order by id asc, reading desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x%5 as id, cast(x%2 as double) as reading  from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -220,7 +221,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id, reading FROM limtest order by id desc, reading desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -231,7 +232,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id, reading FROM limtest order by id desc, reading asc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select x%5 as id, cast(x%2 as double) as reading  from long_sequence(9))",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -240,7 +241,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id FROM limtest LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select 10-x as id from long_sequence(9)) ",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -249,7 +250,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id FROM ( select * from limtest order by id asc LIMIT 3) order by id desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select 10-x as id, rnd_double() as reading  from long_sequence(9) order by 2) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -258,7 +259,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id FROM limtest order by id desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select cast(x as string) as id, rnd_double() as reading  from long_sequence(9) order by 2)",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -267,7 +268,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "select DISTINCT id FROM limtest order by id desc LIMIT 2",
                 "CREATE TABLE limtest as (" +
                         "select 10-x as id, rnd_double() as reading  from long_sequence(9) order by 2) ",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -282,7 +283,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                         "   ) " +
                         "LIMIT 5",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -297,7 +298,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                         "   ) " +
                         "order by id desc",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -311,7 +312,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as (" +  // 1,1 2,0 3,1 0,0 1,1 2,0 3,1 0,0 1,1
                         "select cast( x%4 as int) as id, cast(x%2 as double) as reading, rnd_double() as rnd " +
                         "from long_sequence(9) order by 3)",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -326,7 +327,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                         "   LIMIT 6) " +
                         "LIMIT 5",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
-                null, true, true, false);
+                null, true, false);
     }
 
     @Test
@@ -340,7 +341,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as (" +  // 1,1 2,0 3,1 0,0 1,1 2,0 3,1 0,0 1,1
                         "select cast( x%4 as int) as id, cast(x%2 as double) as reading, rnd_double() as rnd " +
                         "from long_sequence(9) order by 3)",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -352,7 +353,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                         "( select id from test LIMIT 5) " +
                         "order by id desc LIMIT 2",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -367,7 +368,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                         "   order by id desc LIMIT 6) " +
                         "order by id asc limit 5",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
-                null, true, true, true);
+                null, true, true);
     }
 
     @Test
@@ -379,6 +380,6 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                         "( select id from test order by id desc LIMIT 5) " +
                         " LIMIT 2",
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
-                null, true, true, false);
+                null, true, false);
     }
 }

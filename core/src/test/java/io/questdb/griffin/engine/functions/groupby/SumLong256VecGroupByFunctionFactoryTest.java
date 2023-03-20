@@ -24,14 +24,14 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SumLong256VecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "sum\n\n",
                 "select sum(f) from tab",
                 "create table tab as (select cast(null as long256) f from long_sequence(33))",
@@ -39,7 +39,6 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractGriffinTest
                 "insert into tab select cast(123L as long256) from long_sequence(1)",
                 "sum\n0x7b\n",
                 false,
-                true,
                 true
         );
     }
@@ -52,7 +51,6 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractGriffinTest
                 "create table tab as (select x, cast(x as long256) y from long_sequence(100))\n",
                 null,
                 false,
-                true,
                 true
         );
     }

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.*;
 
 /**

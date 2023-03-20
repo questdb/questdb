@@ -1,5 +1,6 @@
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class SortAndLimitTest extends AbstractGriffinTest {
@@ -255,7 +256,6 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 false
         );
     }
@@ -267,7 +267,6 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }

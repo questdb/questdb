@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -112,7 +112,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\tmin\tk\n" +
+        assertQuery13("b\tmin\tk\n" +
                         "HYRX\t0.1143\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t0.1250\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.0230\t1970-01-03T00:00:00.000000Z\n" +
@@ -278,7 +278,6 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "VTJW\t-2.2037\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-4.1995\t1970-01-04T06:00:00.000000Z\n" +
                         "RXGZ\t-1.3064\t1970-01-04T06:00:00.000000Z\n",
-                true,
                 true,
                 true
         );

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -101,7 +102,6 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         " as int) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -119,7 +119,6 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts,2 * (x % 10) sym from long_sequence(10000)" +
                         ") timestamp(ts) PARTITION BY MONTH",
                 null,
-                true,
                 true,
                 true
         );
@@ -177,14 +176,13 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
                 null,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDistinctSymbolsIndexed() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -214,14 +212,13 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "2020-02-09\n" +
                         "2020-02-10\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDistinctSymbolsIndexedWithUpdates() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -241,14 +238,13 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "2020-01-05\n" +
                         "2020-01-06\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testDistinctSymbolsNonIndexed() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "sym\n" +
                         "2020-01-01\n" +
                         "2020-01-02\n" +
@@ -263,7 +259,6 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "2020-02-01\n" +
                         "2020-02-02\n" +
                         "2020-02-03\n",
-                true,
                 true,
                 true
         );
@@ -283,7 +278,6 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -302,7 +296,6 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                         "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
                         " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
                 null,
-                true,
                 true,
                 true
         );

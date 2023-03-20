@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRowCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -644,7 +645,6 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 false
         );
     }
@@ -656,7 +656,6 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 true
         );
     }

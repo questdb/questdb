@@ -39,6 +39,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
@@ -163,7 +164,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             // should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because
             // Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
             @Override
-            public MillisecondClock getClock() {
+            public @NotNull MillisecondClock getClock() {
                 return () -> testMicrosClock.getTicks() / 1000L;
             }
 

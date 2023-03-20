@@ -35,6 +35,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
@@ -958,7 +959,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r\nspanning two lines\n" +
                             "line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\n" +
                             "line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes\n",
-                    "select * from tab38", null, "ts", true, true, true);
+                    "select * from tab38", null, "ts", true, true);
         });
     }
 
@@ -2590,7 +2591,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         }
 
         refreshTablesInBaseEngine();
-        assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\n" +
+        assertQuery12("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\n" +
                         "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\n" +
                         "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\n" +
                         "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\n" +
@@ -2601,9 +2602,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\n" +
                         "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\n" +
                         "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\n",
-                "select * from alltypes", "tstmp", true, sqlExecutionContext, false, true);
+                "select * from alltypes", "tstmp", true, sqlExecutionContext, true);
 
-        assertQuery("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+        assertQuery12("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                 "bo\tBOOLEAN\tfalse\t256\tfalse\t0\tfalse\n" +
                 "by\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
                 "sh\tINT\tfalse\t256\tfalse\t0\tfalse\n" +
@@ -2618,7 +2619,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 "sym\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
                 "l256\tLONG256\tfalse\t256\tfalse\t0\tfalse\n" +
                 "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\n" +
-                "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\n", "show columns from alltypes", null, false, sqlExecutionContext, false, false);
+                "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\n", "show columns from alltypes", null, false, sqlExecutionContext, false);
     }
 
     private void importAndCleanupTable(

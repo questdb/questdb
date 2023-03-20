@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 

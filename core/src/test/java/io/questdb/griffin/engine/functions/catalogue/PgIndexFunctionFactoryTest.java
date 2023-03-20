@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PgIndexFunctionFactoryTest extends AbstractGriffinTest {
@@ -37,7 +37,6 @@ public class PgIndexFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x(a int)",
                 null,
                 false,
-                false,
                 true
         );
     }
@@ -49,7 +48,6 @@ public class PgIndexFunctionFactoryTest extends AbstractGriffinTest {
                 "pg_catalog.pg_index;",
                 "create table x(a int)",
                 null,
-                false,
                 false,
                 true
         );

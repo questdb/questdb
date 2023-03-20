@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 /**
@@ -37,8 +38,14 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     @Test
     public void testSelectAll() throws Exception {
         prepare_unordered_noTs_table();
-
-        assertQueryExpectSize("l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n", "select l from tab");
+        assertQuery(
+                "l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n",
+                "select l from tab",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -125,20 +132,7 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                false,
                 false
-        );
-    }
-
-    private void assertQueryExpectSize(String expected, String query) throws Exception {
-        assertQuery(
-                expected,
-                query,
-                null,
-                null,
-                true,
-                false,
-                true
         );
     }
 

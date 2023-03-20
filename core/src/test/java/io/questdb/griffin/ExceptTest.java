@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class ExceptTest extends AbstractGriffinTest {
@@ -97,7 +98,7 @@ public class ExceptTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -127,7 +128,7 @@ public class ExceptTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("select * from x except y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, true, true, false);
+                assertCursor(expected2, factory, true, false);
             }
         });
     }
@@ -157,7 +158,7 @@ public class ExceptTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -180,7 +181,7 @@ public class ExceptTest extends AbstractGriffinTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x except y except z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, true, true, false);
+                assertCursor(expected2, factory, true, false);
             }
         });
     }

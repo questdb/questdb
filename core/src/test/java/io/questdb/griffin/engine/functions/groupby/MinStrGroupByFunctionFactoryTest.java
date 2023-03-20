@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,7 +44,6 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -59,7 +58,6 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, min(concat(s, s)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );
@@ -76,7 +74,6 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
-                true,
                 true
         );
     }
@@ -90,7 +87,6 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_str('a','a1','a2') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -105,7 +101,6 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
                 null,
                 false,
-                true,
                 true
         );
 
@@ -124,7 +119,6 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select a, min(cast(null as STRING)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
-                true,
                 true,
                 true
         );

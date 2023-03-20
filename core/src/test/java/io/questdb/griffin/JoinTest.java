@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -76,7 +77,7 @@ public class JoinTest extends AbstractGriffinTest {
                 "select a.name, a.age, a.member, b.address, a.ts\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b \n" +
-                        "   on a.ts = b.ts ", null, "ts", false, true, false);
+                        "   on a.ts = b.ts ", null, "ts", false, false);
 
         // query "3"
         assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
@@ -86,7 +87,7 @@ public class JoinTest extends AbstractGriffinTest {
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b \n" +
-                        "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, true, false);
+                        "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, false);
 
         // query "4" - same as "3" but between is replaced with >= and <=
         assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
@@ -96,7 +97,7 @@ public class JoinTest extends AbstractGriffinTest {
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b \n" +
-                        "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)", null, "ts", false, true, false);
+                        "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)", null, "ts", false, false);
     }
 
     @Test
@@ -182,7 +183,6 @@ public class JoinTest extends AbstractGriffinTest {
                 null,
                 "timestamp",
                 false,
-                true,
                 true
         );
     }

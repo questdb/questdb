@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.str.StringSink;
@@ -45,7 +45,15 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     public void testCursor() {
         try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, false, cursor, factory.getMetadata(), false);
+            assertCursor(
+                    toExpectedTableContent(snapshotMetrics()),
+                    false,
+                    true,
+                    false,
+                    cursor,
+                    factory.getMetadata(),
+                    factory.fragmentedSymbolTables()
+            );
         }
     }
 
@@ -85,7 +93,14 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
             try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory()) {
                 for (int i = 0; i < cursorCount; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, false, cursor, factory.getMetadata(), false);
+                        assertCursor(
+                                toExpectedTableContent(snapshotMetrics()),
+                                false,
+                                true,
+                                false,
+                                cursor, factory.getMetadata(),
+                                factory.fragmentedSymbolTables()
+                        );
                     }
                 }
             }
@@ -104,7 +119,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testSql() throws Exception {
-        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from table_writer_metrics()", null, null, null, false, true, true, false, null);
+        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from table_writer_metrics()", null, null, null, false, true, false, null);
     }
 
     private static MetricsSnapshot snapshotMetrics() {

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -33,7 +33,7 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery(
+        assertQuery13(
                 "avg\n" +
                         "5261.376146789\n",
                 "select round(avg(f),9) avg from tab",
@@ -43,7 +43,6 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "avg\n" +
                         "5261.376146789\n",
                 false,
-                true,
                 true
         );
 
@@ -54,14 +53,13 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
                 null,
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\n" +
                         "NaN\n",
                 "select min(f) from tab",
@@ -71,14 +69,13 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "min\n" +
                         "4567866\n",
                 false,
-                true,
                 true
         );
     }
 
     @Test
     public void testMaxIntOrNullThenMaxInt() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "min\n" +
                         "NaN\n",
                 "select min(f) from tab",
@@ -88,7 +85,6 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "min\n" +
                         "2147483647\n",
                 false,
-                true,
                 true
         );
     }
@@ -102,7 +98,6 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table tab as (select rnd_int(-78783, 123239980, 2) f from long_sequence(181))",
                 null,
                 false,
-                true,
                 true
         );
     }

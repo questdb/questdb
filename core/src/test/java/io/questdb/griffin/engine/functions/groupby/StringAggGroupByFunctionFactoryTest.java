@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,7 +41,6 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
-                true,
                 true
         );
     }
@@ -54,7 +53,6 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select string_agg('aaa', ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
-                false,
                 false,
                 true
         );
@@ -91,14 +89,13 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
-                false,
                 true
         );
     }
 
     @Test
     public void testSkipNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "string_agg\n" +
                         "\n",
                 "select string_agg(s, ',') from x",
@@ -107,7 +104,6 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into x select 'abc' from long_sequence(1)",
                 "string_agg\n" +
                         "abc\n",
-                false,
                 false,
                 true
         );

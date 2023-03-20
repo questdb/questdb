@@ -38,6 +38,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.*;
 
 import java.util.HashMap;

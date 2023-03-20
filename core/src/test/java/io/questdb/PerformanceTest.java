@@ -32,6 +32,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;

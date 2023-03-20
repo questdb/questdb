@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

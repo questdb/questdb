@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class GroupByRewriteTest extends AbstractGriffinTest {
@@ -273,7 +274,6 @@ public class GroupByRewriteTest extends AbstractGriffinTest {
                 ddl,
                 null,
                 false,
-                true,
                 true
         );
     }

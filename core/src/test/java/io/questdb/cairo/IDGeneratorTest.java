@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.std.LongList;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 

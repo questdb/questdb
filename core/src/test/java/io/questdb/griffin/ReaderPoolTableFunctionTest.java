@@ -37,6 +37,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -289,7 +290,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
      *
      * @param firstValidator  first validator
      * @param secondValidator second validator
-     * @return true if the first or the 2nd validator returns true and the 1st validator does not throw an exception
+     * @return Validator instance
      */
     private static ReaderPoolRowValidator eitherOf(ReaderPoolRowValidator firstValidator, ReaderPoolRowValidator secondValidator) {
         return (table, owner, txn, timestamp) -> firstValidator.validate(table, owner, txn, timestamp) || secondValidator.validate(table, owner, txn, timestamp);

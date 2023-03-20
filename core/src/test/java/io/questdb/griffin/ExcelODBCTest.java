@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class ExcelODBCTest extends AbstractGriffinTest {
@@ -31,7 +32,7 @@ public class ExcelODBCTest extends AbstractGriffinTest {
     @Test
     public void testGetTableMetaDataQ1() throws SqlException {
         compiler.compile("create table mytab (a int, b float)", sqlExecutionContext);
-        assertQuery(
+        assertQuery12(
                 "nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n" +
                         "public\tmytab\ta\t23\tint4\t1\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n" +
                         "public\tmytab\tb\t700\tfloat4\t2\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n",
@@ -83,14 +84,13 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false,
                 false
         );
     }
 
     @Test
     public void testGetTablesIndexesQ2() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "attname\tattnum\trelname\tnspname\trelname1\n",
                 "select\n" +
                         "  ta.attname,\n" +
@@ -122,14 +122,13 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false,
                 false
         );
     }
 
     @Test
     public void testGetTablesIndexesQ3() throws SqlException {
-        assertQuery(
+        assertQuery12(
                 "attname\tattnum\trelname\tnspname\tNULL\n",
                 "select\n" +
                         " ta.attname,\n" +
@@ -158,7 +157,6 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false,
                 false
         );
     }

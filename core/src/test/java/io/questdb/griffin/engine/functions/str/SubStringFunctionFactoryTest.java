@@ -71,7 +71,6 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 "create table x as (select rnd_str(10,25,1) k from long_sequence(15))",
                 null,
                 true,
-                true,
                 true
         );
     }

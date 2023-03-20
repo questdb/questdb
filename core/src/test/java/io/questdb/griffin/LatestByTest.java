@@ -31,6 +31,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class LatestByTest extends AbstractGriffinTest {
@@ -49,7 +50,7 @@ public class LatestByTest extends AbstractGriffinTest {
                         "  value_decimal BYTE,\n" +
                         "  created_at DATE,\n" +
                         "  ts TIMESTAMP\n" +
-                        ") timestamp(ts) PARTITION BY DAY;", "ts", true, false, false);
+                        ") timestamp(ts) PARTITION BY DAY;", "ts", true, false);
     }
 
     @Test
@@ -385,7 +386,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "from long_sequence(1000000)" +
                     ") timestamp(ts) partition by DAY");
 
-            String distinctSymbols = selectDistinctSym("t", 500, "s");
+            String distinctSymbols = selectDistinctSym();
 
             engine.releaseInactive();
 
@@ -513,7 +514,7 @@ public class LatestByTest extends AbstractGriffinTest {
                         "where s in (select distinct s from a) " +
                         "and s = 'ABC' " +
                         "latest on ts partition by s",
-                "create table a ( i int, s symbol, ts timestamp ) timestamp(ts)", "ts", true, false, false);
+                "create table a ( i int, s symbol, ts timestamp ) timestamp(ts)", "ts", true, false);
     }
 
     @Test
@@ -881,7 +882,7 @@ public class LatestByTest extends AbstractGriffinTest {
             }
         };
 
-        assertQuery("x\ts\tts\n" +
+        assertQuery13("x\ts\tts\n" +
                         "44\tb\t1970-01-02T19:00:00.000000Z\n" +
                         "48\ta\t1970-01-02T23:00:00.000000Z\n",
                 "t " +
@@ -900,7 +901,6 @@ public class LatestByTest extends AbstractGriffinTest {
                         "44\tb\t1970-01-02T19:00:00.000000Z\n" +
                         "1000\tc\t1970-01-02T20:00:00.000000Z\n" +
                         "48\ta\t1970-01-02T23:00:00.000000Z\n",
-                true,
                 true,
                 true);
     }
@@ -997,9 +997,9 @@ public class LatestByTest extends AbstractGriffinTest {
         });
     }
 
-    private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
+    private String selectDistinctSym() throws SqlException {
         StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " order by " + columnName + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select distinct s from t order by s limit " + 500, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 int i = 0;
@@ -1036,7 +1036,6 @@ public class LatestByTest extends AbstractGriffinTest {
                                 "xyz\t1\t42\n",
                         factory,
                         false,
-                        true,
                         false
                 );
             }

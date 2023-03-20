@@ -33,6 +33,8 @@ import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;

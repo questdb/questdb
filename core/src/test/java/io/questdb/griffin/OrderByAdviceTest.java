@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -85,7 +86,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "ABB\t1233285715\n" +
                 "DXR\t1275864035\n";
 
-        assertQuery(
+        assertQuery13(
                 "sym\tspread\n",
                 "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
                 "create table x (\n" +
@@ -102,7 +103,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true,
                 true
         );
     }
@@ -114,7 +114,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "ABB\t0.9809851788419132\n" +
                 "HBC\t0.9940353811420282\n";
 
-        assertQuery(
+        assertQuery13(
                 "sym\tmaxp\n",
                 "select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp",
                 "create table x (\n" +
@@ -129,7 +129,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true,
-                true,
                 true
 
         );
@@ -142,7 +141,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.008427132543617488\n" +
                 "ABB\t0.008444033230580739\n";
 
-        assertQuery(
+        assertQuery13(
                 "sym\tmaxp\n",
                 "select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp",
                 "create table x (\n" +
@@ -157,14 +156,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testNoKeyGroupBy() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "column\nNaN\n",
                 "select sum(price)/count() from x where price>0",
                 "create table x (\n" +
@@ -180,7 +178,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "column\n" +
                         "0.48510032025339733\n",
                 false,
-                true,
                 true
         );
     }
@@ -199,7 +196,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
                 "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
 
-        assertQuery(
+        assertQuery13(
                 "k\tprice\tts\n",
                 "select sym k, price, ts from x order by k, ts desc",
                 "create table x (\n" +
@@ -213,7 +210,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
-                true,
                 true,
                 true
 
@@ -234,7 +230,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t3\n" +
                         "2\t2\n" +
                         "1\t1\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -251,7 +247,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t0003\n" +
                         "2\t0002\n" +
                         "1\t0001\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -268,7 +264,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t00000000000000011\n" +
                         "2\t00000000000000010\n" +
                         "1\t00000000000000001\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -286,7 +282,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t0000003\n" +
                         "2\t0000002\n" +
                         "1\t0000001\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -303,7 +299,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t03\n" +
                         "2\t02\n" +
                         "1\t01\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -347,7 +343,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -370,7 +366,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -384,7 +380,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -398,7 +394,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -412,7 +408,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -426,7 +422,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -440,7 +436,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -463,7 +459,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true, true);
+                true, true);
     }
 
     @Test
@@ -480,7 +476,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "2\t1\t002\n" +
                         "1\t1\t001\n" +
                         "4\t4\t004\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -498,7 +494,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t0000001\th00\n" +
                         "1\t0000001\t001\n" +
                         "2\t1000000\th00\n",
-                true, false, true, false);
+                true, true, false);
     }
 
     @Test
@@ -548,7 +544,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
                 "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
 
-        assertQuery(
+        assertQuery13(
                 "sym\tbid\task\tts\n",
                 "select * from x order by ts desc",
                 "create table x (\n" +
@@ -564,7 +560,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
-                true,
                 true,
                 true
         );
@@ -687,7 +682,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
-                true,
                 true,
                 true
 
@@ -1065,7 +1059,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by DAY",
                 null,
                 true,
-                true,
                 true
 
         );
@@ -1353,7 +1346,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.5716129058692643\t1970-01-03T09:48:00.000000Z\n" +
                 "DXR\t0.05094182589333662\t1970-01-03T09:54:00.000000Z\n";
 
-        assertQuery(
+        assertQuery13(
                 "k\tprice\tts\n",
                 "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'",
                 "create table x (\n" +
@@ -1367,7 +1360,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(100)) timestamp (ts)",
                 expected,
-                true,
                 true,
                 true
 

@@ -24,13 +24,14 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testBooleanIsNotNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n" +
                         "false\n" +
                         "false\n" +
@@ -59,14 +60,13 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "true\n" +
                         "false\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testBooleanIsNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n",
                 "tab_boolean where v is NULL",
                 "create table tab_boolean as (\n" +
@@ -76,7 +76,6 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 "insert into tab_boolean values(NULL)",
                 "v\n",
                 false,
-                true,
                 true
         );
     }
@@ -97,7 +96,7 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testByteIsNotNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n" +
                         "76\n" +
                         "102\n" +
@@ -126,14 +125,13 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "90\n" +
                         "0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testByteIsNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n",
                 "tab_byte where v is NULL",
                 "create table tab_byte as (\n" +
@@ -143,7 +141,6 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 "insert into tab_byte values(NULL)",
                 "v\n",
                 false,
-                true,
                 true
         );
     }
@@ -164,7 +161,7 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testCharIsNotNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n" +
                         "V\n" +
                         "T\n" +
@@ -192,14 +189,13 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "W\n" +
                         "H\n",
                 true,
-                true,
                 false
         );
     }
 
     @Test
     public void testCharIsNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n",
                 "tab_char where v is NULL",
                 "create table tab_char as (\n" +
@@ -208,7 +204,6 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 null,
                 "insert into tab_char values(NULL)",
                 "v\n\n",
-                true,
                 true,
                 false
         );
@@ -230,7 +225,7 @@ public class NullLiteralsTest extends AbstractGriffinTest {
 
     @Test
     public void testShortIsNotNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n" +
                         "-27056\n" +
                         "24814\n" +
@@ -259,14 +254,13 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "30202\n" +
                         "0\n",
                 true,
-                true,
                 true
         );
     }
 
     @Test
     public void testShortIsNull() throws Exception {
-        assertQuery(
+        assertQuery13(
                 "v\n",
                 "tab_short where v is NULL",
                 "create table tab_short as (\n" +
@@ -276,7 +270,6 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 "insert into tab_short values(NULL)",
                 "v\n",
                 false,
-                true,
                 true
         );
     }
