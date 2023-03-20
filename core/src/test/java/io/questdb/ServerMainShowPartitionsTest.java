@@ -315,8 +315,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     }
 
     static {
-        // log is needed to greedily allocate logger infra and
-        // exclude it from leak detector
+        // log is needed to greedily allocate logger
+        // infra and exclude it from leak detector
         LogFactory.getLog(ServerMainShowPartitionsTest.class);
     }
 }
