@@ -39,6 +39,7 @@ import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -50,6 +51,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -171,6 +173,73 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 // fail on first error found
                 for (Throwable t : errors.get()) {
                     Assert.fail(t.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainShowPartitionsTableGetsDeletedMidCursorCheck() throws Exception {
+        String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context0 = executionContext(qdb.getCairoEngine());
+                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context1 = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                CairoEngine engine = qdb.getCairoEngine();
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+
+                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler0, context0, tableName);
+                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
+                assertShowPartitions(finallyExpected, tableToken, compiler0, context0);
+
+                CyclicBarrier start = new CyclicBarrier(2);
+                SOCountDownLatch completed = new SOCountDownLatch(1);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                new Thread(() -> {
+                    try {
+                        start.await();
+                        assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
+                    } catch (Throwable err) {
+                        error.set(err);
+                    } finally {
+                        completed.countDown();
+                    }
+                }).start();
+                start.await();
+
+                if (!isWal) {
+                    try {
+                        dropTable(engine, compiler0, context0, tableToken, false, null);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "[reason='busyReader']");
+                    }
+                } else {
+                    try {
+                        dropTable(engine, compiler0, context0, tableToken, true, null);
+                        Assert.fail();
+                    } catch (AssertionError ignore) {
+                        // noop
+                    }
+                }
+                Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(2L)));
+                if (error.get() != null) {
+                    TestUtils.assertContains(error.get().getMessage(), "table does not exist");
+                }
+                if (!isWal) {
+                    dropTable(engine, compiler0, context0, tableToken, isWal, null);
+                }
+                try {
+                    assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
                 }
             }
         });
