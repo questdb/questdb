@@ -91,13 +91,13 @@ public class TableWriterBenchmark {
     @TearDown(Level.Iteration)
     public void tearDown() {
         writer.commit();
-        writer.truncate(true);
+        writer.truncate();
         writer.close();
         writer2.commit();
-        writer2.truncate(true);
+        writer2.truncate();
         writer2.close();
         writer3.commit();
-        writer3.truncate(true);
+        writer3.truncate();
         writer3.close();
 
         ts = 0;

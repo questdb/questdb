@@ -487,7 +487,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void cleanUp(TableWriter writer) {
         if (targetTableStatus == TableUtils.TABLE_EXISTS && writer != null) {
-            writer.truncate(true);
+            writer.truncate();
         }
     }
 

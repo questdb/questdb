@@ -267,7 +267,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
             if (writer != null) {
                 try {
-                    writer.truncate(true);
+                    writer.truncate();
                 } catch (Throwable th) {
                     LOG.error().$("failed to truncate column version purge log table").$(th).$();
                 }

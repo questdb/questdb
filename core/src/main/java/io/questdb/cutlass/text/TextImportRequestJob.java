@@ -187,7 +187,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     void enforceLogRetention() {
         if (writer != null) {
             if (logRetentionDays < 1) {
-                writer.truncate(true);
+                writer.truncate();
                 return;
             }
             if (writer.getPartitionCount() > 0) {
