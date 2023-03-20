@@ -3050,15 +3050,17 @@ class SqlOptimiser {
             final int dot = Chars.indexOf(col, '.');
             int modelIndex = validateColumnAndGetModelIndex(baseModel, col, dot, node.position);
 
-            if (dot == -1 && baseModel.getJoinModels().size() > 1) {//add alias 
-                CharSequence alias = baseModel.getModelAliasIndexes().keys().get(modelIndex);
+            boolean addAlias = dot == -1 && baseModel.getJoinModels().size() > 1;
+            boolean removeAlias = dot > -1 && baseModel.getJoinModels().size() == 1;
+
+            if (addAlias || removeAlias) {
                 CharacterStoreEntry entry = characterStore.newEntry();
-                entry.put(alias).put('.').put(col);
-                CharSequence prefixedCol = entry.toImmutable();
-                return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
-            } else if (dot > -1 && baseModel.getJoinModels().size() == 1) {//remove alias
-                CharacterStoreEntry entry = characterStore.newEntry();
-                entry.put(col, dot + 1, col.length());
+                if (addAlias) {
+                    CharSequence alias = baseModel.getModelAliasIndexes().keys().get(modelIndex);
+                    entry.put(alias).put('.').put(col);
+                } else {
+                    entry.put(col, dot + 1, col.length());
+                }
                 CharSequence prefixedCol = entry.toImmutable();
                 return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
             }
