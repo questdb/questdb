@@ -54,7 +54,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testConvertLoop2() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -74,7 +74,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -88,7 +88,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -112,7 +112,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonPartitionedToWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createNonPartitionedTable(tableName);
                 insertInto(tableName);
@@ -140,7 +140,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonWalToWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -165,7 +165,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -186,7 +186,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonWalToWalWithDropTable() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -214,7 +214,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -231,7 +231,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testNonWalToWalWithTxn() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
 
@@ -257,7 +257,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 insertInto(tableName);
@@ -279,7 +279,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testSetType() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -304,7 +304,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -335,7 +335,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -358,7 +358,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -377,7 +377,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -406,7 +406,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testWalToNonWal() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -435,7 +435,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
@@ -454,7 +454,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     public void testWalToNonWalWithDropTable() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -487,7 +487,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();

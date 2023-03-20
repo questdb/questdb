@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -33,7 +34,9 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -46,8 +49,10 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
-import java.nio.file.Paths;
-import java.util.*;
+import java.util.Objects;
+import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -64,9 +69,11 @@ public abstract class AbstractBootstrapTest {
     protected static final int PG_PORT = 8822;
     protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     private static final File siteDir = new File(Objects.requireNonNull(ServerMain.class.getResource("/io/questdb/site/")).getFile());
-    protected static CharSequence root;
+    protected static Path auxPath;
+    protected static Path dbPath;
+    protected static int dbPathLen;
+    protected static String rootDir;
     private static boolean publicZipStubCreated = false;
-
     @Rule
     public TestName testName = new TestName();
 
@@ -85,7 +92,10 @@ public abstract class AbstractBootstrapTest {
             publicZipStubCreated = true;
         }
         try {
-            root = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
+            rootDir = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
+            dbPath = new Path().of(rootDir).concat(PropServerConfiguration.DB_DIRECTORY).$();
+            dbPathLen = dbPath.length();
+            auxPath = new Path();
         } catch (IOException e) {
             throw new ExceptionInInitializerError();
         }
@@ -99,8 +109,8 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
-        Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Misc.free(dbPath);
+        Misc.free(auxPath);
         temp.delete();
     }
 
@@ -110,7 +120,7 @@ public abstract class AbstractBootstrapTest {
             int pgPort,
             int ilpPort,
             String... extra) throws Exception {
-        final String confPath = root.toString() + Files.SEPARATOR + "conf";
+        final String confPath = rootDir + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
@@ -175,34 +185,6 @@ public abstract class AbstractBootstrapTest {
         createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
     }
 
-    static void deleteFolder(String folderName, boolean mustExist) {
-        File directory = Paths.get(folderName).toFile();
-        if (directory.exists() && directory.isDirectory()) {
-            Deque<File> directories = new LinkedList<>();
-            directories.offer(directory);
-            while (!directories.isEmpty()) {
-                File root = directories.pop();
-                File[] content = root.listFiles();
-                if (content == null || content.length == 0) {
-                    root.delete();
-                } else {
-                    for (File f : content) {
-                        File target = f.getAbsoluteFile();
-                        if (target.isFile()) {
-                            target.delete();
-                        } else if (target.isDirectory()) {
-                            directories.offer(target);
-                        }
-                    }
-                    directories.offer(root);
-                }
-            }
-            Assert.assertFalse(directory.exists());
-        } else if (mustExist) {
-            Assert.fail("does not exist: " + folderName);
-        }
-    }
-
     protected static void drainWalQueue(CairoEngine engine) {
         try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
             walApplyJob.drain(0);
@@ -255,16 +237,40 @@ public abstract class AbstractBootstrapTest {
             boolean isWal,
             @Nullable String otherVolume
     ) throws Exception {
+        SOCountDownLatch tableDropped = new SOCountDownLatch(1);
+        if (isWal) {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                if (token != null && token.equals(tableToken) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_LOCK_CLOSE) {
+                    tableDropped.countDown();
+                }
+            });
+        } else {
+            tableDropped.countDown();
+        }
         try (OperationFuture op = compiler.compile("DROP TABLE " + tableToken.getTableName(), context).execute(null)) {
             op.await();
         }
         if (isWal) {
             drainWalQueue(engine);
         }
+        Assert.assertTrue(tableDropped.await(TimeUnit.SECONDS.toNanos(2L)));
         if (otherVolume != null) {
-            // drop simply unlinks, the folder remains, it is a feature
-            // delete the table's folder in the other volume
-            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            auxPath.of(otherVolume).concat(tableToken.getDirName()).$();
+            if (Files.exists(auxPath)) {
+                Assert.assertEquals(0, Files.rmdir(auxPath));
+                auxPath.of(dbPath).trimTo(dbPathLen).concat(tableToken.getDirName()).$();
+                boolean exists = Files.exists(auxPath);
+                boolean isSoftLink = Files.isSoftLink(auxPath);
+                Assert.assertTrue(!exists || isSoftLink);
+                if (isSoftLink) {
+                    Assert.assertEquals(0, Files.unlink(auxPath));
+                }
+            }
+        }
+        if (isWal) {
+            engine.setPoolListener(null);
         }
     }
 

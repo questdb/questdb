@@ -39,7 +39,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static io.questdb.griffin.AlterTableSetTypeTest.NON_WAL;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRestartTest {
 
@@ -69,7 +70,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 }
             };
 
-            final Bootstrap bootstrap = new Bootstrap(null, System.getenv(), filesFacade, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            final Bootstrap bootstrap = new Bootstrap(null, System.getenv(), filesFacade, "-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
             try (final ServerMain questdb = new TestServerMain(bootstrap)) {
                 questdb.start();
                 createTable(tableName, "WAL");
@@ -110,7 +111,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();

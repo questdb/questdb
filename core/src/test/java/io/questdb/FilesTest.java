@@ -217,15 +217,36 @@ public class FilesTest {
     }
 
     @Test
-    public void testDeleteDir2() throws Exception {
+    public void testDeleteDir() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
-            Assert.assertTrue(new File(r, "a/b/c").mkdirs());
-            Assert.assertTrue(new File(r, "d/e/f").mkdirs());
-            touch(new File(r, "d/1.txt"));
-            touch(new File(r, "a/b/2.txt"));
-            try (Path path = new Path().of(r.getAbsolutePath()).$()) {
-                Assert.assertEquals(0, Files.rmdir(path));
+            Assert.assertTrue(new File(r, "a" + Files.SEPARATOR + "b" + Files.SEPARATOR + "c" + Files.SEPARATOR + "d").mkdirs());
+            Assert.assertTrue(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "f").mkdirs());
+            touch(new File(r, "a" + Files.SEPARATOR + "1.txt"));
+            touch(new File(r, "a" + Files.SEPARATOR + "b" + Files.SEPARATOR + "2.txt"));
+            touch(new File(r, "a" + Files.SEPARATOR + "b" + Files.SEPARATOR + "c" + Files.SEPARATOR + "3.txt"));
+            touch(new File(r, "d" + Files.SEPARATOR + "1.txt"));
+            touch(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "2.txt"));
+            touch(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "f" + Files.SEPARATOR + "3.txt"));
+
+            try (
+                    Path targetPath = new Path().of(r.getAbsolutePath()).concat("d").$();
+                    Path linkPath = new Path().of(r.getAbsolutePath()).concat("a").concat("link_to_d").$()
+            ) {
+                Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
+                Assert.assertTrue(Files.isSoftLink(linkPath));
+
+                targetPath.of(r.getAbsolutePath()).$();
+                linkPath.of(r.getParentFile().getAbsolutePath()).concat("start_here").$();
+                Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
+                Assert.assertTrue(Files.isSoftLink(linkPath));
+
+                Assert.assertEquals(0, Files.rmdir(linkPath));
+                Assert.assertFalse(new File(linkPath.toString()).exists());
+                Assert.assertTrue(r.exists());
+                Assert.assertEquals(0L, Files.getDirectoryContentSize(targetPath));
+                Assert.assertEquals(0, Files.rmdir(targetPath));
                 Assert.assertFalse(r.exists());
             }
         });

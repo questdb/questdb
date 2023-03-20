@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
+import org.jetbrains.annotations.TestOnly;
 
 @FunctionalInterface
 public interface PoolListener {
@@ -49,6 +50,64 @@ public interface PoolListener {
     byte SRC_READER = 2;
     byte SRC_WAL_WRITER = 4;
     byte SRC_WRITER = 1;
+
+    @TestOnly
+    static String eventName(short ev) {
+        switch (ev) {
+            case EV_RETURN:
+                return "EV_RETURN";
+            case EV_OUT_OF_POOL_CLOSE:
+                return "EV_OUT_OF_POOL_CLOSE";
+            case EV_UNEXPECTED_CLOSE:
+                return "EV_UNEXPECTED_CLOSE";
+            case EV_LOCK_SUCCESS:
+                return "EV_LOCK_SUCCESS";
+            case EV_LOCK_BUSY:
+                return "EV_LOCK_BUSY";
+            case EV_UNLOCKED:
+                return "EV_UNLOCKED";
+            case EV_NOT_LOCKED:
+                return "EV_NOT_LOCKED";
+            case EV_CREATE:
+                return "EV_CREATE";
+            case EV_GET:
+                return "EV_GET";
+            case EV_NOT_LOCK_OWNER:
+                return "EV_NOT_LOCK_OWNER";
+            case EV_CREATE_EX:
+                return "EV_CREATE_EX";
+            case EV_EXPIRE:
+                return "EV_EXPIRE";
+            case EV_LOCK_CLOSE:
+                return "EV_LOCK_CLOSE";
+            case EV_EX_RESEND:
+                return "EV_EX_RESEND";
+            case EV_POOL_OPEN:
+                return "EV_POOL_OPEN";
+            case EV_POOL_CLOSED:
+                return "EV_POOL_CLOSED";
+            case EV_FULL:
+                return "EV_FULL";
+            default:
+                throw new IllegalArgumentException();
+        }
+    }
+
+    @TestOnly
+    static String factoryName(byte factory) {
+        switch (factory) {
+            case SRC_METADATA:
+                return "SRC_METADATA";
+            case SRC_READER:
+                return "SRC_READER";
+            case SRC_WAL_WRITER:
+                return "SRC_WAL_WRITER";
+            case SRC_WRITER:
+                return "SRC_WRITER";
+            default:
+                throw new IllegalArgumentException();
+        }
+    }
 
     static boolean isWalOrWriter(byte factoryType) {
         return factoryType == PoolListener.SRC_WRITER || factoryType == PoolListener.SRC_WAL_WRITER;

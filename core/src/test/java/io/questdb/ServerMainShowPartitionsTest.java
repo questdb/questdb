@@ -38,7 +38,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -79,8 +78,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     private static final int partitionCount = 11;
     private static final int pgPortDelta = 11;
     private static final int pgPort = PG_PORT + pgPortDelta;
-    private static Path path;
-
     private final boolean isWal;
     private final String tableNameSuffix;
 
@@ -102,18 +99,16 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        path = new Path().of(root).concat("db").$();
-        int pathLen = path.length();
         try {
-            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
-            Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
+            Files.remove(dbPath.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(dbPath.trimTo(dbPathLen).concat("telemetry_config.lock").$());
             createDummyConfiguration(
                     HTTP_PORT + pgPortDelta,
                     HTTP_MIN_PORT + pgPortDelta,
                     pgPort,
                     ILP_PORT + pgPortDelta,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
-            path.parent().$();
+            dbPath.parent().$();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -121,7 +116,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        Misc.free(path);
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -130,7 +124,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext defaultContext = executionContext(qdb.getCairoEngine())
             ) {
@@ -140,7 +134,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
 
-                String finallyExpected = replaceSizeToMatchOS(EXPECTED, path, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
+                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
                 assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
                 int numThreads = 5;

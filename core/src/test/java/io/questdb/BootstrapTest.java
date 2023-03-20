@@ -51,16 +51,15 @@ public class BootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testExtractSite() throws Exception {
         createDummyConfiguration();
-        try (Path path = new Path().of(root)) {
-            int plen = path.length();
-            Bootstrap bootstrap = new Bootstrap(new String[]{"-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION});
-            Assert.assertNotNull(bootstrap.getLog());
-            Assert.assertNotNull(bootstrap.getConfiguration());
-            Assert.assertNotNull(bootstrap.getMetrics());
-            bootstrap.extractSite();
-            Assert.assertTrue(Files.exists(path.trimTo(plen).concat("public").concat("version.txt").$()));
-            Assert.assertTrue(Files.exists(path.trimTo(plen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
-        }
+        auxPath.of(rootDir).$();
+        int plen = auxPath.length();
+        Bootstrap bootstrap = new Bootstrap("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+        Assert.assertNotNull(bootstrap.getLog());
+        Assert.assertNotNull(bootstrap.getConfiguration());
+        Assert.assertNotNull(bootstrap.getMetrics());
+        bootstrap.extractSite();
+        Assert.assertTrue(Files.exists(auxPath.concat("public").concat("version.txt").$()));
+        Assert.assertTrue(Files.exists(auxPath.trimTo(plen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
     }
 
     @Test
@@ -114,12 +113,11 @@ public class BootstrapTest extends AbstractBootstrapTest {
             Log logger = factory.create("x");
 
             // create crash files
-            try (Path path = new Path().of(temp.getRoot().getAbsolutePath())) {
-                int plen = path.length();
-                Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
-                Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
-                Files.mkdirs(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
-            }
+            auxPath.of(temp.getRoot().getAbsolutePath()).$();
+            int plen = auxPath.length();
+            Files.touch(auxPath.concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
+            Files.touch(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
+            Files.mkdirs(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
 
             Bootstrap.reportCrashFiles(configuration, logger);
 

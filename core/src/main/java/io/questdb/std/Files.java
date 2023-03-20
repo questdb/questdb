@@ -408,41 +408,40 @@ public final class Files {
     }
 
     public static int rmdir(Path path) {
-        long p = findFirst(path.address());
-        int len = path.length();
-        int errno = -1;
-        if (p > 0) {
+        long pathUtf8Ptr = path.address();
+        long pFind = findFirst(pathUtf8Ptr);
+        if (pFind > 0L) {
+            int len = path.length();
+            int errno;
+            long nameUtf8Ptr;
             try {
                 do {
-                    long lpszName = findName(p);
-                    path.trimTo(len).concat(lpszName).$();
-                    if (findType(p) == DT_DIR) {
-                        if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
-                            continue;
+                    nameUtf8Ptr = findName(pFind);
+                    Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
+                    path.$();
+                    if (findType(pFind) == Files.DT_FILE) {
+                        if (!remove(pathUtf8Ptr)) {
+                            return Os.errno();
                         }
-
-                        if ((errno = rmdir(path)) == 0) {
-                            continue;
+                    } else if (notDots(nameUtf8Ptr)) {
+                        errno = isSoftLink(pathUtf8Ptr) ? unlink(pathUtf8Ptr) : rmdir(path);
+                        if (errno != 0) {
+                            return errno;
                         }
-
-                    } else {
-                        if ((remove(path.address()))) {
-                            continue;
-                        }
-                        errno = Os.errno();
                     }
-                    return errno;
-                } while (findNext(p) > 0);
+                }
+                while (findNext(pFind) > 0);
             } finally {
-                findClose(p);
+                findClose(pFind);
+                path.trimTo(len).$();
             }
-            if (rmdir(path.trimTo(len).$().address())) {
+            if (isSoftLink(pathUtf8Ptr)) {
+                return unlink(pathUtf8Ptr);
+            } else if (rmdir(pathUtf8Ptr)) {
                 return 0;
             }
-            return Os.errno();
         }
-
-        return errno;
+        return Os.errno();
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {

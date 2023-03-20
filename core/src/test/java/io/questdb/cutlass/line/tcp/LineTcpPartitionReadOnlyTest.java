@@ -183,7 +183,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     ) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
                             AllowAllCairoSecurityContext.INSTANCE,
