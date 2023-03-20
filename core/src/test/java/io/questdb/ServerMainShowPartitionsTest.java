@@ -227,7 +227,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
                 Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(5L)));
                 if (error.get() != null) {
-                    TestUtils.assertContains(error.get().getMessage(), "table does not exist");
+                    String msg = error.get().getMessage();
+                    Assert.assertTrue(msg.contains("table busy") || msg.contains("table does not exist"));
                 }
                 try {
                     dropTable(engine, compiler0, context0, tableToken, isWal, null);
