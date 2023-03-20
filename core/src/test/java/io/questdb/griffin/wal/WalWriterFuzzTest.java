@@ -198,7 +198,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int tableCount = Math.max(2, rnd.nextInt(10));
+        int tableCount = Math.max(2, rnd.nextInt(5));
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
         setFuzzCounts(
                 true,
@@ -481,6 +481,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
 
         applyNonWal(transactions, tableNameNoWal);
+
+        // Release TW to reduce memory pressure
+        engine.releaseInactive();
+
         return transactions;
     }
 
