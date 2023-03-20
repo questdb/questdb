@@ -41,6 +41,7 @@ import java.util.Map;
 
 public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
+    public final static String NO_LOCK_REASON = "unknown";
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
@@ -72,7 +73,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$('\'').utf8(tableToken.getDirName()).$("' is locked [owner=").$(lockOwner).$(']').$();
-            throw EntryLockedException.instance("unknown");
+            throw EntryLockedException.instance(NO_LOCK_REASON);
         }
 
         do {
@@ -126,7 +127,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         // max entries exceeded
         notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
         LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
-        throw EntryUnavailableException.instance("unknown");
+        throw EntryUnavailableException.instance(NO_LOCK_REASON);
     }
 
     public int getBusyCount() {

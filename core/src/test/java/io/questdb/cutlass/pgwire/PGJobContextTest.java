@@ -56,11 +56,14 @@ import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
+import org.postgresql.core.Tuple;
+import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
@@ -1414,33 +1417,8 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testBindVariableInFilter() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT), (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts) partition by YEAR").execute();
-            connection.prepareStatement("insert into x values (100, 0)").execute();
-            connection.prepareStatement("insert into x values (101, 1)").execute();
-            connection.prepareStatement("insert into x values (102, 2)").execute();
-            connection.prepareStatement("insert into x values (103, 3)").execute();
-            connection.commit();
-
-            mayDrainWalQueue();
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
-                ps.setLong(1, 0);
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "l[BIGINT],ts[TIMESTAMP]\n" +
-                                    "100,1970-01-01 00:00:00.0\n" +
-                                    "101,1970-01-01 00:00:00.000001\n" +
-                                    "102,1970-01-01 00:00:00.000002\n" +
-                                    "103,1970-01-01 00:00:00.000003\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
+    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
+        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
     }
 
     @Test
@@ -1454,51 +1432,8 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
-        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
-    }
-
-    @Test
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
-    }
-
-    private void testBindVariableDropLastPartitionListWithDatePrecision(int partitionBy) throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY " + PartitionBy.toString(partitionBy)).execute();
-            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
-            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
-            connection.commit();
-            mayDrainWalQueue();
-            try (
-                    PreparedStatement select = connection.prepareStatement("SELECT date FROM x WHERE ts = '2023-02-11T11:12:22.116234Z'");
-                    ResultSet rs = select.executeQuery();
-                    PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")
-            ) {
-                Assert.assertTrue(rs.next());
-                dropPartition.setDate(1, rs.getDate("date"));
-                Assert.assertFalse(dropPartition.execute());
-            }
-            mayDrainWalQueue();
-            try (
-                    PreparedStatement select = connection.prepareStatement("x");
-                    ResultSet rs = select.executeQuery()
-            ) {
-                sink.clear();
-                assertResultSet(
-                        "l[BIGINT],ts[TIMESTAMP],date[TIMESTAMP]\n" +
-                                "14,2023-03-21 03:52:00.999999,2023-03-21 00:00:00.0\n",
-                        sink,
-                        rs
-                );
-            }
-        };
-        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
     }
 
     @Test
@@ -1533,6 +1468,36 @@ if __name__ == "__main__":
         assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
         assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
         assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
+    }
+
+    @Test
+    public void testBindVariableInFilter() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT), (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts) partition by YEAR").execute();
+            connection.prepareStatement("insert into x values (100, 0)").execute();
+            connection.prepareStatement("insert into x values (101, 1)").execute();
+            connection.prepareStatement("insert into x values (102, 2)").execute();
+            connection.prepareStatement("insert into x values (103, 3)").execute();
+            connection.commit();
+
+            mayDrainWalQueue();
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
+                ps.setLong(1, 0);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "l[BIGINT],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "101,1970-01-01 00:00:00.000001\n" +
+                                    "102,1970-01-01 00:00:00.000002\n" +
+                                    "103,1970-01-01 00:00:00.000003\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -2155,7 +2120,7 @@ if __name__ == "__main__":
         // This test doesn't use partitioned tables.
         Assume.assumeFalse(walEnabled);
 
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
             int fetchSize = 993;
@@ -2362,7 +2327,6 @@ if __name__ == "__main__":
         });
     }
 
-
     @Test
     public void testExplainPlanWithWhitespaces() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -2405,6 +2369,125 @@ if __name__ == "__main__":
                 TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
             }
         });
+    }
+
+    @Test// fetch works only in extended query mode 
+    public void testFetch10RowsAtaTime() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement(
+                    "create table xx as (" +
+                            "select x " +
+                            " from long_sequence(100000) )")) {
+                pstmt.execute();
+            }
+            int count = 0;
+            try (PreparedStatement statement = connection.prepareStatement("select * from xx limit 100")) {
+                statement.setFetchSize(10);
+                try (ResultSet rs = statement.executeQuery()) {
+                    List<Tuple> rows = getRows(rs);
+                    Assert.assertEquals(10, rows.size());
+                    while (rs.next()) {
+                        Assert.assertEquals(++count, rs.getRow());
+                    }
+                }
+            }
+
+            Assert.assertEquals(100, count);
+        });
+    }
+
+    /*
+    Tests simple query fetched 1 row at a time, with flush commands in between as done by following node.js code: 
+    "use strict"
+    
+    const { Client, types } = require("pg")
+    const QueryStream = require('pg-query-stream')
+    const JSONStream = require('JSONStream')
+    
+    const start = async () => {
+        const client = new Client({
+            database: "qdb",
+            host: "127.0.0.1",
+            password: "quest",
+            port: 8812,
+            user: "admin",
+        })
+        await client.connect()
+    
+        const res = await client.query('SELECT * FROM long_sequence(5)')
+        console.log(res.rows)
+    
+        const query = new QueryStream('SELECT * FROM long_sequence(5)',[],
+            {   batchSize: 1,
+                types: {
+                    getTypeParser: (dataTypeID, format) => {
+                        return types.getTypeParser(dataTypeID, format)
+                    },
+                }
+            }
+        )
+        const stream = client.query(query)
+        stream.pipe(JSONStream.stringify()).pipe(process.stdout)
+    
+        // release the client when the stream is finished
+        const streamEndPromise = deferredPromise()
+        stream.on('end', streamEndPromise.resolve)
+        stream.on('error', streamEndPromise.reject)
+    
+        await streamEndPromise
+        client.end()
+    }
+    
+    function deferredPromise() {
+        let resolve, reject
+        const p = new Promise((_resolve, _reject) => {
+            resolve = _resolve
+            reject = _reject
+        })
+        p.resolve = resolve
+        p.reject = reject
+        return p
+    }
+    
+    start()
+        .then(() => console.log('Done'))
+        .catch(console.error)    
+    */
+    @Test
+    public void testFetch1RowAtaTimeWithFlushInBetween() throws Exception {
+        assertHexScript(">0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">510000002353454c454354202a2046524f4d206c6f6e675f73657175656e636528352900\n" +
+                "<540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c4543542035005a0000000549\n" +
+                ">50000000260053454c454354202a2046524f4d206c6f6e675f73657175656e6365283529000000\n" +
+                ">420000000f435f310000000000000000\n" +
+                ">440000000950435f3100\n" +
+                ">4800000004\n" +
+                "<31000000043200000004540000001a00017800000000000001000000140008ffffffff0000\n" +
+                ">450000000c435f310000000001\n" +
+                ">4800000004\n" +
+                "<440000000b000100000001317300000004\n" +
+                ">450000000c435f310000000001\n" +
+                ">4800000004\n" +
+                "<440000000b000100000001327300000004\n" +
+                ">450000000c435f3100000000014800000004\n" +
+                "<440000000b000100000001337300000004\n" +
+                ">450000000c435f310000000001\n" +
+                ">4800000004\n" +
+                "<440000000b000100000001347300000004\n" +
+                ">450000000c435f310000000001\n" +
+                ">4800000004\n" +
+                "<440000000b000100000001357300000004\n" +
+                ">450000000c435f310000000001\n" +
+                ">4800000004\n" +
+                "<430000000d53454c454354203000\n" +
+                ">430000000950435f3100\n" +
+                ">5300000004\n" +
+                "<33000000045a0000000549\n" +
+                ">5800000004\n");
     }
 
     @Test
@@ -4055,6 +4138,24 @@ nodejs code:
     }
 
     @Test
+    public void testLimitWithBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement(
+                    "create table xx as ( select x from long_sequence(1000) )")) {
+                pstmt.execute();
+            }
+            try (PreparedStatement statement = connection.prepareStatement("select * from xx limit ?")) {
+                statement.setLong(1, 5);
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("x[BIGINT]\n1\n2\n3\n4\n5\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLocalCopyFrom() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -4439,6 +4540,69 @@ nodejs code:
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
+    }
+
+    @Test
+    public void testNoDataAndEmptyQueryResponsesHex_simpleTextProtocol() throws Exception {
+        /**
+         * go.mod:
+         * module testquestpg
+         *
+         * go 1.19
+         *
+         * require github.com/lib/pq v1.10.7 // indirect
+         *
+         * main.go:
+         *package main
+         *
+         * import (
+         * 	"database/sql"
+         * 	"fmt"
+         * 	_ "github.com/lib/pq"
+         * )
+         *
+         * const (
+         * 	host     = "localhost"
+         * 	port     = 8812
+         * 	user     = "xyz"
+         * 	password = "oh"
+         * 	dbname   = "qdb"
+         * )
+         *
+         * func main() {
+         * 	psqlconn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+         *
+         * 	db, err := sql.Open("postgres", psqlconn)
+         * 	if err != nil {
+         * 		panic(err)
+         *        }
+         *
+         * 	err = db.Ping()
+         * 	if err != nil {
+         * 		panic(err)
+         *    }
+         *
+         * 	db.Close()
+         * }
+         *
+         *
+         */
+
+        // db.Ping() in the golang program above uses the simple text protocol to execute ";" as a query
+        // we need to make sure that we respond with an empty query response
+        String script = ">0000005c00030000636c69656e745f656e636f64696e6700555446380065787472615f666c6f61745f646967697473003200646174657374796c650049534f2c204d445900757365720078797a006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">51000000063b00\n" +
+                "<49000000045a0000000549\n" +
+                ">5800000004";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -6456,13 +6620,13 @@ create table tab as (
         );
     }
 
-    /* asyncqp.py
+    /* asyncqp.py - bind variable in where clause.
+       Unlike jdbc driver, Asyncpg doesn't pass parameter types in Parse message and relies on types returned in ParameterDescription.
     import asyncio
     import asyncpg
 
     async def run():
-        conn = await asyncpg.connect(user='xyz', password='oh',
-                                     database='postgres', host='127.0.0.1')
+        conn = await asyncpg.connect(user='xyz', password='oh', database='postgres', host='127.0.0.1')
         s = """
                 select * from 'tab2' where a > $1
                 LIMIT 100
@@ -6498,6 +6662,46 @@ create table tab as (
                 script,
                 getHexPgWireConfig()
         );
+    }
+
+    /* asyncqp.py - bind variable appear both in select and where clause
+       Unlike jdbc driver, Asyncpg doesn't pass parameter types in Parse message and relies on types returned in ParameterDescription.
+      
+    import asyncio
+    import asyncpg
+    
+    async def run():
+        conn = await asyncpg.connect(user='xyz', password='oh', database='postgres', host='127.0.0.1')
+        s = """
+                select $1, * from 'tab2' where a > $1 LIMIT 100
+            """
+        values = await conn.fetch(s, 'oh' 0.4)
+        await conn.close()
+    
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run())
+     */
+    @Test//bind variables make sense in extended mode only 
+    public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+
+        compiler.compile("create table tab2 (a double);", sqlExecutionContext);
+        executeInsert("insert into 'tab2' values (0.7);");
+        executeInsert("insert into 'tab2' values (0.2);");
+        engine.clear();
+
+        final String script = ">0000000804d2162f\n" +
+                "<4e\n" +
+                ">0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">50000000665f5f6173796e6370675f73746d745f315f5f000a202020202020202020202073656c6563742024312c2a2066726f6d20746162322077686572652061203e2024320a20202020202020202020204c494d4954203130300a20202020202020200000004400000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
+                "<3100000004740000000e000200000413000002bd540000002f000224310000000000000100000413ffffffffffff00006100000000000002000002bd0008ffffffff0000\n" +
+                ">4200000036005f5f6173796e6370675f73746d745f315f5f000002000100010002000000026f68000000083fd999999999999a00010001450000000900000000005300000004\n" +
+                "<320000000444000000180002000000026f68000000083fe6666666666666430000000d53454c4543542031005a0000000549\n" +
+                ">5800000004\n";
+        assertHexScript(script);
     }
 
     @Test
@@ -7514,6 +7718,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
@@ -7550,10 +7758,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdate() throws Exception {
@@ -7607,6 +7811,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -7685,10 +7893,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
@@ -8375,6 +8579,20 @@ create table tab as (
         );
     }
 
+    private List<Tuple> getRows(ResultSet rs) {
+        try {
+            Field field = PgResultSet.class.getDeclaredField("rows");
+
+            if (!field.isAccessible()) {
+                field.setAccessible(true);
+            }
+            field.setAccessible(true);
+            return (List<Tuple>) field.get(rs);
+        } catch (IllegalAccessException | NoSuchFieldException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -8739,6 +8957,44 @@ create table tab as (
                 }
             }
         });
+    }
+
+    private void testBindVariableDropLastPartitionListWithDatePrecision(int partitionBy) throws Exception {
+        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY " + PartitionBy.toString(partitionBy)).execute();
+            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+            connection.commit();
+            mayDrainWalQueue();
+            try (
+                    PreparedStatement select = connection.prepareStatement("SELECT date FROM x WHERE ts = '2023-02-11T11:12:22.116234Z'");
+                    ResultSet rs = select.executeQuery();
+                    PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")
+            ) {
+                Assert.assertTrue(rs.next());
+                dropPartition.setDate(1, rs.getDate("date"));
+                Assert.assertFalse(dropPartition.execute());
+            }
+            mayDrainWalQueue();
+            try (
+                    PreparedStatement select = connection.prepareStatement("x");
+                    ResultSet rs = select.executeQuery()
+            ) {
+                sink.clear();
+                assertResultSet(
+                        "l[BIGINT],ts[TIMESTAMP],date[TIMESTAMP]\n" +
+                                "14,2023-03-21 03:52:00.999999,2023-03-21 00:00:00.0\n",
+                        sink,
+                        rs
+                );
+            }
+        };
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
     }
 
     private void testBindVariableIsNotNull(boolean binary) throws Exception {

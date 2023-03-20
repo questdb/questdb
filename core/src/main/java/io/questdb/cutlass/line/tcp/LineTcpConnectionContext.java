@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitFailedException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -125,6 +126,15 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
                     if (tableNextCommitTime < minTableNextCommitTime) {
                         // taking the earliest commit time
                         minTableNextCommitTime = tableNextCommitTime;
+                    }
+                } catch (CommitFailedException ex) {
+                    if (ex.isTableDropped()) {
+                        // table dropped, nothing to worry about
+                        LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableNameUtf16()).I$();
+                        tud.setWriterInError();
+                        tud.releaseWriter(false);
+                    } else {
+                        LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
                     }
                 } catch (Throwable ex) {
                     LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
@@ -234,7 +244,9 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
         try {
-            return parseMeasurements(netIoJob);
+            IOContextResult parasResult = parseMeasurements(netIoJob);
+            doMaintenance(milliClock.getTicks());
+            return parasResult;
         } finally {
             netIoJob.releaseWalTableDetails();
         }
