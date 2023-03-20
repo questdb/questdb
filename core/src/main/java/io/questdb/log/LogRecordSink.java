@@ -34,9 +34,9 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     protected final long address;
     protected final long lim;
     protected long _wptr;
+    private boolean done = false;
     private int level;
     private int multibyteLength = 0;
-    private boolean done = false;
 
     LogRecordSink(long address, long addressSize) {
         this.address = _wptr = address;
@@ -82,26 +82,46 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(char c) {
-        if (done) {
+        final long left = lim - _wptr;
+        byte b = (byte) c;
+        if (left >= 4) {  // 4 is the maximum byte length for a UTF-8 character.
+            Unsafe.getUnsafe().putByte(_wptr++, b);
             return this;
         }
 
-        final long left = lim - _wptr;
-        byte b = (byte) c;
+        // We're now down to the last few bytes of the line.
+        // As such we need to be careful not to write a partial UTF-8 character.
+
+        if (done) {
+            // If we've detected a character that is too long for the buffer,
+            // then we need to stop processing any later characters.
+            // In other words, we want to truncate the log line, not skip over the characters that don't fit.
+            //
+            // Take the following string:
+            //     >>> "I'd like some apple π!".encode('utf-8')
+            //     b"I'd like some apple \xcf\x80!"
+            //     >>> len(_)
+            //     23
+            //
+            // Encoded, it's 23 bytes. Let's assume that the buffer is only 22 bytes.
+            // Without the `done` flag it would serialize out as: "I'd like some apple !"
+            // writing the "!" character as there would have been enough space for it.
+            return this;
+        }
+
         long needed = utf8charNeeded(b);
         if (needed < 1) {
-            // Invalid UTF-8 byte, sentinel replacement.
+            // Invalid UTF-8 byte, sentinel replacement -- this should never happen in practice.
             b = (byte) '?';
             needed = 1;
         }
 
         if (left >= needed) {
             Unsafe.getUnsafe().putByte(_wptr++, b);
-        }
-        else {
-            // Stop processing any further characters.
+        } else {
             done = true;
         }
+
         return this;
     }
 
