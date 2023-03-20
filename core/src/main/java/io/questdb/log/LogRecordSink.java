@@ -204,6 +204,8 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
                 int multibyteLength = UTF8_BYTE_CLASS_BAD;
                 long ptr = _wptr - 1;
                 final long boundary = Math.max(address, _wptr - 4);
+
+                lookback:
                 for (; ptr >= boundary; --ptr) {
                     byte prev = Unsafe.getUnsafe().getByte(ptr);
                     multibyteLength = utf8byteClass(prev);
@@ -213,7 +215,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
                         case UTF8_BYTE_CLASS_CONTINUATION:
                             continue;
                         default:
-                            break;
+                            break lookback;
                     }
                 }
 
