@@ -349,19 +349,13 @@ final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
 
-                boolean symTableContainsNull = false;
                 switch (ColumnType.tagOf(m.getColumnType(index))) {
                     case ColumnType.SYMBOL:
-                        symTableContainsNull = reader.getSymbolMapReader(index).containsNullValue();
-                        // fall through
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
                         if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                            if (symTableContainsNull && value != null && value.length() == 0) {
-                                value = null;
-                            }
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
@@ -903,19 +897,13 @@ final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
 
-                boolean symTableContainsNull = false;
                 switch (ColumnType.tagOf(m.getColumnType(index))) {
                     case ColumnType.SYMBOL:
-                        symTableContainsNull = reader.getSymbolMapReader(index).containsNullValue();
-                        // fall through
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
                         if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                            if (symTableContainsNull && value != null && value.length() == 0) {
-                                value = null;
-                            }
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
