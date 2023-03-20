@@ -84,11 +84,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LagCalculationWindowsSize() {
-        return conf.getO3LagCalculationWindowsSize();
-    }
-
-    @Override
     public CharSequence getBackupTempDirName() {
         return conf.getBackupTempDirName();
     }
@@ -359,8 +354,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LagCalculationWindowsSize() {
+        return conf.getO3LagCalculationWindowsSize();
+    }
+
+    @Override
     public long getO3MaxLag() {
         return conf.getO3MaxLag();
+    }
+
+    @Override
+    public int getO3MemMaxPages() {
+        return conf.getO3MemMaxPages();
     }
 
     @Override

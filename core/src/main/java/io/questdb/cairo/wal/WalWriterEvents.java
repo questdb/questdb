@@ -183,6 +183,7 @@ class WalWriterEvents implements Closeable {
                     int symbolCount = 0;
                     for (int j = 0; j < size; j++) {
                         final CharSequence symbol = symbolMap.keys().getQuick(j);
+                        assert symbol != null;
                         final int value = symbolMap.get(symbol);
                         // Ignore symbols cached from symbolMapReader
                         if (value >= initialCount) {

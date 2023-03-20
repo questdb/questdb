@@ -116,7 +116,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             );
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                if (cc.getType() == CompiledQuery.SELECT) {
+                if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                     state.recordCursorFactory = cc.getRecordCursorFactory();
                 } else if (isExpRequest) {
                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");

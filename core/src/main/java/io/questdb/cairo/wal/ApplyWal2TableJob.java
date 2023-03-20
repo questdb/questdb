@@ -50,6 +50,7 @@ import java.io.Closeable;
 
 import static io.questdb.TelemetrySystemEvent.*;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -103,7 +104,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationCompiler operationCompiler,
             Job.RunStatus runStatus
     ) {
-        long lastSequencerTxn = -1;
+        long lastSequencerTxn;
         long lastWriterTxn = WAL_APPLY_IGNORE_ERROR;
         Path tempPath = Path.PATH.get();
 
@@ -125,7 +126,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
-                    if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
+                    //noinspection StringEquality
+                    if (tableBusy.getReason() != NO_LOCK_REASON
+                            && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
+                            && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
                     }
                     // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
@@ -148,8 +152,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .I$();
             return WAL_APPLY_FAILED;
         }
-        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
-
         return lastWriterTxn;
     }
 
@@ -342,8 +344,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (hasNext) {
                                 final long start = microClock.getTicks();
                                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                                structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
+                                structuralChangeCursor.next().apply(writer, true);
                                 walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
                             } else {
                                 // Something messed up in sequencer.

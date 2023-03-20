@@ -98,6 +98,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAliasWithWildcard1() throws SqlException {
+        assertQuery(
+                "select-choose a1, a1 a, b from (select-choose [a a1, b] a a1, b from (select [a, b] from x))",
+                "select a as a1, * from x",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAliasWithWildcard2() throws SqlException {
+        assertQuery(
+                "select-virtual cast(a,long) a1, a, b from (select [a, b] from x)",
+                "select a::long as a1, * from x",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAliasWithWildcard3() throws SqlException {
+        assertQuery(
+                "select-virtual cast(a,long) a1, a, b from (select [a, b] from x)",
+                "select cast(a as long) a1, * from x",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAliasWithWildcard4() throws SqlException {
+        assertQuery(
+                "select-virtual a, b, cast(a,long) a1 from (select [a, b] from x)",
+                "select *, cast(a as long) a1 from x",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAmbiguousColumn() throws Exception {
         assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
@@ -1515,27 +1551,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableInVolumeWal() throws SqlException {
-        Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
-
-        assertCreateTable(
-                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'");
-
-        assertCreateTable(
-                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'");
-
-        assertCreateTable(
-                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
-
-        assertCreateTable(
-                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
-                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
-    }
-
-    @Test
     public void testCreateTableInVolumeBypassWal() throws SqlException {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
 
@@ -1612,6 +1627,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "PARTITION BY YEAR IN VOLUME",
                 95,
                 "path for volume expected");
+    }
+
+    @Test
+    public void testCreateTableInVolumeWal() throws SqlException {
+        Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
+
+        assertCreateTable(
+                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
     }
 
     @Test
@@ -6656,9 +6692,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertSyntaxError(
-                "select t2.ts as \"TS\", t2.ts ts1, t1.* from t1 asof join (select * from t2) t2;",
-                0,
-                "Duplicate column [name=ts1]",
+                "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;",
+                10,
+                "Duplicate column [name=TS1]",
+                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
+                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
+        );
+
+        assertSyntaxError(
+                "select t1.*, t2.ts from t1 asof join (select * from t2) t2;",
+                13,
+                "Duplicate column [name=ts]",
                 modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
                 modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
         );
@@ -6674,7 +6718,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "Duplicate table or alias: a",
                 modelOf("DB").col("a", ColumnType.SYMBOL).timestamp("b")
         );
-
 
         assertSyntaxError(
                 "SELECT " +

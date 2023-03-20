@@ -643,6 +643,44 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testExpExplainQueryPlan() throws Exception {
+        testJsonQuery(1,
+                "GET /exp?query=explain+select+1+from+x+where+f>systimestamp()+and+f<0+limit+1 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "02b3\r\n" +
+                        "\"QUERY PLAN\"\r\n" +
+                        "\"Limit lo: 1\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1);
+    }
+
+    @Test
     public void testExpNull() throws Exception {
         testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -670,8 +708,8 @@ public class IODispatcherTest {
                         "\r\n" +
                         "\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1);
+                        "\r\n",
+                1);
     }
 
     @Test
@@ -740,9 +778,8 @@ public class IODispatcherTest {
                         "034f\r\n" +
                         "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"timestamp\":-1,\"count\":9}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1);
-
+                        "\r\n",
+                1);
     }
 
     @Test

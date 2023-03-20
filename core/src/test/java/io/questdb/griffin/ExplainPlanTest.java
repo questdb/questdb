@@ -4622,6 +4622,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectIndexedSymbols7b() throws Exception {
+        assertPlan("create table a ( ts timestamp, s symbol index) timestamp(ts);",
+                "select s from a where s != 'S1' and length(s) = 2 order by s ",
+                "Sort light\n" +
+                        "  keys: [s]\n" +
+                        "    FilterOnExcludedValues\n" +
+                        "      symbolFilter: s not in ['S1']\n" +
+                        "      filter: length(s)=2\n" +
+                        "        Cursor-order scan\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test
     public void testSelectIndexedSymbols8() throws Exception {
         assertPlan("create table a ( s symbol index) ;",
                 "select * from a where s != 'S1' order by s ",
@@ -6160,7 +6173,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testWhereUuid() throws Exception {
         assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
-                "Async Filter\n" +
+                "Async JIT Filter\n" +
                         "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +
