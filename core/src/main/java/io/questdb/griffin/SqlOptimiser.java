@@ -356,9 +356,9 @@ class SqlOptimiser {
     private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel) throws SqlException {
         this.sqlNodeStack.clear();
 
-        ExpressionNode n = replaceIfUnaliasedLiteral(node, baseModel);
-        if (n != node) {
-            node.of(LITERAL, n.token, node.precedence, node.position);
+        ExpressionNode temp = replaceIfUnaliasedLiteral(node, baseModel);
+        if (temp != node) {
+            node.of(LITERAL, temp.token, node.precedence, node.position);
             return;
         }
 
@@ -367,25 +367,46 @@ class SqlOptimiser {
 
         while (!this.sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-                if (node.rhs != null) {
-                    n = replaceIfUnaliasedLiteral(node.rhs, baseModel);
-                    if (node.rhs == n) {
-                        this.sqlNodeStack.push(node.rhs);
-                    } else {
-                        node.rhs = n;
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        temp = replaceIfUnaliasedLiteral(node.rhs, baseModel);
+                        if (node.rhs == temp) {
+                            this.sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = temp;
+                        }
                     }
-                }
 
-                if (node.lhs != null) {
-                    n = replaceIfUnaliasedLiteral(node.lhs, baseModel);
-                    if (n == node.lhs) {
-                        node = node.lhs;
+                    if (node.lhs != null) {
+                        temp = replaceIfUnaliasedLiteral(node.lhs, baseModel);
+                        if (temp == node.lhs) {
+                            node = node.lhs;
+                        } else {
+                            node.lhs = temp;
+                            node = null;
+                        }
                     } else {
-                        node.lhs = n;
                         node = null;
                     }
                 } else {
-                    node = null;
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        temp = replaceIfUnaliasedLiteral(e, baseModel);
+                        if (e == temp) {
+                            this.sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, temp);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    temp = replaceIfUnaliasedLiteral(e, baseModel);
+                    if (e == temp) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, temp);
+                        node = null;
+                    }
                 }
             } else {
                 node = this.sqlNodeStack.poll();
@@ -3155,47 +3176,71 @@ class SqlOptimiser {
 
     //push aggregate function calls to group by model, replace key column expressions with group by aliases
     //raise error if raw column usage doesn't match one of expressions on group by list 
-    private ExpressionNode rewriteGroupBySelectExpression(@Transient ExpressionNode node,
+    private ExpressionNode rewriteGroupBySelectExpression(final @Transient ExpressionNode topLevelNode,
                                                           QueryModel groupByModel,
                                                           ObjList<ExpressionNode> groupByNodes,
                                                           ObjList<CharSequence> groupByAliases) throws SqlException {
         this.sqlNodeStack.clear();
 
-        ExpressionNode temp = replaceIfGroupByExpressionOrAggregate(node, groupByModel, groupByNodes, groupByAliases);
-        if (temp != node) {
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        ExpressionNode temp = replaceIfGroupByExpressionOrAggregate(topLevelNode, groupByModel, groupByNodes, groupByAliases);
+        if (temp != topLevelNode) {
             return temp;
         }
 
-        ExpressionNode current = node;
+        ExpressionNode node = topLevelNode;
 
-        while (!this.sqlNodeStack.isEmpty() || current != null) {
-            if (current != null) {
-                if (current.rhs != null) {
-                    temp = replaceIfGroupByExpressionOrAggregate(current.rhs, groupByModel, groupByNodes, groupByAliases);
-                    if (current.rhs == temp) {
-                        this.sqlNodeStack.push(current.rhs);
-                    } else {
-                        current.rhs = temp;
+        while (!this.sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        temp = replaceIfGroupByExpressionOrAggregate(node.rhs, groupByModel, groupByNodes, groupByAliases);
+                        if (node.rhs == temp) {
+                            this.sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = temp;
+                        }
                     }
-                }
 
-                if (current.lhs != null) {
-                    temp = replaceIfGroupByExpressionOrAggregate(current.lhs, groupByModel, groupByNodes, groupByAliases);
-                    if (temp == current.lhs) {
-                        current = current.lhs;
+                    if (node.lhs != null) {
+                        temp = replaceIfGroupByExpressionOrAggregate(node.lhs, groupByModel, groupByNodes, groupByAliases);
+                        if (temp == node.lhs) {
+                            node = node.lhs;
+                        } else {
+                            node.lhs = temp;
+                            node = null;
+                        }
                     } else {
-                        current.lhs = temp;
-                        current = null;
+                        node = null;
                     }
                 } else {
-                    current = null;
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        temp = replaceIfGroupByExpressionOrAggregate(e, groupByModel, groupByNodes, groupByAliases);
+                        if (e == temp) {
+                            this.sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, temp);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    temp = replaceIfGroupByExpressionOrAggregate(e, groupByModel, groupByNodes, groupByAliases);
+                    if (e == temp) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, temp);
+                        node = null;
+                    }
                 }
             } else {
-                current = this.sqlNodeStack.poll();
+                node = this.sqlNodeStack.poll();
             }
         }
 
-        return node;
+        return topLevelNode;
     }
 
     /**
@@ -4375,20 +4420,32 @@ class SqlOptimiser {
 
             sqlNodeStack.clear();
             while (node != null) {
-                if (node.rhs != null) {
-                    checkIsNotAggregateOrWindowFunction(node.rhs, model);
-                    this.sqlNodeStack.push(node.rhs);
-                }
-
-                if (node.lhs != null) {
-                    checkIsNotAggregateOrWindowFunction(node.lhs, model);
-                    node = node.lhs;
-                } else {
-                    if (!sqlNodeStack.isEmpty()) {
-                        node = this.sqlNodeStack.poll();
-                    } else {
-                        node = null;
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        checkIsNotAggregateOrWindowFunction(node.rhs, model);
+                        this.sqlNodeStack.push(node.rhs);
                     }
+
+                    if (node.lhs != null) {
+                        checkIsNotAggregateOrWindowFunction(node.lhs, model);
+                        node = node.lhs;
+                    } else {
+                        if (!sqlNodeStack.isEmpty()) {
+                            node = this.sqlNodeStack.poll();
+                        } else {
+                            node = null;
+                        }
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        checkIsNotAggregateOrWindowFunction(e, model);
+                        this.sqlNodeStack.push(e);
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    checkIsNotAggregateOrWindowFunction(e, model);
+                    node = e;
                 }
             }
         } catch (SqlException sqle) {

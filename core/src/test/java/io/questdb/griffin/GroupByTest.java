@@ -91,7 +91,7 @@ public class GroupByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, concat('a', 'b', 'c', first(x)) ";
-            assertError(query, "[58] Aggregate function cannot be passed as an argument");
+            assertError(query, "[58] aggregate functions are not allowed in GROUP BY");
         });
     }
 
@@ -100,7 +100,7 @@ public class GroupByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, case when x > 0 then 1 else first(x) end ";
-            assertError(query, "[64] Aggregate function cannot be passed as an argument");
+            assertError(query, "[64] aggregate functions are not allowed in GROUP BY");
         });
     }
 
@@ -109,7 +109,7 @@ public class GroupByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
             String query = "select x, avg(y) from t group by x, strpos('123', '1' || first(x)::string)";
-            assertError(query, "[57] Aggregate function cannot be passed as an argument");
+            assertError(query, "[57] aggregate functions are not allowed in GROUP BY");
         });
     }
 
@@ -187,7 +187,6 @@ public class GroupByTest extends AbstractGriffinTest {
             assertError(query, "[36] window functions are not allowed in GROUP BY");
         });
     }
-
 
     @Test
     public void test2FailOnWindowFunctionNestedInFunctionAliasInGroupByClause1() throws Exception {
@@ -270,14 +269,16 @@ public class GroupByTest extends AbstractGriffinTest {
                     "group by x+1";
 
             assertPlan(query,
-                    "GroupBy vectorized: false\n" +
-                            "  keys: [case]\n" +
-                            "  values: [count(*)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [case([x<0,-1,x=0,0,1])]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n");
+                    "VirtualRecord\n" +
+                            "  functions: [case([column<0,-1,column=0,0,1]),count]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [column]\n" +
+                            "      values: [count(*)]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [x+1]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
 
             assertQuery("case\tcount\n" +
                     "1\t2\n", query, null, true, true);
@@ -425,7 +426,7 @@ public class GroupByTest extends AbstractGriffinTest {
             compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
             String query = "select ordr.date_report, count(*) " +
                     "from dat ordr " +
-                    "group by date_report " +
+                    "group by date_report " +//no alias used here
                     "order by ordr.date_report";
             assertPlan(query,
                     "Sort light\n" +
@@ -447,7 +448,7 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
-            String query = "select date_report, count(*) " +
+            String query = "select date_report, count(*) " +//date_report used with no alias
                     "from dat ordr " +
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
@@ -495,10 +496,39 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
+            String query = "select date_report, dateadd('d', -1, ordr.date_report) as minusday, dateadd('d', 1, date_report) as plusday, count(*) " +
+                    "from dat ordr " +
+                    "group by dateadd('d', -1, date_report), ordr.date_report " +
+                    "order by ordr.date_report";
+            assertPlan(query,
+                    "Sort light\n" +
+                            "  keys: [date_report]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [date_report,dateadd,dateadd('d',1,date_report),count]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [date_report,dateadd]\n" +
+                            "          values: [count(*)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [date_report,dateadd('d',-1,date_report)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: dat\n");
+            assertQuery("date_report\tminusday\tplusday\tcount\n" +
+                    "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3\n" +
+                    "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t4\n" +
+                    "1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t3\n", query, null, true, true);
+        });
+    }
+
+    @Test
     public void test5GroupByWithNonAggregateExpressionUsingKeyColumn() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
-            String query = "select ordr.date_report, to_str(ordr.date_report, 'dd.MM.yyyy') as dt, count(*)\n" +
+            String query = "select ordr.date_report, to_str(ordr.date_report, 'dd.MM.yyyy') as dt, " +
+                    "dateadd('d', 1, date_report) as plusday, dateadd('d', -1, ordr.date_report) as minusday, count(*)\n" +
                     "from dat ordr\n" +
                     "group by ordr.date_report\n" +
                     "order by ordr.date_report";
@@ -507,27 +537,32 @@ public class GroupByTest extends AbstractGriffinTest {
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [date_report,to_str(date_report),count]\n" +
+                            "      functions: [date_report,to_str(date_report),dateadd('d',1,date_report),dateadd('d',-1,date_report),count]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [date_report]\n" +
                             "          values: [count(*)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n");
-            assertQuery("date_report\tdt\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t01.01.1970\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t02.01.1970\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t03.01.1970\t3\n", query, null, true, true);
+            assertQuery("date_report\tdt\tplusday\tminusday\tcount\n" +
+                    "1970-01-01T00:00:00.000000Z\t01.01.1970\t1970-01-02T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t3\n" +
+                    "1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4\n" +
+                    "1970-01-03T00:00:00.000000Z\t03.01.1970\t1970-01-04T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3\n", query, null, true, true);
         });
     }
 
     @Test
-    public void test6GroupByWithNonAggregateExpressionUsingKeyColumn() throws Exception {
+    public void test6GroupByWithNonAggregateExpressionUsingKeyColumn1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
             compile("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
 
-            String query = "select details.date_report, to_str(details.date_report, 'dd.MM.yyyy') as dt, min(details.x), count(*) " +
+            String query = "select details.date_report, " +
+                    " to_str(details.date_report, 'dd.MM.yyyy') as dt, " +
+                    " dateadd('d', 1, details.date_report) as plusday, " +
+                    " min(details.x), " +
+                    " count(*), " +
+                    " min(dateadd('d', -1, ordr.date_report)) as minminusday " +
                     "from ord ordr " +
                     "join det details on ordr.x = details.x " +
                     "group by details.date_report " +
@@ -537,10 +572,10 @@ public class GroupByTest extends AbstractGriffinTest {
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [date_report,to_str(date_report),min,count]\n" +
+                            "      functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [date_report]\n" +
-                            "          values: [min(x),count(*)]\n" +
+                            "          values: [min(x),count(*),min(dateadd('d',-1,date_report1))]\n" +
                             "            SelectedRecord\n" +
                             "                Hash Join Light\n" +
                             "                  condition: details.x=ordr.x\n" +
@@ -551,10 +586,10 @@ public class GroupByTest extends AbstractGriffinTest {
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: det\n");
-            assertQuery("date_report\tdt\tmin\tcount\n" +
-                    "1970-01-11T00:00:00.000000Z\t11.01.1970\t3\t3\n" +
-                    "1970-01-12T00:00:00.000000Z\t12.01.1970\t1\t4\n" +
-                    "1970-01-13T00:00:00.000000Z\t13.01.1970\t2\t3\n", query, null, true, true);
+            assertQuery("date_report\tdt\tplusday\tmin\tcount\tminminusday\n" +
+                    "1970-01-11T00:00:00.000000Z\t11.01.1970\t1970-01-12T00:00:00.000000Z\t3\t3\t1969-12-31T00:00:00.000000Z\n" +
+                    "1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z\n" +
+                    "1970-01-13T00:00:00.000000Z\t13.01.1970\t1970-01-14T00:00:00.000000Z\t2\t3\t1970-01-02T00:00:00.000000Z\n", query, null, true, true);
         });
     }
 
@@ -570,6 +605,21 @@ public class GroupByTest extends AbstractGriffinTest {
                     "group by details.date_report " +
                     "order by details.date_report";
             assertError(query, "[35] Ambiguous column [name=date_report]");
+        });
+    }
+
+    @Test
+    public void test6GroupByWithNonAggregateExpressionUsingKeyColumn3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table ord as ( select cast(86400000000*(x%3) as timestamp) as date_report, x from long_sequence(10))");
+            compile("create table det as ( select cast(86400000000*(10+x%3) as timestamp) as date_report, x from long_sequence(10))");
+
+            String query = "select details.date_report, dateadd('d', 1, date_report), min(details.x), count(*) " +
+                    "from ord ordr " +
+                    "join det details on ordr.x = details.x " +
+                    "group by details.date_report " +
+                    "order by details.date_report";
+            assertError(query, "[44] Ambiguous column [name=date_report]");
         });
     }
 
@@ -742,6 +792,145 @@ public class GroupByTest extends AbstractGriffinTest {
                     "2\t0\t2\n", query, null, true, true);
         });
     }
+
+    @Test
+    public void testGroupByWithAliasClash3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x, x%2 as y from long_sequence(2))");
+            compile("create table t2 as (select x, x%2 as y from long_sequence(2))");
+
+            String query = "select t1.x, max(t2.y), case when t1.x > 1 then 100*t1.x else 10*t2.x end " +
+                    "from t1 " +
+                    "join t2 on t1.y = t2.y  " +
+                    "group by t1.x, t2.x";
+
+            assertPlan(query, "VirtualRecord\n" +
+                    "  functions: [x,max,case([1<x,100*x,10*x1])]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [x,x1]\n" +
+                    "      values: [max(y)]\n" +
+                    "        SelectedRecord\n" +
+                    "            Hash Join Light\n" +
+                    "              condition: t2.y=t1.y\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: t1\n" +
+                    "                Hash\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: t2\n");
+
+            assertQuery("x\tmax\tcase\n" +
+                    "1\t1\t10\n" +
+                    "2\t0\t200\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByWithAliasClash4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x, x%2 as y from long_sequence(2))");
+            compile("create table t2 as (select x, x%2 as y from long_sequence(2))");
+
+            String query = "select t1.x, max(t2.y), case when t1.x > 1 then 30*t1.x else 20*t2.x end " +
+                    "from t1 " +
+                    "join t2 on t1.y = t2.y  " +
+                    "group by t1.x, t2.x, case when t1.x > 1 then 30*t1.x else 20*t2.x end";
+
+            assertPlan(query, "VirtualRecord\n" +
+                    "  functions: [x,max,case]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [x,case,x1]\n" +
+                    "      values: [max(y)]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [x,y,case([1<x,30*x,20*x1]),x1]\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: t2.y=t1.y\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: t1\n" +
+                    "                    Hash\n" +
+                    "                        DataFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: t2\n");
+
+            assertQuery("x\tmax\tcase\n" +
+                    "1\t1\t20\n" +
+                    "2\t0\t60\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByWithAliasClash5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
+            compile("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
+
+            String query = "select t1.x, max(t2.y), dateadd('d', t1.x, '2023-03-01T00:00:00')::long + t2.x " +
+                    "from t1 " +
+                    "join t2 on t1.y = t2.y  " +
+                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') ";
+
+            assertPlan(query, "VirtualRecord\n" +
+                    "  functions: [x,max,dateadd::long+x1]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [x,x1,dateadd]\n" +
+                    "      values: [max(y)]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: t2.y=t1.y\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: t1\n" +
+                    "                    Hash\n" +
+                    "                        DataFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: t2\n");
+
+            assertQuery("x\tmax\tcolumn\n" +
+                    "1\t1\t1677715200000001\n" +
+                    "2\t0\t1677801600000002\n", query, null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByWithAliasClash6() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x::int as x, x%2 as y from long_sequence(2))");
+            compile("create table t2 as (select x::int as x, x%2 as y from long_sequence(2))");
+
+            String query = "select t1.x, max(t2.y), dateadd('s', max(t2.y)::int, dateadd('d', t1.x, '2023-03-01T00:00:00') ) " +
+                    "from t1 " +
+                    "join t2 on t1.y = t2.y  " +
+                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') ";
+
+            assertPlan(query, "VirtualRecord\n" +
+                    "  functions: [x,max,dateadd('s',dateadd,max::int)]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [x,dateadd,x1]\n" +
+                    "      values: [max(y)]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: t2.y=t1.y\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: t1\n" +
+                    "                    Hash\n" +
+                    "                        DataFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: t2\n");
+
+            assertQuery("x\tmax\tdateadd\n" +
+                    "1\t1\t2023-03-02T00:00:01.000000Z\n" +
+                    "2\t0\t2023-03-03T00:00:00.000000Z\n", query, null, true, true);
+        });
+    }
+
 
     @Test
     public void testGroupByWithDuplicateSelectColumn() throws Exception {
