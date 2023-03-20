@@ -439,6 +439,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return conf.getRepeatMigrationsFromVersion();
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return conf.getRndFunctionMemoryMaxPages();
     }

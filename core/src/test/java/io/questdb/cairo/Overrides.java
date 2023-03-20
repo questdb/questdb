@@ -45,7 +45,6 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private long o3MinLag = -1;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
@@ -61,6 +60,7 @@ public class Overrides implements ConfigurationOverrides {
     private int maxUncommittedRows = -1;
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
+    private long o3MinLag = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
@@ -69,6 +69,7 @@ public class Overrides implements ConfigurationOverrides {
     private int parallelImportStatusLogKeepNDays = -1;
     private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
+    private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
@@ -232,6 +233,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getRecreateDistressedSequencerAttempts() {
         return recreateDistressedSequencerAttempts;
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return repeatMigrationsFromVersion;
     }
 
     @Override
@@ -408,6 +414,7 @@ public class Overrides implements ConfigurationOverrides {
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
         walApplyTableTimeQuote = -1;
+        repeatMigrationsFromVersion = -1;
     }
 
     @Override
@@ -588,6 +595,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setRegistryCompactionThreshold(int value) {
         tableRegistryCompactionThreshold = value;
+    }
+
+    @Override
+    public void setRepeatMigrationsFromVersion(int value) {
+        repeatMigrationsFromVersion = value;
     }
 
     @Override

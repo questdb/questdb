@@ -167,43 +167,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    private void commitFullRecord(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        symbolColumnCount = symbolCountProviders.size();
-
-        writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset(writeAreaSize);
-        putLong(TX_OFFSET_TXN_64, ++txn);
-        putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
-        putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
-        putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
-        putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
-        putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
-        putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
-        putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
-        putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
-        putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
-        putLagValues();
-        putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
-
-        // store symbol counts
-        storeSymbolCounts(symbolCountProviders);
-
-        // store attached partitions
-        txPartitionCount = 1;
-        saveAttachedPartitionsToTx(symbolColumnCount);
-        finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES, commitMode);
-
-        prevTransientRowCount = transientRowCount;
-        prevMinTimestamp = minTimestamp;
-        prevMaxTimestamp = maxTimestamp;
-
-        prevRecordStructureVersion = lastRecordStructureVersion;
-        lastRecordStructureVersion = recordStructureVersion;
-        prevRecordBaseOffset = lastRecordBaseOffset;
-        lastRecordBaseOffset = writeBaseOffset;
-    }
-
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
@@ -484,11 +447,42 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return calculateTxRecordSize(symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES);
     }
 
-    private void putLagValues() {
-        putLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
-        putLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
-        putInt(TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
-        putInt(TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
+    private void commitFullRecord(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        symbolColumnCount = symbolCountProviders.size();
+
+        writeAreaSize = calculateWriteSize();
+        writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        putLong(TX_OFFSET_TXN_64, ++txn);
+        putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+        putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
+        putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
+        putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
+        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
+        putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
+        putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
+        putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
+        putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
+        putLagValues();
+        putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
+        putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));
+
+        // store symbol counts
+        storeSymbolCounts(symbolCountProviders);
+
+        // store attached partitions
+        txPartitionCount = 1;
+        saveAttachedPartitionsToTx(symbolColumnCount);
+        finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES, commitMode);
+
+        prevTransientRowCount = transientRowCount;
+        prevMinTimestamp = minTimestamp;
+        prevMaxTimestamp = maxTimestamp;
+
+        prevRecordStructureVersion = lastRecordStructureVersion;
+        lastRecordStructureVersion = recordStructureVersion;
+        prevRecordBaseOffset = lastRecordBaseOffset;
+        lastRecordBaseOffset = writeBaseOffset;
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {
@@ -549,6 +543,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private void putInt(long offset, int value) {
         assert offset + Integer.BYTES <= writeAreaSize;
         txMemBase.putInt(writeBaseOffset + offset, value);
+    }
+
+    private void putLagValues() {
+        putLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+        putLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+        putInt(TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+        int lagTxnRaw = lagOrdered ? lagTxnCount : -lagTxnCount;
+        putInt(TX_OFFSET_LAG_TXN_COUNT_32, lagTxnRaw);
+        putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnRaw));
     }
 
     private void putLong(long offset, long value) {

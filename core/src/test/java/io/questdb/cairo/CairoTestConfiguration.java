@@ -182,6 +182,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return overrides.getRepeatMigrationsFromVersion();
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return overrides.getRndFunctionMemoryMaxPages() < 0 ? super.getRndFunctionMemoryMaxPages() : overrides.getRndFunctionMemoryMaxPages();
     }

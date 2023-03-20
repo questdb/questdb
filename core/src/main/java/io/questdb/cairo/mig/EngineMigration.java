@@ -74,18 +74,35 @@ public class EngineMigration {
                     .I$();
             if (existed) {
                 int currentTableVersion = ff.readNonNegativeInt(upgradeFd, 0);
+
+                if (currentTableVersion > latestTableVersion) {
+                    ff.close(upgradeFd);
+                    LOG.critical().$("database storage is marked as upgraded to an incompatible version, ")
+                            .$(". Upgrade the database or ")
+                            .$("remove file ")
+                            .$(TableUtils.UPGRADE_FILE_NAME)
+                            .$((" to force proceed"))
+                            .$(" [storageVersion=").$(currentTableVersion)
+                            .$(", databaseVersion=").$(latestTableVersion).I$();
+
+                    throw CairoException.critical(0)
+                            .put("database storage is marked as upgraded to an incompatible version, ")
+                            .put(". Upgrade the database or ")
+                            .put("remove file ")
+                            .put(TableUtils.UPGRADE_FILE_NAME)
+                            .put(" [storageVersion=").put(currentTableVersion)
+                            .put(", databaseVersion=").put(latestTableVersion);
+                }
+
                 int currentMigrationVersion = ff.readNonNegativeInt(upgradeFd, 4);
-                if (currentMigrationVersion < 0) {
+                if (currentMigrationVersion <= 0 || configuration.getRepeatMigrationsFromVersion() == currentTableVersion) {
                     currentMigrationVersion = currentTableVersion;
                 }
 
                 if (currentMigrationVersion == latestMigrationVersion) {
-                    LOG.info().$("table structures are up to date").$();
+                    LOG.info().$("upgraded to [migrationVersion=").$(currentMigrationVersion).$();
                     ff.close(upgradeFd);
-                    upgradeFd = -1;
-                } else if (currentMigrationVersion > latestTableVersion) {
-                    LOG.critical().$("database storage is upgraded to an incompatible version [storageVersion=").$(currentMigrationVersion)
-                            .$(", databaseVersion=").$(latestMigrationVersion).$();
+                    return;
                 }
             }
 

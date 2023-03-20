@@ -257,6 +257,8 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
+    int getRepeatMigrationsFromVersion();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();

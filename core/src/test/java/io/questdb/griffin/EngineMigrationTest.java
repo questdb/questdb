@@ -24,11 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -139,6 +137,64 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         generateMigrationTables();
         engine.releaseAllWriters();
         assertData(true, true, true, true);
+    }
+
+    @Test
+    public void testMig702Repeatable() throws SqlException, NumericException {
+        node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
+
+        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        TableToken token = engine.getTableToken("abc");
+
+        CairoConfiguration config = engine.getConfiguration();
+        try (TxWriter txWriter = new TxWriter(config.getFilesFacade())) {
+            Path p = Path.getThreadLocal(config.getRoot());
+            txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+
+            txWriter.setLagRowCount(100);
+            txWriter.setLagTxnCount(1);
+            txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
+            txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+
+            txWriter.commit(CommitMode.SYNC, new ObjList<>());
+        }
+
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+        // Check txn file not upgraded
+        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
+            Path p = Path.getThreadLocal(config.getRoot());
+            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+
+            Assert.assertEquals(100, txReader.getLagRowCount());
+            Assert.assertEquals(1, txReader.getLagTxnCount());
+            Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), txReader.getLagMinTimestamp());
+            Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"), txReader.getLagMaxTimestamp());
+        }
+
+        TestUtils.messTxnUnallocated(
+                config.getFilesFacade(),
+                Path.getThreadLocal(config.getRoot()),
+                new Rnd(),
+                token
+        );
+
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+        // Check txn file is upgraded
+        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
+            Path p = Path.getThreadLocal(config.getRoot());
+            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+
+            Assert.assertEquals(0, txReader.getLagRowCount());
+            Assert.assertEquals(0, txReader.getLagTxnCount());
+            Assert.assertEquals(0L, txReader.getLagMinTimestamp());
+            Assert.assertEquals(0L, txReader.getLagMaxTimestamp());
+        }
     }
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {

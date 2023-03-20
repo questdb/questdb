@@ -112,7 +112,8 @@ public final class TableUtils {
     public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
     public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
     public static final long TX_OFFSET_SEQ_TXN_64 = TX_OFFSET_TRUNCATE_VERSION_64 + 8;
-    public static final long TX_OFFSET_LAG_TXN_COUNT_32 = TX_OFFSET_SEQ_TXN_64 + 8;
+    public static final long TX_OFFSET_CHECKSUM_32 = TX_OFFSET_SEQ_TXN_64 + 8;
+    public static final long TX_OFFSET_LAG_TXN_COUNT_32 = TX_OFFSET_CHECKSUM_32 + 4;
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
@@ -155,10 +156,6 @@ public final class TableUtils {
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MIN_SYMBOL_CAPACITY = 2;
-
-    static {
-        assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
-    }
 
     private TableUtils() {
     }
@@ -451,18 +448,6 @@ public final class TableUtils {
 
     public static int existsInVolume(FilesFacade ff, Path volumePath, CharSequence name) {
         return exists(ff, volumePath.concat(name).$());
-    }
-
-    private static int exists(FilesFacade ff, Path path) {
-        if (ff.exists(path)) { // it can also be a file, for example created with touch
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return TABLE_EXISTS;
-            } else {
-                return TABLE_RESERVED;
-            }
-        } else {
-            return TABLE_DOES_NOT_EXIST;
-        }
     }
 
     public static void freeTransitionIndex(long address) {
@@ -1382,6 +1367,18 @@ public final class TableUtils {
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
+    private static int exists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) { // it can also be a file, for example created with touch
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return TABLE_EXISTS;
+            } else {
+                return TABLE_RESERVED;
+            }
+        } else {
+            return TABLE_DOES_NOT_EXIST;
+        }
+    }
+
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
         if (strLength < 1 || strLength > 255) {
             // EXT4 and many others do not allow file name length > 255 bytes
@@ -1399,6 +1396,17 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
+    }
+
+    static int calculateTxnLagChecksum(long txn1, long seqTxn1, int lagRowCount1, long lagMinTimestamp1, long lagMaxTimestamp1, int lagTxnCount1) {
+        long checkSum = txn1 +
+                seqTxn1 +
+                lagRowCount1 +
+                lagMinTimestamp1 +
+                lagMaxTimestamp1 +
+                lagTxnCount1;
+
+        return (int) (checkSum ^ (checkSum >>> 32));
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
@@ -1474,5 +1482,9 @@ public final class TableUtils {
 
     public interface FailureCloseable {
         void close(long prevSize);
+    }
+
+    static {
+        assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

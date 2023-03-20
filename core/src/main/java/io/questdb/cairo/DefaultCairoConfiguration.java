@@ -445,6 +445,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return -1;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }

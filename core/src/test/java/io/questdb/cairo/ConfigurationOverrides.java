@@ -90,6 +90,8 @@ public interface ConfigurationOverrides {
 
     int getRecreateDistressedSequencerAttempts();
 
+    int getRepeatMigrationsFromVersion();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
@@ -215,6 +217,8 @@ public interface ConfigurationOverrides {
     void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts);
 
     void setRegistryCompactionThreshold(int value);
+
+    void setRepeatMigrationsFromVersion(int value);
 
     void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages);
 

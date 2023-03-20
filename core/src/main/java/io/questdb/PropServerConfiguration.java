@@ -178,6 +178,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
+    private final int repeatMigrationFromVersion;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
     private final int rerunMaxProcessingQueueSize;
@@ -457,6 +458,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
+        this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -1888,6 +1890,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRenameTableModelPoolCapacity() {
             return sqlRenameTableModelPoolCapacity;
+        }
+
+        @Override
+        public int getRepeatMigrationsFromVersion() {
+            return repeatMigrationFromVersion;
         }
 
         @Override
