@@ -190,7 +190,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
             path.of(cairoConfig.getRoot()).concat(tableToken).$();
             rootLen = path.length();
-            scanDetachedAndAttachablePartitions(cairoConfig.getFilesFacade());
+            scanDetachedAndAttachablePartitions();
             limit = tableReader.getTxFile().getPartitionCount() + attachablePartitions.size() + detachedPartitions.size();
             toTop();
             return this;
@@ -303,7 +303,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
 
-        private void scanDetachedAndAttachablePartitions(FilesFacade ff) {
+        private void scanDetachedAndAttachablePartitions() {
             long pFind = ff.findFirst(path);
             if (pFind > 0L) {
                 try {

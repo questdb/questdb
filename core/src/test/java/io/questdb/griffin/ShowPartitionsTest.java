@@ -110,6 +110,10 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                     Path dstPath = new Path();
                     Path srcPath = new Path()
             ) {
+                if (isWal) {
+                    tab.wal();
+                    tab2.wal();
+                }
                 createPopulateTable(
                         1,
                         tab.timestamp("ts")
@@ -162,6 +166,10 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                     Path dstPath = new Path();
                     Path srcPath = new Path()
             ) {
+                if (isWal) {
+                    tab.wal();
+                    tab2.wal();
+                }
                 createPopulateTable(
                         1,
                         tab.timestamp("ts")
