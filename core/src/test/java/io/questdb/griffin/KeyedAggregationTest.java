@@ -167,6 +167,44 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByWithIndexedSymbolKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE records (\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  account_uuid SYMBOL INDEX,\n" +
+                    "  requests LONG\n" +
+                    ") timestamp (ts)");
+
+            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
+
+            String query = "select account_uuid, " +
+                    "     sum(requests) request_count " +
+                    "from records " +
+                    "where ts > '2023-02-01' " +
+                    "    and ts < '2023-02-02' " +
+                    "order by 1 asc";
+
+            assertPlan(query,
+                    "Sort light\n" +
+                            "  keys: [account_uuid]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [account_uuid]\n" +
+                            "      values: [sum(requests)]\n" +
+                            "        SortedSymbolIndex\n" +
+                            "            Index forward scan on: account_uuid\n" +
+                            "              symbolOrder: asc\n" +
+                            "            Interval forward scan on: records\n" +
+                            "              intervals: [static=[1675209600000001,1675295999999999]\n");
+
+            assertQuery("account_uuid\trequest_count\n" +
+                    "s0\t0\n" +
+                    "s1\t100\n" +
+                    "s2\t200\n" +
+                    "s3\t300\n", query, null, true, true, false);
+        });
+    }
+
+    @Test
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
@@ -853,23 +891,14 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compile("alter table tab add column s2 symbol cache", sqlExecutionContext);
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
 
-            final String expected;
-            if (Os.type == Os.OSX_ARM64 || Os.type == Os.LINUX_ARM64) {
-                expected = "s2\tsum\n" +
-                        "\t520447.66299686837\n" +
-                        "a1\t104308.65839619662\n" +
-                        "a2\t104559.28674751727\n" +
-                        "a3\t104044.11326997768\n";
-            } else {
-                expected = "s2\tsum\n" +
-                        "\t520447.6629968692\n" +
-                        "a1\t104308.65839619662\n" +
-                        "a2\t104559.28674751727\n" +
-                        "a3\t104044.11326997768\n";
-            }
+            String expected = "s2\tsum\n" +
+                    "\t520447.6629969\n" +
+                    "a1\t104308.6583962\n" +
+                    "a2\t104559.2867475\n" +
+                    "a3\t104044.11327\n";
 
             // test with key falling within null columns
-            assertSql("select s2, sum(val) from tab order by s2", expected);
+            assertSql("select s2, round(sum(val), 7) sum from tab order by s2", expected);
         });
     }
 
@@ -974,12 +1003,12 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             );
 
             assertSql(
-                    "select s1, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1",
+                    "select s1, round(sum(val), 8) as sum from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1",
                     "s1\tsum\n" +
-                            "\t13168.088431585857\n" +
-                            "s1\t12972.778275274499\n" +
-                            "s2\t13388.118328291552\n" +
-                            "s3\t12929.34474745085\n"
+                            "\t13168.08843159\n" +
+                            "s1\t12972.77827527\n" +
+                            "s2\t13388.11832829\n" +
+                            "s3\t12929.34474745\n"
             );
         });
     }
