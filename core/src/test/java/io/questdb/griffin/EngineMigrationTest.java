@@ -140,6 +140,39 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMig702NonRepeatable() throws SqlException {
+        node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(-1);
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+
+        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        TableToken token = engine.getTableToken("abc");
+        CairoConfiguration config = engine.getConfiguration();
+
+        TestUtils.messTxnUnallocated(
+                config.getFilesFacade(),
+                Path.getThreadLocal(config.getRoot()),
+                new Rnd(123, 123),
+                token
+        );
+
+        // Run migration
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+        // Check txn file is upgraded
+        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
+            Path p = Path.getThreadLocal(config.getRoot());
+            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+
+            Assert.assertNotEquals(0, txReader.getLagRowCount());
+            Assert.assertNotEquals(0, txReader.getLagTxnCount());
+            Assert.assertNotEquals(0L, txReader.getLagMinTimestamp());
+            Assert.assertNotEquals(0L, txReader.getLagMaxTimestamp());
+        }
+    }
+
+    @Test
     public void testMig702Repeatable() throws SqlException, NumericException {
         node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
 
