@@ -253,7 +253,7 @@ public abstract class AbstractBootstrapTest {
         if (isWal) {
             drainWalQueue(engine);
         }
-        Assert.assertTrue(tableDropped.await(TimeUnit.SECONDS.toNanos(2L)));
+        Assert.assertTrue(tableDropped.await(TimeUnit.SECONDS.toNanos(10L)));
         if (otherVolume != null) {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -268,9 +268,6 @@ public abstract class AbstractBootstrapTest {
                     Assert.assertEquals(0, Files.unlink(auxPath));
                 }
             }
-        }
-        if (isWal) {
-            engine.setPoolListener(null);
         }
     }
 

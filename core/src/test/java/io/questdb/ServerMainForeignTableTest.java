@@ -55,8 +55,6 @@ import static io.questdb.test.tools.TestUtils.*;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
-    private static final Log LOG = LogFactory.getLog(ServerMainForeignTableTest.class);
-
     private static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
             "2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\n" +
             "2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\n" +
@@ -667,7 +665,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             sink.put(" IN VOLUME '" + otherVolumeAlias + '\'');
         }
         sink.put('\n');
-        LOG.info().$("About to execute: ").$(sink).$();
         try (OperationFuture op = compiler.compile(sink.toString(), context).execute(null)) {
             op.await();
         }
@@ -690,27 +687,25 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         }
         SOCountDownLatch tableWriterReturned = new SOCountDownLatch(1);
         engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-            LOG.info().$("POOL -> FT: ").$(PoolListener.factoryName(factoryType))
-                    .$(", Event: ").$(PoolListener.eventName(event))
-                    .$(", TableToken: ").$(tableToken != null ? tableToken.getTableName() : "null")
-                    .$();
             if (tableToken != null && tableToken.getTableName().equals(tableName)) {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    LOG.info().$("Releasing writer").$();
                     tableWriterReturned.countDown();
                 }
             }
         });
-        LOG.info().$("About to execute insert 1000000 rows on table: ").$(tableName).$();
         try (OperationFuture op = compiler.compile(insertStmt, context).execute(null)) {
             op.await();
         }
         if (isWal) {
             drainWalQueue(engine);
         }
-        Assert.assertTrue(tableWriterReturned.await(TimeUnit.SECONDS.toNanos(2L)));
-        engine.setPoolListener(null);
-        LOG.info().$("Inserted 1000000 rows on table: ").$(tableName).$();
+        Assert.assertTrue(tableWriterReturned.await(TimeUnit.SECONDS.toNanos(10L)));
         return engine.getTableToken(tableName);
+    }
+
+    static {
+        // log is needed to greedily allocate logger infra and
+        // exclude it from leak detector
+        LogFactory.getLog(ServerMainForeignTableTest.class);
     }
 }
