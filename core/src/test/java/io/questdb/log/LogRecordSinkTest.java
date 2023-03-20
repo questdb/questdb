@@ -33,9 +33,78 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class LogRecordSinkTest {
 
     private StringSink sink;
+
+    /**
+     * Test that we don't trim the log on an invalid UTF-8 sequence.
+     */
+    public void runTestUtf8LineTrimmingImpl(ScenarioConsumer scenarioConsumer) throws Exception {
+        final String[] msgs = {
+                "abcd",  // ASCII last char, 4 bytes total.
+                "abcð",  // 2-byte UTF-8 last char, 5 bytes total.
+                "abc嚜", // 3-byte UTF-8 last char, 6 bytes total.
+                "abc\uD83D\uDCA9", // 4-byte UTF-8 last char, 7 bytes total.
+        };
+
+        // Expected byte length of each message when encoded as UTF-8.
+        final int[] expEncLens = {4, 5, 6, 7};
+
+        final int[][] scenarios = {
+                // { msg string index, sink max len, expected written len }
+
+                // ASCII
+                {0, 4, 4},
+                {0, 5, 4},
+                {0, 3, 3},
+                {0, 2, 2},
+                {0, 1, 1},
+                {0, 0, 0},
+
+                // 2-byte UTF-8
+                {1, 5, 5},
+                {1, 6, 5},
+                {1, 4, 3},
+                {1, 3, 3},
+
+                // 3-byte UTF-8
+                {2, 6, 6},
+                {2, 7, 6},
+                {2, 5, 3},
+                {2, 4, 3},
+                {2, 3, 3},
+
+                // 4-byte UTF-8
+                {3, 7, 7},
+                {3, 8, 7},
+                {3, 6, 3},
+                {3, 5, 3},
+                {3, 4, 3},
+                {3, 3, 3},
+        };
+
+        for (int[] scenario : scenarios) {
+            final int msgIdx = scenario[0];
+            final String msg = msgs[msgIdx];
+            final long sinkMaxLen = scenario[1];
+            final long expectedLen = scenario[2];
+            // System.err.printf(
+            //         "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
+            //         msgIdx, msg, sinkMaxLen, expectedLen);
+
+            // Sanity-checking our test data.
+            final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+            final int utf8ByteLen = msgBytes.length;
+            Assert.assertEquals(utf8ByteLen, expEncLens[msgIdx]);
+
+            TestUtils.assertMemoryLeak(() -> {
+                scenarioConsumer.accept(msg, utf8ByteLen, sinkMaxLen, expectedLen);
+            });
+        }
+    }
 
     @Before
     public void setUp() {
@@ -163,84 +232,94 @@ public class LogRecordSinkTest {
         });
     }
 
-    /**
-     * Test that we don't trim the log on an invalid UTF-8 sequence.
-     */
     @Test
     public void testUtf8LineTrimming() throws Exception {
-        final String[] msgs = {
-                "abcd",  // ASCII last char, 4 bytes total.
-                "abcð",  // 2-byte UTF-8 last char, 5 bytes total.
-                "abc嚜", // 3-byte UTF-8 last char, 6 bytes total.
-                "abc\uD83D\uDCA9", // 4-byte UTF-8 last char, 7 bytes total.
-        };
-
-        // Expected byte length of each message when encoded as UTF-8.
-        final int[] expEncLens = {4, 5, 6, 7};
-
-        final int[][] scenarios = {
-                // { msg string index, sink max len, expected written len }
-
-                // ASCII
-                {0, 4, 4},
-                {0, 5, 4},
-                {0, 3, 3},
-                {0, 2, 2},
-                {0, 1, 1},
-                {0, 0, 0},
-
-                // 2-byte UTF-8
-                {1, 5, 5},
-                {1, 6, 5},
-                {1, 4, 3},
-                {1, 3, 3},
-
-                // 3-byte UTF-8
-                {2, 6, 6},
-                {2, 7, 6},
-                {2, 5, 3},
-                {2, 4, 3},
-                {2, 3, 3},
-
-                // 4-byte UTF-8
-                {3, 7, 7},
-                {3, 8, 7},
-                {3, 6, 3},
-                {3, 5, 3},
-                {3, 4, 3},
-                {3, 3, 3},
-        };
-
-        for (int[] scenario : scenarios) {
-            final int msgIdx = scenario[0];
-            final String msg = msgs[msgIdx];
-            final long sinkMaxLen = scenario[1];
-            final long expectedLen = scenario[2];
-            // System.err.printf(
-            //         "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
-            //         msgIdx, msg, sinkMaxLen, expectedLen);
-
-            TestUtils.assertMemoryLeak(() -> {
-                final byte[] msgBytes = msg.getBytes(Files.UTF_8);
-                final int len = msgBytes.length;
-                Assert.assertEquals(len, expEncLens[msgIdx]);
-                final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
-                    logRecord.encodeUtf8(msg);
-                    Assert.assertEquals(expectedLen, logRecord.length());
-                    if (sinkMaxLen > 0) {
-                        // Now test that the log record can be cleared and reused.
-                        logRecord.clear();
-                        sink.clear();
-                        logRecord.encodeUtf8("x");
-                        logRecord.toSink(sink);
-                        Assert.assertEquals("x", sink.toString());
-                    }
-                } finally {
-                    Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+        runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
+            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                logRecord.encodeUtf8(msg);
+                Assert.assertEquals(expectedLen, logRecord.length());
+                if (sinkMaxLen > 0) {
+                    // Now test that the log record can be cleared and reused.
+                    logRecord.clear();
+                    sink.clear();
+                    logRecord.encodeUtf8("x");
+                    logRecord.toSink(sink);
+                    Assert.assertEquals("x", sink.toString());
                 }
-            });
+            } finally {
+                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testUtf8LineTrimmingFromCharSeq() throws Exception {
+        runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
+            final Utf8CharSequence utf8CharSeq = new Utf8CharSequence(msg);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                logRecord.put(utf8CharSeq);
+                Assert.assertEquals(expectedLen, logRecord.length());
+            } finally {
+                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testUtf8LineTrimmingFromCharSeqOverload() throws Exception {
+        runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
+            final String prefix = "test prefix";
+            final String msg2 = prefix + msg;
+            final Utf8CharSequence utf8CharSeq = new Utf8CharSequence(msg2);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                logRecord.put(utf8CharSeq, prefix.length(), utf8CharSeq.length());
+                Assert.assertEquals(expectedLen, logRecord.length());
+            } finally {
+                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @FunctionalInterface
+    interface ScenarioConsumer {
+        void accept(String msg, int utf8ByteLen, long sinkMaxLen, long expectedLen) throws Exception;
+    }
+
+    final class Utf8CharSequence implements CharSequence {
+        final byte[] buf;
+
+        Utf8CharSequence(String msg) {
+            this.buf = msg.getBytes(Files.UTF_8);
+        }
+
+        Utf8CharSequence(byte[] buf) {
+            this.buf = buf;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return (char) buf[index];
+        }
+
+        @Override
+        public int length() {
+            return buf.length;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new Utf8CharSequence(Arrays.copyOfRange(buf, start, end));
+        }
+
+        @Override
+        public String toString() {
+            return new String(buf, Files.UTF_8);
         }
     }
 }

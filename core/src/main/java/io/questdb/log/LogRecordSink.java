@@ -62,21 +62,54 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr);
-        int len = cs.length();
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, n, _wptr);
-        _wptr += n;
+        final int rem = (int) (lim - _wptr);
+        final int len = cs.length();
+        if (rem >= len) {
+            // Common case where the buffer fits the available space.
+            Chars.asciiStrCpy(cs, len, _wptr);
+            _wptr += len;
+            return this;
+        }
+
+        // The line is being truncated:
+        // We determine a safe length to byte-copy.
+        // We skip copying the last 4 bytes, as they may be a multi-byte UTF-8 character.
+        // NOTE: The computed length may be negative.
+        int safeLen = rem - 4;
+
+        if (safeLen > 0) {
+            Chars.asciiStrCpy(cs, safeLen, _wptr);
+            _wptr += safeLen;
+        }
+
+        safeLen = Math.max(0, safeLen);
+        for (int i = safeLen; i < rem; i++) {
+            // Copying one byte at a time ensures no partial UTF-8 characters are written.
+            put(cs.charAt(i));
+        }
         return this;
     }
 
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
-        int rem = (int) (lim - _wptr);
-        int len = hi - lo;
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, lo, n, _wptr);
-        _wptr += n;
+        final int rem = (int) (lim - _wptr);
+        final int len = hi - lo;
+        if (rem >= len) {
+            Chars.asciiStrCpy(cs, lo, len, _wptr);
+            _wptr += len;
+            return this;
+        }
+
+        int safeLen = rem - 4;
+        if (safeLen > 0) {
+            Chars.asciiStrCpy(cs, lo, safeLen, _wptr);
+            _wptr += safeLen;
+        }
+
+        safeLen = Math.max(0, safeLen);
+        for (int i = safeLen; i < rem; i++) {
+            put(cs.charAt(lo + i));
+        }
         return this;
     }
 
