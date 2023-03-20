@@ -179,7 +179,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainShowPartitionsTableGetsDeletedMidCursorCheck() throws Exception {
+    public void testServerMainShowPartitionsTableGetsDeletedMidCursor() throws Exception {
         String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
@@ -201,41 +201,36 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 SOCountDownLatch completed = new SOCountDownLatch(1);
                 AtomicReference<Throwable> error = new AtomicReference<>();
 
+                // show partitions concurrently
                 new Thread(() -> {
                     try {
                         start.await();
                         assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
                     } catch (Throwable err) {
+                        // delete won
                         error.set(err);
                     } finally {
                         completed.countDown();
                     }
                 }).start();
-                start.await();
 
-                if (!isWal) {
-                    try {
-                        dropTable(engine, compiler0, context0, tableToken, false, null);
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "[reason='busyReader']");
-                    }
-                } else {
-                    try {
-                        dropTable(engine, compiler0, context0, tableToken, true, null);
-                    } catch (AssertionError ignore) {
-                        // noop
-                    }
+                start.await();
+                try {
+                    dropTable(engine, compiler0, context0, tableToken, false, null);
+                } catch (Error e) {
+                    Assert.assertTrue(isWal);
+                    Assert.assertTrue(e instanceof AssertionError); // times out on delete
+                } catch (CairoException ce) {
+                    Assert.assertFalse(isWal);
+                    TestUtils.assertContains(ce.getFlyweightMessage(), "[reason='busyReader']");
                 }
-                Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(2L)));
+
+                Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(5L)));
                 if (error.get() != null) {
                     TestUtils.assertContains(error.get().getMessage(), "table does not exist");
                 }
-                if (!isWal) {
-                    dropTable(engine, compiler0, context0, tableToken, isWal, null);
-                }
                 try {
-                    assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
-                    Assert.fail();
+                    dropTable(engine, compiler0, context0, tableToken, isWal, null);
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
                 }

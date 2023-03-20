@@ -33,7 +33,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
@@ -103,7 +102,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateTableInVolumeIfNotExists() throws Exception {
+    public void testServerMainCreateTableInVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -116,100 +115,65 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getCairoEngine();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                // create non wal table in volume, and drop it
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
-                assertTableExists(tableToken, false, true);
-                createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, true);
-                dropTable(engine, compiler, context, tableToken, false, otherVolume);
+                for (int i = 0; i < 2; i++) {
+                    // create non wal table in volume, and drop it
+                    TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
+                    assertTableExists(tableToken, false, true);
+                    createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, true);
+                    dropTable(engine, compiler, context, tableToken, false, otherVolume);
 
-                // create non wal table in standard dir, and drop it
-                tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
-                assertTableExists(tableToken, false, false);
-                dropTable(engine, compiler, context, tableToken, false, otherVolume);
-                try {
+                    // create non wal table in standard dir, and drop it
+                    tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
+                    assertTableExists(tableToken, false, false);
+                    dropTable(engine, compiler, context, tableToken, false, otherVolume);
+                    try {
+                        dropTable(engine, compiler, context, tableToken, false, null);
+                        Assert.fail();
+                    } catch (SqlException err) {
+                        TestUtils.assertContains(err.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInVolumeTableExists() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                CairoEngine engine = qdb.getCairoEngine();
+
+                for (int i = 0; i < 2; i++) {
+                    // create normal table in standard dir, then drop it
+                    TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
+                    try {
+                        createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, false, false);
                     dropTable(engine, compiler, context, tableToken, false, null);
-                    Assert.fail();
-                } catch (SqlException err) {
-                    TestUtils.assertContains(err.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
+
+                    // create normal table in other volume, then drop it
+                    tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
+                    try {
+                        createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                    }
+                    assertTableExists(tableToken, false, true);
+                    dropTable(engine, compiler, context, tableToken, false, otherVolume);
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testServerMainCreateTableInVolumeTableExists0() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = testName.getMethodName();
-        assertMemoryLeak(() -> {
-            try (
-                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
-            ) {
-                qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CairoEngine engine = qdb.getCairoEngine();
-
-                // create normal table in standard dir, then drop it
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
-                try {
-                    createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, false, false);
-                dropTable(engine, compiler, context, tableToken, false, null);
-
-                // create normal table in other volume, then drop it
-                tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
-                try {
-                    createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, false, true);
-                dropTable(engine, compiler, context, tableToken, false, otherVolume);
-            }
-        });
-    }
-
-    @Test
-    public void testServerMainCreateTableInVolumeTableExists1() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = testName.getMethodName();
-        assertMemoryLeak(() -> {
-            try (
-                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
-            ) {
-                qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                CairoEngine engine = qdb.getCairoEngine();
-
-                // create normal table in other volume, then drop it
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
-                try {
-                    createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, false, true);
-                dropTable(engine, compiler, context, tableToken, false, otherVolume);
-
-                // create normal table in standard dir, then drop it
-                tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
-                try {
-                    createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-                assertTableExists(tableToken, false, false);
-                dropTable(engine, compiler, context, tableToken, false, null);
             }
         });
     }
@@ -362,14 +326,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
                 CairoEngine engine = qdb.getCairoEngine();
 
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, false);
-                assertTableExists(tableToken, true, true);
-                tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, true);
-                dropTable(engine, compiler, context, tableToken, true, otherVolume);
+                for (int i = 0; i < 2; i++) {
+                    TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, false);
+                    assertTableExists(tableToken, true, true);
+                    tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, true);
+                    dropTable(engine, compiler, context, tableToken, true, otherVolume);
 
-                tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, true);
-                assertTableExists(tableToken, true, true);
-                dropTable(engine, compiler, context, tableToken, true, otherVolume);
+                    tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, true);
+                    assertTableExists(tableToken, true, true);
+                    dropTable(engine, compiler, context, tableToken, true, otherVolume);
+                }
+
             }
         });
     }
@@ -474,7 +441,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateWalTableWhileConcurrentCreateWalTable() throws Exception {
+    public void testServerMainCreateWalTableWhileConcurrentCreateWalTableInVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -491,7 +458,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CyclicBarrier startBarrier = new CyclicBarrier(3);
                 SOCountDownLatch haltLatch = new SOCountDownLatch(2);
                 AtomicBoolean isInVolume = new AtomicBoolean();
-
                 for (int i = 0; i < 1; i++) {
                     isInVolume.set(false);
                     startBarrier.reset();
