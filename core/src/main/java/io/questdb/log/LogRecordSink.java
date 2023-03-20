@@ -220,7 +220,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
                 }
 
                 // Adjust the obtained length to account for the number of bytes looked back.
-                multibyteLength -= (int) (_wptr - ptr - 1);
+                multibyteLength -= (int) (_wptr - ptr);
 
                 // Normalize errors in case of an illegal ascii character followed by one or more continuation bytes.
                 if (multibyteLength < 1) {

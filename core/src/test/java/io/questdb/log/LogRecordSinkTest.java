@@ -91,9 +91,9 @@ public class LogRecordSinkTest {
             final String msg = msgs[msgIdx];
             final long sinkMaxLen = scenario[1];
             final long expectedLen = scenario[2];
-            // System.err.printf(
-            //         "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
-            //         msgIdx, msg, sinkMaxLen, expectedLen);
+             System.err.printf(
+                     "scenario: msgIdx: %d, msg: %s, sinkMaxLen: %d, expectedLen: %d\n",
+                     msgIdx, msg, sinkMaxLen, expectedLen);
 
             // Sanity-checking our test data.
             final byte[] msgBytes = msg.getBytes(Files.UTF_8);
