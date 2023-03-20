@@ -1253,7 +1253,7 @@ public class O3FailureTest extends AbstractO3Test {
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
+        assertMaxTimestamp(compiler.engine, expectedMaxTimestamp);
     }
 
     private static void assertXCountAndMax(

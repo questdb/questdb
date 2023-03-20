@@ -98,7 +98,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     // returns transaction number, which is always > -1. Negative values are used as status code.
-    public long applyWAL(
+    long applyWAL(
             TableToken tableToken,
             CairoEngine engine,
             OperationCompiler operationCompiler,
@@ -121,7 +121,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 rowsSinceLastCommit = 0;
-                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON, false)) {
+                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
                     lastWriterTxn = writer.getSeqTxn();
@@ -253,7 +253,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final CairoConfiguration configuration = engine.getConfiguration();
                 if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
                     try {
-                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON, false);
+                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (EntryUnavailableException ex) {
                         // Table is being written to, we cannot destroy it at the moment
                         return false;
