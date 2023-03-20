@@ -64,11 +64,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LagCalculationWindowsSize() {
-        return 4;
-    }
-
-    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -364,9 +359,19 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LagCalculationWindowsSize() {
+        return 4;
+    }
+
+    @Override
     public long getO3MaxLag() {
         // 5 min
         return 300_000_000L;
+    }
+
+    @Override
+    public int getO3MemMaxPages() {
+        return Integer.MAX_VALUE;
     }
 
     @Override
