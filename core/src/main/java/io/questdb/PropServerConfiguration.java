@@ -1821,6 +1821,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3MemMaxPages() {
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
         public long getO3MinLag() {
             return o3MinLagUs;
         }

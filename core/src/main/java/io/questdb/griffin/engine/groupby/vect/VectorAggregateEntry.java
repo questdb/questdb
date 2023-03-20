@@ -26,15 +26,13 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.AbstractLockable;
-import io.questdb.std.Mutable;
-import io.questdb.std.Rosti;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.mp.Sequence;
+import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class VectorAggregateEntry extends AbstractLockable implements Mutable {
+public class VectorAggregateEntry implements Mutable {
     private ExecutionCircuitBreaker circuitBreaker;
     private int columnSizeShr;
     private CountDownLatchSPI doneLatch;
@@ -53,10 +51,25 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         func = null;
     }
 
-    public boolean run(int workerId) {
-        if (tryLock()) {
-            if (!circuitBreaker.checkIfTripped()
-                    && (oomCounter == null || oomCounter.get() == 0)) {
+    public void run(int workerId, Sequence seq, long cursor) {
+        long keyAddress = this.keyAddress;
+        long valueAddress = this.valueAddress;
+        long valueCount = this.valueCount;
+        int columnSizeShr = this.columnSizeShr;
+        AtomicInteger oomCounter = this.oomCounter;
+        long[] pRosti = this.pRosti;
+        RostiAllocFacade raf = this.raf;
+        VectorAggregateFunction func = this.func;
+        ExecutionCircuitBreaker circuitBreaker = this.circuitBreaker;
+        CountDownLatchSPI doneLatch = this.doneLatch;
+
+        seq.done(cursor);
+        run(workerId, keyAddress, valueAddress, valueCount, columnSizeShr, oomCounter, pRosti, raf, func, circuitBreaker, doneLatch);
+    }
+
+    private static void run(int workerId, long keyAddress, long valueAddress, long valueCount, int columnSizeShr, AtomicInteger oomCounter, long[] pRosti, RostiAllocFacade raf, VectorAggregateFunction func, ExecutionCircuitBreaker circuitBreaker, CountDownLatchSPI doneLatch) {
+        try {
+            if (!circuitBreaker.checkIfTripped() && (oomCounter == null || oomCounter.get() == 0)) {
                 if (pRosti != null) {
                     long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
                     if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
@@ -67,14 +80,12 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
                     func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
                 }
             }
+        } finally {
             doneLatch.countDown();
-            return true;
         }
-        return false;
     }
 
     void of(
-            int sequence,
             VectorAggregateFunction vaf,
             long[] pRosti,
             long keyPageAddress,
@@ -87,7 +98,6 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
             RostiAllocFacade raf,
             ExecutionCircuitBreaker circuitBreaker
     ) {
-        of(sequence);
         this.pRosti = pRosti;
         this.keyAddress = keyPageAddress;
         this.valueAddress = valuePageAddress;

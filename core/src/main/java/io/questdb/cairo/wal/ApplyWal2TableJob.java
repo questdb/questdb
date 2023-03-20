@@ -50,6 +50,7 @@ import java.io.Closeable;
 
 import static io.questdb.TelemetrySystemEvent.*;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -96,37 +97,62 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
     }
 
-    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
-        if (engine.lockReadersByTableToken(tableToken)) {
-            TableWriter writerToClose = null;
-            try {
-                final CairoConfiguration configuration = engine.getConfiguration();
-                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
-                    try {
-                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
-                    } catch (EntryUnavailableException ex) {
-                        // Table is being written to, we cannot destroy it at the moment
-                        return false;
-                    } catch (CairoException ex) {
-                        // Ignore it, table can be half deleted.
+    // returns transaction number, which is always > -1. Negative values are used as status code.
+    public long applyWAL(
+            TableToken tableToken,
+            CairoEngine engine,
+            OperationCompiler operationCompiler,
+            Job.RunStatus runStatus
+    ) {
+        long lastSequencerTxn;
+        long lastWriterTxn = WAL_APPLY_IGNORE_ERROR;
+        Path tempPath = Path.PATH.get();
+
+        try {
+            do {
+                // security context is checked on writing to the WAL and can be ignored here
+                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                if (engine.isTableDropped(tableToken) || updatedToken == null) {
+                    if (engine.isTableDropped(tableToken)) {
+                        return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
                     }
+                    // else: table is dropped and fully cleaned, this is late notification.
+                    return Long.MAX_VALUE;
                 }
-                if (writer != null) {
-                    // Force writer to close all the files.
-                    writer.destroy();
+
+                rowsSinceLastCommit = 0;
+                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON, false)) {
+                    assert writer.getMetadata().getTableId() == tableToken.getTableId();
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
+                    lastWriterTxn = writer.getSeqTxn();
+                } catch (EntryUnavailableException tableBusy) {
+                    //noinspection StringEquality
+                    if (tableBusy.getReason() != NO_LOCK_REASON
+                            && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
+                            && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
+                        LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
+                    }
+                    // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
+                    // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
+                    // "ignore" or last txn we applied.
+                    break;
                 }
-                return cleanDroppedTableDirectory(engine, tempPath, tableToken);
-            } finally {
-                if (writerToClose != null) {
-                    writerToClose.close();
-                }
-                engine.releaseReadersByTableToken(tableToken);
+
+                lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+            } while (lastWriterTxn < lastSequencerTxn && !runStatus.isTerminating());
+        } catch (CairoException ex) {
+            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
+                // Table is dropped, and we received cairo exception in the middle of apply
+                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
             }
-        } else {
-            LOG.info().$("table '").utf8(tableToken.getDirName())
-                    .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
+            telemetryFacade.store(TelemetryOrigin.WAL_APPLY, WAL_APPLY_SUSPEND);
+            LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(tableToken.getDirName())
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return WAL_APPLY_FAILED;
         }
-        return false;
+        return lastWriterTxn;
     }
 
     @Override
@@ -220,62 +246,37 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return true;
     }
 
-    // returns transaction number, which is always > -1. Negative values are used as status code.
-    private long applyWAL(
-            TableToken tableToken,
-            CairoEngine engine,
-            Job.RunStatus runStatus
-    ) {
-        long lastSequencerTxn = -1;
-        long lastWriterTxn = WAL_APPLY_IGNORE_ERROR;
-        Path tempPath = Path.PATH.get();
-
-        try {
-            do {
-                // security context is checked on writing to the WAL and can be ignored here
-                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-                if (engine.isTableDropped(tableToken) || updatedToken == null) {
-                    if (engine.isTableDropped(tableToken)) {
-                        return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
+    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
+        if (engine.lockReadersByTableToken(tableToken)) {
+            TableWriter writerToClose = null;
+            try {
+                final CairoConfiguration configuration = engine.getConfiguration();
+                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
+                    try {
+                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON, false);
+                    } catch (EntryUnavailableException ex) {
+                        // Table is being written to, we cannot destroy it at the moment
+                        return false;
+                    } catch (CairoException ex) {
+                        // Ignore it, table can be half deleted.
                     }
-                    // else: table is dropped and fully cleaned, this is late notification.
-                    return Long.MAX_VALUE;
                 }
-
-                rowsSinceLastCommit = 0;
-                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
-                    assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
-                    lastWriterTxn = writer.getSeqTxn();
-                } catch (EntryUnavailableException tableBusy) {
-                    if (tableBusy.getReason() != null // only pool release action does not have lock reason
-                            && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
-                            && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
-                        LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
-                    }
-                    // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
-                    // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
-                    // "ignore" or last txn we applied.
-                    break;
+                if (writer != null) {
+                    // Force writer to close all the files.
+                    writer.destroy();
                 }
-
-                lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
-            } while (lastWriterTxn < lastSequencerTxn && !runStatus.isTerminating());
-        } catch (CairoException ex) {
-            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
-                // Table is dropped, and we received cairo exception in the middle of apply
-                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
+                return cleanDroppedTableDirectory(engine, tempPath, tableToken);
+            } finally {
+                if (writerToClose != null) {
+                    writerToClose.close();
+                }
+                engine.releaseReadersByTableToken(tableToken);
             }
-            telemetryFacade.store(TelemetryOrigin.WAL_APPLY, WAL_APPLY_SUSPEND);
-            LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(tableToken.getDirName())
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
-            return WAL_APPLY_FAILED;
+        } else {
+            LOG.info().$("table '").utf8(tableToken.getDirName())
+                    .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
         }
-        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
-
-        return lastWriterTxn;
+        return false;
     }
 
     private void applyOutstandingWalTransactions(
@@ -343,8 +344,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (hasNext) {
                                 final long start = microClock.getTicks();
                                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                                structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
+                                structuralChangeCursor.next().apply(writer, true);
                                 walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
                             } else {
                                 // Something messed up in sequencer.
@@ -663,7 +664,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final int tableId = tableToken.getTableId();
         if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
             // Check, maybe we already processed this table to higher txn.
-            final long txn = applyWAL(tableToken, engine, runStatus);
+            final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
             if (txn > -1L) {
                 lastAppliedSeqTxns.put(tableId, txn);
             } else if (txn == WAL_APPLY_FAILED) {

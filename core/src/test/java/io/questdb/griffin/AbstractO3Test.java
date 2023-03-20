@@ -55,6 +55,7 @@ public class AbstractO3Test {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static int dataAppendPageSize = -1;
+    protected static int o3MemMaxPages = -1;
     protected static CharSequence root;
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -84,6 +85,7 @@ public class AbstractO3Test {
     public void tearDown() {
         TestUtils.removeTestPath(root);
         dataAppendPageSize = -1;
+        o3MemMaxPages = -1;
     }
 
     protected static void assertIndexConsistency(
@@ -325,6 +327,11 @@ public class AbstractO3Test {
                     public int getO3ColumnMemorySize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
+
+                    @Override
+                    public int getO3MemMaxPages() {
+                        return o3MemMaxPages > 0 ? o3MemMaxPages : super.getO3MemMaxPages();
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -359,6 +366,11 @@ public class AbstractO3Test {
                     @Override
                     public int getO3CopyQueueCapacity() {
                         return 0;
+                    }
+
+                    @Override
+                    public int getO3MemMaxPages() {
+                        return o3MemMaxPages > 0 ? o3MemMaxPages : super.getO3MemMaxPages();
                     }
 
                     @Override

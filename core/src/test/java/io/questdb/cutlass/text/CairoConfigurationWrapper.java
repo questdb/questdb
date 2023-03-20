@@ -370,6 +370,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MemMaxPages() {
+        return conf.getO3MemMaxPages();
+    }
+
+    @Override
     public long getO3MinLag() {
         return conf.getO3MinLag();
     }

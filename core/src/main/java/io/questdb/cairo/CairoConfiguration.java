@@ -194,6 +194,8 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
+    int getO3LagCalculationWindowsSize();
+
     default double getO3LagDecreaseFactor() {
         return 0.5;
     }
@@ -210,9 +212,9 @@ public interface CairoConfiguration {
      */
     long getO3MaxLag();
 
-    long getO3MinLag();
+    int getO3MemMaxPages();
 
-    int getO3LagCalculationWindowsSize();
+    long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
 

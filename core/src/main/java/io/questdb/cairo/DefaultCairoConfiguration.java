@@ -378,6 +378,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MemMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public long getO3MinLag() {
         return 1_000_000;
     }
