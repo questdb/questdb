@@ -112,7 +112,8 @@ public class FuzzTransactionGenerator {
                         startTs = (minTimestamp + offset - jitter);
                     }
                 } else {
-                    startTs = lastTimestamp;
+                    long writeInterval = rnd.nextLong((maxTimestamp - minTimestamp) / transactionCount);
+                    startTs = lastTimestamp - writeInterval;
                 }
                 long size = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
