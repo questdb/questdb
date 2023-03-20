@@ -31,12 +31,13 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 public class LogRecordSink extends AbstractCharSink implements Sinkable {
+    public final static int UTF8_BYTE_CLASS_BAD = -1;
+    public final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
     protected final long address;
     protected final long lim;
     protected long _wptr;
     private boolean done = false;
     private int level;
-    private int multibyteLength = 0;
 
     LogRecordSink(long address, long addressSize) {
         this.address = _wptr = address;
@@ -138,12 +139,12 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
             //
             // Encoded, it's 23 bytes. Let's assume that the buffer is only 22 bytes.
             // Without the `done` flag it would serialize out as: "I'd like some apple !"
-            // writing the "!" character as there would have been enough space for it.
+            // incorrectly writing the '!' byte as there would have been enough space for it.
             return this;
         }
 
         long needed = utf8charNeeded(b);
-        if (needed < 1) {
+        if (needed == UTF8_BYTE_CLASS_BAD) {
             // Invalid UTF-8 byte, sentinel replacement -- this should never happen in practice.
             b = (byte) '?';
             needed = 1;
@@ -167,32 +168,68 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         Chars.utf8Decode(address, _wptr, sink);
     }
 
-    private long utf8charNeeded(byte b) {
+    private static int utf8byteClass(byte b) {
         // Reference the table at:
         // https://en.wikipedia.org/wiki/UTF-8#Encoding
-
         if (b >= 0) {
-            return 1;  // ASCII
-        }
-
-        if ((b & 0xC0) == 0x80) {
+            // ASCII
+            return 1;
+        } else if ((b & 0xC0) == 0x80) {
             // 0xC0 = 1100 0000, 0x80 = 1000 0000, check if starts with 10
-            // This is a continuation byte.
-            --multibyteLength;
+            return UTF8_BYTE_CLASS_CONTINUATION;
         } else if ((b & 0xE0) == 0xC0) {
             // 0xE0 = 1110 0000, 0xC0 = 1100 0000, check if starts with 110
-            multibyteLength = 2;
+            return 2;
         } else if ((b & 0xF0) == 0xE0) {
             // 0xF0 = 1111 0000, 0xE0 = 1110 0000m, check if starts with 1110
-            multibyteLength = 3;
+            return 3;
         } else if ((b & 0xF8) == 0xF0) {
             // 0xF8 = 1111 1000, 0xF0 = 1111 0000, check if starts with 1111 0
-            multibyteLength = 4;
+            return 4;
         } else {
-            // Invalid UTF-8 char.
-            return -1;
+            return UTF8_BYTE_CLASS_BAD;
         }
+    }
 
-        return multibyteLength;
+    private int utf8charNeeded(byte b) {
+        final int byteClass = utf8byteClass(b);
+        switch (byteClass) {
+            case UTF8_BYTE_CLASS_BAD:
+                return UTF8_BYTE_CLASS_BAD;
+
+            case UTF8_BYTE_CLASS_CONTINUATION: {
+                // We've been dropped into the middle of a multi-byte character
+                // without prior knowledge of how long it is.
+                // We now need to look back to find the start of the character.
+                int multibyteLength = UTF8_BYTE_CLASS_BAD;
+                long ptr = _wptr - 1;
+                final long boundary = Math.max(address, _wptr - 4);
+                for (; ptr >= boundary; --ptr) {
+                    byte prev = Unsafe.getUnsafe().getByte(ptr);
+                    multibyteLength = utf8byteClass(prev);
+                    switch (multibyteLength) {
+                        case UTF8_BYTE_CLASS_BAD:
+                            return UTF8_BYTE_CLASS_BAD;
+                        case UTF8_BYTE_CLASS_CONTINUATION:
+                            continue;
+                        default:
+                            break;
+                    }
+                }
+
+                // Adjust the obtained length to account for the number of bytes looked back.
+                multibyteLength -= (int) (_wptr - ptr - 1);
+
+                // Normalize errors in case of an illegal ascii character followed by one or more continuation bytes.
+                if (multibyteLength < 1) {
+                    multibyteLength = UTF8_BYTE_CLASS_BAD;
+                }
+
+                return multibyteLength;
+            }
+
+            default:
+                return byteClass;
+        }
     }
 }

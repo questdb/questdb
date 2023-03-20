@@ -147,16 +147,19 @@ public class LogRecordSinkTest {
         // UTF-8 encoding for an illegal 5-byte sequence.
         final byte lead5 = (byte) 0xF8; // 1111 1000
         final byte inter = (byte) 0xBF; // 1011 1111
+        final byte ascii = (byte) 'a';
 
 
         final byte[][] buffers = {
                 {lead5, inter, inter},
-                {inter, inter}
+                {inter, inter},
+                {ascii, inter, inter},
         };
 
         final String[] expectedMsgs = {
                 "???",
-                "??"
+                "??",
+                "a??"
         };
 
         for (int bufIndex = 0; bufIndex < buffers.length; bufIndex++) {
