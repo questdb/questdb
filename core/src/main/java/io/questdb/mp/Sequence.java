@@ -32,7 +32,7 @@ public interface Sequence extends Barrier, Mutable {
 
     /***
      * Returns next position to publish to / fetch from
-     * @return Queue index to use. Returns -1 if full or -2 if empty
+     * @return Queue index to use. Returns -1 if full / empty or -2 if race is lost
      */
     long next();
 
