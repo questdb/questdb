@@ -277,7 +277,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
 
             assertPlan(query, "SelectedRecord\n" +
                     "    Sort light\n" +
-                    "      keys: [a_tax]\n" +
+                    "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
                     "            Async Filter\n" +
                     "              filter: vendor_id in [A1,A2]\n" +
