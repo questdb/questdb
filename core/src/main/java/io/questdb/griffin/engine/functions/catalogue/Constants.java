@@ -124,7 +124,7 @@ public class Constants {
     };
     static final String[] NAMESPACES = {"pg_catalog", PUBLIC};
     static final int[] NAMESPACE_OIDS = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
-    static final StrConstant PG_CATALOG_VERSION_CONSTANT = new StrConstant("PostgreSQL 15.x (QuestDB)");
+    static final StrConstant PG_CATALOG_VERSION_CONSTANT = new StrConstant("PostgreSQL 15.2 (QuestDB)");
     static final StrFunction PUBLIC_CONSTANT = new StrConstant(PUBLIC);
     static final StrFunction USER_CONSTANT = new StrConstant("admin");
 }
