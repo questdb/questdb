@@ -62,6 +62,11 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected long lagMaxTimestamp;
+    protected long lagMinTimestamp;
+    protected boolean lagOrdered;
+    protected int lagRowCount;
+    protected int lagTxnCount;
     protected long maxTimestamp;
     protected long minTimestamp;
     protected int partitionBy;
@@ -71,12 +76,7 @@ public class TxReader implements Closeable, Mutable {
     protected long transientRowCount;
     protected long truncateVersion;
     protected long txn;
-    int baseOffset;
-    long lagMaxTimestamp;
-    long lagMinTimestamp;
-    boolean lagOrdered;
-    int lagRowCount;
-    int lagTxnCount;
+    private int baseOffset;
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;

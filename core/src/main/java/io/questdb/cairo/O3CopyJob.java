@@ -569,7 +569,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     directIoFlag
             );
         } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr, Long.MAX_VALUE);
+            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);
         }
     }
 

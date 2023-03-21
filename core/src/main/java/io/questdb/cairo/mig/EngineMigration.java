@@ -40,8 +40,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 import static io.questdb.cairo.TableUtils.META_OFFSET_VERSION;
 import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
@@ -109,24 +107,23 @@ public class EngineMigration {
             if (upgradeFd != -1) {
                 try {
                     LOG.info().$("upgrading database [version=").$(latestMigrationVersion).I$();
-                    if (upgradeTables(context, latestTableVersion, latestMigrationVersion)) {
-                        TableUtils.writeIntOrFail(
-                                ff,
-                                upgradeFd,
-                                0,
-                                latestTableVersion,
-                                mem,
-                                path
-                        );
-                        TableUtils.writeIntOrFail(
-                                ff,
-                                upgradeFd,
-                                4,
-                                latestMigrationVersion,
-                                mem,
-                                path
-                        );
-                    }
+                    upgradeTables(context, latestTableVersion, latestMigrationVersion);
+                    TableUtils.writeIntOrFail(
+                            ff,
+                            upgradeFd,
+                            0,
+                            latestTableVersion,
+                            mem,
+                            path
+                    );
+                    TableUtils.writeIntOrFail(
+                            ff,
+                            upgradeFd,
+                            4,
+                            latestMigrationVersion,
+                            mem,
+                            path
+                    );
                 } finally {
                     Vm.bestEffortClose(
                             ff,
@@ -145,11 +142,10 @@ public class EngineMigration {
         return MIGRATIONS.get(version);
     }
 
-    private static boolean upgradeTables(MigrationContext context, int latestTableVersion, int latestMigrationVersion) {
+    private static void upgradeTables(MigrationContext context, int latestTableVersion, int latestMigrationVersion) {
         final FilesFacade ff = context.getFf();
         final CharSequence root = context.getConfiguration().getRoot();
         long mem = context.getTempMemory(8);
-        final AtomicBoolean updateSuccess = new AtomicBoolean(true);
 
         try (Path path = new Path(); Path copyPath = new Path()) {
             path.of(root);
@@ -224,7 +220,6 @@ public class EngineMigration {
             });
             LOG.info().$("upgraded tables to ").$(latestMigrationVersion).$();
         }
-        return updateSuccess.get();
     }
 
     static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {

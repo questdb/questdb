@@ -1398,13 +1398,13 @@ public final class TableUtils {
         return metaMem.getInt(offset);
     }
 
-    static int calculateTxnLagChecksum(long txn1, long seqTxn1, int lagRowCount1, long lagMinTimestamp1, long lagMaxTimestamp1, int lagTxnCount1) {
+    static int calculateTxnLagChecksum(long txn1, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
         long checkSum = txn1 +
-                seqTxn1 +
-                lagRowCount1 +
-                lagMinTimestamp1 +
-                lagMaxTimestamp1 +
-                lagTxnCount1;
+                seqTxn +
+                lagRowCount +
+                lagMinTimestamp +
+                lagMaxTimestamp +
+                lagTxnCount;
 
         return (int) (checkSum ^ (checkSum >>> 32));
     }

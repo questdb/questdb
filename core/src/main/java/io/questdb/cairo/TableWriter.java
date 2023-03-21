@@ -4190,8 +4190,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3SrcIndexMem.addressOf(committedIndexOffset),
                             0,
                             copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                            o3DstIndexMem.addressOf(existingLagRows << 3),
-                            destOffset + size
+                            o3DstIndexMem.addressOf(existingLagRows << 3)
                     );
                 }
 
@@ -4313,8 +4312,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             0,
                             transientRowsAdded - 1,
                             // copy uncommitted index over the trailing LONG
-                            o3IndexMem.addressOf(dstAppendOffset),
-                            dstVarOffset + srcDataMem.getAppendOffset() - srcVarOffset
+                            o3IndexMem.addressOf(dstAppendOffset)
                     );
 
                     if (locallyMapped) {
@@ -4443,8 +4441,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3SrcIndexMem.addressOf(committedIndexOffset),
                     0,
                     copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                    Math.abs(destAddr),
-                    destOffset + size
+                    Math.abs(destAddr)
             );
             mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
         }

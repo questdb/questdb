@@ -109,8 +109,7 @@ public class O3Utils {
             long src,
             long srcLo,
             long srcHi,
-            long dstAddr,
-            long destSize
+            long dstAddr
     ) {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }

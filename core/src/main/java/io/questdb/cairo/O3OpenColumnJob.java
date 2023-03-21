@@ -1867,8 +1867,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                                 srcDataFixAddr,
                                 0,
                                 hiInclusive,
-                                srcDataFixAddr + srcDataMaxBytes,
-                                Long.MAX_VALUE
+                                srcDataFixAddr + srcDataMaxBytes
                         );
 
                         // now set the "empty" bit of fixed size column with references to those
@@ -1904,8 +1903,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                                 srcDataFixAddr,
                                 0,
                                 hiInclusive,
-                                srcDataFixAddr + srcDataMaxBytes,
-                                Long.MAX_VALUE
+                                srcDataFixAddr + srcDataMaxBytes
                         );
 
                         // now set the "empty" bit of fixed size column with references to those
