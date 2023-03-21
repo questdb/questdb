@@ -36,7 +36,7 @@ public class QueryColumn implements Mutable {
     private int columnType;
     private boolean includeIntoWildcard = true;
 
-    protected QueryColumn() {
+    public QueryColumn() {
     }
 
     @Override

@@ -47,15 +47,11 @@ package io.questdb.std.fastdouble;
  * </dl>
  * </p>
  */
-class FastDoubleMath {
+public class FastDoubleMath {
     /**
      * Bias used in the exponent of a double.
      */
     public static final int DOUBLE_EXPONENT_BIAS = 1023;
-    /**
-     * The number of bits in the significand, including the implicit bit.
-     */
-    public static final int DOUBLE_SIGNIFICAND_WIDTH = 53;
     /**
      * Largest power of 10 value of the exponent.
      * <p>
@@ -63,7 +59,7 @@ class FastDoubleMath {
      * infinite in a double, so we never need to worry about powers
      * of 10 greater than 308.
      */
-    final static int DOUBLE_MAX_EXPONENT_POWER_OF_TEN = 308;
+    public final static int DOUBLE_MAX_EXPONENT_POWER_OF_TEN = 308;
     /**
      * Smallest power of 10 value of the exponent.
      * <p>
@@ -85,7 +81,11 @@ class FastDoubleMath {
      * than 2^-1022 with expressions of the form w * 10^-326.
      * Thus, we need to pick SMALLEST_POWER_OF_TEN >= -326.
      */
-    final static int DOUBLE_MIN_EXPONENT_POWER_OF_TEN = -325;
+    public final static int DOUBLE_MIN_EXPONENT_POWER_OF_TEN = -325;
+    /**
+     * The number of bits in the significand, including the implicit bit.
+     */
+    public static final int DOUBLE_SIGNIFICAND_WIDTH = 53;
     /**
      * A complement to mantissa_64 complete to a
      * 128-bit mantissa.
@@ -100,7 +100,7 @@ class FastDoubleMath {
      * }
      * </pre>
      */
-    final static long[] MANTISSA_128 = {
+    public final static long[] MANTISSA_128 = {
             0x419ea3bd35385e2dL, 0x52064cac828675b9L,
             0x7343efebd1940993L, 0x1014ebe6c5f90bf8L,
             0xd41a26e077774ef6L, 0x8920b098955522b4L,
@@ -439,7 +439,7 @@ class FastDoubleMath {
      * }
      * </pre>
      */
-    static final long[] MANTISSA_64 = {
+    public static final long[] MANTISSA_64 = {
             0xa5ced43b7e3e9188L, 0xcf42894a5dce35eaL,
             0x818995ce7aa0e1b2L, 0xa1ebfb4219491a1fL,
             0xca66fa129f9b60a6L, 0xfd00b897478238d0L,
@@ -789,7 +789,7 @@ class FastDoubleMath {
      * @param power       the exponent number (the power)
      * @return the computed double on success, {@link Double#NaN} on failure
      */
-    static double tryDecFloatToDouble(boolean isNegative, long significand, int power) {
+    public static double tryDecFloatToDouble(boolean isNegative, long significand, int power) {
         // we start with a fast path
         // It was described in Clinger WD (1990).
         if (-22 <= power && power <= 22 && Long.compareUnsigned(significand, (1L << DOUBLE_SIGNIFICAND_WIDTH) - 1) <= 0) {
@@ -970,6 +970,45 @@ class FastDoubleMath {
     }
 
     /**
+     * Tries to compute {@code significand * 2^power} exactly using a fast
+     * algorithm; and if {@code isNegative} is true, negate the result.
+     *
+     * @param isNegative  true if the sign is negative
+     * @param significand the significand
+     * @param power       the power of the exponent
+     * @return the double value,
+     * or {@link Double#NaN} if the fast path failed.
+     */
+    public static double tryHexFloatToDouble(boolean isNegative, long significand, int power) {
+
+        // we start with a fast path
+        // We try to mimic the fast described by Clinger WD for decimal
+        // float number literals. How to read floating point numbers accurately.
+        // ACM SIGPLAN Notices. 1990
+        if (Long.compareUnsigned(significand, 0x1fffffffffffffL) <= 0) {
+            // convert the integer into a double. This is lossless since
+            // 0 <= i <= 2^53 - 1.
+            double d = (double) significand;
+            //
+            // The general idea is as follows.
+            // If 0 <= s < 2^53  then
+            // 1) Both s and p can be represented exactly as 64-bit floating-point
+            // values (binary64).
+            // 2) Because s and p can be represented exactly as floating-point values,
+            // then s * p will produce correctly rounded values.
+            //
+            d = d * Math.scalb(1d, power);
+            if (isNegative) {
+                d = -d;
+            }
+            return d;
+        }
+
+        // The fast path has failed
+        return Double.NaN;
+    }
+
+    /**
      * Tries to compute {@code significand * 10^exponent} exactly using a fast
      * algorithm; and if {@code isNegative} is true, negate the result;
      * the significand can be truncated.
@@ -1014,45 +1053,6 @@ class FastDoubleMath {
             result = Double.NaN;
         }
         return result;
-    }
-
-    /**
-     * Tries to compute {@code significand * 2^power} exactly using a fast
-     * algorithm; and if {@code isNegative} is true, negate the result.
-     *
-     * @param isNegative  true if the sign is negative
-     * @param significand the significand
-     * @param power       the power of the exponent
-     * @return the double value,
-     * or {@link Double#NaN} if the fast path failed.
-     */
-    static double tryHexFloatToDouble(boolean isNegative, long significand, int power) {
-
-        // we start with a fast path
-        // We try to mimic the fast described by Clinger WD for decimal
-        // float number literals. How to read floating point numbers accurately.
-        // ACM SIGPLAN Notices. 1990
-        if (Long.compareUnsigned(significand, 0x1fffffffffffffL) <= 0) {
-            // convert the integer into a double. This is lossless since
-            // 0 <= i <= 2^53 - 1.
-            double d = (double) significand;
-            //
-            // The general idea is as follows.
-            // If 0 <= s < 2^53  then
-            // 1) Both s and p can be represented exactly as 64-bit floating-point
-            // values (binary64).
-            // 2) Because s and p can be represented exactly as floating-point values,
-            // then s * p will produce correctly rounded values.
-            //
-            d = d * Math.scalb(1d, power);
-            if (isNegative) {
-                d = -d;
-            }
-            return d;
-        }
-
-        // The fast path has failed
-        return Double.NaN;
     }
 
     /**

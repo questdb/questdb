@@ -65,10 +65,10 @@ import java.util.Iterator;
  * closed.
  */
 public class WriterPool extends AbstractPool {
+    public static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
-    static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
@@ -99,6 +99,19 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    public int countFreeWriters() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            final long owner = e.owner;
+            if (owner == UNALLOCATED) {
+                count++;
+            } else {
+                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
+            }
+        }
+        return count;
+    }
+
     /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
@@ -119,76 +132,6 @@ public class WriterPool extends AbstractPool {
      */
     public TableWriter get(TableToken tableToken, String lockReason) {
         return getWriterEntry(tableToken, lockReason, null);
-    }
-
-    private TableWriter getWriterEntry(
-            TableToken tableToken,
-            String lockReason,
-            @Nullable AsyncWriterCommand asyncWriterCommand
-    ) {
-        assert null != lockReason;
-        checkClosed();
-
-        long thread = Thread.currentThread().getId();
-
-        while (true) {
-            Entry e = entries.get(tableToken.getDirName());
-            if (e == null) {
-                // We are racing to create new writer!
-                e = new Entry(clock.getTicks());
-                Entry other = entries.putIfAbsent(tableToken.getDirName(), e);
-                if (other == null) {
-                    // race won
-                    return createWriter(tableToken, e, thread, lockReason);
-                } else {
-                    e = other;
-                }
-            }
-
-            long owner = e.owner;
-            // try to change owner
-            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-                // in an extreme race condition it is possible that e.writer will be null
-                // in this case behaviour should be identical to entry missing entirely
-                if (e.writer == null) {
-                    return createWriter(tableToken, e, thread, lockReason);
-                }
-                return checkClosedAndGetWriter(tableToken, e, lockReason);
-            } else {
-                if (owner < 0) {
-                    // writer is about to be released from the pool by release method.
-                    // try again, it should become available soon.
-                    Os.pause();
-                    continue;
-                }
-                if (owner == thread) {
-                    if (e.lockFd != -1L) {
-                        throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
-                    }
-
-                    if (e.ex != null) {
-                        notifyListener(thread, tableToken, PoolListener.EV_EX_RESEND);
-                        // this writer failed to allocate by this very thread
-                        // ensure consistent response
-                        entries.remove(tableToken.getDirName());
-                        throw e.ex;
-                    }
-                }
-                if (asyncWriterCommand != null) {
-                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
-                    return null;
-                }
-
-                String reason = reinterpretOwnershipReason(e.ownershipReason);
-
-                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
-                        .$("`, owner=").$(owner)
-                        .$(", thread=").$(thread)
-                        .$(", reason=").$(reason)
-                        .I$();
-                throw EntryUnavailableException.instance(reason);
-            }
-        }
     }
 
     /**
@@ -286,10 +229,6 @@ public class WriterPool extends AbstractPool {
         return entries.size();
     }
 
-    public void unlock(TableToken tableToken) {
-        unlock(tableToken, null, false);
-    }
-
     public void unlock(TableToken tableToken, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
@@ -344,6 +283,10 @@ public class WriterPool extends AbstractPool {
             notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.critical(0).put("Not lock owner of ").put(tableToken.getDirName());
         }
+    }
+
+    public void unlock(TableToken tableToken) {
+        unlock(tableToken, null, false);
     }
 
     private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
@@ -439,6 +382,76 @@ public class WriterPool extends AbstractPool {
         }
     }
 
+    private TableWriter getWriterEntry(
+            TableToken tableToken,
+            String lockReason,
+            @Nullable AsyncWriterCommand asyncWriterCommand
+    ) {
+        assert null != lockReason;
+        checkClosed();
+
+        long thread = Thread.currentThread().getId();
+
+        while (true) {
+            Entry e = entries.get(tableToken.getDirName());
+            if (e == null) {
+                // We are racing to create new writer!
+                e = new Entry(clock.getTicks());
+                Entry other = entries.putIfAbsent(tableToken.getDirName(), e);
+                if (other == null) {
+                    // race won
+                    return createWriter(tableToken, e, thread, lockReason);
+                } else {
+                    e = other;
+                }
+            }
+
+            long owner = e.owner;
+            // try to change owner
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // in an extreme race condition it is possible that e.writer will be null
+                // in this case behaviour should be identical to entry missing entirely
+                if (e.writer == null) {
+                    return createWriter(tableToken, e, thread, lockReason);
+                }
+                return checkClosedAndGetWriter(tableToken, e, lockReason);
+            } else {
+                if (owner < 0) {
+                    // writer is about to be released from the pool by release method.
+                    // try again, it should become available soon.
+                    Os.pause();
+                    continue;
+                }
+                if (owner == thread) {
+                    if (e.lockFd != -1L) {
+                        throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
+                    }
+
+                    if (e.ex != null) {
+                        notifyListener(thread, tableToken, PoolListener.EV_EX_RESEND);
+                        // this writer failed to allocate by this very thread
+                        // ensure consistent response
+                        entries.remove(tableToken.getDirName());
+                        throw e.ex;
+                    }
+                }
+                if (asyncWriterCommand != null) {
+                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
+                    return null;
+                }
+
+                String reason = reinterpretOwnershipReason(e.ownershipReason);
+
+                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
+                        .$("`, owner=").$(owner)
+                        .$(", thread=").$(thread)
+                        .$(", reason=").$(reason)
+                        .I$();
+                throw EntryUnavailableException.instance(reason);
+            }
+        }
+    }
+
     private boolean lockAndNotify(long thread, Entry e, TableToken tableToken, String lockReason) {
         assertLockReasonIsNone(lockReason);
         Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
@@ -530,19 +543,6 @@ public class WriterPool extends AbstractPool {
     protected void closePool() {
         super.closePool();
         LOG.info().$("closed").$();
-    }
-
-    int countFreeWriters() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            final long owner = e.owner;
-            if (owner == UNALLOCATED) {
-                count++;
-            } else {
-                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
-            }
-        }
-        return count;
     }
 
     @Override

@@ -75,6 +75,26 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
+    public static final String META_PREV_FILE_NAME = "_meta.prev";
+    /**
+     * TXN file structure
+     * struct {
+     * long txn;
+     * long transient_row_count; // rows count in last partition
+     * long fixed_row_count; // row count in table excluding count in last partition
+     * long max_timestamp; // last timestamp written to table
+     * long struct_version; // data structure version; whenever columns added or removed this version changes.
+     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
+     * long txn_check; // same as txn - sanity check for concurrent reads and writes
+     * int  map_writer_count; // symbol writer count
+     * int  map_writer_position[map_writer_count]; // position of each of map writers
+     * }
+     * <p>
+     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
+     */
+
+    public static final String META_SWAP_FILE_NAME = "_meta.swp";
+    public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -86,6 +106,9 @@ public final class TableUtils {
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String TODO_FILE_NAME = "_todo_";
+    public static final byte TODO_RESTORE_META = 2;
+    public static final byte TODO_TRUNCATE = 1;
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
@@ -119,29 +142,6 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    static final String META_PREV_FILE_NAME = "_meta.prev";
-    /**
-     * TXN file structure
-     * struct {
-     * long txn;
-     * long transient_row_count; // rows count in last partition
-     * long fixed_row_count; // row count in table excluding count in last partition
-     * long max_timestamp; // last timestamp written to table
-     * long struct_version; // data structure version; whenever columns added or removed this version changes.
-     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
-     * long txn_check; // same as txn - sanity check for concurrent reads and writes
-     * int  map_writer_count; // symbol writer count
-     * int  map_writer_position[map_writer_count]; // position of each of map writers
-     * }
-     * <p>
-     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
-     */
-
-    static final String META_SWAP_FILE_NAME = "_meta.swp";
-    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
-    static final String TODO_FILE_NAME = "_todo_";
-    static final byte TODO_RESTORE_META = 2;
-    static final byte TODO_TRUNCATE = 1;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -441,18 +441,6 @@ public final class TableUtils {
         return exists(ff, volumePath.concat(name).$());
     }
 
-    private static int exists(FilesFacade ff, Path path) {
-        if (ff.exists(path)) { // it can also be a file, for example created with touch
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return TABLE_EXISTS;
-            } else {
-                return TABLE_RESERVED;
-            }
-        } else {
-            return TABLE_DOES_NOT_EXIST;
-        }
-    }
-
     public static void freeTransitionIndex(long address) {
         if (address == 0) {
             return;
@@ -603,7 +591,7 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009':
+                case '	':
                 case '\u000B':
                 case '\u000c':
                 case '\n':
@@ -662,7 +650,7 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009':
+                case '	':
                 case '\u000B':
                 case '\u000c':
                 case '\r':
@@ -1362,6 +1350,18 @@ public final class TableUtils {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    private static int exists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) { // it can also be a file, for example created with touch
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return TABLE_EXISTS;
+            } else {
+                return TABLE_RESERVED;
+            }
+        } else {
+            return TABLE_DOES_NOT_EXIST;
+        }
     }
 
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {

@@ -39,7 +39,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
-class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
+public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
@@ -63,7 +63,7 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private long nextCheckIdleTime;
     private long nextCommitTime;
 
-    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+    public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
@@ -90,10 +90,6 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
                 tud.close();
             }
         }
-    }
-
-    protected CairoSecurityContext getSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
     }
 
     @Override
@@ -164,6 +160,17 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
 
     public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
         return tableUpdateDetailsUtf8.get(tableName);
+    }
+
+    public IOContextResult handleIO(NetworkIOJob netIoJob) {
+        read();
+        try {
+            IOContextResult parasResult = parseMeasurements(netIoJob);
+            doMaintenance(milliClock.getTicks());
+            return parasResult;
+        } finally {
+            netIoJob.releaseWalTableDetails();
+        }
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -247,15 +254,8 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         return false;
     }
 
-    IOContextResult handleIO(NetworkIOJob netIoJob) {
-        read();
-        try {
-            IOContextResult parasResult = parseMeasurements(netIoJob);
-            doMaintenance(milliClock.getTicks());
-            return parasResult;
-        } finally {
-            netIoJob.releaseWalTableDetails();
-        }
+    protected CairoSecurityContext getSecurityContext() {
+        return AllowAllCairoSecurityContext.INSTANCE;
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
@@ -361,7 +361,7 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         recvBufStartOfMeasurement = recvBufStart;
     }
 
-    enum IOContextResult {
+    public enum IOContextResult {
         NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT
     }
 }

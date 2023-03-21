@@ -70,7 +70,7 @@ public class TableUpdateDetails implements Closeable {
     private volatile boolean writerInError;
     private int writerThreadId;
 
-    TableUpdateDetails(
+    public TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
             TableWriterAPI writer,

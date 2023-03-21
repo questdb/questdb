@@ -57,7 +57,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
 
-class LineTcpMeasurementScheduler implements Closeable {
+public class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
@@ -80,7 +80,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
 
-    LineTcpMeasurementScheduler(
+    public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
@@ -257,6 +257,67 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+    public boolean scheduleEvent(
+            CairoSecurityContext securityContext,
+            NetworkIOJob netIoJob,
+            LineTcpConnectionContext ctx,
+            LineTcpParser parser
+    ) {
+        DirectByteCharSequence measurementName = parser.getMeasurementName();
+        TableUpdateDetails tud;
+        try {
+            tud = ctx.getTableUpdateDetails(measurementName);
+            if (tud == null) {
+                tud = netIoJob.getLocalTableDetails(measurementName);
+                if (tud == null) {
+                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
+                }
+            } else if (tud.isWriterInError()) {
+                TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
+                assert tud == removed;
+                removed.close();
+                tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
+            }
+        } catch (EntryUnavailableException ex) {
+            // Table writer is locked
+            LOG.info().$("could not get table writer [tableName=").$(measurementName)
+                    .$(", ex=`")
+                    .$(ex.getFlyweightMessage())
+                    .$("`]")
+                    .$();
+            return true;
+        } catch (CairoException ex) {
+            // Table could not be created
+            LOG.error().$("could not create table [tableName=").$(measurementName)
+                    .$(", errno=").$(ex.getErrno())
+                    .$(", ex=`")
+                    .$(ex.getFlyweightMessage())
+                    .$("`]")
+                    .I$();
+            // More details will be logged by catching thread
+            throw ex;
+        }
+
+        if (tud.isWal()) {
+            try {
+                appendToWal(securityContext, netIoJob, parser, tud);
+            } catch (CommitFailedException ex) {
+                if (ex.isTableDropped()) {
+                    // table dropped, nothing to worry about
+                    LOG.info().$("closing writer because table has been dropped (1) [table=").$(measurementName).I$();
+                    tud.setWriterInError();
+                    tud.releaseWriter(false);
+                    // continue to next line
+                    return false;
+                }
+                handleAppendException(measurementName, tud, ex);
+            } catch (Throwable ex) {
+                handleAppendException(measurementName, tud, ex);
+            }
+            return false;
+        }
+        return dispatchEvent(securityContext, netIoJob, parser, tud);
+    }
 
     private static long getEventSlotSize(int maxMeasurementSize) {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
@@ -769,67 +830,5 @@ class LineTcpMeasurementScheduler implements Closeable {
             Os.pause();
         }
         return seq;
-    }
-
-    boolean scheduleEvent(
-            CairoSecurityContext securityContext,
-            NetworkIOJob netIoJob,
-            LineTcpConnectionContext ctx,
-            LineTcpParser parser
-    ) {
-        DirectByteCharSequence measurementName = parser.getMeasurementName();
-        TableUpdateDetails tud;
-        try {
-            tud = ctx.getTableUpdateDetails(measurementName);
-            if (tud == null) {
-                tud = netIoJob.getLocalTableDetails(measurementName);
-                if (tud == null) {
-                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
-                }
-            } else if (tud.isWriterInError()) {
-                TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
-                assert tud == removed;
-                removed.close();
-                tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
-            }
-        } catch (EntryUnavailableException ex) {
-            // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(measurementName)
-                    .$(", ex=`")
-                    .$(ex.getFlyweightMessage())
-                    .$("`]")
-                    .$();
-            return true;
-        } catch (CairoException ex) {
-            // Table could not be created
-            LOG.error().$("could not create table [tableName=").$(measurementName)
-                    .$(", errno=").$(ex.getErrno())
-                    .$(", ex=`")
-                    .$(ex.getFlyweightMessage())
-                    .$("`]")
-                    .I$();
-            // More details will be logged by catching thread
-            throw ex;
-        }
-
-        if (tud.isWal()) {
-            try {
-                appendToWal(securityContext, netIoJob, parser, tud);
-            } catch (CommitFailedException ex) {
-                if (ex.isTableDropped()) {
-                    // table dropped, nothing to worry about
-                    LOG.info().$("closing writer because table has been dropped (1) [table=").$(measurementName).I$();
-                    tud.setWriterInError();
-                    tud.releaseWriter(false);
-                    // continue to next line
-                    return false;
-                }
-                handleAppendException(measurementName, tud, ex);
-            } catch (Throwable ex) {
-                handleAppendException(measurementName, tud, ex);
-            }
-            return false;
-        }
-        return dispatchEvent(securityContext, netIoJob, parser, tud);
     }
 }

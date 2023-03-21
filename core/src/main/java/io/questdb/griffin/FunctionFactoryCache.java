@@ -95,6 +95,10 @@ public class FunctionFactoryCache {
         return factories;
     }
 
+    public int getFunctionCount() {
+        return factories.size();
+    }
+
     public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
         return factories.get(token);
     }
@@ -150,9 +154,5 @@ public class FunctionFactoryCache {
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
         return new SwappingArgsFunctionFactory(name, factory);
-    }
-
-    int getFunctionCount() {
-        return factories.size();
     }
 }

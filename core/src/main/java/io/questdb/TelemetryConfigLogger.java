@@ -44,11 +44,10 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import java.io.Closeable;
 
 public class TelemetryConfigLogger implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
+    public static final String OS_NAME = "os.name";
     public static final CharSequence TELEMETRY_CONFIG_TABLE_NAME = "telemetry_config";
-    static final String OS_NAME = "os.name";
     static final String QDB_PACKAGE = "QDB_PACKAGE";
-
+    private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
     private final CharSequence questDBVersion;
     private final TelemetryConfiguration telemetryConfiguration;
     private final SCSequence tempSequence = new SCSequence();

@@ -28,6 +28,8 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 
 public class CreateTableTestUtils {

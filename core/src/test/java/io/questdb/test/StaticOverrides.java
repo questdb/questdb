@@ -24,13 +24,13 @@
 
 package io.questdb.test;
 
-import io.questdb.cairo.Overrides;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-class StaticOverrides extends Overrides {
+public class StaticOverrides extends Overrides {
 
     @Override
     public String getAttachableDirSuffix() {

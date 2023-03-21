@@ -25,7 +25,7 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.QuestDBTestNode;
+import io.questdb.test.QuestDBTestNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -44,7 +44,11 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.*;
-import org.hamcrest.MatcherAssert;
+import io.questdb.test.cairo.LogRecordSinkAdapter;
+import io.questdb.test.cairo.RecordCursorPrinter;
+import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -56,9 +60,6 @@ import java.sql.Timestamp;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 public final class TestUtils {
 
@@ -416,6 +417,15 @@ public final class TestUtils {
         }
     }
 
+    public static <T> void assertEquals(ObjList<T> expected, ObjList<T> actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static void assertEquals(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -712,7 +722,7 @@ public final class TestUtils {
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {
-        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
+        try (InputStream stream = Files.class.getResourceAsStream("/io/questdb/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
             final File target = new File(targetDir, "conf/mime.types");
             Assert.assertTrue(target.getParentFile().mkdirs());
@@ -1291,7 +1301,7 @@ public final class TestUtils {
     public static void removeTestPath(CharSequence root) {
         final Path path = Path.getThreadLocal(root);
         final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
-        MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
+        Assert.assertTrue("Test dir cleanup error, rc=" + rc, rc <= 0);
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
@@ -1425,6 +1435,12 @@ public final class TestUtils {
             } catch (AssertionError e) {
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
+        }
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    public static void drainCursor(RecordCursor cursor) {
+        while (cursor.hasNext()) {
         }
     }
 

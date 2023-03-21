@@ -242,6 +242,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return partitionIndex << columnCountShl;
     }
 
+    public int getColumnCount() {
+        return columnCount;
+    }
+
     public long getColumnTop(int base, int columnIndex) {
         return columnTops.getQuick(base / 2 + columnIndex);
     }
@@ -293,6 +297,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return end / PARTITIONS_SLOT_SIZE;
     }
 
+    public long getPartitionRowCount(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+    }
+
     public long getPartitionTimestampByIndex(int partitionIndex) {
         return txFile.getPartitionTimestamp(partitionIndex);
     }
@@ -326,6 +334,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txn;
     }
 
+    public TxnScoreboard getTxnScoreboard() {
+        return txnScoreboard;
+    }
+
     public long getTxnStructureVersion() {
         return txFile.getStructureVersion();
     }
@@ -344,6 +356,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             // to house keep the partition versions
             checkSchedulePurgeO3Partitions();
         }
+    }
+
+    public boolean isColumnCached(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
     public boolean isOpen() {
@@ -1299,23 +1315,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    int getColumnCount() {
-        return columnCount;
-    }
-
     int getPartitionIndex(int columnBase) {
         return columnBase >>> columnCountShl;
-    }
-
-    long getPartitionRowCount(int partitionIndex) {
-        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-    }
-
-    TxnScoreboard getTxnScoreboard() {
-        return txnScoreboard;
-    }
-
-    boolean isColumnCached(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 }

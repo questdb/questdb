@@ -1082,6 +1082,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public int getColumnCount() {
+        return columns.size();
+    }
+
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
@@ -1252,6 +1256,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isPartitionReadOnly(int partitionIndex) {
         return txWriter.isPartitionReadOnly(partitionIndex);
+    }
+
+    public boolean isSymbolMapWriterCached(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
     public void markSeqTxnCommitted(long seqTxn) {
@@ -6491,10 +6499,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    void closeActivePartition(boolean truncate) {
+    public void closeActivePartition(boolean truncate) {
         LOG.info().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
         closeAppendMemoryTruncate(truncate);
         freeIndexers();
+    }
+
+    public MemoryMA getStorageColumn(int index) {
+        return columns.getQuick(index);
     }
 
     void closeActivePartition(long size) {
@@ -6550,10 +6562,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     TxReader getTxReader() {
         return txWriter;
-    }
-
-    boolean isSymbolMapWriterCached(int columnIndex) {
-        return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
     void o3ClockDownPartitionUpdateCount() {
