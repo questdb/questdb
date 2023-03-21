@@ -153,15 +153,6 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void test2FailOnStarInGroupByClause() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table t (x long, y long);");
-            String query = "select x, avg(y) from t group by t.* ";
-            assertError(query, "[33] Invalid column: t.*");
-        });
-    }
-
-    @Test
     public void test2FailOnWindowFunctionAliasInGroupByClause() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t (x long, y long);");
@@ -499,7 +490,8 @@ public class GroupByTest extends AbstractGriffinTest {
     public void test4GroupByWithNonAggregateExpressionUsingAliasDefinedOnSameLevel5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table dat as ( select cast(86400000000*(x%3) as timestamp) as date_report from long_sequence(10))");
-            String query = "select date_report, dateadd('d', -1, ordr.date_report) as minusday, dateadd('d', 1, date_report) as plusday, count(*) " +
+            String query = "select date_report, dateadd('d', -1, ordr.date_report) as minusday, dateadd('d', 1, date_report) as plusday, " +
+                    "concat('1', ordr.date_report, '3'), count(*) " +
                     "from dat ordr " +
                     "group by dateadd('d', -1, date_report), ordr.date_report " +
                     "order by ordr.date_report";
@@ -507,7 +499,7 @@ public class GroupByTest extends AbstractGriffinTest {
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [date_report,dateadd,dateadd('d',1,date_report),count]\n" +
+                            "      functions: [date_report,dateadd,dateadd('d',1,date_report),concat(['1',date_report,'3']),count]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [date_report,dateadd]\n" +
                             "          values: [count(*)]\n" +
@@ -516,10 +508,10 @@ public class GroupByTest extends AbstractGriffinTest {
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: dat\n");
-            assertQuery("date_report\tminusday\tplusday\tcount\n" +
-                    "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3\n" +
-                    "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t4\n" +
-                    "1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t3\n", query, null, true, true);
+            assertQuery("date_report\tminusday\tplusday\tconcat\tcount\n" +
+                    "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t103\t3\n" +
+                    "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t1864000000003\t4\n" +
+                    "1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t11728000000003\t3\n", query, null, true, true);
         });
     }
 
@@ -754,6 +746,15 @@ public class GroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByIndexOutsideSelectList() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab as (select x, x%2 as y from long_sequence(2))");
+            assertError("select * from tab group by 5",
+                    "[27] GROUP BY position 5 is not in select list");
+        });
+    }
+
+    @Test
     public void testGroupByWithAliasClash1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t as (" +
@@ -931,7 +932,6 @@ public class GroupByTest extends AbstractGriffinTest {
         });
     }
 
-
     @Test
     public void testGroupByWithDuplicateSelectColumn() throws Exception {
         assertQuery("k1\tkey2\tkey21\tcount\n" +
@@ -994,13 +994,22 @@ public class GroupByTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testStarIsNotAllowedInGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab as (select x, x%2 as y from long_sequence(2))");
+            assertError("select * from tab group by tab.*",
+                    "[27] '*' is not allowed in GROUP BY");
+        });
+    }
+
     private void assertError(String query, String errorMessage) {
         try {
             assertQuery(null, query,
                     null, true, true);
             Assert.fail();
         } catch (SqlException sqle) {
-            sqle.printStackTrace();
+            //sqle.printStackTrace();
             Assert.assertEquals(errorMessage, sqle.getMessage());
         }
     }

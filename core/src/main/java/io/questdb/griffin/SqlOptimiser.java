@@ -3797,7 +3797,7 @@ class SqlOptimiser {
                         int columnIdx = Numbers.parseInt(node.token);
                         //group by column index is 1-based
                         if (columnIdx < 1 || columnIdx > columns.size()) {
-                            throw SqlException.$(node.position, "GROUP BY position is not in select list");
+                            throw SqlException.$(node.position, "GROUP BY position ").put(columnIdx).put(" is not in select list");
                         }
                         columnIdx--;
 
@@ -3811,6 +3811,10 @@ class SqlOptimiser {
                     }
                 }
 
+                if (node.type == LITERAL && Chars.endsWith(node.token, '*')) {
+                    throw SqlException.$(node.position, "'*' is not allowed in GROUP BY");
+                }
+
                 addMissingTablePrefixes(node, baseModel);
                 //ignore duplicates in group by 
                 if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
@@ -3820,10 +3824,6 @@ class SqlOptimiser {
                 validateGroupByExpression(node, groupByModel, originalNodePosition);
 
                 if (node.type == LITERAL) {
-                    if (Chars.endsWith(node.token, '*')) {
-                        throw SqlException.$(node.position, "'*' is not allowed in GROUP BY");
-                    }
-
                     if (alias == null) {
                         alias = createColumnAlias(node, groupByModel);
                     } else {
