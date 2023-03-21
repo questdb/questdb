@@ -3069,7 +3069,7 @@ class SqlOptimiser {
             // for each order by column check how deep we need to go between "model" and "base"
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
-                final CharSequence column = orderBy.token;
+                CharSequence column = orderBy.token;
                 final int dot = Chars.indexOf(column, '.');
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
@@ -3099,7 +3099,13 @@ class SqlOptimiser {
                             orderBy.token = map.valueAtQuick(index);
                         } else {
                             if (dot > -1) {
-                                throw SqlException.invalidColumn(orderBy.position, column);
+                                if (base.getModelAliasIndexes().contains(column, 0, dot)) {
+                                    if (base.getModelAliasIndexes().size() == 1) {
+                                        column = column.subSequence(dot + 1, column.length());//remove alias 
+                                    }
+                                } else {
+                                    throw SqlException.invalidColumn(orderBy.position, column);
+                                }
                             }
 
                             // we must attempt to ascend order by column

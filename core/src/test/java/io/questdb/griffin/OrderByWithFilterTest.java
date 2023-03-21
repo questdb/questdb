@@ -257,6 +257,94 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByPrefixedColumnNotOnSelectList1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trips (\n" +
+                    "  vendor_id SYMBOL,\n" +
+                    "  pickup_datetime TIMESTAMP,\n" +
+                    "  tax DOUBLE,\n" +
+                    "  mta_tax DOUBLE\n" +
+                    ") timestamp (pickup_datetime) PARTITION BY MONTH;");
+
+            compile("insert into trips " +
+                    "select 'A' || x, dateadd('s', x::int, '2019-06-30T00:00:00.000000Z'), x::timestamp, x, x%2 from long_sequence(10)");
+
+            String query = "select a.vendor_id from " +
+                    "trips a " +
+                    "where pickup_datetime >= '2019-06-30T00:00:00.000000Z' " +
+                    "and vendor_id in ('A1', 'A2') " +
+                    "order by a.mta_tax;";
+
+            assertPlan(query, "SelectedRecord\n" +
+                    "    Sort light\n" +
+                    "      keys: [a_tax]\n" +
+                    "        SelectedRecord\n" +
+                    "            Async Filter\n" +
+                    "              filter: vendor_id in [A1,A2]\n" +
+                    "              workers: 1\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: trips\n" +
+                    "                      intervals: [static=[1561852800000000,9223372036854775807]\n");
+
+            assertQuery("vendor_id\n" +
+                    "A1\n" +
+                    "A2\n", query, null, true, false);
+        });
+    }
+
+    @Test
+    public void testOrderByPrefixedColumnNotOnSelectList2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE t1 (\n" +
+                    "  vendor_id SYMBOL,\n" +
+                    "  pickup_datetime TIMESTAMP,\n" +
+                    "  tax DOUBLE,\n" +
+                    "  mta_tax DOUBLE\n" +
+                    ") timestamp (pickup_datetime) PARTITION BY MONTH");
+            compile("CREATE TABLE t2 (\n" +
+                    "  vendor_id SYMBOL,\n" +
+                    "  mta_tax DOUBLE\n" +
+                    ")");
+
+            compile("insert into t1 " +
+                    "select 'A' || x, dateadd('s', x::int, '2019-06-30T00:00:00.000000Z'), x::timestamp, x, 0 from long_sequence(10)");
+
+            compile("insert into t2 " +
+                    "select 'A' || x, -x from long_sequence(10)");
+
+            String query = "select a.vendor_id " +
+                    "from t1 a " +
+                    "join t2 b on a.vendor_id = b.vendor_id " +
+                    "where a.pickup_datetime >= '2019-06-30T00:00:00.000000Z' " +
+                    "and b.vendor_id in ('A1', 'A2') " +
+                    "order by b.mta_tax;";
+
+            assertPlan(query, "SelectedRecord\n" +
+                    "    Sort\n" +
+                    "      keys: [mta_tax]\n" +
+                    "        SelectedRecord\n" +
+                    "            Hash Join Light\n" +
+                    "              condition: b.vendor_id=a.vendor_id\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: t1\n" +
+                    "                      intervals: [static=[1561852800000000,9223372036854775807]\n" +
+                    "                Hash\n" +
+                    "                    Async Filter\n" +
+                    "                      filter: vendor_id in [A1,A2]\n" +
+                    "                      workers: 1\n" +
+                    "                        DataFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: t2\n");
+
+            assertQuery("vendor_id\n" +
+                    "A2\n" +
+                    "A1\n", query, null, true, false);
+        });
+    }
+
+    @Test
     public void testOrderByTimestampWithColumnTops() throws Exception {
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into trips " +
