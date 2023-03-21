@@ -28,13 +28,16 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.wal.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -1231,6 +1234,61 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
         });
+    }
+
+    @Test
+    public void testSavedDataInTxnFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "str string," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            // In order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
+
+            // Out of order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
+
+            // In order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+
+
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            runApplyOnce();
+
+            TableToken token = engine.getTableToken(tableName);
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(1, txReader.getLagTxnCount());
+                Assert.assertEquals(1, txReader.getLagRowCount());
+                Assert.assertTrue(txReader.isLagOrdered());
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
+
+                runApplyOnce();
+
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(2, txReader.getLagTxnCount());
+                Assert.assertEquals(2, txReader.getLagRowCount());
+                Assert.assertFalse(txReader.isLagOrdered());
+                Assert.assertEquals("2022-02-24T00:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
+            }
+        });
+    }
+
+    private void runApplyOnce() {
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.run(0);
+        }
     }
 
     @Test

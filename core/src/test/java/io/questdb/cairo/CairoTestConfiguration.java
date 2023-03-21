@@ -273,7 +273,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
 
     @Override
     public long getWalApplyTableTimeQuota() {
-        return overrides.getWalApplyTableTimeQuote() > 0 ? overrides.getWalApplyTableTimeQuote() : super.getWalApplyTableTimeQuota();
+        return overrides.getWalApplyTableTimeQuote() >= 0 ? overrides.getWalApplyTableTimeQuote() : super.getWalApplyTableTimeQuota();
     }
 
     @Override

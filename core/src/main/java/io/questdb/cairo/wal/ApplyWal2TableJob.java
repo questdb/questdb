@@ -308,8 +308,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 isTerminating = runStatus.isTerminating();
                 final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
+                boolean firstRun = true;
                 WHILE_TRANSACTION_CURSOR:
-                while (!isTerminating && (finishedAll = microClock.getTicks() <= timeLimit) && transactionLogCursor.hasNext()) {
+                while (!isTerminating && ((finishedAll = microClock.getTicks() <= timeLimit) || firstRun) && transactionLogCursor.hasNext()) {
+                    firstRun = false;
                     final int walId = transactionLogCursor.getWalId();
                     final int segmentId = transactionLogCursor.getSegmentId();
                     final long segmentTxn = transactionLogCursor.getSegmentTxn();
