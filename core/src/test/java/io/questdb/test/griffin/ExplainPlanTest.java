@@ -59,6 +59,8 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class ExplainPlanTest extends AbstractGriffinTest {
 
     protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
@@ -3563,6 +3565,117 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByIsMaintainedInLtAndAsofSubqueries() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+
+            for (String joinType : Arrays.asList("AsOf", "Lt")) {
+                String query = "with gp as \n" +
+                        "(\n" +
+                        "selecT * from (\n" +
+                        "selecT * from gas_prices order by timestamp asc, galon_price desc\n" +
+                        ") timestamp(timestamp))\n" +
+                        "selecT * from gp gp1 \n" +
+                        joinType + " join gp gp2 \n" +
+                        "order by gp1.timestamp; ";
+
+                String expectedPlan = "SelectedRecord\n" +
+                        "    " + joinType + " Join\n" +
+                        "        SelectedRecord\n" +
+                        "            Sort light\n" +
+                        "              keys: [timestamp, galon_price desc]\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: gas_prices\n" +
+                        "        SelectedRecord\n" +
+                        "            Sort light\n" +
+                        "              keys: [timestamp, galon_price desc]\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: gas_prices\n";
+
+                assertPlan(query, expectedPlan);
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByIsMaintainedInSpliceSubqueries() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
+
+            String query = "with gp as (\n" +
+                    "selecT * from (\n" +
+                    "selecT * from gas_prices order by timestamp asc, galon_price desc\n" +
+                    ") timestamp(timestamp))\n" +
+                    "selecT * from gp gp1 \n" +
+                    "splice join gp gp2 \n" +
+                    "order by gp1.timestamp; ";
+
+            String expectedPlan = "Sort\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Splice Join\n" +
+                    "            SelectedRecord\n" +
+                    "                Sort light\n" +
+                    "                  keys: [timestamp, galon_price desc]\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: gas_prices\n" +
+                    "            SelectedRecord\n" +
+                    "                Sort light\n" +
+                    "                  keys: [timestamp, galon_price desc]\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: gas_prices\n";
+
+            assertPlan(query, expectedPlan);
+        });
+    }
+
+    @Test
+    public void testOrderByIsMaintainedInSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE gas_prices " +
+                    "(timestamp TIMESTAMP, " +
+                    "galon_price DOUBLE) " +
+                    "timestamp (timestamp);");
+
+            String query = "WITH full_range AS (  \n" +
+                    "  SELECT timestamp, galon_price FROM (\n" +
+                    "    SELECT * FROM (\n" +
+                    "      SELECT * FROM gas_prices\n" +
+                    "      UNION\n" +
+                    "      SELECT to_timestamp('1999-01-01', 'yyyy-MM-dd'), NULL as galon_price -- First Date\n" +
+                    "      UNION \n" +
+                    "      SELECT to_timestamp('2023-02-20', 'yyyy-MM-dd'), NULL  as galon_price -- Last Date\n" +
+                    "    ) AS unordered_data \n" +
+                    "    order by timestamp\n" +
+                    "  ) TIMESTAMP(timestamp)\n" +
+                    ") \n" +
+                    "select * " +
+                    "from full_range";
+
+            String expectedPlan = "SelectedRecord\n" +
+                    "    Sort\n" +
+                    "      keys: [timestamp]\n" +
+                    "        Union\n" +
+                    "            Union\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: gas_prices\n" +
+                    "                VirtualRecord\n" +
+                    "                  functions: [915148800000000,null]\n" +
+                    "                    long_sequence count: 1\n" +
+                    "            VirtualRecord\n" +
+                    "              functions: [1676851200000000,null]\n" +
+                    "                long_sequence count: 1\n";
+            assertPlan(query, expectedPlan);
+            assertPlan(query + " order by timestamp", expectedPlan);
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithAddition() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( x int );");
@@ -6110,7 +6223,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
                             "        Splice Join\n" +
-                            "          condition: \n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
