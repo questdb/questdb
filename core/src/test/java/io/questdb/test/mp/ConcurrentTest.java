@@ -83,9 +83,6 @@ public class ConcurrentTest {
     public void testConcurrentFanOutAsyncOffloadPattern() {
         // This test aims to reproduce a simplified variant of async offload inter-thread communication pattern.
 
-        class Item {
-            int owner;
-        }
 
         final int capacity = 2;
         final int collectorThreads = 2;
@@ -1133,6 +1130,10 @@ public class ConcurrentTest {
                 }
             }
         }
+    }
+
+    static class Item {
+        int owner;
     }
 
     private static class LongMsg {

@@ -431,21 +431,6 @@ public class CompactMapTest extends AbstractCairoTest {
         // This function must know about entry structure.
         // To make hash consistent we will assume that first character of
         // string is always a number and this number will be hash code of string.
-        class MockHash implements CompactMap.HashFunction {
-            final MemoryR mem;
-
-            public MockHash(MemoryR mem) {
-                this.mem = mem;
-            }
-
-            @Override
-            public long hash(long offset, long size) {
-                // we have single key field, which is string
-                // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
-                char c = mem.getChar(offset + 12);
-                return c - '0';
-            }
-        }
 
         StringSink sink = new StringSink();
         // tweak capacity in such a way that we only have one spare slot before resize is needed
@@ -455,7 +440,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, MockHash::new, 1, Integer.MAX_VALUE)) {
+                (long) (N * loadFactor), loadFactor, MockHash2::new, 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -902,6 +887,22 @@ public class CompactMapTest extends AbstractCairoTest {
                 // with key format
                 throw new RuntimeException();
             }
+        }
+    }
+
+    static class MockHash2 implements CompactMap.HashFunction {
+        final MemoryR mem;
+
+        public MockHash2(MemoryR mem) {
+            this.mem = mem;
+        }
+
+        @Override
+        public long hash(long offset, long size) {
+            // we have single key field, which is string
+            // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
+            char c = mem.getChar(offset + 12);
+            return c - '0';
         }
     }
 }

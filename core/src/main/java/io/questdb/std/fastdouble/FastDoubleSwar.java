@@ -48,7 +48,6 @@ import io.questdb.std.Unsafe;
  *     arXiv.2101.11408v3 [cs.DS] 24 Feb 2021</dt>
  *     <dd><a href="https://arxiv.org/pdf/2101.11408.pdf">arxiv.org</a></dd>
  * </dl>
- * </p>
  */
 public class FastDoubleSwar {
     public static long getChunk(byte[] a, int offset) {

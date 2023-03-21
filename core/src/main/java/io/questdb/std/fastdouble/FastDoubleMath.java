@@ -45,7 +45,6 @@ package io.questdb.std.fastdouble;
  *     <dt>Clinger WD (1990). How to read floating point numbers accurately. ACM SIGPLAN Notices.</dt>
  *     <dd>- no link -</dd>
  * </dl>
- * </p>
  */
 public class FastDoubleMath {
     /**
@@ -65,7 +64,7 @@ public class FastDoubleMath {
      * <p>
      * The smallest non-zero double is 2^−1074.
      * <p>
-     * We take as input numbers of the form w x 10^q where w < 2^64.
+     * We take as input numbers of the form w x 10^q where w &lt; 2^64.
      * <p>
      * We have that {@literal w * 10^-343 < 2^(63-343) * 5^-343 < 2^-1076}.
      * <p>
@@ -79,7 +78,7 @@ public class FastDoubleMath {
      * If we are solely interested in the *normal* numbers then the
      * smallest value is 2^-1022. We can generate a value larger
      * than 2^-1022 with expressions of the form w * 10^-326.
-     * Thus, we need to pick SMALLEST_POWER_OF_TEN >= -326.
+     * Thus, we need to pick SMALLEST_POWER_OF_TEN &lt;= -326.
      */
     public final static int DOUBLE_MIN_EXPONENT_POWER_OF_TEN = -325;
     /**
