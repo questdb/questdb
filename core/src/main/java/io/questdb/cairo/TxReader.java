@@ -358,7 +358,7 @@ public class TxReader implements Closeable, Mutable {
             lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
             int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
             lagTxnCount = Math.abs(lagTxnCountRaw);
-            lagOrdered = lagTxnCount > -1;
+            lagOrdered = lagTxnCountRaw > -1;
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
             Unsafe.getUnsafe().loadFence();
