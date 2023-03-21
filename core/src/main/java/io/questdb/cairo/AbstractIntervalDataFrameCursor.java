@@ -119,6 +119,57 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         sizeSoFar = 0;
     }
 
+    private static long scanDown(MemoryR column, long value, long low, long high) {
+        for (long i = high - 1; i >= low; i--) {
+            long that = column.getLong(i * 8);
+            if (that == value) {
+                return i;
+            }
+
+            if (that < value) {
+                return -(i + 2);
+            }
+        }
+        return -(low + 1);
+    }
+
+    private static long scanUp(MemoryR column, long value, long low, long high) {
+        for (long i = low; i < high; i++) {
+            long that = column.getLong(i * 8);
+            if (that == value) {
+                return i;
+            }
+
+            if (that > value) {
+                return -(i + 1);
+            }
+        }
+        return -(high + 1);
+    }
+
+    private static long scrollDown(MemoryR column, long low, long high, long value) {
+        do {
+            if (low < high) {
+                low++;
+            } else {
+                return low;
+            }
+
+        } while (column.getLong(low * 8) == value);
+        return low - 1;
+    }
+
+    private static long scrollUp(MemoryR column, long high, long value) {
+        do {
+            if (high > 0) {
+                high--;
+            } else {
+                return 0;
+            }
+        } while (column.getLong(high * 8) == value);
+        return high + 1;
+    }
+
     private void calculateRanges(LongList intervals) {
         size = -1;
         if (intervals.size() > 0) {
@@ -183,16 +234,16 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 // calculate intersection
 
                 long lo;
-                if (partitionTimestampLo == intervalLo) {
+                if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = search(column, intervalLo, partitionLimit, rowCount, AbstractIntervalDataFrameCursor.SCAN_UP);
+                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? rowCount - 1 : partitionLimit, rowCount, AbstractIntervalDataFrameCursor.SCAN_UP);
                     if (lo < 0) {
                         lo = -lo - 1;
                     }
                 }
 
-                long hi = search(column, intervalHi, lo, rowCount, AbstractIntervalDataFrameCursor.SCAN_DOWN);
+                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, AbstractIntervalDataFrameCursor.SCAN_DOWN);
 
                 if (hi < 0) {
                     hi = -hi - 1;
@@ -272,25 +323,25 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
-    protected static long search(MemoryR column, long value, long low, long high, int increment) {
-        while (low < high) {
-            long mid = (low + high - 1) >>> 1;
+    protected static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
+        while (high - low > 65) {
+            long mid = (low + high) / 2;
             long midVal = column.getLong(mid * 8);
 
             if (midVal < value)
-                low = mid + 1;
+                low = mid;
             else if (midVal > value)
-                high = mid;
+                high = mid - 1;
             else {
                 // In case of multiple equal values, find the first
-                mid += increment;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
-                    mid += increment;
-                }
-                return mid - increment;
+                return scanDir == -1 ?
+                        scrollUp(column, mid, midVal) :
+                        scrollDown(column, mid, high, midVal);
             }
         }
-        return -(low + 1);
+        return scanDir == -1 ?
+                scanUp(column, value, low, high + 1) :
+                scanDown(column, value, low, high + 1);
     }
 
     protected class IntervalDataFrame implements DataFrame {
