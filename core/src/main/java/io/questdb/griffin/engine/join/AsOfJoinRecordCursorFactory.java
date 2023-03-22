@@ -149,7 +149,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordValueSink valueSink,
                 ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
-            this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, masterTableKeyColumns, slaveWrappedOverMaster);
+            this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;

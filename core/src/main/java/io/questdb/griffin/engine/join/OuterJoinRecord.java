@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 
 public class OuterJoinRecord extends JoinRecord {
-    private final Record nullRecord;
+    protected final Record nullRecord;
     private Record flappingSlave;
 
     public OuterJoinRecord(int split, Record nullRecord) {
@@ -37,7 +37,6 @@ public class OuterJoinRecord extends JoinRecord {
 
     void hasSlave(boolean value) {
         if (value) {
-            // todo: this logic is odd, why is there the check at all? why not just slave = flappingSlave?
             if (flappingSlave != slave) {
                 slave = flappingSlave;
             }
