@@ -99,14 +99,14 @@ public class Mig702 {
 
                 txMemory.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32_MIG, 0);
                 txMemory.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32_MIG, 0);
-                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG, Long.MIN_VALUE);
-                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64_MIG, Long.MAX_VALUE);
+                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG, Long.MAX_VALUE);
+                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64_MIG, Long.MIN_VALUE);
                 int zeroChecksum = calculateTxnLagChecksum(
                         version,
                         seqTxn,
                         0,
-                        Long.MIN_VALUE,
                         Long.MAX_VALUE,
+                        Long.MIN_VALUE,
                         0
                 );
                 txMemory.putInt(baseOffset + TX_OFFSET_CHECKSUM_32_MIG, zeroChecksum);

@@ -225,8 +225,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             Assert.assertEquals(0, txReader.getLagRowCount());
             Assert.assertEquals(0, txReader.getLagTxnCount());
-            Assert.assertEquals(0L, txReader.getLagMinTimestamp());
-            Assert.assertEquals(0L, txReader.getLagMaxTimestamp());
+            Assert.assertEquals(Long.MAX_VALUE, txReader.getLagMinTimestamp());
+            Assert.assertEquals(Long.MIN_VALUE, txReader.getLagMaxTimestamp());
         }
     }
 
