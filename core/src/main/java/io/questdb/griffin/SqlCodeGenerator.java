@@ -3907,7 +3907,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // todo: when order by coincides with keyColumn and there is index we can incorporate
                         //    ordering in the code that returns rows from index rather than having an
                         //    "overhead" order by implementation, which would be trying to oder already ordered symbols
-                        if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) { //HERE
+                        if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
                             myMeta.setTimestampIndex(-1);
                             if (orderByAdviceSize == 1) {
                                 orderByKeyColumn = true;

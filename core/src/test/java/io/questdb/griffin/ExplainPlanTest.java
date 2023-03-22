@@ -3610,16 +3610,25 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampAndOtherColumns() throws Exception {
+    public void testOrderByTimestampAndOtherColumns1() throws Exception {
         assertPlan("create table tab (i int, ts timestamp) timestamp(ts)",
                 "select * from (select * from tab order by ts, i desc limit 10) order by ts",
-                "Sort light\n" +
-                        "  keys: [ts]\n" +
-                        "    Sort light lo: 10\n" +
-                        "      keys: [ts, i desc]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n");
+                "Sort light lo: 10\n" +
+                        "  keys: [ts, i desc]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n");
+    }
+
+    @Test
+    public void testOrderByTimestampAndOtherColumns2() throws Exception {
+        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)",
+                "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc",
+                "Sort light lo: 10\n" +
+                        "  keys: [ts desc, i]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n");
     }
 
     @Test

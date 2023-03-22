@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -114,7 +115,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             case ORDER_DESC:
                 return SCAN_DIRECTION_BACKWARD;
             default:
-                return SCAN_DIRECTION_OTHER;
+                throw CairoException.critical(0).put("Unexpected factory order [order=").put(dataFrameCursorFactory.getOrder()).put("]");
         }
     }
 

@@ -109,15 +109,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     static int getScanDirection(ListColumnFilter sortColumnFilter) {
         assert sortColumnFilter.size() > 0;
-        int order = toOrder(sortColumnFilter.get(0));
 
-        for (int i = 1, n = sortColumnFilter.size(); i < n; i++) {
-            if (order != toOrder(sortColumnFilter.get(i))) {
-                return SCAN_DIRECTION_OTHER;
-            }
-        }
-
-        return order;
+        return toOrder(sortColumnFilter.get(0));
     }
 
     @Override
