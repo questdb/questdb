@@ -416,6 +416,8 @@ public interface CairoConfiguration {
 
     int getWalCommitSquashRowLimit();
 
+    long getWalDataAppendPageSize();
+
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
