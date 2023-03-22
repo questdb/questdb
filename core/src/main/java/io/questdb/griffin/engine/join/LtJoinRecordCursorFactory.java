@@ -127,7 +127,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Map joinKeyMap;
         private final ColumnFilter masterTableKeyColumns;
         private final int masterTimestampIndex;
-        private final LtJoinRecord record;
+        private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final int slaveWrappedOverMaster;
         private final RecordValueSink valueSink;
@@ -149,7 +149,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int slaveTimestampIndex,
                 RecordValueSink valueSink,
                 ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster) {
-            this.record = new LtJoinRecord(columnSplit, nullRecord, masterTableKeyColumns, slaveWrappedOverMaster);
+            this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, masterTableKeyColumns, slaveWrappedOverMaster);
             this.columnSplit = columnSplit;
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;

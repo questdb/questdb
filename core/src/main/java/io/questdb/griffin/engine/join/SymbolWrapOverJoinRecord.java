@@ -30,20 +30,23 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public class LtJoinRecord implements Record {
+/**
+ *
+ */
+public class SymbolWrapOverJoinRecord implements Record {
     private final int masterSlaveSplit;
     private final ColumnFilter masterTableKeyColumns;
     private final Record nullRecord;
-    private final int slaveWrappedOverMaster;
+    private final int slaveWrapOverToMaster;
     protected Record slave;
     private Record flappingSlave;
     private Record master;
 
-    public LtJoinRecord(int masterSlaveSplit, Record nullRecord, ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster) {
+    public SymbolWrapOverJoinRecord(int masterSlaveSplit, Record nullRecord, ColumnFilter masterTableKeyColumns, int slaveWrapOverToMaster) {
         this.masterSlaveSplit = masterSlaveSplit;
         this.nullRecord = nullRecord;
         this.masterTableKeyColumns = masterTableKeyColumns;
-        this.slaveWrappedOverMaster = slaveWrappedOverMaster;
+        this.slaveWrapOverToMaster = slaveWrapOverToMaster;
     }
 
     @Override
@@ -148,8 +151,8 @@ public class LtJoinRecord implements Record {
             return master.getInt(col);
         }
         int slaveCol = col - masterSlaveSplit;
-        if (slaveCol >= slaveWrappedOverMaster && slave != nullRecord) {
-            slaveCol -= slaveWrappedOverMaster;
+        if (slaveCol >= slaveWrapOverToMaster && slave != nullRecord) {
+            slaveCol -= slaveWrapOverToMaster;
             int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
             return master.getInt(masterCol);
         }
@@ -265,8 +268,8 @@ public class LtJoinRecord implements Record {
             return master.getSym(col);
         }
         int slaveCol = col - masterSlaveSplit;
-        if (slaveCol >= slaveWrappedOverMaster && slave != nullRecord) {
-            slaveCol -= slaveWrappedOverMaster;
+        if (slaveCol >= slaveWrapOverToMaster && slave != nullRecord) {
+            slaveCol -= slaveWrapOverToMaster;
             int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
             return master.getSym(masterCol);
         }
@@ -278,7 +281,13 @@ public class LtJoinRecord implements Record {
         if (col < masterSlaveSplit) {
             return master.getSymB(col);
         }
-        return slave.getSymB(col - masterSlaveSplit);
+        int slaveCol = col - masterSlaveSplit;
+        if (slaveCol >= slaveWrapOverToMaster && slave != nullRecord) {
+            slaveCol -= slaveWrapOverToMaster;
+            int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
+            return master.getSymB(masterCol);
+        }
+        return slave.getSymB(slaveCol);
     }
 
     @Override
