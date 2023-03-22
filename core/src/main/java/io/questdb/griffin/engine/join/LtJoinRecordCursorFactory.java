@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -75,7 +77,8 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveFactory.getMetadata().getTimestampIndex(),
                 slaveValueSink,
                 masterTableKeyColumns,
-                slaveWrappedOverMaster
+                slaveWrappedOverMaster,
+                columnIndex
         );
         this.slaveColumnIndex = columnIndex;
         this.joinContext = joinContext;
@@ -122,17 +125,12 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         cursor.close();
     }
 
-    private class LtJoinRecordCursor implements NoRandomAccessRecordCursor {
-        protected final int columnSplit;
+    private class LtJoinRecordCursor extends AbstractSymbolWrapOverCursor {
         private final Map joinKeyMap;
-        private final ColumnFilter masterTableKeyColumns;
         private final int masterTimestampIndex;
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
-        private final int slaveWrappedOverMaster;
         private final RecordValueSink valueSink;
-        protected RecordCursor masterCursor;
-        protected RecordCursor slaveCursor;
         private boolean danglingSlaveRecord = false;
         private boolean isMasterHasNextPending;
         private boolean isOpen;
@@ -148,16 +146,14 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 RecordValueSink valueSink,
-                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster) {
+                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex) {
+            super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, masterTableKeyColumns, slaveWrappedOverMaster);
-            this.columnSplit = columnSplit;
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.valueSink = valueSink;
             this.isOpen = true;
-            this.slaveWrappedOverMaster = slaveWrappedOverMaster;
-            this.masterTableKeyColumns = masterTableKeyColumns;
         }
 
         @Override
@@ -165,29 +161,13 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 joinKeyMap.close();
-                masterCursor = Misc.free(masterCursor);
-                slaveCursor = Misc.free(slaveCursor);
+                super.close();
             }
         }
 
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            int slaveCol = columnIndex - columnSplit;
-            if (slaveCol >= slaveWrappedOverMaster) {
-                slaveCol -= slaveWrappedOverMaster;
-                int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
-                return masterCursor.getSymbolTable(masterCol);
-            }
-            slaveCol = slaveColumnIndex.getQuick(slaveCol);
-            return slaveCursor.getSymbolTable(slaveCol);
         }
 
         @Override
@@ -239,29 +219,6 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 return true;
             }
             return false;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            // everything before columnSplit is from master. all columns are mapped 1:1.
-            if (columnIndex < columnSplit) {
-                return masterCursor.newSymbolTable(columnIndex);
-            }
-
-            // everything after columnSplit is from slave
-            int slaveCol = columnIndex - columnSplit;
-            if (slaveCol >= slaveWrappedOverMaster) {
-                // ok, this is technically a slave column, but we get the symbol table from master cursor.
-                // why? key symbols from slave cursors are converted to strings. that's undisiarable.
-                // so let's use the fact it's a join key column. keys are present in both master and slave cursors
-                // this is a bit of a hack, but it works
-                // LtJoinRecord getInt() and getSym() and getSym() methods are aware of this
-                slaveCol -= slaveWrappedOverMaster;
-                int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
-                return masterCursor.newSymbolTable(masterCol);
-            }
-            slaveCol = slaveColumnIndex.getQuick(slaveCol);
-            return slaveCursor.newSymbolTable(slaveCol);
         }
 
         @Override
