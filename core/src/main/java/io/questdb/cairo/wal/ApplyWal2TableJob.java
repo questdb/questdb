@@ -66,10 +66,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final int lookAheadTransactionCount;
-    private final long tableTimeQuotaMicros;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
+    private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final WalEventReader walEventReader;
@@ -120,7 +120,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastWriterTxn = writer.getAppliedSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 //noinspection StringEquality
-                    if (tableBusy.getReason() != NO_LOCK_REASON
+                if (tableBusy.getReason() != NO_LOCK_REASON
                         && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
                         && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                     LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();

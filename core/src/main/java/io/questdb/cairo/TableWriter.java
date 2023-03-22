@@ -4074,56 +4074,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long lagIndxOffset = (txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex)) << 3;
             final long lagIndxSize = (lagRows + 1) << 3;
             final long lagIndxMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagIndex, lagIndxOffset, lagIndxSize, false) : 0;
-            final long lagIndxAddr = Math.abs(lagIndxMapAddr);
+            try {
+                final long lagIndxAddr = Math.abs(lagIndxMapAddr);
 
-            final long lagDataBegin = lagRows > 0 ? Unsafe.getUnsafe().getLong(lagIndxAddr) : 0;
-            final long lagDataEnd = lagRows > 0 ? Unsafe.getUnsafe().getLong(lagIndxAddr + lagIndxSize - 8) : 0;
-            final long lagDataSize = lagDataEnd - lagDataBegin;
-            assert lagRows == 0 || lagDataSize > 0;
-            final long lagDataMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagData, lagDataBegin, lagDataSize, false) : 0;
-            final long lagDataAddr = Math.abs(lagDataMapAddr) - lagDataBegin;
+                final long lagDataBegin = lagRows > 0 ? Unsafe.getUnsafe().getLong(lagIndxAddr) : 0;
+                final long lagDataEnd = lagRows > 0 ? Unsafe.getUnsafe().getLong(lagIndxAddr + lagIndxSize - 8) : 0;
+                final long lagDataSize = lagDataEnd - lagDataBegin;
+                assert lagRows == 0 || lagDataSize > 0;
+                final long lagDataMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagData, lagDataBegin, lagDataSize, false) : 0;
 
-            destData.jumpTo(src1DataSize + lagDataSize);
-            destIndex.jumpTo((rowCount + 1) << 3);
-            destIndex.putLong(rowCount << 3, src1DataSize + lagDataSize);
+                try {
+                    final long lagDataAddr = Math.abs(lagDataMapAddr) - lagDataBegin;
+                    destData.jumpTo(src1DataSize + lagDataSize);
+                    destIndex.jumpTo((rowCount + 1) << 3);
+                    destIndex.putLong(rowCount << 3, src1DataSize + lagDataSize);
 
-            // exclude the trailing offset from shuffling
-            final long destDataAddr = destData.addressOf(0);
-            final long destIndxAddr = destIndex.addressOf(0);
+                    // exclude the trailing offset from shuffling
+                    final long destDataAddr = destData.addressOf(0);
+                    final long destIndxAddr = destIndex.addressOf(0);
 
-            if (columnType == ColumnType.STRING) {
-                // add max offset so that we do not have conditionals inside loop
-                Vect.oooMergeCopyStrColumn(
-                        mergedTimestampAddress,
-                        rowCount,
-                        src1IndxAddr,
-                        src1DataAddr,
-                        lagIndxAddr,
-                        lagDataAddr,
-                        destIndxAddr,
-                        destDataAddr,
-                        0L
-                );
-            } else if (columnType == ColumnType.BINARY) {
-                Vect.oooMergeCopyBinColumn(
-                        mergedTimestampAddress,
-                        rowCount,
-                        src1IndxAddr,
-                        src1DataAddr,
-                        lagIndxAddr,
-                        lagDataAddr,
-                        destIndxAddr,
-                        destDataAddr,
-                        0L
-                );
-            } else {
+                    if (columnType == ColumnType.STRING) {
+                        // add max offset so that we do not have conditionals inside loop
+                        Vect.oooMergeCopyStrColumn(
+                                mergedTimestampAddress,
+                                rowCount,
+                                src1IndxAddr,
+                                src1DataAddr,
+                                lagIndxAddr,
+                                lagDataAddr,
+                                destIndxAddr,
+                                destDataAddr,
+                                0L
+                        );
+                    } else if (columnType == ColumnType.BINARY) {
+                        Vect.oooMergeCopyBinColumn(
+                                mergedTimestampAddress,
+                                rowCount,
+                                src1IndxAddr,
+                                src1DataAddr,
+                                lagIndxAddr,
+                                lagDataAddr,
+                                destIndxAddr,
+                                destDataAddr,
+                                0L
+                        );
+                    } else {
+                        throw new UnsupportedOperationException("unsupported column type:" + ColumnType.nameOf(columnType));
+                    }
+                } finally {
+                    mapAppendColumnBufferRelease(lagDataMapAddr, lagDataBegin, lagDataSize);
+                }
+            } finally {
                 mapAppendColumnBufferRelease(lagIndxMapAddr, lagIndxOffset, lagIndxSize);
-                mapAppendColumnBufferRelease(lagDataMapAddr, lagDataBegin, lagDataSize);
-                throw new UnsupportedOperationException("unsupported column type:" + ColumnType.nameOf(columnType));
             }
-
-            mapAppendColumnBufferRelease(lagIndxMapAddr, lagIndxOffset, lagIndxSize);
-            mapAppendColumnBufferRelease(lagDataMapAddr, lagDataBegin, lagDataSize);
         } catch (Throwable e) {
             handleWorkStealingException(
                     "cannot merge variable length column into lag",
