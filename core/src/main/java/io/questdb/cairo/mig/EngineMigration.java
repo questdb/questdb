@@ -48,6 +48,20 @@ public class EngineMigration {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final IntObjHashMap<MigrationAction> MIGRATIONS = new IntObjHashMap<>();
 
+    /**
+     * This method scans root db directory and applies necessary migrations to all tables.
+     *
+     * @param engine                 CairoEngine instance
+     * @param latestTableVersion     storage compatibility version. This version is stored in table _meta file
+     *                               and is enforced by QuestDB to match to ColumnType.VERSION on querying and writing.
+     * @param latestMigrationVersion some migrations are forward compatible. When a forward compatible
+     *                               migration runs it does not change _meta file version so that older QuestDB versions
+     *                               can still read / write if downgraded.
+     *                               Such compatible migration version is stored in table _upgrade.d file only,
+     *                               and it must be greater or equal to latestTableVersion.
+     *                               Migration version is used to determine if migration run is required.
+     * @param force                  if true, migration will be run even if _upgrade.d file exists, and it is up-to-date.
+     */
     public static void migrateEngineTo(CairoEngine engine, int latestTableVersion, int latestMigrationVersion, boolean force) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final CairoConfiguration configuration = engine.getConfiguration();
@@ -104,34 +118,32 @@ public class EngineMigration {
                 }
             }
 
-            if (upgradeFd != -1) {
-                try {
-                    LOG.info().$("upgrading database [version=").$(latestMigrationVersion).I$();
-                    upgradeTables(context, latestTableVersion, latestMigrationVersion);
-                    TableUtils.writeIntOrFail(
-                            ff,
-                            upgradeFd,
-                            0,
-                            latestTableVersion,
-                            mem,
-                            path
-                    );
-                    TableUtils.writeIntOrFail(
-                            ff,
-                            upgradeFd,
-                            4,
-                            latestMigrationVersion,
-                            mem,
-                            path
-                    );
-                } finally {
-                    Vm.bestEffortClose(
-                            ff,
-                            LOG,
-                            upgradeFd,
-                            2 * Integer.BYTES
-                    );
-                }
+            try {
+                LOG.info().$("upgrading database [version=").$(latestMigrationVersion).I$();
+                upgradeTables(context, latestTableVersion, latestMigrationVersion);
+                TableUtils.writeIntOrFail(
+                        ff,
+                        upgradeFd,
+                        0,
+                        latestTableVersion,
+                        mem,
+                        path
+                );
+                TableUtils.writeIntOrFail(
+                        ff,
+                        upgradeFd,
+                        4,
+                        latestMigrationVersion,
+                        mem,
+                        path
+                );
+            } finally {
+                Vm.bestEffortClose(
+                        ff,
+                        LOG,
+                        upgradeFd,
+                        2 * Integer.BYTES
+                );
             }
         } finally {
             Unsafe.free(mem, tempMemSize, MemoryTag.NATIVE_MIG);

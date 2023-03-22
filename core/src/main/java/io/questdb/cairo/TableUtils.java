@@ -151,6 +151,7 @@ public final class TableUtils {
     static final String TODO_FILE_NAME = "_todo_";
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
+    private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MIN_VALUE, Long.MAX_VALUE, 0);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -985,8 +986,9 @@ public final class TableUtils {
 
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
-        txMem.putLong(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
-        txMem.putLong(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+        txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
+        txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+        txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
 
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -1398,14 +1400,13 @@ public final class TableUtils {
         return metaMem.getInt(offset);
     }
 
-    static int calculateTxnLagChecksum(long txn1, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
-        long checkSum = txn1 +
-                seqTxn +
-                lagRowCount +
-                lagMinTimestamp +
-                lagMaxTimestamp +
-                lagTxnCount;
-
+    static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
+        long checkSum = lagMinTimestamp;
+        checkSum = checkSum * 31 + lagMaxTimestamp;
+        checkSum = checkSum * 31 + txn;
+        checkSum = checkSum * 31 + seqTxn;
+        checkSum = checkSum * 31 + lagRowCount;
+        checkSum = checkSum * 31 + lagTxnCount;
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 

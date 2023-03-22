@@ -30,18 +30,18 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.mig.MigrationUtils.openFileSafe;
 
-class Mig702 {
-    public static final long TX_BASE_OFFSET_A_32 = 8;
-    public static final long TX_BASE_OFFSET_B_32 = 32;
-    public static final long TX_OFFSET_SEQ_TXN_64_MIG = 80;
-    public static final long TX_OFFSET_CHECKSUM_32_MIG = TX_OFFSET_SEQ_TXN_64_MIG + 8;
-    public static final long TX_OFFSET_LAG_TXN_COUNT_32_MIG = TX_OFFSET_CHECKSUM_32_MIG + 4;
-    public static final long TX_OFFSET_LAG_ROW_COUNT_32_MIG = TX_OFFSET_LAG_TXN_COUNT_32_MIG + 4;
-    public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG = TX_OFFSET_LAG_ROW_COUNT_32_MIG + 4;
-    public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64_MIG = TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG + 8;
+public class Mig702 {
     private static final String TXN_FILE_NAME_MIG = "_txn";
     private static final long TXN_VERSION_OFFSET_MIG = 0;
+    private static final long TX_BASE_OFFSET_A_32 = 8;
+    private static final long TX_BASE_OFFSET_B_32 = 32;
     private static final long TX_OFFSET_MAP_WRITER_COUNT_MIG = 128;
+    private static final long TX_OFFSET_SEQ_TXN_64_MIG = 80;
+    private static final long TX_OFFSET_CHECKSUM_32_MIG = TX_OFFSET_SEQ_TXN_64_MIG + 8;
+    private static final long TX_OFFSET_LAG_TXN_COUNT_32_MIG = TX_OFFSET_CHECKSUM_32_MIG + 4;
+    private static final long TX_OFFSET_LAG_ROW_COUNT_32_MIG = TX_OFFSET_LAG_TXN_COUNT_32_MIG + 4;
+    private static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG = TX_OFFSET_LAG_ROW_COUNT_32_MIG + 4;
+    private static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64_MIG = TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG + 8;
 
     private static int getInt(MemoryMARW txMemory, long baseOffset, long txOffsetTransientRowCount64) {
         return txMemory.getInt(baseOffset + txOffsetTransientRowCount64);
@@ -51,14 +51,13 @@ class Mig702 {
         return txMemory.getLong(baseOffset + txOffsetTransientRowCount64);
     }
 
-    static int calculateTxnLagChecksum(long txn1, long seqTxn1, int lagRowCount1, long lagMinTimestamp1, long lagMaxTimestamp1, int lagTxnCount1) {
-        long checkSum = txn1 +
-                seqTxn1 +
-                lagRowCount1 +
-                lagMinTimestamp1 +
-                lagMaxTimestamp1 +
-                lagTxnCount1;
-
+    public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
+        long checkSum = lagMinTimestamp;
+        checkSum = checkSum * 31 + lagMaxTimestamp;
+        checkSum = checkSum * 31 + txn;
+        checkSum = checkSum * 31 + seqTxn;
+        checkSum = checkSum * 31 + lagRowCount;
+        checkSum = checkSum * 31 + lagTxnCount;
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
@@ -100,14 +99,14 @@ class Mig702 {
 
                 txMemory.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32_MIG, 0);
                 txMemory.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32_MIG, 0);
-                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG, 0);
-                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64_MIG, 0);
+                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64_MIG, Long.MIN_VALUE);
+                txMemory.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64_MIG, Long.MAX_VALUE);
                 int zeroChecksum = calculateTxnLagChecksum(
                         version,
                         seqTxn,
                         0,
-                        0,
-                        0,
+                        Long.MIN_VALUE,
+                        Long.MAX_VALUE,
                         0
                 );
                 txMemory.putInt(baseOffset + TX_OFFSET_CHECKSUM_32_MIG, zeroChecksum);

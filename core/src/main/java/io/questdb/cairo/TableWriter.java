@@ -179,7 +179,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int indexCount;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
-    private long lastOpenPartitionTimestamp;
     private long lastOpenPartitionTs = -1L;
     private long lastPartitionTimestamp;
     private LifecycleManager lifecycleManager;
@@ -1402,7 +1401,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         assert maxTimestamp == Long.MIN_VALUE ||
                 partitionFloorMethod.floor(partitionTimestampHi) == partitionFloorMethod.floor(txWriter.maxTimestamp);
-        assert maxTimestamp == Long.MIN_VALUE || lastOpenPartitionTimestamp == partitionTimestampHi;
 
         lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
 
@@ -4901,7 +4899,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void openPartition(long timestamp) {
         try {
-            lastOpenPartitionTimestamp = partitionTimestampHi = setStateForTimestamp(path, timestamp);
+            partitionTimestampHi = setStateForTimestamp(path, timestamp);
             int plen = path.length();
             if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("Cannot create directory: ").put(path);
