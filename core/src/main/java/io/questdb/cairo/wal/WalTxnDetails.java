@@ -142,7 +142,7 @@ public class WalTxnDetails {
         }
 
         // set commit to timestamp moving backwards
-        long runningMinTimestamp = LAST_ROW_COMMIT;//Long.MAX_VALUE;
+        long runningMinTimestamp = LAST_ROW_COMMIT;
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
 
             long commitToTimestamp = runningMinTimestamp;
