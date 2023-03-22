@@ -3743,7 +3743,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
     }
-    
+
     @Test
     public void testRewriteAggregateWithAddition() throws Exception {
         assertMemoryLeak(() -> {
