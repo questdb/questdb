@@ -49,6 +49,7 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.junit.*;
@@ -59,7 +60,7 @@ public class ILPAndPGTest extends BasePGTest {
     static final String[] O_IDS = genStrings(16, "generated-id-");
     static final String[] O_LINKED_IDS = genLinkedIds(O_IDS);
     static final Lock O_LOCK = new ReentrantLock();
-    static final Random O_RAND = new Random(System.currentTimeMillis());
+    static final Rnd O_RAND = new Rnd();
     static final String[] O_STR1_VALS = genStrings(8, "STR1-");
     static final String[] O_STR2_VALS = genStrings(4, "STR1-");
     static final String O_TABLE = "table";
@@ -208,6 +209,14 @@ public class ILPAndPGTest extends BasePGTest {
         return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
 
+    private static int nextInt(int lo, int hi) {
+        return lo + O_RAND.nextInt(hi - lo);
+    }
+
+    private long nextLong(long lo, long hi) {
+        return lo + O_RAND.nextLong(hi - lo);
+    }
+
     static String[] genLinkedIds(String[] idsBase) {
         String[] out = new String[idsBase.length];
         for (int j = 0; j < idsBase.length; j++) {
@@ -255,21 +264,21 @@ public class ILPAndPGTest extends BasePGTest {
 
     static String randString(int minLen, int maxLen) {
         StringBuilder buf = new StringBuilder();
-        int len = O_RAND.nextInt(minLen, maxLen + 1);
+        int len = nextInt(minLen, maxLen + 1);
         for (int j = 0; j < len; j++) {
             if (minLen > 10 && O_RAND.nextDouble() > 0.8) {
                 // sometimes append a UTF-8 character
                 buf.append("ü");
             } else {
                 // A-Z, a-z
-                buf.append((char) (O_RAND.nextBoolean() ? O_RAND.nextInt(0x41, 0x5B) : O_RAND.nextInt(0x61, 0x7b)));
+                buf.append((char) (O_RAND.nextBoolean() ? nextInt(0x41, 0x5B) : nextInt(0x61, 0x7b)));
             }
         }
         return buf.toString();
     }
 
     static <T> T randValue(T[] arr) {
-        return arr[O_RAND.nextInt(0, arr.length)];
+        return arr[nextInt(0, arr.length)];
     }
 
     void insertData(SOCountDownLatch ilpProducerHalted) {
@@ -293,7 +302,7 @@ public class ILPAndPGTest extends BasePGTest {
                 while (!O_EXIT.get()) {
                     O_LOCK.lock();
                     try {
-                        insertRow(O_RAND.nextInt(1, 1000), ilp, new HashSet<>());
+                        insertRow(nextInt(1, 1000), ilp, new HashSet<>());
                         ++bgInsertCount;
                         if (bgInsertCount % 200 == 0) {
                             ilp.flush();
@@ -323,7 +332,7 @@ public class ILPAndPGTest extends BasePGTest {
         String str1 = randValue(O_STR1_VALS);
         String str2 = randValue(O_STR2_VALS);
         boolean active = O_RAND.nextBoolean();
-        long whenStartMs = System.currentTimeMillis() + O_RAND.nextInt(1, Math.max(2, row / 2));
+        long whenStartMs = System.currentTimeMillis() + nextInt(1, Math.max(2, row / 2));
         if (row > 2000) {
             whenStartMs += 300L;
         }
@@ -331,7 +340,7 @@ public class ILPAndPGTest extends BasePGTest {
             oMinTimeMs = whenStartMs;
         }
         // mostly null
-        Long whenEndMs = O_RAND.nextDouble() > 0.9 ? whenStartMs + O_RAND.nextLong(1000L, 2000L) : null;
+        Long whenEndMs = O_RAND.nextDouble() > 0.9 ? whenStartMs + nextLong(1000L, 2000L) : null;
         long tsNanos = whenStartMs * 1_000_000L;
         allTimestamps.add(tsNanos);
         ilp = ilp.table(O_TABLE)
