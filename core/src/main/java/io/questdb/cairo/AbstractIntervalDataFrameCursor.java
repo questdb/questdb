@@ -38,6 +38,9 @@ import org.jetbrains.annotations.TestOnly;
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_DOWN = 1;
     static final int SCAN_UP = -1;
+
+    static final int THRESHOLD = 65;
+
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
     protected final int timestampIndex;
@@ -232,18 +235,17 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 }
 
                 // calculate intersection
-
                 long lo;
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? rowCount - 1 : partitionLimit, rowCount, AbstractIntervalDataFrameCursor.SCAN_UP);
+                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? rowCount - 1 : partitionLimit, rowCount, SCAN_UP);
                     if (lo < 0) {
                         lo = -lo - 1;
                     }
                 }
 
-                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, AbstractIntervalDataFrameCursor.SCAN_DOWN);
+                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, SCAN_DOWN);
 
                 if (hi < 0) {
                     hi = -hi - 1;
@@ -324,7 +326,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     protected static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
-        while (high - low > 65) {
+        while (high - low > THRESHOLD) {
             long mid = (low + high) / 2;
             long midVal = column.getLong(mid * 8);
 
@@ -334,12 +336,12 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 high = mid - 1;
             else {
                 // In case of multiple equal values, find the first
-                return scanDir == -1 ?
+                return scanDir == SCAN_UP ?
                         scrollUp(column, mid, midVal) :
                         scrollDown(column, mid, high, midVal);
             }
         }
-        return scanDir == -1 ?
+        return scanDir == SCAN_UP ?
                 scanUp(column, value, low, high + 1) :
                 scanDown(column, value, low, high + 1);
     }
