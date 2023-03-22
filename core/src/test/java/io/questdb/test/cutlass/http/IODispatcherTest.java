@@ -910,7 +910,7 @@ public class IODispatcherTest {
                 // upload file
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-                TableToken tableToken = cairoEngine.getTableToken("sample.csv");
+                TableToken tableToken = cairoEngine.verifyTableName("sample.csv");
                 try (
                         TableReader reader = cairoEngine.getReader(
                                 cairoEngine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
@@ -987,7 +987,7 @@ public class IODispatcherTest {
                 // upload file
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-                TableToken tableToken = cairoEngine.getTableToken("sample.csv");
+                TableToken tableToken = cairoEngine.verifyTableName("sample.csv");
                 try (
                         TableReader reader = cairoEngine.getReader(
                                 cairoEngine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
@@ -7673,7 +7673,7 @@ public class IODispatcherTest {
             TestUtils.create(model, engine);
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("y"), metrics)) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");

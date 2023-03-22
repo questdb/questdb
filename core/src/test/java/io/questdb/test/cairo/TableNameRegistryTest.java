@@ -430,7 +430,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.reloadTableNames();
 
             Assert.assertNull(engine.getTableTokenIfExists("tab1"));
-            Assert.assertEquals(tt2, engine.getTableToken("tab2"));
+            Assert.assertEquals(tt2, engine.verifyTableName("tab2"));
         });
     }
 
@@ -495,9 +495,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.reloadTableNames();
 
-            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
-            Assert.assertEquals(tt2, engine.getTableToken("tab2_ࠄ"));
-            Assert.assertEquals(tt3, engine.getTableToken("tab3_ࠄ"));
+            Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
+            Assert.assertEquals(tt2, engine.verifyTableName("tab2_ࠄ"));
+            Assert.assertEquals(tt3, engine.verifyTableName("tab3_ࠄ"));
         });
     }
 
@@ -557,19 +557,19 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             engine.reloadTableNames(convertedTables);
 
-            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
+            Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
 
-            Assert.assertEquals(tt2.getTableId(), engine.getTableToken("tab2").getTableId());
-            Assert.assertEquals(tt2.getTableName(), engine.getTableToken("tab2").getTableName());
-            Assert.assertEquals(tt2.getDirName(), engine.getTableToken("tab2").getDirName());
+            Assert.assertEquals(tt2.getTableId(), engine.verifyTableName("tab2").getTableId());
+            Assert.assertEquals(tt2.getTableName(), engine.verifyTableName("tab2").getTableName());
+            Assert.assertEquals(tt2.getDirName(), engine.verifyTableName("tab2").getDirName());
             Assert.assertTrue(tt2.isWal());
-            Assert.assertFalse(engine.getTableToken("tab2").isWal());
+            Assert.assertFalse(engine.verifyTableName("tab2").isWal());
 
-            Assert.assertEquals(tt3.getTableId(), engine.getTableToken("tab3").getTableId());
-            Assert.assertEquals(tt3.getTableName(), engine.getTableToken("tab3").getTableName());
-            Assert.assertEquals(tt3.getDirName(), engine.getTableToken("tab3").getDirName());
+            Assert.assertEquals(tt3.getTableId(), engine.verifyTableName("tab3").getTableId());
+            Assert.assertEquals(tt3.getTableName(), engine.verifyTableName("tab3").getTableName());
+            Assert.assertEquals(tt3.getDirName(), engine.verifyTableName("tab3").getDirName());
             Assert.assertFalse(tt3.isWal());
-            Assert.assertTrue(engine.getTableToken("tab3").isWal());
+            Assert.assertTrue(engine.verifyTableName("tab3").isWal());
         });
     }
 

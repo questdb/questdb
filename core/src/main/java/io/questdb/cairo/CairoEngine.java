@@ -189,9 +189,9 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        securityContext.checkCreateTablePermission();
-        CharSequence tableName = struct.getTableName();
+        final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
+        securityContext.authorizeTableCreate(tableName);
 
         int tableId = (int) tableIdGenerator.getNextId();
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
@@ -244,9 +244,9 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        securityContext.checkCreateTablePermission();
-        CharSequence tableName = struct.getTableName();
+        final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
+        securityContext.authorizeTableCreate(tableName);
 
         int tableId = (int) tableIdGenerator.getNextId();
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
@@ -265,7 +265,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
                         throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
                     }
-                    createTableInVolumeUnsafe(securityContext, mem, path, struct, tableToken);
+                    createTableInVolumeUnsafe(mem, path, struct, tableToken);
                     tableCreated = true;
                 } finally {
                     if (!keepLock) {
@@ -295,7 +295,7 @@ public class CairoEngine implements Closeable, WriterSource {
             Path path,
             TableToken tableToken
     ) {
-        securityContext.checkDropTablePermission();
+        securityContext.authorizeTableDrop();
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (tableNameRegistry.dropTable(tableToken)) {
@@ -330,9 +330,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken tableToken,
             CharSequence backupDirName
     ) {
-        securityContext.checkWritePermission();
-        verifyTableToken(tableToken);
-
+        authorizeWrite(securityContext, tableToken);
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
         return new TableWriter(
                 configuration,
@@ -408,7 +406,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(CairoSecurityContext securityContext, TableToken tableToken) {
-        verifyTableToken(tableToken);
+        authorizeRead(securityContext, tableToken);
         return readerPool.get(tableToken);
     }
 
@@ -417,10 +415,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken tableToken,
             long version
     ) {
-        TableToken newTableToken = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (newTableToken == null) {
-            throw CairoException.tableDoesNotExist(tableToken.getTableName());
-        }
+        TableToken newTableToken = authorizeRead(securityContext, tableToken);
         final int tableId = tableToken.getTableId();
         if (tableId > -1 && newTableToken.getTableId() != tableId) {
             throw TableReferenceOutOfDateException.of(tableToken, tableId, newTableToken.getTableId(), version, -1);
@@ -441,6 +436,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReaderWithRepair(CairoSecurityContext securityContext, TableToken tableToken) {
+        // todo: untested verification
+        verifyTableToken(tableToken);
         try {
             return getReader(securityContext, tableToken);
         } catch (CairoException e) {
@@ -478,23 +475,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableSequencerAPI;
     }
 
-    public TableToken getTableToken(final CharSequence tableName) {
-        TableToken tableToken = tableNameRegistry.getTableToken(tableName);
-        if (tableToken == null) {
-            throw CairoException.tableDoesNotExist(tableName);
-        }
-        if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
-            throw CairoException.nonCritical().put("table name is reserved [table=").put(tableName).put("]");
-        }
-        return tableToken;
-    }
-
-    public TableToken getTableToken(final CharSequence tableName, int lo, int hi) {
-        StringSink sink = Misc.getThreadLocalBuilder();
-        sink.put(tableName, lo, hi);
-        return getTableToken(sink);
-    }
-
     public TableToken getTableTokenByDirName(String dirName, int tableId) {
         return tableNameRegistry.getTableToken(dirName, tableId);
     }
@@ -519,8 +499,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken tableToken,
             @Nullable String lockReason
     ) {
-        securityContext.checkWritePermission();
-        verifyTableToken(tableToken);
+        authorizeWrite(securityContext, tableToken);
 
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
@@ -567,8 +546,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public @NotNull WalWriter getWalWriter(CairoSecurityContext securityContext, TableToken tableToken) {
-        securityContext.checkWritePermission();
-        verifyTableToken(tableToken);
+        authorizeWrite(securityContext, tableToken);
         return walWriterPool.get(tableToken);
     }
 
@@ -577,8 +555,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken tableToken,
             String lockReason
     ) {
-        securityContext.checkWritePermission();
-        verifyTableToken(tableToken);
+        authorizeWrite(securityContext, tableToken);
         return writerPool.get(tableToken, lockReason);
     }
 
@@ -587,8 +564,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken tableToken,
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
-        securityContext.checkWritePermission();
-        verifyTableToken(tableToken);
+        authorizeWrite(securityContext, tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
@@ -647,8 +623,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public CharSequence lockWriter(CairoSecurityContext securityContext, TableToken tableToken, String lockReason) {
-        securityContext.checkWritePermission();
-        verifyTableToken(tableToken);
+        authorizeWrite(securityContext, tableToken);
         return writerPool.lock(tableToken, lockReason);
     }
 
@@ -738,12 +713,12 @@ public class CairoEngine implements Closeable, WriterSource {
             Path otherPath,
             CharSequence newName
     ) {
-        securityContext.checkRenameTablePermission();
 
         validNameOrThrow(tableName);
         validNameOrThrow(newName);
 
-        TableToken tableToken = getTableToken(tableName);
+        final TableToken tableToken = verifyTableName(tableName);
+        securityContext.authorizeTableRename(tableToken);
         final TableToken newTableToken;
         if (tableToken != null) {
             if (tableToken.isWal()) {
@@ -816,10 +791,36 @@ public class CairoEngine implements Closeable, WriterSource {
         writerPool.unlock(tableToken);
     }
 
-    // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableInVolumeUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
-        securityContext.checkCreateTablePermission();
+    public TableToken verifyTableName(final CharSequence tableName) {
+        TableToken tableToken = tableNameRegistry.getTableToken(tableName);
+        if (tableToken == null) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
+            throw CairoException.nonCritical().put("table name is reserved [table=").put(tableName).put("]");
+        }
+        return tableToken;
+    }
 
+    public TableToken verifyTableName(final CharSequence tableName, int lo, int hi) {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        sink.put(tableName, lo, hi);
+        return verifyTableName(sink);
+    }
+
+    private TableToken authorizeRead(CairoSecurityContext securityContext, TableToken tableToken) {
+        TableToken tt = verifyTableToken(tableToken);
+        securityContext.authorizeTableRead(tableToken);
+        return tt;
+    }
+
+    private void authorizeWrite(CairoSecurityContext securityContext, TableToken tableToken) {
+        verifyTableToken(tableToken);
+        securityContext.authorizeTableWrite(tableToken);
+    }
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
+    private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         // only create the table after it has been registered
         TableUtils.createTableInVolume(
                 configuration.getFilesFacade(),
@@ -895,7 +896,7 @@ public class CairoEngine implements Closeable, WriterSource {
             RuntimeException rethrow
     ) {
         try {
-            securityContext.checkWritePermission();
+            securityContext.authorizeTableWrite(tableToken);
             writerPool.get(tableToken, "repair").close();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
@@ -922,14 +923,15 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private void verifyTableToken(TableToken tableToken) {
-        TableToken newTableToken = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (newTableToken == null) {
+    private TableToken verifyTableToken(TableToken tableToken) {
+        TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
+        if (tt == null) {
             throw CairoException.tableDoesNotExist(tableToken.getTableName());
         }
-        if (!newTableToken.equals(tableToken)) {
-            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), newTableToken.getTableId(), newTableToken.getTableId(), -1);
+        if (!tt.equals(tableToken)) {
+            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
         }
+        return tt;
     }
 
     private class EngineMaintenanceJob extends SynchronizedJob {

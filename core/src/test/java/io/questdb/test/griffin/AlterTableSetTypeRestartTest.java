@@ -61,7 +61,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 createTable(tableName, "WAL");
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 insertInto(tableName);
                 insertInto(tableName);
@@ -80,7 +80,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // table has been converted to non-WAL
                 assertFalse(engine.isWalTable(token));
@@ -94,7 +94,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // table has been converted to WAL
                 assertTrue(engine.isWalTable(token));
@@ -120,7 +120,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
@@ -148,7 +148,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
@@ -171,7 +171,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // WAL table
                 assertTrue(engine.isWalTable(token));
@@ -194,7 +194,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
@@ -221,7 +221,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
                 final CairoEngine engine = questdb.getCairoEngine();
                 try {
-                    engine.getTableToken(tableName);
+                    engine.verifyTableName(tableName);
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
                 }
@@ -242,7 +242,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
                 setSeqTxn(engine, token, 12345L);
 
                 // non-WAL table
@@ -267,7 +267,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
                 assertSeqTxn(engine, token, 0L);
 
                 drainWalQueue(engine);
@@ -287,7 +287,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
@@ -310,7 +310,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // table has been converted to WAL
                 assertTrue(engine.isWalTable(token));
@@ -341,7 +341,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // table has been converted to non-WAL
                 assertFalse(engine.isWalTable(token));
@@ -364,7 +364,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // no conversion happened, table was already non-WAL type
                 assertFalse(engine.isWalTable(token));
@@ -383,7 +383,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // table has been converted to WAL
                 assertTrue(engine.isWalTable(token));
@@ -413,7 +413,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 createTable(tableName, "WAL");
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 insertInto(tableName);
                 drainWalQueue(engine);
@@ -441,7 +441,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
                 assertFalse(engine.isWalTable(token));
                 assertSeqTxn(engine, token, 0);
                 insertInto(tableName);
@@ -461,7 +461,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 createTable(tableName, "WAL");
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 insertInto(tableName);
                 drainWalQueue(engine);
@@ -494,7 +494,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
                 final CairoEngine engine = questdb.getCairoEngine();
                 try {
-                    engine.getTableToken(tableName);
+                    engine.verifyTableName(tableName);
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
                 }

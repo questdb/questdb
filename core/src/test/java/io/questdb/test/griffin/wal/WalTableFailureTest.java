@@ -469,7 +469,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.getTableToken(tableName)));
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
         });
     }
 
@@ -1130,7 +1130,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
                 " from long_sequence(1)" +
                 ") timestamp(ts) partition by DAY " + (isWal ? "" : "BYPASS ") + "WAL");
-        return engine.getTableToken(tableName);
+        return engine.verifyTableName(tableName);
     }
 
     private TableToken createStandardWalTable(String tableName) throws SqlException {
@@ -1277,7 +1277,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.getTableToken(tableName)));
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");

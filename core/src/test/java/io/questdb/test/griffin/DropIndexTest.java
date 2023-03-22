@@ -298,7 +298,7 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             try (Path path2 = new Path().put(configuration.getRoot()).concat(tableToken)) {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
@@ -556,7 +556,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
                 (String) configuration.getRoot(),
                 tableToken.getDirName()

@@ -358,7 +358,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             path.of(configuration.getRoot());
-                            TableToken tableToken = engine.getTableToken(tableName);
+                            TableToken tableToken = engine.verifyTableName(tableName);
                             if (
                                     TableUtils.isValidTableName(tableName, tableName.length())
                                             && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
@@ -447,7 +447,6 @@ public class DatabaseSnapshotAgent implements Closeable {
     }
 
     private void unsafeReleaseReaders() {
-        Misc.freeObjList(snapshotReaders);
-        snapshotReaders.clear();
+        Misc.freeObjListAndClear(snapshotReaders);
     }
 }

@@ -100,7 +100,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         ") timestamp(ts) partition by DAY BYPASS WAL",
                 sqlExecutionContext
         );
-        this.statusTableToken = engine.getTableToken(statusTableName);
+        this.statusTableToken = engine.verifyTableName(statusTableName);
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();

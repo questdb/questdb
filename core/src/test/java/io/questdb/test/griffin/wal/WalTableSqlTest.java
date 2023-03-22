@@ -249,7 +249,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
             compile("drop table " + tableName);
 
             compile("create table " + tableName + " as (" +
@@ -259,7 +259,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            TableToken sysTableName2 = engine.getTableToken(tableName);
+            TableToken sysTableName2 = engine.verifyTableName(tableName);
             Assert.assertNotEquals(sysTableName2, sysTableName1);
 
             engine.releaseInactive();
@@ -342,7 +342,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             try (
                     WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
                     WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
@@ -400,7 +400,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by DAY WAL"
                 );
 
-                TableToken sysTableName2 = engine.getTableToken(tableName);
+                TableToken sysTableName2 = engine.verifyTableName(tableName);
                 Assert.assertNotEquals(sysTableName2, tableToken);
 
                 engine.releaseAllReaders();
@@ -544,10 +544,10 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
 
             compile("alter table " + tableName + " drop partition list '2022-02-24'");
-            TableToken table2directoryName = engine.getTableToken(tableName);
+            TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + newTableName);
 
-            TableToken newTableDirectoryName = engine.getTableToken(newTableName);
+            TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
@@ -643,7 +643,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 drainWalQueue(walApplyJob);
-                TableToken sysTableName1 = engine.getTableToken(tableName);
+                TableToken sysTableName1 = engine.verifyTableName(tableName);
 
                 try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
                     compile("drop table " + tableName);
@@ -674,7 +674,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
 
             compile("create table " + tableName + "2 as (" +
                     "select x, " +
@@ -683,7 +683,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY"
             );
-            TableToken sysTableName2 = engine.getTableToken(tableName + "2");
+            TableToken sysTableName2 = engine.verifyTableName(tableName + "2");
 
             compile("alter table " + tableName + "2 set type wal", sqlExecutionContext);
             compile("drop table " + tableName);
@@ -729,7 +729,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
             compile("drop table " + tableName);
 
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).toString());
@@ -771,7 +771,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
             compile("drop table " + tableName);
 
             pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).slash$().toString());
@@ -812,7 +812,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
                 }
 
-                TableToken table2directoryName = engine.getTableToken(tableName + "2");
+                TableToken table2directoryName = engine.verifyTableName(tableName + "2");
                 compile("drop table " + tableName + "2");
 
                 drainWalQueue(walApplyJob);
@@ -847,7 +847,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
 
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 drainWalQueue(walApplyJob);
@@ -879,7 +879,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
             engine.getTableSequencerAPI().releaseInactive();
             compile("drop table " + tableName);
 
@@ -948,7 +948,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName = engine.getTableToken(tableName);
+            TableToken sysTableName = engine.verifyTableName(tableName);
 
             compile("drop table " + tableName);
             drainWalQueue();
@@ -1070,11 +1070,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            TableToken table2directoryName = engine.getTableToken(tableName);
+            TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
             compile("rename table " + tableName + " to " + newTableName);
 
-            TableToken newTableDirectoryName = engine.getTableToken(newTableName);
+            TableToken newTableDirectoryName = engine.verifyTableName(newTableName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
@@ -1104,11 +1104,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            TableToken table2directoryName = engine.getTableToken(tableName);
+            TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + newTableName);
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
-            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
+            TableToken newTabledirectoryName = engine.verifyTableName(newTableName);
             Assert.assertNotEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
 
             drainWalQueue();
@@ -1128,7 +1128,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 engine.releaseInactive();
                 refreshTablesInBaseEngine();
 
-                TableToken newTabledirectoryName2 = engine.getTableToken(newTableName);
+                TableToken newTabledirectoryName2 = engine.verifyTableName(newTableName);
                 Assert.assertEquals(newTabledirectoryName, newTabledirectoryName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
@@ -1159,11 +1159,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            TableToken table2directoryName = engine.getTableToken(tableName);
+            TableToken table2directoryName = engine.verifyTableName(tableName);
             compile("rename table " + tableName + " to " + newTableName);
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
-            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
+            TableToken newTabledirectoryName = engine.verifyTableName(newTableName);
             Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
 
             drainWalQueue();
@@ -1183,7 +1183,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 engine.releaseInactive();
                 refreshTablesInBaseEngine();
 
-                TableToken newTabledirectoryName2 = engine.getTableToken(newTableName);
+                TableToken newTabledirectoryName2 = engine.verifyTableName(newTableName);
                 Assert.assertEquals(newTabledirectoryName, newTabledirectoryName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
@@ -1258,7 +1258,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
             runApplyOnce();
 
-            TableToken token = engine.getTableToken(tableName);
+            TableToken token = engine.verifyTableName(tableName);
             try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
                 txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                 txReader.unsafeLoadAll();
@@ -1363,6 +1363,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
                 isTerminating.set(false);
 
+                //noinspection StatementWithEmptyBody
                 while (walApplyJob.run(0, runStatus)) ;
 
                 engine.releaseInactive();
@@ -1425,8 +1426,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1 = engine.getTableToken(tableName);
-            TableToken sysTableName2 = engine.getTableToken(tableName + "2");
+            TableToken sysTableName1 = engine.verifyTableName(tableName);
+            TableToken sysTableName2 = engine.verifyTableName(tableName + "2");
 
             // Fully delete table2
             compile("drop table " + tableName + "2");
@@ -1486,7 +1487,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 drainWalQueue();
 
-                TableToken sysTableName1 = engine.getTableToken(tableName);
+                TableToken sysTableName1 = engine.verifyTableName(tableName);
                 compile("drop table " + tableName);
 
                 latch.set(true);

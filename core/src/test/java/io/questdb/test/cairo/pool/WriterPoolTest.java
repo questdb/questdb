@@ -60,7 +60,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CreateTableTestUtils.create(model);
         }
-        zTableToken = engine.getTableToken("z");
+        zTableToken = engine.verifyTableName("z");
     }
 
     @Test
@@ -129,7 +129,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             sink.clear();
             sink.put("x");
-            TableToken xTableToken = engine.getTableToken(sink);
+            TableToken xTableToken = engine.verifyTableName(sink);
 
 
             TableWriter writer1 = pool.get(xTableToken, "testing");
@@ -273,7 +273,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        TableToken xyzTableToken = engine.getTableToken("xyz");
+        TableToken xyzTableToken = engine.verifyTableName("xyz");
         for (int i = 0; i < 100; i++) {
             assertWithPool(pool -> {
                 AtomicInteger exceptionCount = new AtomicInteger();
@@ -327,7 +327,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        TableToken xyzTableName = engine.getTableToken("xyz");
+        TableToken xyzTableName = engine.verifyTableName("xyz");
         for (int i = 0; i < 100; i++) {
             assertWithPool(pool -> {
                 AtomicInteger exceptionCount = new AtomicInteger();
@@ -403,8 +403,8 @@ public class WriterPoolTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        TableToken xTableToken = engine.getTableToken("x");
-        TableToken yTableToken = engine.getTableToken("y");
+        TableToken xTableToken = engine.verifyTableName("x");
+        TableToken yTableToken = engine.verifyTableName("y");
 
         assertWithPool(pool -> {
 
@@ -473,7 +473,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             CreateTableTestUtils.create(model);
         }
 
-        TableToken xyzTableToken = engine.getTableToken("xyz");
+        TableToken xyzTableToken = engine.verifyTableName("xyz");
         for (int i = 0; i < 100; i++) {
             assertWithPool(pool -> {
                 AtomicInteger exceptionCount = new AtomicInteger();
@@ -527,7 +527,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         }
 
         assertWithPool(pool -> {
-            TableToken xTableToken = engine.getTableToken("x");
+            TableToken xTableToken = engine.verifyTableName("x");
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(xTableToken, "testing"));
             pool.unlock(xTableToken);
             pool.get(xTableToken, "testing").close();
@@ -658,7 +658,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-            TableToken tableToken = engine.getTableToken(x);
+            TableToken tableToken = engine.verifyTableName(x);
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(tableToken, "testing"));
 
             TableWriter writer = new TableWriter(

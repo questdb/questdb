@@ -389,7 +389,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 }
 
                 try (TxReader txReader = new TxReader(ff)) {
-                    TableToken tableToken = engine.getTableToken("up");
+                    TableToken tableToken = engine.verifyTableName("up");
                     txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));

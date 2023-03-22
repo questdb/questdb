@@ -415,6 +415,7 @@ public abstract class AbstractCairoTest {
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        //noinspection StatementWithEmptyBody
         while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
         }
     }
@@ -440,14 +441,14 @@ public abstract class AbstractCairoTest {
     protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
         return engine.getReader(
                 engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.getTableToken(tableName)
+                engine.verifyTableName(tableName)
         );
     }
 
     protected static TableReader getReader(CharSequence tableName) {
         return engine.getReader(
                 engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.getTableToken(tableName)
+                engine.verifyTableName(tableName)
         );
     }
 
@@ -458,7 +459,7 @@ public abstract class AbstractCairoTest {
     protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
         return engine.getTableWriterAPI(
                 engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.getTableToken(tableName),
+                engine.verifyTableName(tableName),
                 "test"
         );
     }
@@ -467,7 +468,7 @@ public abstract class AbstractCairoTest {
     protected static WalWriter getWalWriter(CharSequence tableName) {
         return engine.getWalWriter(
                 engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.getTableToken(tableName)
+                engine.verifyTableName(tableName)
         );
     }
 
@@ -495,11 +496,11 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, engine.getTableToken(tableName));
+        return new TableReader(configuration, engine.verifyTableName(tableName));
     }
 
     protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return new TableWriter(configuration, engine.getTableToken(tableName), metrics);
+        return new TableWriter(configuration, engine.verifyTableName(tableName), metrics);
     }
 
     protected static void releaseInactive(CairoEngine engine) {
@@ -511,8 +512,8 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void replicate(String tableName, String wal, QuestDBTestNode srcNode, QuestDBTestNode dstNode) {
-        TableToken srcTableToken = srcNode.getEngine().getTableToken(tableName);
-        TableToken dstTableToken = dstNode.getEngine().getTableToken(tableName);
+        TableToken srcTableToken = srcNode.getEngine().verifyTableName(tableName);
+        TableToken dstTableToken = dstNode.getEngine().verifyTableName(tableName);
 
         dstNode.getEngine().getTableSequencerAPI().closeSequencer(dstTableToken);
         dstNode.getEngine().getTableSequencerAPI().releaseInactive();
@@ -572,7 +573,7 @@ public abstract class AbstractCairoTest {
     protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
@@ -581,7 +582,7 @@ public abstract class AbstractCairoTest {
     protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
@@ -590,18 +591,18 @@ public abstract class AbstractCairoTest {
     protected void assertWalExistence(boolean expectExists, String tableName, int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             path.of(root).concat(tableToken).concat("wal").put(walId).$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
     protected boolean isWalTable(CharSequence tableName) {
-        return engine.isWalTable(engine.getTableToken(tableName));
+        return engine.isWalTable(engine.verifyTableName(tableName));
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
-        return new TableWriter(configuration, engine.getTableToken(tableName), messageBus, metrics);
+        return new TableWriter(configuration, engine.verifyTableName(tableName), messageBus, metrics);
     }
 
     protected TableToken registerTableName(CharSequence tableName) {

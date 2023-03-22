@@ -2818,7 +2818,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         drainWalQueue(engine);
         Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
+                engine.verifyTableName("x")
         ));
 
         engine.releaseInactive();
@@ -2828,7 +2828,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         drainWalQueue(engine);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
+                engine.verifyTableName("x")
         ));
 
         assertXCountAndMax(
@@ -2872,7 +2872,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         drainWalQueue(engine);
         Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
+                engine.verifyTableName("x")
         ));
 
         engine.releaseInactive();
@@ -2882,7 +2882,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         drainWalQueue(engine);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
+                engine.verifyTableName("x")
         ));
 
         assertXCountAndMax(
@@ -2989,7 +2989,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         drainWalQueue(engine);
         Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
+                engine.verifyTableName("x")
         ));
 
         engine.releaseInactive();
@@ -2999,7 +2999,7 @@ public class O3FailureTest extends AbstractO3Test {
         drainWalQueue(engine);
 
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
+                engine.verifyTableName("x")
         ));
 
         assertXCountAndMax(

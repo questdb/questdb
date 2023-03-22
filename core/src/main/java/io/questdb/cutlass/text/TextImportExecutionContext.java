@@ -25,6 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.security.DenyAllCairoSecurityContext;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -37,16 +39,24 @@ public class TextImportExecutionContext implements Mutable {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final Rnd rnd;
+    private CairoSecurityContext securityContext = DenyAllCairoSecurityContext.INSTANCE;
 
     public TextImportExecutionContext(CairoConfiguration configuration) {
         MicrosecondClock clock = configuration.getMicrosecondClock();
         this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
     }
 
-    public long assignActiveImportId() {
+    public long assignActiveImportId(CairoSecurityContext securityContext) {
         long nextId = rnd.nextPositiveLong();
         activeImportId.set(nextId);
+        this.securityContext = securityContext;
         return nextId;
+    }
+
+    @Override
+    public void clear() {
+        activeImportId.set(INACTIVE);
+        securityContext = DenyAllCairoSecurityContext.INSTANCE;
     }
 
     public long getActiveImportId() {
@@ -57,8 +67,7 @@ public class TextImportExecutionContext implements Mutable {
         return circuitBreaker;
     }
 
-    @Override
-    public void clear() {
-        activeImportId.set(INACTIVE);
+    public CairoSecurityContext getSecurityContext() {
+        return securityContext;
     }
 }

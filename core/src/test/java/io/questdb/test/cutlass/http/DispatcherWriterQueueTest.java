@@ -417,7 +417,7 @@ public class DispatcherWriterQueueTest {
     private TableReader getReader(CairoEngine engine, String tableName) {
         return engine.getReader(
                 engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.getTableToken(tableName)
+                engine.verifyTableName(tableName)
         );
     }
 

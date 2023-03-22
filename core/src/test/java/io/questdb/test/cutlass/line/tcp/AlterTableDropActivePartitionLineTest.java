@@ -124,7 +124,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                     stmt.execute();
                 }
 
-                TableToken token = engine.getTableToken(tableName);
+                TableToken token = engine.verifyTableName(tableName);
                 // set up a thread that will send ILP/TCP for today
 
                 // today is deterministic

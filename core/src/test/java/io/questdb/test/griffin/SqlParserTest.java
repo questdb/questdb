@@ -7461,7 +7461,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        TableToken tableToken = engine.getTableToken(tableModel.getName());
+                        TableToken tableToken = engine.verifyTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
@@ -7503,7 +7503,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        TableToken tableToken1 = engine.getTableToken(tableModel.getName());
+                        TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
                         configuration.getFilesFacade().rmdir(path);
                         tableModel.close();

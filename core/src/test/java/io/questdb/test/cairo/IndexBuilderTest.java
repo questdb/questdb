@@ -487,7 +487,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 indexBuilder -> indexBuilder.reindexAllInPartition("1970-01-01"));
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.verifyTableName("xxx"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -593,7 +593,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         );
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.verifyTableName("xxx"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -633,7 +633,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            TableToken xxx = engine.getTableToken("xxx");
+            TableToken xxx = engine.verifyTableName("xxx");
             String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 

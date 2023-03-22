@@ -62,7 +62,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
                 insertInto(tableName);
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
@@ -85,7 +85,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // conversion is disabled so table is not converted, it is still non-WAL
                 assertFalse(engine.isWalTable(token));

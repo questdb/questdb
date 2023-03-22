@@ -26,37 +26,43 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.TableToken;
 
 public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     public static final ReadOnlyCairoSecurityContext INSTANCE = new ReadOnlyCairoSecurityContext();
 
     @Override
-    public void checkWritePermission() {
+    public void authorizeTableWrite(TableToken tableToken) {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void checkCreateTablePermission() {
+    public void authorizeTableCreate(CharSequence tableName) {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void checkDropTablePermission() {
+    public void authorizeTableDrop() {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void checkRenameTablePermission() {
+    public void authorizeTableRename(TableToken tableToken) {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void checkLockTablePermission() {
+    public void authorizeTableLock() {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void checkSnapshotDatabasePermission() {
+    public void authorizeDatabaseSnapshot() {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeCopyExecute() {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 }

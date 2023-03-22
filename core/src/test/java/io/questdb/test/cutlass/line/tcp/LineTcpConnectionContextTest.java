@@ -1673,7 +1673,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         });
 
         try {
-            engine.getTableToken(table);
+            engine.verifyTableName(table);
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
         }
@@ -1725,7 +1725,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         });
 
         try {
-            engine.getTableToken(table);
+            engine.verifyTableName(table);
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
         }
@@ -1953,7 +1953,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
 
             // with this line we are testing that mmap size is calculated correctly even in case of fileSize=pageSize
-            (new TableReader(configuration, engine.getTableToken(table))).close();
+            (new TableReader(configuration, engine.verifyTableName(table))).close();
         });
     }
 

@@ -86,7 +86,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 createTable(tableName, "WAL");
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
 
                 try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
                     insertInto(tableName);
@@ -125,7 +125,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final TableToken token = engine.verifyTableName(tableName);
                 assertFalse(engine.isWalTable(token));
 
                 // insert works now

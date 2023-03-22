@@ -34,13 +34,16 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.*;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractGriffinTest {
@@ -215,12 +218,32 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testBackupTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
+            // create infrastructure where backup is enabled (dir configured)
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                compiler.compile("backup table balances", readOnlyExecutionContext);
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
+            final File backupDir = temp.newFolder();
+            final DateFormat backupSubDirFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
+                        @Override
+                        public CharSequence getBackupRoot() {
+                            return backupDir.getAbsolutePath();
+                        }
+
+                        @Override
+                        public DateFormat getBackupDirTimestampFormat() {
+                            return backupSubDirFormat;
+                        }
+                    });
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                sqlExecutionContext.with(ReadOnlyCairoSecurityContext.INSTANCE, null);
+                try {
+                    compiler.compile("backup table balances", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception ex) {
+                    Assert.assertTrue(ex.toString().contains("permission denied"));
+                }
             }
         });
     }

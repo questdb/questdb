@@ -787,7 +787,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 threadId = i;
             }
         }
-        TableToken tableToken = engine.getTableToken(tableNameUtf16);
+        TableToken tableToken = engine.verifyTableName(tableNameUtf16);
         final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,

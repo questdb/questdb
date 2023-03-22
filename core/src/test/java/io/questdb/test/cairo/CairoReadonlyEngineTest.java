@@ -153,8 +153,8 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
                 roEngine.reloadTableNames();
                 Assert.assertEquals(
-                        engine.getTableToken(tableName),
-                        roEngine.getTableToken(tableName)
+                        engine.verifyTableName(tableName),
+                        roEngine.verifyTableName(tableName)
                 );
             }
         });
@@ -168,7 +168,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
 
                 try {
-                    roEngine.getTableToken(tableName);
+                    roEngine.verifyTableName(tableName);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertEquals(
@@ -179,8 +179,8 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
                 currentMicros += 1_100_000L;
                 Assert.assertEquals(
-                        engine.getTableToken(tableName),
-                        roEngine.getTableToken(tableName)
+                        engine.verifyTableName(tableName),
+                        roEngine.verifyTableName(tableName)
                 );
             }
         });

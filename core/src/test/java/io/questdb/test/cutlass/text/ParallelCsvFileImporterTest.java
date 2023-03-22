@@ -2532,7 +2532,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         }
 
-        TableToken tableToken = engine.getTableToken("tableName");
+        TableToken tableToken = engine.verifyTableName("tableName");
         ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, tableToken.getDirName()));
         Assert.assertEquals(list(expectedChunks), actualChunks);
     }

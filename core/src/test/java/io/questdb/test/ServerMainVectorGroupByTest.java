@@ -185,7 +185,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         ) {
             op.await();
         }
-        return engine.getTableToken(tableName);
+        return engine.verifyTableName(tableName);
     }
 
     static {

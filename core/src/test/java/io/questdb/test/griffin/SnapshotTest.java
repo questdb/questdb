@@ -438,7 +438,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
 
             engine.releaseInactive();
             Assert.assertTrue(ff.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
@@ -872,7 +872,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
                 int tableNameLen = path.length();
                 FilesFacade ff = configuration.getFilesFacade();
@@ -962,7 +962,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
                 int tableNameLen = path.length();
                 copyPath.concat(tableToken);

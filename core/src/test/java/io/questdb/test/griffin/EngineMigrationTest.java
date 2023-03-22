@@ -149,7 +149,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken token = engine.getTableToken("abc");
+        TableToken token = engine.verifyTableName("abc");
         CairoConfiguration config = engine.getConfiguration();
 
         TestUtils.messTxnUnallocated(
@@ -180,7 +180,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken token = engine.getTableToken("abc");
+        TableToken token = engine.verifyTableName("abc");
 
         CairoConfiguration config = engine.getConfiguration();
         try (TxWriter txWriter = new TxWriter(config.getFilesFacade())) {
@@ -1692,7 +1692,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 engine.getConfiguration().getFilesFacade(),
                 Path.getThreadLocal(root),
                 new Rnd(),
-                engine.getTableToken("t_col_top_ooo_day_wal")
+                engine.verifyTableName("t_col_top_ooo_day_wal")
         );
 
         Path from = Path.getThreadLocal(configuration.getRoot()).concat("t_col_top_день");

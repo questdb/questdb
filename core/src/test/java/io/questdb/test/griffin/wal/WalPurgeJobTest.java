@@ -126,7 +126,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         assertWalExistence(true, tableName, 1);
 
         // A test FilesFacade that hides the "wal2" directory.
-        String dirNamePath = Files.SEPARATOR + Chars.toString(engine.getTableToken(tableName).getDirName());
+        String dirNamePath = Files.SEPARATOR + Chars.toString(engine.verifyTableName(tableName).getDirName());
         FilesFacade testFF = new TestFilesFacadeImpl() {
             @Override
             public void iterateDir(LPSZ path, FindVisitor func) {
@@ -459,7 +459,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             CharSequence root = engine.getConfiguration().getRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                path.of(root).concat(engine.getTableToken(tableName)).concat("wal1").concat("stuff").$();
+                path.of(root).concat(engine.verifyTableName(tableName)).concat("wal1").concat("stuff").$();
                 ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
@@ -728,7 +728,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             CharSequence root = engine.getConfiguration().getRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(root).concat(tableToken).$();
                 Assert.assertTrue(path.toString(), ff.exists(path));
                 path.of(root).concat(tableToken).concat("waldo").$();

@@ -128,7 +128,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
             });
 
             // Assert all data went into WAL1 and WAL2 does not exist
-            TableToken token = engine.getTableToken("table");
+            TableToken token = engine.verifyTableName("table");
             Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
             Assert.assertFalse(engine.getConfiguration().getFilesFacade().exists(path.slash$()));
         });

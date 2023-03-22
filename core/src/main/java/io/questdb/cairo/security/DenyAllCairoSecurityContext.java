@@ -24,6 +24,20 @@
 
 package io.questdb.cairo.security;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.TableToken;
+
 public class DenyAllCairoSecurityContext extends ReadOnlyCairoSecurityContext {
     public static final DenyAllCairoSecurityContext INSTANCE = new DenyAllCairoSecurityContext();
+
+    @Override
+    public void authorizeCopyCancel(CairoSecurityContext securityContext) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeTableRead(TableToken tableToken) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
 }

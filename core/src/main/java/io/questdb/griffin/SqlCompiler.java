@@ -468,7 +468,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCairoSecurityContext().checkLockTablePermission();
+        executionContext.getCairoSecurityContext().authorizeTableLock();
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
@@ -1200,7 +1200,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void cancelTextImport(CopyModel model) throws SqlException {
+    private void cancelTextImport(CairoSecurityContext securityContext, CopyModel model) throws SqlException {
         assert model.isCancel();
 
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
@@ -1211,6 +1211,9 @@ public class SqlCompiler implements Closeable {
         if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
             throw SqlException.$(0, "No active import to cancel.");
         }
+
+        textImportExecutionContext.getSecurityContext().authorizeCopyCancel(securityContext);
+
         long importId;
         try {
             CharSequence idString = model.getTarget().token;
@@ -1362,7 +1365,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.CREATE_TABLE:
                 return createTableWithRetries(executionModel, executionContext);
             case ExecutionModel.COPY:
-                return executeCopy(executionContext, (CopyModel) executionModel);
+                return executeCopy(executionContext.getCairoSecurityContext(), (CopyModel) executionModel);
             case ExecutionModel.RENAME_TABLE:
                 final RenameTableModel rtm = (RenameTableModel) executionModel;
                 engine.rename(executionContext.getCairoSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
@@ -1660,7 +1663,7 @@ public class SqlCompiler implements Closeable {
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
+        final TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
         int status = executionContext.getStatus(path, tableToken);
@@ -1668,11 +1671,7 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofCreateTable();
         }
 
-        this.insertCount = -1;
         if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            if (createTableModel.isIgnoreIfExists()) {
-                return compiledQuery.ofCreateTable();
-            }
             throw SqlException.$(name.position, "table already exists");
         }
 
@@ -1689,8 +1688,8 @@ public class SqlCompiler implements Closeable {
             }
         }
 
+        this.insertCount = -1;
         if (createTableModel.getQueryModel() == null) {
-            executionContext.getCairoSecurityContext().checkWritePermission();
             try {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
@@ -1846,22 +1845,22 @@ public class SqlCompiler implements Closeable {
     }
 
     @NotNull
-    private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
-        executionContext.getCairoSecurityContext().checkWritePermission();
-        if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+    private CompiledQuery executeCopy(CairoSecurityContext securityContext, CopyModel copyModel) throws SqlException {
+        securityContext.authorizeCopyExecute();
+        if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
             // no-op implementation
-            setupTextLoaderFromModel(executionModel);
+            setupTextLoaderFromModel(copyModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
-        RecordCursorFactory copyFactory = executeCopy0(executionModel);
+        RecordCursorFactory copyFactory = executeCopy0(securityContext, copyModel);
         return compiledQuery.ofCopyLocal(copyFactory);
     }
 
     @Nullable
-    private RecordCursorFactory executeCopy0(CopyModel model) throws SqlException {
+    private RecordCursorFactory executeCopy0(CairoSecurityContext securityContext, CopyModel model) throws SqlException {
         try {
             if (model.isCancel()) {
-                cancelTextImport(model);
+                cancelTextImport(securityContext, model);
                 return null;
             } else {
                 if (model.getTimestampColumnName() == null &&
@@ -2394,7 +2393,7 @@ public class SqlCompiler implements Closeable {
 
     private boolean removeTableDirectory(CreateTableModel model) {
         int errno;
-        TableToken tableToken = engine.getTableToken(model.getName().token);
+        TableToken tableToken = engine.verifyTableName(model.getName().token);
         if ((errno = engine.removeDirectory(path, tableToken.getDirName())) == 0) {
             return true;
         }
@@ -2443,7 +2442,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCairoSecurityContext().checkWritePermission();
+        executionContext.getCairoSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
@@ -2627,7 +2626,6 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery vacuum(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCairoSecurityContext().checkWritePermission();
         CharSequence tok = expectToken(lexer, "'table'");
         // It used to be VACUUM PARTITIONS but become VACUUM TABLE
         boolean partitionsKeyword = isPartitionsKeyword(tok);
@@ -2637,11 +2635,11 @@ public class SqlCompiler implements Closeable {
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
-                executionContext.getCairoSecurityContext().checkWritePermission();
                 TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
+                        executionContext.getCairoSecurityContext().authorizeTableWrite(rdr.getTableToken());
                         if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableToken(), partitionBy)) {
                             throw SqlException.$(
                                     tableNamePos,
@@ -2988,7 +2986,7 @@ public class SqlCompiler implements Closeable {
         }
 
         private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             srcPath.of(backupRoot).concat(tableToken).slash$();
 
             if (ff.exists(srcPath)) {
@@ -3060,7 +3058,6 @@ public class SqlCompiler implements Closeable {
         }
 
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
-            executionContext.getCairoSecurityContext().checkWritePermission();
             if (null == configuration.getBackupRoot()) {
                 throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }

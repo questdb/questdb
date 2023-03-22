@@ -98,7 +98,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
             if (processingCursor > -1) {
                 final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
 
-                long importId = textImportExecutionContext.assignActiveImportId();
+                long importId = textImportExecutionContext.assignActiveImportId(executionContext.getCairoSecurityContext());
                 task.of(
                         executionContext.getCairoSecurityContext(),
                         importId,

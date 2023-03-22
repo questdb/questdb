@@ -225,6 +225,6 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
                         ") timestamp (timestamp);",
                 sqlExecutionContext
         );
-        return engine.getTableToken("x");
+        return engine.verifyTableName("x");
     }
 }

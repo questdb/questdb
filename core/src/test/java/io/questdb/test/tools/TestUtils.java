@@ -517,7 +517,7 @@ public final class TestUtils {
     public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
-        TableToken tt = engine.getTableToken(tableName);
+        TableToken tt = engine.verifyTableName(tableName);
         try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
@@ -1029,7 +1029,7 @@ public final class TestUtils {
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
-        return getWriter(engine, engine.getTableToken(tableName));
+        return getWriter(engine, engine.verifyTableName(tableName));
     }
 
     public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {

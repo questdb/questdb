@@ -638,7 +638,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertColumnTypes(String[][] columnTypes) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(securityContext, engine.getTableToken("tab"))) {
+            try (TableReader reader = engine.getReader(securityContext, engine.verifyTableName("tab"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int i = 0; i < columnTypes.length; i++) {
                     String[] arr = columnTypes[i];
@@ -651,7 +651,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertColumnsIndexed(String tableName, String... columnNames) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader r = engine.getReader(securityContext, engine.getTableToken(tableName))) {
+            try (TableReader r = engine.getReader(securityContext, engine.verifyTableName(tableName))) {
                 TableReaderMetadata metadata = r.getMetadata();
                 IntList indexed = new IntList();
                 indexed.setPos(metadata.getColumnCount());
@@ -687,7 +687,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertPartitionAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(securityContext, engine.getTableToken("tab"))) {
+            try (TableReader reader = engine.getReader(securityContext, engine.verifyTableName("tab"))) {
                 Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
                 Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
             }
@@ -696,7 +696,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertSymbolParameters(SymbolParameters parameters) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(securityContext, engine.getTableToken("tab"))) {
+            try (TableReader reader = engine.getReader(securityContext, engine.verifyTableName("tab"))) {
                 if (parameters.symbolCapacity != null) {
                     Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(1).getSymbolCapacity());
                 }
@@ -711,7 +711,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertWalEnabled(boolean isWalEnabled) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(securityContext, engine.getTableToken(("x")))) {
+            try (TableReader reader = engine.getReader(securityContext, engine.verifyTableName(("x")))) {
                 Assert.assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
             }
         });
@@ -719,7 +719,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertWithClauseParameters(int maxUncommittedRows, int o3MaxLag) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(securityContext, engine.getTableToken(("x")))) {
+            try (TableReader reader = engine.getReader(securityContext, engine.verifyTableName(("x")))) {
                 Assert.assertEquals(o3MaxLag, reader.getMetadata().getO3MaxLag());
                 Assert.assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
             }

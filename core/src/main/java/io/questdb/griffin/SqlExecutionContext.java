@@ -117,11 +117,11 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     default TableToken getTableToken(CharSequence tableName) {
-        return getCairoEngine().getTableToken(tableName);
+        return getCairoEngine().verifyTableName(tableName);
     }
 
     default TableToken getTableToken(CharSequence tableName, int lo, int hi) {
-        return getCairoEngine().getTableToken(tableName, lo, hi);
+        return getCairoEngine().verifyTableName(tableName, lo, hi);
     }
 
     default TableToken getTableTokenIfExists(CharSequence tableName) {

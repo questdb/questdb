@@ -92,7 +92,18 @@ public class TextImportRequestTask implements Mutable {
         return securityContext;
     }
 
-    public void of(CairoSecurityContext securityContext, long importId, String tableName, String fileName, boolean headerFlag, String timestampColumnName, byte delimiter, String timestampFormat, int partitionBy, int atomicity) {
+    public void of(
+            CairoSecurityContext securityContext,
+            long importId,
+            String tableName,
+            String fileName,
+            boolean headerFlag,
+            String timestampColumnName,
+            byte delimiter,
+            String timestampFormat,
+            int partitionBy,
+            int atomicity
+    ) {
         this.clear();
         this.securityContext = securityContext;
         this.importId = importId;

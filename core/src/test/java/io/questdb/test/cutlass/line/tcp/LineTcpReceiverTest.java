@@ -191,7 +191,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.getTableToken(tableName))) {
+                            && name.equals(engine.verifyTableName(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -559,7 +559,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.getTableToken(tableName))) {
+                            && name.equals(engine.verifyTableName(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -1611,7 +1611,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.drop(securityContext, path, engine.getTableToken("weather"));
+        engine.drop(securityContext, path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {

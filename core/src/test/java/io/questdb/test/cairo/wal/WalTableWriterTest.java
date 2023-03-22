@@ -659,7 +659,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                     assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
                 }
                 drainWalQueue();
-                assertFalse(engine.getTableSequencerAPI().isSuspended(engine.getTableToken(tableName)));
+                assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
 
                 try {
                     executeOperation("UPDATE " + tableCopyName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
@@ -864,7 +864,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
     }
 
     private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
-        try (TableReader reader = getReader(engine.getTableToken(tableName))) {
+        try (TableReader reader = getReader(engine.verifyTableName(tableName))) {
             assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
                     "maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n");
             reader.reload();

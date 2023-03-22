@@ -296,7 +296,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createY(engine);
                 try {
-                    engine.drop(securityContext, path, engine.getTableToken("x"));
+                    engine.drop(securityContext, path, engine.verifyTableName("x"));
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");

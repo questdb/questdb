@@ -337,7 +337,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.tableName = tableName;
         this.tableToken = cairoEngine.lockTableName(tableName, false);
         if (tableToken == null) {
-            tableToken = cairoEngine.getTableToken(tableName);
+            tableToken = cairoEngine.verifyTableName(tableName);
         }
         this.importRoot = tmpPath.of(inputWorkRoot).concat(tableToken).toString();
         this.inputFileName = inputFileName;
