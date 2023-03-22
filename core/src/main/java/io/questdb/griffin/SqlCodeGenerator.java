@@ -104,7 +104,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList groupByFunctionPositions = new IntList();
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> groupedAnalytic = new ObjObjHashMap<>();
     private final IntHashSet intHashSet = new IntHashSet();
-    private final IntList intList = new IntList();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
@@ -572,10 +571,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                     int index = listColumnFilterA.getColumnIndexFactored(i);
                     final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(index);
-                    // symbols columns are converted to strings. This is because
-                    // we need to match them with columns from the master table
                     if (ColumnType.isSymbol(m.getType())) {
                         // todo: fetch index, indexValueBlockCap and static flag from master table
+                        // q: is it really necessary?
                         metadata.add(
                                 slaveAlias,
                                 m.getName(),
@@ -4442,8 +4440,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
     ) throws SqlException {
-        // listColumnFilterA represents store column indexes of slave table
-        // todo: really? to be confirmed
         lookupColumnIndexesUsingVanillaNames(listColumnFilterA, jc.aNames, slaveMetadata);
         if (vanillaMaster) {
             lookupColumnIndexesUsingVanillaNames(listColumnFilterB, jc.bNames, masterMetadata);

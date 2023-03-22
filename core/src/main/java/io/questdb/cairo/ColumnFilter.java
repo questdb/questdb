@@ -31,8 +31,7 @@ public interface ColumnFilter {
 
     default int getColumnIndexFactored(int position) {
         int index = getColumnIndex(position);
-        int indexFactor = getIndexFactor(index);
-        return (index * indexFactor - 1);
+        return (index * getIndexFactor(index) - 1);
     }
 
     default int getIndexFactor(int index) {
