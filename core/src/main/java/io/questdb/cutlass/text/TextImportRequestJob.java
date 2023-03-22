@@ -176,7 +176,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
     private boolean useParallelImport() {
         TableToken tableToken = engine.getTableTokenIfExists(task.getTableName());
-        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (engine.getStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
             return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
         }
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {

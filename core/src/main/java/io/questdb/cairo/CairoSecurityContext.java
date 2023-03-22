@@ -33,4 +33,20 @@ public interface CairoSecurityContext {
             throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
         }
     }
+
+    default void checkCreateTablePermission() {
+    }
+
+    default void checkDropTablePermission() {
+    }
+
+    default void checkRenameTablePermission() {
+    }
+
+    default void checkLockTablePermission() {
+    }
+
+    default void checkSnapshotDatabasePermission() {
+
+    }
 }

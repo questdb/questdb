@@ -25,8 +25,9 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.DefaultFactoriesFactory;
+import io.questdb.cairo.security.FactoriesFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -87,7 +88,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoPageFrameReduceTaskPoolCapacity;
-    private final CairoSecurityContextFactory cairoSecurityContextFactory = new AllowAllSecurityContextFactory();
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -187,6 +187,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final String root;
     private final int sampleByIndexSearchPageSize;
+    private final CairoSecurityContextFactory securityContextFactory;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -452,9 +453,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
+    ) throws JsonException, ServerConfigurationException {
+        this(root, properties, env, log, buildInformation, DefaultFactoriesFactory.INSTANCE);
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            FactoriesFactory factoriesFactory
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
+        this.securityContextFactory = factoriesFactory.getSecurityContextFactory();
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -1567,7 +1580,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-            return cairoSecurityContextFactory;
+            return securityContextFactory;
         }
 
         @Override
@@ -2424,6 +2437,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRequestHeaderBufferSize() {
             return requestHeaderBufferSize;
+        }
+
+        @Override
+        public CairoSecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
         }
 
         @Override

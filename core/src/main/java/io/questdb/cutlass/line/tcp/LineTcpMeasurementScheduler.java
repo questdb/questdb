@@ -691,7 +691,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
                 TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
-                int status = engine.getStatus(securityContext, path, tableToken);
+                int status = engine.getStatus(path, tableToken);
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
                         throw CairoException.nonCritical()

@@ -31,13 +31,13 @@ import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -189,14 +189,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
-            TableToken tt = engine.getTableTokenIfExists(tableName);
-            assertEquals(
-                    TableUtils.TABLE_EXISTS,
-                    engine.getStatus(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                            path,
-                            tt
-                    )
-            );
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(path, engine.getTableTokenIfExists(tableName)));
         }
     }
 

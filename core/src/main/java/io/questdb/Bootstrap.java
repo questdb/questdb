@@ -27,6 +27,8 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.security.DefaultFactoriesFactory;
+import io.questdb.cairo.security.FactoriesFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -71,10 +73,16 @@ public class Bootstrap {
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
-        this(BANNER, System.getenv(), null, args);
+        this(BANNER, System.getenv(), null, DefaultFactoriesFactory.INSTANCE, args);
     }
 
-    public Bootstrap(String banner, @Nullable Map<String, String> env, FilesFacade ffOverride, String... args) {
+    public Bootstrap(
+            String banner,
+            @Nullable Map<String, String> env,
+            FilesFacade ffOverride,
+            FactoriesFactory factoriesFactory,
+            String... args
+    ) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -154,8 +162,8 @@ public class Bootstrap {
             // /server.conf properties
             final Properties properties = loadProperties(rootPath);
             config = ffOverride == null
-                    ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
-                    : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
+                    ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation, factoriesFactory)
+                    : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation, factoriesFactory) {
                 private CairoConfiguration cairoConf;
 
                 @Override

@@ -127,7 +127,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             } catch (SqlException expected) {
                 // check the writer wasn't actually locked
                 assertNull(engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock"));
-                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), x);
+                engine.unlockWriter(x);
             } finally {
                 Misc.free(readOnlyContext);
             }
@@ -175,7 +175,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             } catch (SqlException expected) {
                 // check the writer wasn't actually released
                 TestUtils.assertEquals("alterSystem", engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock"));
-                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), x);
+                engine.unlockWriter(x);
             } finally {
                 Misc.free(readOnlyContext);
             }

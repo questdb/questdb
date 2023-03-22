@@ -26,14 +26,11 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoSecurityContext;
 
-public class AllowAllSecurityContextFactory implements CairoSecurityContextFactory {
-    public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
-
-    private AllowAllSecurityContextFactory() {
-    }
+public class DenyAllCairoSecurityContext implements CairoSecurityContext {
+    public static final DenyAllCairoSecurityContext INSTANCE = new DenyAllCairoSecurityContext();
 
     @Override
-    public CairoSecurityContext getInstance(CharSequence principal) {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public boolean canWrite() {
+        return false;
     }
 }

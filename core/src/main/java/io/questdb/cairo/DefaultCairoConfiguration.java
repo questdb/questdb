@@ -45,7 +45,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final CharSequence root;
-    private final CairoSecurityContextFactory securityContextFactory = new AllowAllSecurityContextFactory();
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
@@ -123,7 +122,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-        return securityContextFactory;
+        return AllowAllSecurityContextFactory.INSTANCE;
     }
 
     @Override
