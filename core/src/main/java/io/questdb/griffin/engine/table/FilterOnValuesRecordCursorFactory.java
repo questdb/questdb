@@ -48,6 +48,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private final int[] cursorFactoriesIdx;
     private final Function filter;
     private final boolean followedOrderByAdvice;
+    private final boolean heapCursorUsed;
     private final int orderDirection;
     private final RowCursorFactory rowCursorFactory;
 
@@ -83,8 +84,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             }
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
+            heapCursorUsed = false;
             rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         } else {
+            heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         }
         cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
@@ -99,7 +102,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     @Override
     public int getScanDirection() {
         if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC
-                && rowCursorFactory instanceof HeapRowCursorFactory) {
+                && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -113,7 +116,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
-        if (rowCursorFactory instanceof SequentialRowCursorFactory) {//sorting symbols makes no sense for heap factory
+        if (!heapCursorUsed) {//sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.child(rowCursorFactory);

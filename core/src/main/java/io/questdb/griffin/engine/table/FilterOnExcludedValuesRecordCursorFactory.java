@@ -52,6 +52,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final IntHashSet excludedKeys = new IntHashSet();
     private final Function filter;
     private final boolean followedOrderByAdvice;
+    private final boolean heapCursorUsed;
     private final IntHashSet includedKeys = new IntHashSet();
     private final int indexDirection;
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
@@ -92,8 +93,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         cursorFactoriesIdx = new int[]{0};
         cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
+            heapCursorUsed = false;
             cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
+            heapCursorUsed = true;
             cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
@@ -111,7 +114,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     @Override
     public int getScanDirection() {
         if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC
-                && cursor.getRowCursorFactory() instanceof HeapRowCursorFactory) {
+                && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -152,7 +155,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             }
 
             // sorting values makes no sense for heap row cursor  
-            if (cursor.getRowCursorFactory() instanceof SequentialRowCursorFactory) {
+            if (!heapCursorUsed) {
                 //sorting here can produce order of cursorFactories different from one shown by explain command
                 if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparator);
@@ -173,7 +176,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
-        if (cursor.getRowCursorFactory() instanceof SequentialRowCursorFactory) {//sorting symbols makes no sense for heap factory
+        if (!heapCursorUsed) {//sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
