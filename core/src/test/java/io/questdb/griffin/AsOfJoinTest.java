@@ -318,7 +318,26 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
             }
         }
+    }
 
+    @Test
+    public void testIssue2976() throws Exception {
+        compiler.setFullFatJoins(true);
+        compile("CREATE TABLE 'tests' (\n" +
+                "  Ticker SYMBOL capacity 256 CACHE,\n" +
+                "  ts timestamp\n" +
+                ") timestamp (ts) PARTITION BY MONTH");
+        compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
+
+        String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+        String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
+                "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
+                "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
+                "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n";
+        assertQuery(expected, query, "ts", false, true);
     }
 
     @Test

@@ -147,7 +147,13 @@ public class LtJoinRecord implements Record {
         if (col < masterSlaveSplit) {
             return master.getInt(col);
         }
-        return slave.getInt(col - masterSlaveSplit);
+        int slaveCol = col - masterSlaveSplit;
+        if (slaveCol >= slaveWrappedOverMaster && slave != nullRecord) {
+            slaveCol -= slaveWrappedOverMaster;
+            int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
+            return master.getInt(masterCol);
+        }
+        return slave.getInt(slaveCol);
     }
 
     @Override
@@ -259,7 +265,7 @@ public class LtJoinRecord implements Record {
             return master.getSym(col);
         }
         int slaveCol = col - masterSlaveSplit;
-        if (slaveCol >= slaveWrappedOverMaster) {
+        if (slaveCol >= slaveWrappedOverMaster && slave != nullRecord) {
             slaveCol -= slaveWrappedOverMaster;
             int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
             return master.getSym(masterCol);

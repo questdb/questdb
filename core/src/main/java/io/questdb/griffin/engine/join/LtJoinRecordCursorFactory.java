@@ -37,11 +37,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final IntList columnIndex;
     private final LtJoinRecordCursor cursor;
     private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
+    private final IntList slaveColumnIndex; // maps columns after the split to columns in the slave cursor
     private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
@@ -77,7 +77,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 masterTableKeyColumns,
                 slaveWrappedOverMaster
         );
-        this.columnIndex = columnIndex;
+        this.slaveColumnIndex = columnIndex;
         this.joinContext = joinContext;
     }
 
@@ -176,9 +176,13 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             int slaveCol = columnIndex - columnSplit;
             if (slaveCol >= slaveWrappedOverMaster) {
+                // todo: map to the right column in the master cursor
+                // currently this first key is mapped to the first column in the master cursor, the 2nd key to the 2nd column and so on
                 slaveCol -= slaveWrappedOverMaster;
                 return masterCursor.getSymbolTable(slaveCol);
             }
+            // we have our map slave column index to the right column in the slave cursor
+            slaveCol = slaveColumnIndex.getQuick(slaveCol);
             return slaveCursor.getSymbolTable(slaveCol);
         }
 
@@ -238,7 +242,16 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (columnIndex < columnSplit) {
                 return masterCursor.newSymbolTable(columnIndex);
             }
-            return slaveCursor.newSymbolTable(columnIndex - columnSplit);
+            int slaveCol = columnIndex - columnSplit;
+            if (slaveCol >= slaveWrappedOverMaster) {
+                // todo: map to the right column in the master cursor
+                // currently this first key is mapped to the first column in the master cursor, the 2nd key to the 2nd column and so on
+                slaveCol -= slaveWrappedOverMaster;
+                return masterCursor.newSymbolTable(slaveCol);
+            }
+            // we have our map slave column index to the right column in the slave cursor
+            slaveCol = slaveColumnIndex.getQuick(slaveCol);
+            return slaveCursor.newSymbolTable(slaveCol);
         }
 
         @Override
@@ -268,7 +281,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecord();
             MapRecord mapRecord = joinKeyMap.getRecord();
-            mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
+            mapRecord.setSymbolTableResolver(slaveCursor, slaveColumnIndex);
             record.of(masterRecord, mapRecord);
             isMasterHasNextPending = true;
         }
