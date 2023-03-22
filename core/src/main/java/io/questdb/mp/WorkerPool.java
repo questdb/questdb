@@ -174,7 +174,7 @@ public class WorkerPool implements Closeable {
         if (!closed.get() && running.compareAndSet(false, true)) {
 
             // very common cleaner
-            // it is setup from start() to make sure it is called last
+            // it is set up from start() to make sure it is called last
             // some other thread local cleaners are liable to access thread local Path instances
             setupPathCleaner();
 

@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -58,6 +59,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final long[] pRosti;
+    private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final ObjList<VectorAggregateFunction> vafList;
@@ -84,6 +86,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // ...
         // functions[n].type == columnTypes[n+1]
 
+        perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.base = base;
         // first column is INT or SYMBOL
@@ -333,13 +336,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             doneLatch.reset();
 
-            // check if this is executed via worker pool
             final Thread thread = Thread.currentThread();
             final int workerId;
             if (thread instanceof Worker) {
-                workerId = ((Worker) thread).getWorkerId();
+                // it's a worker thread, potentially from the shared pool
+                workerId = ((Worker) thread).getWorkerId() % workerCount;
             } else {
-                workerId = pRosti.length - 1; // avoid clashing with other worker with id=0 in tests
+                // it's an embedder's thread, so use a random slot
+                workerId = -1;
             }
 
             try {
@@ -368,16 +372,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         long seq = pubSeq.next();
                         if (seq < 0) {
                             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                            if (keyAddress == 0) {
-                                vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
-                            } else {
-                                long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
-                                if (!vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId)) {
-                                    oomCounter.incrementAndGet();
+                            // acquire the slot and DIY the func
+                            final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+                            try {
+                                if (keyAddress == 0) {
+                                    vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, slot);
+                                } else {
+                                    long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+                                    if (!vaf.aggregate(pRosti[slot], keyAddress, valueAddress, valueAddressSize, columnSizeShr, slot)) {
+                                        oomCounter.incrementAndGet();
+                                    }
+                                    raf.updateMemoryUsage(pRosti[slot], oldSize);
                                 }
-                                raf.updateMemoryUsage(pRosti[workerId], oldSize);
+                                ownCount++;
+                            } finally {
+                                perWorkerLocks.releaseSlot(slot);
                             }
-                            ownCount++;
                         } else {
                             final VectorAggregateEntry entry = entryPool.next();
                             queuedCount++;
@@ -392,6 +402,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         doneLatch,
                                         oomCounter,
                                         null,
+                                        perWorkerLocks,
                                         sharedCircuitBreaker
                                 );
                             } else {
@@ -405,6 +416,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         doneLatch,
                                         oomCounter,
                                         raf,
+                                        perWorkerLocks,
                                         sharedCircuitBreaker
                                 );
                             }
@@ -429,7 +441,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
                 // tasks in flight.
 
-                // start at the back to reduce chance of clashing
                 reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(
                         bus.getVectorAggregateSubSeq(),
                         queue,
