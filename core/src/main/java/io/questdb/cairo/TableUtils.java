@@ -984,8 +984,8 @@ public final class TableUtils {
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
 
-        txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MAX_VALUE);
-        txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
