@@ -32,12 +32,12 @@ import io.questdb.std.str.CharSink;
 
 public class LtJoinRecord implements Record {
     private final int masterSlaveSplit;
+    private final ColumnFilter masterTableKeyColumns;
     private final Record nullRecord;
     private final int slaveWrappedOverMaster;
     protected Record slave;
     private Record flappingSlave;
     private Record master;
-    private ColumnFilter masterTableKeyColumns;
 
     public LtJoinRecord(int masterSlaveSplit, Record nullRecord, ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster) {
         this.masterSlaveSplit = masterSlaveSplit;

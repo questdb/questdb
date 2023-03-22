@@ -588,7 +588,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         metadata.add(slaveAlias, m);
                     }
-                    slaveTypes.add(ColumnType.SYMBOL);
+                    slaveTypes.add(m.getType());
                     columnIndex.add(index);
                 }
             } else {
