@@ -2395,6 +2395,10 @@ class SqlOptimiser {
         if (model.getLimitLo() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         }
+        //if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join 
+        if (model.getTimestamp() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
 
         // determine if ordering is required
         switch (topLevelOrderByMnemonic) {

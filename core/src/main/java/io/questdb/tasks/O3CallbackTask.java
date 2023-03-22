@@ -26,9 +26,8 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.AbstractLockable;
 
-public class O3CallbackTask extends AbstractLockable {
+public class O3CallbackTask {
     private int columnIndex;
     private int columnType;
     private CountDownLatchSPI countDownLatchSPI;
@@ -80,7 +79,6 @@ public class O3CallbackTask extends AbstractLockable {
             long row2Hi,
             TableWriter.O3ColumnUpdateMethod writerCallbackMethod
     ) {
-        of(columnIndex);
         this.countDownLatchSPI = countDownLatchSPI;
         this.columnIndex = columnIndex;
         this.columnType = columnType;
