@@ -22,8 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.test;
 
+import io.questdb.Bootstrap;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
@@ -35,6 +38,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TableModel;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
