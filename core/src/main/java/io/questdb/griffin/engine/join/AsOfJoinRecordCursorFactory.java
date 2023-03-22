@@ -68,13 +68,17 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         Map joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
+        int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
         this.cursor = new AsOfJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 NullRecordFactory.getInstance(slaveColumnTypes),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                slaveValueSink
+                slaveValueSink,
+                masterTableKeyColumns,
+                slaveWrappedOverMaster,
+                columnIndex
         );
         this.columnIndex = columnIndex;
         this.joinContext = joinContext;
@@ -122,10 +126,10 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         slaveFactory.close();
     }
 
-    private class AsOfJoinRecordCursor extends AbstractJoinCursor {
+    private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
-        private final OuterJoinRecord record;
+        private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
         private boolean danglingSlaveRecord = false;
@@ -142,10 +146,10 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
-                RecordValueSink valueSink
-        ) {
-            super(columnSplit);
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
+                RecordValueSink valueSink,
+                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex) {
+            super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
+            this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, masterTableKeyColumns, slaveWrappedOverMaster);
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
