@@ -333,7 +333,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         boolean canUpdateMetadata = true;
         TableToken tableToken = engine.getTableTokenIfExists(tableName);
 
-        switch (engine.getStatus(cairoSecurityContext, path, tableToken)) {
+        switch (engine.getStatus(path, tableToken)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);
                 writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);

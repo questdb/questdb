@@ -1359,7 +1359,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         TableWriter writer = null;
 
         try {
-            targetTableStatus = cairoEngine.getStatus(cairoSecurityContext, path, tableToken);
+            targetTableStatus = cairoEngine.getStatus(path, tableToken);
             switch (targetTableStatus) {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     if (partitionBy == PartitionBy.NONE) {

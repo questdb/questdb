@@ -281,7 +281,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         TableToken tableToken = engine.getTableTokenIfExists(token);
         switch (entry.state) {
             case 0:
-                int exists = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableToken);
+                int exists = engine.getStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;

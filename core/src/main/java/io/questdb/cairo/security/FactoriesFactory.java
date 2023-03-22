@@ -24,16 +24,6 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoSecurityContext;
-
-public class AllowAllSecurityContextFactory implements CairoSecurityContextFactory {
-    public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
-
-    private AllowAllSecurityContextFactory() {
-    }
-
-    @Override
-    public CairoSecurityContext getInstance(CharSequence principal) {
-        return AllowAllCairoSecurityContext.INSTANCE;
-    }
+public interface FactoriesFactory {
+    CairoSecurityContextFactory getSecurityContextFactory();
 }

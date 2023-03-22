@@ -1131,9 +1131,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void closePendingWriters(boolean commit) {
-        Iterator<ObjObjHashMap.Entry<TableToken, TableWriterAPI>> iterator = pendingWriters.iterator();
-        while (iterator.hasNext()) {
-            final TableWriterAPI m = iterator.next().value;
+        for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+            final TableWriterAPI m = pendingWriter.value;
             if (commit) {
                 m.commit();
             } else {
@@ -1325,7 +1324,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void executeInsert(SqlCompiler compiler) throws SqlException {
         TableWriterAPI writer;
         boolean recompileStale = true;
-        for (int retries = 0; recompileStale; retries++) {
+        for (int retries = 0; true; retries++) {
             try {
                 switch (transactionState) {
                     case IN_TRANSACTION:
@@ -2544,7 +2543,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         TableToken tableToken = engine.getTableTokenIfExists(textLoader.getTableName());
         if (
                 TableUtils.TABLE_EXISTS == engine.getStatus(
-                        sqlExecutionContext.getCairoSecurityContext(),
                         path,
                         tableToken
                 )

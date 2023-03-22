@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
@@ -71,8 +70,7 @@ public class VacuumColumnVersions implements Closeable {
         this.tableFiles = Misc.free(this.tableFiles);
     }
 
-    public void run(SqlExecutionContext executionContext, TableReader reader) {
-        executionContext.getCairoSecurityContext().checkWritePermission();
+    public void run(TableReader reader) {
         LOG.info().$("processing [dirName=").utf8(reader.getTableToken().getDirName()).I$();
         fileNameSink = new StringSink();
 

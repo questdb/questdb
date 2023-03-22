@@ -24,16 +24,10 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoSecurityContext;
-
-public class AllowAllSecurityContextFactory implements CairoSecurityContextFactory {
-    public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
-
-    private AllowAllSecurityContextFactory() {
-    }
-
+public class DefaultFactoriesFactory implements FactoriesFactory {
+    public static final DefaultFactoriesFactory INSTANCE = new DefaultFactoriesFactory();
     @Override
-    public CairoSecurityContext getInstance(CharSequence principal) {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public CairoSecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
     }
 }

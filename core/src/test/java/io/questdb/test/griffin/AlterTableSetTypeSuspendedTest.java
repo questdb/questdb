@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.*;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.DefaultFactoriesFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -71,7 +72,15 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 }
             };
 
-            final Bootstrap bootstrap = new Bootstrap(null, System.getenv(), filesFacade, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            final Bootstrap bootstrap = new Bootstrap(
+                    null,
+                    System.getenv(),
+                    filesFacade,
+                    DefaultFactoriesFactory.INSTANCE,
+                    "-d",
+                    root.toString(),
+                    Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
+            );
             try (final ServerMain questdb = new TestServerMain(bootstrap)) {
                 questdb.start();
                 createTable(tableName, "WAL");
