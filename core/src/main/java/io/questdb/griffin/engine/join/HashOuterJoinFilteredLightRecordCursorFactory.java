@@ -101,8 +101,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
     }
 
     @Override

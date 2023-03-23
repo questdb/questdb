@@ -2441,11 +2441,11 @@ class SqlOptimiser {
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model);
         final IntList orderByDirectionAdvice = model.getOrderByDirection();
-        final ObjList<QueryModel> jm = model.getJoinModels();//order by should not copy through group by 
+        final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0) {
+                if (model.getGroupBy().size() == 0) {//order by should not copy through group by
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);

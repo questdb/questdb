@@ -61,8 +61,8 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return factoryA.hasDescendingOrder();
+    public int getScanDirection() {
+        return factoryA.getScanDirection();
     }
 
     @Override
