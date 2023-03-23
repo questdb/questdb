@@ -1161,10 +1161,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     @Test
     public void testOOMInRostiMergeResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         final int WORKER_COUNT = 2;
-        pageFrameMaxRows = 1000;//if it's default (1mil) then rosti could create single task for whole table data
+        pageFrameMaxRows = 1000; // if it's default (1mil) then rosti could create single task for whole table data
 
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
-            final long[] pRostis = new long[2];
+            final long[] pRostis = new long[WORKER_COUNT];
             final AtomicInteger sizeCounter = new AtomicInteger(0);
             int rostis;
 
