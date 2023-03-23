@@ -50,6 +50,7 @@ import org.junit.rules.TestName;
 import java.net.URISyntaxException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -836,11 +837,12 @@ public class O3Test extends AbstractO3Test {
     public void testReadPartitionWhileMergingVarColumnWithColumnTop() throws Exception {
         AtomicReference<SqlCompiler> compilerRef = new AtomicReference<>();
         AtomicReference<SqlExecutionContext> executionContextRef = new AtomicReference<>();
+        AtomicBoolean compared = new AtomicBoolean(false);
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "2020-02-05.5" + Files.SEPARATOR + "ks.")) {
+                if (Chars.contains(name, "2020-02-05.") && Chars.contains(name, Files.SEPARATOR + "ks.")) {
                     try {
                         TestUtils.assertSqlCursors(
                                 compilerRef.get(),
@@ -849,6 +851,7 @@ public class O3Test extends AbstractO3Test {
                                 "x",
                                 LOG
                         );
+                        compared.set(true);
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }
@@ -924,6 +927,8 @@ public class O3Test extends AbstractO3Test {
                 },
                 ff
         );
+
+        Assert.assertTrue("comparison did not happen", compared.get());
     }
 
     @Test
