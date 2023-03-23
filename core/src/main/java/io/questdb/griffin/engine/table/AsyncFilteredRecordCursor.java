@@ -59,9 +59,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
+    public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
         this.filter = filter;
-        this.hasDescendingOrder = hasDescendingOrder;
+        this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         record = new PageAddressCacheRecord();
     }
 

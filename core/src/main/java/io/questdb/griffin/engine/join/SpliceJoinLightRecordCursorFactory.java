@@ -117,8 +117,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
     }
 
     @Override
@@ -129,7 +129,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Splice Join");
-        sink.optAttr("condition", joinContext);
+        if (joinContext != null && !joinContext.isEmpty()) {
+            sink.optAttr("condition", joinContext);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

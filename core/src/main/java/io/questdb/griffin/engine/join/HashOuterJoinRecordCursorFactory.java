@@ -93,8 +93,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
     }
 
     @Override
