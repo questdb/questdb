@@ -799,8 +799,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return conf.getWalCommitSquashRowLimit();
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return conf.getWalSquashUncommittedRowsMultiplier();
     }
 
     @Override

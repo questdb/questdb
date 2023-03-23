@@ -807,8 +807,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return 512 * 1024;
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return 20;
     }
 
     @Override

@@ -418,7 +418,7 @@ public interface CairoConfiguration {
 
     long getWalApplyTableTimeQuota();
 
-    int getWalCommitSquashRowLimit();
+    double getWalSquashUncommittedRowsMultiplier();
 
     boolean getWalEnabledDefault();
 

@@ -1424,7 +1424,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
-                if (copyToLagOnly && totalUncommitted < configuration.getWalCommitSquashRowLimit()) {
+                if (copyToLagOnly && totalUncommitted <= getMaxWalSquashRows()) {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
 
                     // Don't commit anything, move everything to memory instead.
@@ -1494,7 +1494,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     o3Hi - 1,
                                     BinarySearch.SCAN_DOWN
                             );
-                    walLagRowCount = Math.min(o3Hi - o3Lo - lagThresholdRow, configuration.getWalCommitSquashRowLimit());
+                    walLagRowCount = Math.min(o3Hi - o3Lo - lagThresholdRow, getMaxWalSquashRows());
                     assert walLagRowCount >= 0 && walLagRowCount < o3Hi - o3Lo;
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
@@ -3286,6 +3286,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (symbolMapWriters != null) {
             symbolMapWriters.clear();
         }
+    }
+
+    private long getMaxWalSquashRows() {
+        return (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows();
     }
 
     private long getO3RowCount0() {
