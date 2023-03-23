@@ -471,7 +471,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
-        this.walCommitSquashRowLimit = getInt(properties, env, PropertyKey.CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT, 100 * 1024 * 1024);
+        this.walCommitSquashRowLimit = getInt(properties, env, PropertyKey.CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT, 10 * 1024 * 1024);
         this.walApplyTableTimeQuota = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
