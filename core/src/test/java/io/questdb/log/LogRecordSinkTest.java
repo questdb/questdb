@@ -142,10 +142,12 @@ public class LogRecordSinkTest {
 
     @Test
     public void testLoggerApi() throws Exception {
-        try (Utf8 msg = new Utf8("abcde ðãµ¶ Āڜ 嚜꓂ \uD83D\uDCA9 \uD83E\uDD9E!")) {
+        final String str = "abcde ðãµ¶ Āڜ 嚜꓂ \uD83D\uDCA9 \uD83E\uDD9E!";
+        try (Utf8 msg = new Utf8(str)) {
             final long lo = msg.address();
             final long hi = lo + msg.length();
             LOG.info().$utf8(lo, hi).$();
+            Assert.assertEquals(str, msg.toString());
         }
     }
 
@@ -399,7 +401,7 @@ public class LogRecordSinkTest {
         @Override
         public String toString() {
             final StringSink sink = new StringSink();
-            Chars.utf8Decode(lo, hi, sink);
+            sink.putUtf8(lo, hi);
             return sink.toString();
         }
     }
