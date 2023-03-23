@@ -26,18 +26,51 @@ package io.questdb.cairo;
 
 public enum AttachDetachStatus {
     OK,
-    DETACH_ERR_ACTIVE,
-    DETACH_ERR_MISSING_PARTITION,
+    DETACH_ERR_ACTIVE(false),
+    DETACH_ERR_MISSING_PARTITION(false),
     DETACH_ERR_MISSING_PARTITION_DIR,
     DETACH_ERR_COPY_META,
     DETACH_ERR_HARD_LINK,
     DETACH_ERR_COPY,
-    DETACH_ERR_ALREADY_DETACHED,
+    DETACH_ERR_ALREADY_DETACHED(false),
     DETACH_ERR_MKDIR,
-    ATTACH_ERR_PARTITION_EXISTS,
+    ATTACH_ERR_PARTITION_EXISTS(false),
     ATTACH_ERR_RENAME,
     ATTACH_ERR_COPY,
     ATTACH_ERR_MISSING_PARTITION,
     ATTACH_ERR_DIR_EXISTS,
-    ATTACH_ERR_EMPTY_PARTITION
+    ATTACH_ERR_EMPTY_PARTITION;
+
+    private final boolean isCritical;
+
+    AttachDetachStatus() {
+        this(true);
+    }
+
+    AttachDetachStatus(boolean isCritical) {
+        this.isCritical = isCritical;
+    }
+
+    public CairoException getException(
+            int position,
+            AttachDetachStatus status,
+            TableToken tableToken,
+            int partitionBy,
+            long partitionTs
+    ) {
+        assert status != OK;
+        CairoException exception = isCritical ?
+                CairoException.critical(CairoException.METADATA_VALIDATION) :
+                CairoException.nonCritical();
+        String statusName = status.name();
+        String operation = statusName.split("_")[0].toLowerCase();
+        exception.put("could not ").put(operation)
+                .put(" partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                .put(", detachStatus=").put(statusName)
+                .put(", partitionTimestamp=").ts(partitionTs)
+                .put(", partitionBy=").put(PartitionBy.toString(partitionBy))
+                .put(']')
+                .position(position);
+        return exception;
+    }
 }
