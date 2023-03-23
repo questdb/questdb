@@ -890,7 +890,7 @@ public final class SqlParser {
                 tok = null;
             }
 
-            if (tok == null || Chars.equals(tok, ';')) { //token can also be ';' on query boundary
+            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) { //token can also be ';' on query boundary
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
@@ -1672,7 +1672,7 @@ public final class SqlParser {
                 throw err(lexer, null, "'from' expected");
             }
 
-            if (tok == null || Chars.equals(tok, ';')) {
+            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as 
                 lexer.unparseLast();
                 break;
             }
@@ -2284,6 +2284,7 @@ public final class SqlParser {
         columnAliasStop.add("union");
         columnAliasStop.add("except");
         columnAliasStop.add("intersect");
+        columnAliasStop.add(")");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");
