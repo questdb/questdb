@@ -47,12 +47,16 @@ public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
 
     @Override
     public int getInt(int col) {
-        // symbols are internally represented as ints. so we need to wrap over ints too.
         if (col < split) {
+            // it's an int from master record
+            // no need to do anything special
             return master.getInt(col);
         }
+        // ok, it's an int from slave record
         int slaveCol = col - split;
         if (shouldWrapOver(slaveCol)) {
+            // we need to wrap over to master record
+            // because it could be a symbol column
             slaveCol -= slaveValuesKeysSplit;
             int masterCol = keyColumnsToMaster.getColumnIndexFactored(slaveCol);
             return master.getInt(masterCol);
@@ -66,10 +70,10 @@ public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
             return master.getSym(col);
         }
         int slaveCol = col - split;
-        if (shouldWrapOver(slaveCol)) {
-            slaveCol -= slaveValuesKeysSplit;
-            int masterCol = keyColumnsToMaster.getColumnIndexFactored(slaveCol);
-            return master.getSym(masterCol);
+        if (isSlaveKeyColumn(slaveCol)) {
+            // key symbols are converted to strings before inserting into map.
+            // so we can read them as strings directly from the map.
+            return slave.getStr(slaveCol);
         }
         return slave.getSym(slaveCol);
     }
@@ -80,12 +84,15 @@ public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
             return master.getSymB(col);
         }
         int slaveCol = col - split;
-        if (shouldWrapOver(slaveCol)) {
-            slaveCol -= slaveValuesKeysSplit;
-            int masterCol = keyColumnsToMaster.getColumnIndexFactored(slaveCol);
-            return master.getSymB(masterCol);
+        if (isSlaveKeyColumn(slaveCol)) {
+            return slave.getStrB(slaveCol);
+        } else {
+            return slave.getSymB(slaveCol);
         }
-        return slave.getSymB(slaveCol);
+    }
+
+    private boolean isSlaveKeyColumn(int col) {
+        return col >= slaveValuesKeysSplit;
     }
 
     private boolean shouldWrapOver(int slaveCol) {

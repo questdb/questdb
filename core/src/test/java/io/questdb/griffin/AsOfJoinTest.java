@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -312,10 +313,10 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 Assert.assertTrue(cursor.hasNext());
                 CharSequence sym0 = record.getSym(0);
                 CharSequence sym1 = record.getSym(1);
-                Assert.assertEquals("ABC", sym0);
-                Assert.assertEquals("ABC", sym1);
                 Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
                 Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
+                TestUtils.assertEquals("ABC", sym0);
+                TestUtils.assertEquals("ABC", sym1);
             }
         }
     }
