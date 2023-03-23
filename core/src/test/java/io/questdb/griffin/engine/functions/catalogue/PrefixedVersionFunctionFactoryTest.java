@@ -32,7 +32,7 @@ public class PrefixedVersionFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPrefixedCurrentSchemaFunc() throws Exception {
         assertQuery("version\n" +
-                        "PostgreSQL 15.2 (QuestDB)\n",
+                        "PostgreSQL 15.2 (QuestDB), compiled by Visual C++ build 1914, 64-bit\n",
                 "select pg_catalog.version();",
                 true);
     }
