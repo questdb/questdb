@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
@@ -120,57 +121,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         partitionLo = initialPartitionLo;
         partitionHi = initialPartitionHi;
         sizeSoFar = 0;
-    }
-
-    private static long scanDown(MemoryR column, long value, long low, long high) {
-        for (long i = high - 1; i >= low; i--) {
-            long that = column.getLong(i * 8);
-            if (that == value) {
-                return i;
-            }
-
-            if (that < value) {
-                return -(i + 2);
-            }
-        }
-        return -(low + 1);
-    }
-
-    private static long scanUp(MemoryR column, long value, long low, long high) {
-        for (long i = low; i < high; i++) {
-            long that = column.getLong(i * 8);
-            if (that == value) {
-                return i;
-            }
-
-            if (that > value) {
-                return -(i + 1);
-            }
-        }
-        return -(high + 1);
-    }
-
-    private static long scrollDown(MemoryR column, long low, long high, long value) {
-        do {
-            if (low < high) {
-                low++;
-            } else {
-                return low;
-            }
-
-        } while (column.getLong(low * 8) == value);
-        return low - 1;
-    }
-
-    private static long scrollUp(MemoryR column, long high, long value) {
-        do {
-            if (high > 0) {
-                high--;
-            } else {
-                return 0;
-            }
-        } while (column.getLong(high * 8) == value);
-        return high + 1;
     }
 
     private void calculateRanges(LongList intervals) {
@@ -326,24 +276,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     protected static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
-        while (high - low > THRESHOLD) {
-            long mid = (low + high) / 2;
-            long midVal = column.getLong(mid * 8);
-
-            if (midVal < value)
-                low = mid;
-            else if (midVal > value)
-                high = mid - 1;
-            else {
-                // In case of multiple equal values, find the first
-                return scanDir == SCAN_UP ?
-                        scrollUp(column, mid, midVal) :
-                        scrollDown(column, mid, high, midVal);
-            }
-        }
-        return scanDir == SCAN_UP ?
-                scanUp(column, value, low, high + 1) :
-                scanDown(column, value, low, high + 1);
+        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     protected class IntervalDataFrame implements DataFrame {
