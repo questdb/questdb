@@ -61,59 +61,45 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         return (int) (_wptr - address);
     }
 
+    /**
+     * Log a string that contains only ASCII chars.
+     * Call `encodeUtf8` otherwise.
+     */
     @Override
     public CharSink put(CharSequence cs) {
-        final int rem = (int) (lim - _wptr);
-        final int len = cs.length();
-        if (rem >= len) {
-            // Common case where the buffer fits the available space.
-            Chars.asciiStrCpy(cs, len, _wptr);
-            _wptr += len;
-            return this;
+        for (int i = 0, n = cs.length(); i < n; i++) {
+            char c = cs.charAt(i);
+            boolean isAscii = (c >= 0) && (c <= 127);
+            if (!isAscii) {
+                System.err.printf("Non-ascii character: %c\n", c);
+            }
         }
-
-        // The line is being truncated:
-        // We determine a safe length to byte-copy.
-        // We skip copying the last 4 bytes, as they may be a multi-byte UTF-8 character.
-        // NOTE: The computed length may be negative.
-        int safeLen = rem - 4;
-
-        if (safeLen > 0) {
-            Chars.asciiStrCpy(cs, safeLen, _wptr);
-            _wptr += safeLen;
-        }
-
-        safeLen = Math.max(0, safeLen);
-        for (int i = safeLen; i < rem; i++) {
-            // Copying one byte at a time ensures no partial UTF-8 characters are written.
-            put(cs.charAt(i));
-        }
+        int rem = (int) (lim - _wptr);
+        int len = cs.length();
+        int n = Math.min(rem, len);
+        Chars.asciiStrCpy(cs, n, _wptr);
+        _wptr += n;
         return this;
     }
 
+    /**
+     * Log a substring that contains only ASCII chars.
+     * Call `encodeUtf8` otherwise.
+     */
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
-        final int rem = (int) (lim - _wptr);
-        final int len = hi - lo;
-        if (rem >= len) {
-            Chars.asciiStrCpy(cs, lo, len, _wptr);
-            _wptr += len;
-            return this;
-        }
-
-        int safeLen = rem - 4;
-        if (safeLen > 0) {
-            Chars.asciiStrCpy(cs, lo, safeLen, _wptr);
-            _wptr += safeLen;
-        }
-
-        safeLen = Math.max(0, safeLen);
-        for (int i = safeLen; i < rem; i++) {
-            put(cs.charAt(lo + i));
-        }
+        int rem = (int) (lim - _wptr);
+        int len = hi - lo;
+        int n = Math.min(rem, len);
+        Chars.asciiStrCpy(cs, lo, n, _wptr);
+        _wptr += n;
         return this;
     }
 
+    /**
+     * Log a ASCII character or UTF-8 byte (cast as a `char`).
+     * The signature breaks expectations: Read as if `char c` were `byte b`.
+     */
     @Override
     public CharSink put(char c) {
         final long left = lim - _wptr;
@@ -164,11 +150,16 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         final long rem = (lim - _wptr);
         final long len = hi - lo;
         if (rem >= len) {
+            // Common case where the buffer fits the available space.
             Unsafe.getUnsafe().copyMemory(lo, _wptr, len);
             _wptr += len;
             return this;
         }
 
+        // The line is being truncated:
+        // We determine a safe length to byte-copy.
+        // We skip copying the last 4 bytes, as they may be a multibyte UTF-8 codepoint.
+        // NOTE: The computed length may be negative.
         long safeLen = rem - 4;
         if (safeLen > 0) {
             Unsafe.getUnsafe().copyMemory(lo, _wptr, safeLen);
@@ -177,6 +168,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
         safeLen = Math.max(0, safeLen);
         for (long i = safeLen; i < rem; i++) {
+            // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
             put((char) Unsafe.getUnsafe().getByte(lo + i));
         }
         return this;
