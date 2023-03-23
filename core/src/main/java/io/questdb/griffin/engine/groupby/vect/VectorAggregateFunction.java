@@ -32,7 +32,7 @@ import io.questdb.std.Mutable;
 public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
-     * Not-keyed aggregation that doesn't use rosti.
+     * Non-keyed aggregation that doesn't use rosti.
      * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
      *
      * @param address        address
@@ -85,7 +85,7 @@ public interface VectorAggregateFunction extends Function, Mutable {
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');
     }
-    
+
     /**
      * Used for keyed aggregates only.
      * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.

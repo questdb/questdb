@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.VolumeDefinitions;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
@@ -156,6 +156,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getO3MinLag() {
+        return overrides.getO3MinLag() >= 0 ? overrides.getO3MinLag() : super.getO3MinLag();
+    }
+
+    @Override
     public int getPageFrameReduceQueueCapacity() {
         return overrides.getPageFrameReduceQueueCapacity() < 0 ? super.getPageFrameReduceQueueCapacity() : overrides.getPageFrameReduceQueueCapacity();
     }
@@ -174,6 +179,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return overrides.getQueryCacheEventQueueCapacity() < 0 ? super.getQueryCacheEventQueueCapacity() : overrides.getQueryCacheEventQueueCapacity();
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return overrides.getRepeatMigrationsFromVersion();
     }
 
     @Override
@@ -259,6 +269,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
+    }
+
+    @Override
+    public long getWalApplyTableTimeQuota() {
+        return overrides.getWalApplyTableTimeQuote() >= 0 ? overrides.getWalApplyTableTimeQuote() : super.getWalApplyTableTimeQuota();
     }
 
     @Override

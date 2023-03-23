@@ -24,14 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedPgClassFunctionFactory extends AbstractPgClassFunctionFactory {
+public class PrefixedPgClassFunctionFactory extends PgClassFunctionFactory {
     @Override
     public String getSignature() {
         return "pg_catalog.pg_class()";
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
     }
 }

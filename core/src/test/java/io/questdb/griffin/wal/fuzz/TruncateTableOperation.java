@@ -22,32 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.wal.fuzz;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.Rnd;
 
-public class CurrentSchemaBooleanFunctionFactory implements FunctionFactory {
-    private final static StrFunction INSTANCE = new StrConstant("questdb");
-
+public class TruncateTableOperation implements FuzzTransactionOperation {
     @Override
-    public String getSignature() {
-        return "current_schemas(T)";
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+        tableWriter.truncate();
         return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return INSTANCE;
     }
 }

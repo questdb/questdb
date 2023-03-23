@@ -98,6 +98,15 @@ public class UuidTest {
     }
 
     @Test
+    public void testInvalidOffsets() {
+        String uuids = "'11111111-1111-1111-1111-111111111111'";
+        assertExceptionWhileParsing(uuids, 0, 0);
+        assertExceptionWhileParsing(uuids, 10, 0);
+        assertExceptionWhileParsing(uuids, 3, uuids.length() - 1);
+        assertExceptionWhileParsing(uuids, 1, uuids.length() + 1);
+    }
+
+    @Test
     public void testRandomized() {
         for (int i = 0; i < 100_000; i++) {
             long lo = ThreadLocalRandom.current().nextLong();
@@ -125,6 +134,24 @@ public class UuidTest {
         }
     }
 
+    @Test
+    public void testWithOffsets() throws NumericException {
+        UUID juuid = UUID.randomUUID();
+        String prefix = "prefix";
+        String suffix = "suffix";
+        String withUuid = prefix + juuid + suffix;
+
+        Uuid uuid = new Uuid();
+        uuid.of(withUuid, prefix.length(), withUuid.length() - suffix.length());
+        assertEqualsBitS(juuid, uuid);
+
+        UUID juuid1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        Uuid uuid1 = new Uuid();
+        String uuids = "'11111111-1111-1111-1111-111111111111'";
+        uuid1.of(uuids, 1, uuids.length() - 1);
+        assertEqualsBitS(juuid1, uuid1);
+    }
+
     private static void assertEqualsBitS(UUID expected, Uuid actual) {
         assertEquals("Bad parsing " + expected, expected.getMostSignificantBits(), actual.getHi());
         assertEquals("Bad parsing " + expected, expected.getLeastSignificantBits(), actual.getLo());
@@ -146,9 +173,13 @@ public class UuidTest {
     }
 
     private static void assertExceptionWhileParsing(String uuid) {
+        assertExceptionWhileParsing(uuid, 0, 0);
+    }
+
+    private static void assertExceptionWhileParsing(String uuid, int lo, int hi) {
         Uuid muuid = new Uuid();
         try {
-            muuid.of(uuid);
+            muuid.of(uuid, lo, hi);
             fail();
         } catch (NumericException expected) {
 

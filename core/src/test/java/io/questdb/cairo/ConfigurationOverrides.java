@@ -76,6 +76,8 @@ public interface ConfigurationOverrides {
 
     long getO3MaxLag();
 
+    long getO3MinLag();
+
     int getPageFrameMaxRows();
 
     int getPageFrameReduceQueueCapacity();
@@ -87,6 +89,8 @@ public interface ConfigurationOverrides {
     int getQueryCacheEventQueueCapacity();
 
     int getRecreateDistressedSequencerAttempts();
+
+    int getRepeatMigrationsFromVersion();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -111,6 +115,8 @@ public interface ConfigurationOverrides {
     int getTableRegistryCompactionThreshold();
 
     MicrosecondClock getTestMicrosClock();
+
+    long getWalApplyTableTimeQuote();
 
     long getWalPurgeInterval();
 
@@ -192,6 +198,8 @@ public interface ConfigurationOverrides {
 
     void setO3MaxLag(long configOverrideO3MaxLag);
 
+    void setO3MinLag(long minLag);
+
     void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
 
     void setPageFrameMaxRows(int pageFrameMaxRows);
@@ -209,6 +217,8 @@ public interface ConfigurationOverrides {
     void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts);
 
     void setRegistryCompactionThreshold(int value);
+
+    void setRepeatMigrationsFromVersion(int value);
 
     void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages);
 
@@ -231,6 +241,8 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setWalApplyTableTimeQuote(long walApplyTableTimeQuote);
 
     void setWalPurgeInterval(long walPurgeInterval);
 

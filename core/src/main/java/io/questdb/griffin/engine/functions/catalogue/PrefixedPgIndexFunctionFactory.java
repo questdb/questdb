@@ -24,29 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordMetadata;
-
-public class PrefixedPgIndexFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private final static RecordMetadata METADATA;
+public class PrefixedPgIndexFunctionFactory extends PgIndexFunctionFactory {
 
     public PrefixedPgIndexFunctionFactory() {
-        super("pg_catalog.pg_index()", METADATA);
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN));
-        METADATA = metadata;
+        super("pg_catalog.pg_index()");
     }
 }

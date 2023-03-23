@@ -270,8 +270,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
         pageFrameMaxRows = 1_000_000;
         assertQuery("s\tksum\n" +
-                        "aa\t416262.4729439185\n" +
-                        "bb\t416933.34165981336\n",
+                        "aa\t416262.4729439181\n" +
+                        "bb\t416933.3416598129\n",
                 "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
@@ -292,9 +292,9 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
         pageFrameMaxRows = 1_000_000;
         assertQueryExpectSize("s\tksum\tksum1\n" +
-                        "aa\t416262.4729439185\t416262.4729439185\n" +
-                        "bb\t416933.34165981336\t416933.34165981336\n",
-                "select s, ksum(d), ksum(d) from x order by s",
+                        "aa\t416262.47294392\t416262.47294392\n" +
+                        "bb\t416933.34165981\t416933.34165981\n",
+                "select s, round(ksum(d), 8) ksum, round(ksum(d), 8) ksum1 from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -310,9 +310,9 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     public void testKeyedKSumSumDoubleSomeNaN() throws Exception {
         pageFrameMaxRows = 1_000_000;
         assertQuery("s\tksum\tsum\n" +
-                        "aa\t416262.4729439185\t416262.47294389317\n" +
-                        "bb\t416933.34165981336\t416933.34165982535\n",
-                "select s, ksum(d), sum(d) from x order by s",
+                        "aa\t416262.4729439\t416262.4729439\n" +
+                        "bb\t416933.3416598\t416933.3416598\n",
+                "select s, round(ksum(d),7) as ksum, round(sum(d),7) as sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -856,8 +856,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testSumOverCrossJoinSubQuery() throws Exception {
         assertQuery("sum\n" +
-                        "-0.5260093253070417\n",
-                "SELECT sum(lth*pcp) " +
+                        "-0.5260093253\n",
+                "SELECT round(sum(lth*pcp), 10) as sum " +
                         "from ( " +
                         "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
                         "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
@@ -3096,8 +3096,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumOneDoubleMultiplePartitions() throws Exception {
         assertQuery("sum\n" +
-                        "9278.19042608885\n",
-                "select sum(d) from x",
+                        "9278.190426089\n",
+                "select round(sum(d), 9) as sum from x",
                 "create table x as " +
                         "(" +
                         "select" +

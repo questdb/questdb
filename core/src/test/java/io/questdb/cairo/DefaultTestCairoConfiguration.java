@@ -64,6 +64,12 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public long getWalApplyTableTimeQuota() {
+        // Unrestricted.
+        return -1L;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return true;
     }

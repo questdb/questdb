@@ -79,11 +79,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
-size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
+size_t copyData0(int inFd, int outFd, off_t fromOffset, off_t destOffset, jlong length) {
     char buf[4096 * 4]; // 16K
     size_t read_sz;
     off_t rd_off = fromOffset;
-    off_t wrt_off = 0;
+    off_t wrt_off = destOffset;
     off_t len;
 
     if (length < 0) {
@@ -133,7 +133,12 @@ size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jint srcFd, jint dstFd, jlong srcOffset, jlong length) {
-    return (jlong) copyData0((int) srcFd, (int) dstFd, srcOffset, length);
+    return (jlong) copyData0((int) srcFd, (int) dstFd, srcOffset, 0, length);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
+        (JNIEnv *e, jclass cls, jint srcFd, jint dstFd, jlong srcOffset, jlong dstOffset, jlong length) {
+    return (jlong) copyData0((int) srcFd, (int) dstFd, srcOffset, dstOffset, length);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {

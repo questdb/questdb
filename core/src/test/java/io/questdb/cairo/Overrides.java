@@ -60,6 +60,7 @@ public class Overrides implements ConfigurationOverrides {
     private int maxUncommittedRows = -1;
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
+    private long o3MinLag = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
@@ -68,6 +69,7 @@ public class Overrides implements ConfigurationOverrides {
     private int parallelImportStatusLogKeepNDays = -1;
     private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
+    private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
@@ -79,6 +81,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
     private int tableRegistryCompactionThreshold;
+    private long walApplyTableTimeQuote = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private int walTxnNotificationQueueCapacity = -1;
@@ -198,6 +201,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public long getO3MinLag() {
+        return o3MinLag;
+    }
+
+    @Override
     public int getPageFrameMaxRows() {
         return pageFrameMaxRows;
     }
@@ -225,6 +233,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getRecreateDistressedSequencerAttempts() {
         return recreateDistressedSequencerAttempts;
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return repeatMigrationsFromVersion;
     }
 
     @Override
@@ -285,6 +298,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
+    }
+
+    @Override
+    public long getWalApplyTableTimeQuote() {
+        return walApplyTableTimeQuote;
     }
 
     @Override
@@ -357,6 +375,7 @@ public class Overrides implements ConfigurationOverrides {
         hideTelemetryTable = false;
         maxUncommittedRows = -1;
         o3MaxLag = -1;
+        o3MinLag = -1;
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
@@ -394,6 +413,8 @@ public class Overrides implements ConfigurationOverrides {
         mangleTableDirNames = true;
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
+        walApplyTableTimeQuote = -1;
+        repeatMigrationsFromVersion = -1;
     }
 
     @Override
@@ -527,6 +548,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setO3MinLag(long minLag) {
+        o3MinLag = minLag;
+    }
+
+    @Override
     public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         this.o3QuickSortEnabled = o3QuickSortEnabled;
     }
@@ -569,6 +595,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setRegistryCompactionThreshold(int value) {
         tableRegistryCompactionThreshold = value;
+    }
+
+    @Override
+    public void setRepeatMigrationsFromVersion(int value) {
+        repeatMigrationsFromVersion = value;
     }
 
     @Override
@@ -624,6 +655,10 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         this.testMicrosClock = testMicrosClock;
+    }
+
+    public void setWalApplyTableTimeQuote(long walApplyTableTimeQuote) {
+        this.walApplyTableTimeQuote = walApplyTableTimeQuote;
     }
 
     @Override

@@ -89,6 +89,10 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
         return valueAt(keyIndex(key));
     }
 
+    public T get(CharSequence key, int lo, int hi) {
+        return valueAt(keyIndex(key, lo, hi));
+    }
+
     @Override
     public int hashCode() {
         int hashCode = 0;

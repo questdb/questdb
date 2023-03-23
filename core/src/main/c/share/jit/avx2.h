@@ -82,6 +82,10 @@ namespace questdb::avx2 {
                 c.vpbroadcastq(val, mem);
             }
                 break;
+            case data_type_t::i128: {
+                c.vbroadcasti128(val, mem);
+            }
+                break;
             case data_type_t::f32: {
                 c.vbroadcastss(val, mem);
             }
@@ -98,19 +102,27 @@ namespace questdb::avx2 {
 
     jit_value_t
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &input_index) {
-
-        Gp column_address = c.newInt64();
+        Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
 
         uint32_t shift = type_shift(type);
+        Mem m;
+        if (shift < 4) {
+            m = ymmword_ptr(column_address, input_index, shift);
+        } else {
+            Gp offset = c.newInt64("row_offset");
+            c.mov(offset, input_index);
+            c.sal(offset, shift);
+            m = ymmword_ptr(column_address, offset, 0);
+        }
 
-        Mem m = ymmword_ptr(column_address, input_index, shift);
         Ymm row_data = c.newYmm();
         switch (type) {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::i64:
+            case data_type_t::i128:
                 c.vmovdqu(row_data, m);
                 break;
             case data_type_t::f32:
@@ -131,27 +143,33 @@ namespace questdb::avx2 {
         auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
             case data_type_t::i8: {
-                auto value = static_cast<int8_t>(instr.ipayload);
+                auto value = static_cast<int8_t>(instr.ipayload.lo);
                 Mem mem = c.newConst(scope, &value, 1);
                 c.vpbroadcastb(val, mem);
             }
                 break;
             case data_type_t::i16: {
-                auto value = static_cast<int16_t>(instr.ipayload);
+                auto value = static_cast<int16_t>(instr.ipayload.lo);
                 Mem mem = c.newConst(scope, &value, 2);
                 c.vpbroadcastw(val, mem);
             }
                 break;
             case data_type_t::i32: {
-                auto value = static_cast<int32_t>(instr.ipayload);
+                auto value = static_cast<int32_t>(instr.ipayload.lo);
                 Mem mem = c.newConst(scope, &value, 4);
                 c.vpbroadcastd(val, mem);
             }
                 break;
             case data_type_t::i64: {
-                auto value = instr.ipayload;
+                auto value = instr.ipayload.lo;
                 Mem mem = c.newConst(scope, &value, 8);
                 c.vpbroadcastq(val, mem);
+            }
+                break;
+            case data_type_t::i128: {
+                auto value = instr.ipayload;
+                Mem mem = c.newConst(scope, &value, 16);
+                c.vbroadcasti128(val, mem);
             }
                 break;
             case data_type_t::f32: {
@@ -302,6 +320,8 @@ namespace questdb::avx2 {
                         break;
                 }
                 break;
+            case data_type_t::i128:
+                return std::make_pair(lhs, rhs);
             default:
                 break;
         }
@@ -378,13 +398,13 @@ namespace questdb::avx2 {
                     return;
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
-                    auto idx = static_cast<int32_t>(instr.ipayload);
+                    auto idx = static_cast<int32_t>(instr.ipayload.lo);
                     values.append(read_vars_mem(c, type, idx, vars_ptr));
                 }
                     break;
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
-                    auto idx = static_cast<int32_t>(instr.ipayload);
+                    auto idx = static_cast<int32_t>(instr.ipayload.lo);
                     values.append(read_mem(c, type, idx, cols_ptr, input_index));
                 }
                     break;
@@ -406,4 +426,3 @@ namespace questdb::avx2 {
 }
 
 #endif //QUESTDB_JIT_AVX2_H
-

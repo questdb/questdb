@@ -34,16 +34,14 @@ import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.Worker;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.tasks.VectorAggregateTask;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
@@ -51,28 +49,31 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
-    private final ObjList<VectorAggregateEntry> activeEntries;
     private final RecordCursorFactory base;
     private final GroupByNotKeyedVectorRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final PerWorkerLocks perWorkerLocks; // used to protect VAF's internal slots
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private final ObjList<VectorAggregateFunction> vafList;
+    private final int workerCount;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
+            int workerCount,
             @Transient ObjList<VectorAggregateFunction> vafList
     ) {
         super(metadata);
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
-        this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         this.base = base;
         this.vafList = new ObjList<>(vafList.size());
         this.vafList.addAll(vafList);
         this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
+        this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        this.workerCount = workerCount;
     }
 
     @Override
@@ -109,26 +110,33 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     static int getRunWhatsLeft(
+            Sequence subSeq,
+            RingQueue<VectorAggregateTask> queue,
             int queuedCount,
             int reclaimed,
             int workerId,
-            ObjList<VectorAggregateEntry> activeEntries,
             SOUnboundedCountDownLatch doneLatch,
             Log log,
             SqlExecutionCircuitBreaker circuitBreaker,
             AtomicBooleanCircuitBreaker sharedCB
     ) {
-        for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
+        while (!doneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
             }
-            if (activeEntries.getQuick(i).run(workerId)) {
+
+            long cursor = subSeq.next();
+            if (cursor > -1) {
+                VectorAggregateTask task = queue.get(cursor);
+                task.entry.run(workerId, subSeq, cursor);
                 reclaimed++;
+            } else if (cursor == -1) {
+                log.info().$("waiting for completion [queuedCount=").$(queuedCount).$(']').$();
+                doneLatch.await(queuedCount);
+            } else {
+                Os.pause();
             }
         }
-
-        log.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
-        doneLatch.await(queuedCount);
         return reclaimed;
     }
 
@@ -194,7 +202,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
             sharedCircuitBreaker.reset();
             entryPool.clear();
-            activeEntries.clear();
             int queuedCount = 0;
             int ownCount = 0;
             int reclaimed = 0;
@@ -202,13 +209,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
             doneLatch.reset();
 
-            // check if this executed via worker pool
             final Thread thread = Thread.currentThread();
             final int workerId;
             if (thread instanceof Worker) {
-                workerId = ((Worker) thread).getWorkerId();
+                // it's a worker thread, potentially from the shared pool
+                workerId = ((Worker) thread).getWorkerId() % workerCount;
             } else {
-                workerId = 0;
+                // it's an embedder's thread, so use a random slot
+                workerId = -1;
             }
 
             try {
@@ -232,16 +240,21 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         long seq = pubSeq.next();
                         if (seq < 0) {
                             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                            // diy the func
+                            // acquire the slot and DIY the func
                             // vaf need to know which column it is hitting in the frame and will need to
                             // aggregate between frames until done
-                            vaf.aggregate(pageAddress, pageSize, colSizeShr, workerId);
-                            ownCount++;
+                            final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+                            try {
+                                vaf.aggregate(pageAddress, pageSize, colSizeShr, slot);
+                                ownCount++;
+                            } finally {
+                                perWorkerLocks.releaseSlot(slot);
+                            }
                         } else {
                             final VectorAggregateEntry entry = entryPool.next();
                             // null pRosti means that we do not need keyed aggregation
+                            queuedCount++;
                             entry.of(
-                                    queuedCount++,
                                     vaf,
                                     null,
                                     0,
@@ -251,9 +264,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                     doneLatch,
                                     null,
                                     null,
+                                    perWorkerLocks,
                                     sharedCircuitBreaker
                             );
-                            activeEntries.add(entry);
                             queue.get(seq).entry = entry;
                             pubSeq.done(seq);
                         }
@@ -274,12 +287,12 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 // aggregation tasks not related to this execution (we work in concurrent environment)
                 // To deal with that we need to have our own checklist.
 
-                // start at the back to reduce chance of clashing
                 reclaimed = getRunWhatsLeft(
+                        bus.getVectorAggregateSubSeq(),
+                        queue,
                         queuedCount,
                         reclaimed,
                         workerId,
-                        activeEntries,
                         doneLatch,
                         LOG,
                         circuitBreaker,
