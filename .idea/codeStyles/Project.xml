@@ -1,17 +1,9 @@
 <component name="ProjectCodeStyleConfiguration">
   <code_scheme name="Project" version="173">
+    <option name="FORMATTER_TAGS_ENABLED" value="true" />
     <codeStyleSettings language="JAVA">
       <arrangement>
-        <groups>
-          <group>
-            <type>GETTERS_AND_SETTERS</type>
-            <order>KEEP</order>
-          </group>
-          <group>
-            <type>OVERRIDDEN_METHODS</type>
-            <order>KEEP</order>
-          </group>
-        </groups>
+        <groups />
         <rules>
           <section>
             <rule>
@@ -23,6 +15,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -35,6 +28,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -47,6 +41,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -59,6 +54,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -70,6 +66,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -81,6 +78,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -92,6 +90,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -103,6 +102,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -114,6 +114,7 @@
                   <PUBLIC>true</PUBLIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -125,6 +126,7 @@
                   <PROTECTED>true</PROTECTED>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -136,6 +138,7 @@
                   <PACKAGE_PRIVATE>true</PACKAGE_PRIVATE>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -147,6 +150,7 @@
                   <PRIVATE>true</PRIVATE>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -157,6 +161,7 @@
                   <PUBLIC>true</PUBLIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -167,6 +172,7 @@
                   <PROTECTED>true</PROTECTED>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -177,6 +183,7 @@
                   <PACKAGE_PRIVATE>true</PACKAGE_PRIVATE>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -187,6 +194,7 @@
                   <PRIVATE>true</PRIVATE>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -194,6 +202,7 @@
               <match>
                 <FIELD>true</FIELD>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -201,6 +210,7 @@
               <match>
                 <CONSTRUCTOR>true</CONSTRUCTOR>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -231,9 +241,33 @@
               <match>
                 <AND>
                   <METHOD>true</METHOD>
+                  <PRIVATE>true</PRIVATE>
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
+            </rule>
+          </section>
+          <section>
+            <rule>
+              <match>
+                <AND>
+                  <METHOD>true</METHOD>
+                  <PRIVATE>true</PRIVATE>
+                </AND>
+              </match>
+              <order>BY_NAME</order>
+            </rule>
+          </section>
+          <section>
+            <rule>
+              <match>
+                <AND>
+                  <METHOD>true</METHOD>
+                  <STATIC>true</STATIC>
+                </AND>
+              </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -249,6 +283,7 @@
               <match>
                 <ENUM>true</ENUM>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -256,6 +291,7 @@
               <match>
                 <INTERFACE>true</INTERFACE>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -266,6 +302,7 @@
                   <STATIC>true</STATIC>
                 </AND>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
           <section>
@@ -273,6 +310,7 @@
               <match>
                 <CLASS>true</CLASS>
               </match>
+              <order>BY_NAME</order>
             </rule>
           </section>
         </rules>
