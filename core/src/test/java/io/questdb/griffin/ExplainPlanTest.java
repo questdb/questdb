@@ -1846,24 +1846,29 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByInt1() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select min(d), i from a group by i",
-                "GroupBy vectorized: true\n" +
-                        "  keys: [i]\n" +
-                        "  values: [min(d)]\n" +
-                        "  workers: 1\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: a\n");
+                "VirtualRecord\n" +
+                        "  functions: [min,i]\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [i]\n" +
+                        "      values: [min(d)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
-    @Test // repeated int key disables vectorized impl
+    @Test//repeated group by keys get merged at group by level 
     public void testGroupByInt2() throws Exception {
         assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
-                "GroupBy vectorized: false\n" +
-                        "  keys: [i,i1]\n" +
-                        "  values: [min(d)]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: a\n");
+                "VirtualRecord\n" +
+                        "  functions: [i,i,min]\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [i]\n" +
+                        "      values: [min(d)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
     @Test
@@ -2372,7 +2377,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( i1 int)");
             compile("create table b ( i2 int)");
 
-            assertQuery("", "select * from a , b where a.i1 = b.i2", null, null);
+            assertQuery("", "select * from a, b where a.i1 = b.i2", null, null);
 
             assertPlan("select * from a , b where a.i1 = b.i2",
                     "SelectedRecord\n" +
@@ -3791,6 +3796,50 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRewriteAggregateWithAdditionOnJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE taba ( x int, id int );");
+            compile("  CREATE TABLE tabb ( x int, id int );");
+
+            assertPlan("SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " +
+                            "FROM taba " +
+                            "join tabb on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(x),sum(x1),count(x),count(x1)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tabb.id=taba.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: taba\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tabb\n");
+
+            assertPlan("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " +
+                            "FROM taba " +
+                            "join tabb on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(x),sum(x1),count(x1),count(x)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tabb.id=taba.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: taba\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tabb\n");
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithMultiplication() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( x int );");
@@ -3858,6 +3907,50 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRewriteAggregateWithMultiplicationOnJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE taba ( x int, id int );");
+            compile("  CREATE TABLE tabb ( x int, id int );");
+
+            assertPlan("SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " +
+                            "FROM taba " +
+                            "join tabb on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum1,sum*10,sum1*10]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(x),sum(x1)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tabb.id=taba.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: taba\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tabb\n");
+
+            assertPlan("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " +
+                            "FROM taba " +
+                            "join tabb on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum1,10*sum,10*sum1]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(x),sum(x1)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tabb.id=taba.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: taba\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tabb\n");
+        });
+    }
+
+    @Test
     public void testRewriteAggregateWithSubtraction() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE tab ( x int );");
@@ -3904,6 +3997,50 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRewriteAggregateWithSubtractionOnJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE taba ( x int, id int );");
+            compile("  CREATE TABLE tabb ( x int, id int );");
+
+            assertPlan("SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " +
+                            "FROM taba " +
+                            "join tabb on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(x),sum(x1),count(x),count(x1)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tabb.id=taba.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: taba\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tabb\n");
+
+            assertPlan("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " +
+                            "FROM taba " +
+                            "join tabb on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(x),sum(x1),count(x),count(x1)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tabb.id=taba.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: taba\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tabb\n");
+        });
+    }
+
+    @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
             compile("  CREATE TABLE hits\n" +
@@ -3913,7 +4050,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "    ResolutionHeight int\n" +
                     ") TIMESTAMP(EventTime) PARTITION BY DAY;");
 
-            assertPlan("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" +
+            assertPlan("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), " +
+                            "SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" +
                             "FROM hits",
                     "VirtualRecord\n" +
                             "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
@@ -3922,6 +4060,39 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n");
+        });
+    }
+
+    @Test
+    public void testRewriteAggregatesOnJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE hits1" +
+                    "(" +
+                    "    EventTime timestamp, " +
+                    "    ResolutionWidth int, " +
+                    "    ResolutionHeight int, " +
+                    "    id int" +
+                    ")");
+            compile("CREATE TABLE hits2 as (select * from hits1)");
+
+            assertPlan("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " +
+                            "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" +
+                            "FROM hits1 h1 " +
+                            "join hits2 h2 on (id)",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: h2.id=h1.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: hits1\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: hits2\n");
         });
     }
 
