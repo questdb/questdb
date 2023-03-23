@@ -505,7 +505,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
             if (intHashSet.excludes(k)) {
-                // if column is not in key, it must be of fixed length.
+                // if a slave column is not in key, it must be of fixed length.
                 // why? our maps do not support variable length types in values, only in keys
                 if (ColumnType.isVariableLength(slaveMetadata.getColumnType(k))) {
                     throw SqlException
@@ -515,8 +515,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        // at this point listColumnFilterB has column indexes of the master table that are keys
-        // so masterSink writes key columns of master table to a record
+        // at this point listColumnFilterB has column indexes of the master record that are JOIIN keys
+        // so masterSink writes key columns of master record to a sink
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
@@ -571,21 +571,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                     int index = listColumnFilterA.getColumnIndexFactored(i);
                     final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(index);
-                    if (ColumnType.isSymbol(m.getType())) {
-                        // todo: fetch index, indexValueBlockCap and static flag from master table
-                        // q: is it really necessary?
-                        metadata.add(
-                                slaveAlias,
-                                m.getName(),
-                                ColumnType.SYMBOL,
-                                false,
-                                0,
-                                false,
-                                null
-                        );
-                    } else {
-                        metadata.add(slaveAlias, m);
-                    }
+                    metadata.add(slaveAlias, m);
                     slaveTypes.add(m.getType());
                     columnIndex.add(index);
                 }
@@ -613,9 +599,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                     int index = listColumnFilterA.getColumnIndexFactored(i);
                     int type = slaveMetadata.getColumnType(index);
-                    if (ColumnType.isSymbol(type)) {
-                        type = ColumnType.STRING;
-                    }
                     metadata.add(
                             slaveAlias,
                             slaveMetadata.getColumnName(index),
@@ -636,20 +619,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return generator.create(
                     configuration,
-                    metadata, // the metadata of the joined table
+                    metadata,
                     master,
                     slave,
-                    keyTypes,  // used as map keys
-                    valueTypes, // used as map values
-                    slaveTypes, // used to create a null record which is used when the slave table has no matching row
-                    masterSink, // for sinking keys from a master table
+                    keyTypes,
+                    valueTypes,
+                    slaveTypes,
+                    masterSink,
                     RecordSinkFactory.getInstance( // slaveKeySink
                             asm,
                             slaveMetadata,
-                            listColumnFilterA, // this is a list of slave columns that are keys
+                            listColumnFilterA,
                             true
                     ),
-                    masterMetadata.getColumnCount(), // to calculate the split in JoinRecord
+                    masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
                     joinContext,
