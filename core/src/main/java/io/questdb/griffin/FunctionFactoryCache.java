@@ -42,6 +42,7 @@ public class FunctionFactoryCache {
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -78,6 +79,8 @@ public class FunctionFactoryCache {
                         }
                     } else if (factory.isGroupBy()) {
                         groupByFunctionNames.add(name);
+                    } else if (factory.isWindow()) {
+                        windowFunctionNames.add(name);
                     } else if (factory.isCursor()) {
                         cursorFunctionNames.add(name);
                     } else if (factory.isRuntimeConstant()) {
@@ -125,6 +128,10 @@ public class FunctionFactoryCache {
         }
 
         return false;
+    }
+
+    public boolean isWindow(CharSequence name) {
+        return name != null && windowFunctionNames.contains(name);
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
