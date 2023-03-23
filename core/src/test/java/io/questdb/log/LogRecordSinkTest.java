@@ -24,18 +24,19 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Arrays;
+import java.io.Closeable;
 
 public class LogRecordSinkTest {
+
+    private static final Log LOG = LogFactory.getLog(LogRecordSinkTest.class);
 
     private StringSink sink;
 
@@ -137,6 +138,15 @@ public class LogRecordSinkTest {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testLoggerApi() throws Exception {
+        try (Utf8 msg = new Utf8("abcde ðãµ¶ Āڜ 嚜꓂ \uD83D\uDCA9 \uD83E\uDD9E!")) {
+            final long lo = msg.address();
+            final long hi = lo + msg.length();
+            LOG.info().$utf8(lo, hi).$();
+        }
     }
 
     /**
@@ -260,14 +270,15 @@ public class LogRecordSinkTest {
     @Test
     public void testUtf8LineTrimmingFromCharSeq() throws Exception {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
-            final Utf8CharSequence utf8CharSeq = new Utf8CharSequence(msg);
+            final Utf8 utf8 = new Utf8(msg);
             final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
-                logRecord.put(utf8CharSeq);
+                logRecord.put(utf8);
                 Assert.assertEquals(expectedLen, logRecord.length());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+                Misc.free(utf8);
             }
         });
     }
@@ -277,14 +288,33 @@ public class LogRecordSinkTest {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
             final String prefix = "test prefix";
             final String msg2 = prefix + msg;
-            final Utf8CharSequence utf8CharSeq = new Utf8CharSequence(msg2);
+            final Utf8 utf8 = new Utf8(msg2);
             final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
-                logRecord.put(utf8CharSeq, prefix.length(), utf8CharSeq.length());
+                logRecord.put(utf8, prefix.length(), utf8.length());
                 Assert.assertEquals(expectedLen, logRecord.length());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+                Misc.free(utf8);
+            }
+        });
+    }
+
+    @Test
+    public void testUtf8LineTrimmingFromUtf8Buf() throws Exception {
+        runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
+            final Utf8 utf8 = new Utf8(msg);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                final long lo = utf8.address();
+                final long hi = lo + utf8.length();
+                logRecord.putUtf8(lo, hi);
+                Assert.assertEquals(expectedLen, logRecord.length());
+            } finally {
+                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+                Misc.free(utf8);
             }
         });
     }
@@ -294,35 +324,83 @@ public class LogRecordSinkTest {
         void accept(String msg, int utf8ByteLen, long sinkMaxLen, long expectedLen) throws Exception;
     }
 
-    final class Utf8CharSequence implements CharSequence {
-        final byte[] buf;
+    /**
+     * A class that holds UTF-8 in native memory.
+     * <p>
+     * Solely intended for testing purposes.
+     * <p>
+     * It conforms to the expections of LogRecordSink
+     * and its length() / charAt() etc methods operate/return
+     * bytes even when the signature says chars.
+     */
+    static final class Utf8 implements LPSZ, CharSequence, Closeable {
+        private long lo;
+        private long hi;
 
-        Utf8CharSequence(String msg) {
-            this.buf = msg.getBytes(Files.UTF_8);
+        public Utf8(String msg) {
+            final byte[] buf = msg.getBytes(Files.UTF_8);
+            lo = Unsafe.malloc(buf.length, MemoryTag.NATIVE_DEFAULT);
+            hi = lo + buf.length;
+            Unsafe.getUnsafe().copyMemory(buf, Unsafe.BYTE_OFFSET, null, lo, buf.length);
         }
 
-        Utf8CharSequence(byte[] buf) {
-            this.buf = buf;
+        public Utf8(long lo, long hi) {
+            final long len = hi - lo;
+            this.lo = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            this.hi = this.lo + len;
+            Unsafe.getUnsafe().copyMemory(null, lo, null, this.lo, len);
         }
 
         @Override
-        public char charAt(int index) {
-            return (char) buf[index];
+        public long address() {
+            return lo;
+        }
+
+        @Override
+        public int capacity() {
+            return byteLength();
+        }
+
+        public byte byteAt(int index) {
+            return Unsafe.getUnsafe().getByte(lo + index);
+        }
+
+        public int byteLength() {
+            return (int) (hi - lo);
+        }
+
+        @Override
+        public void close() {
+            if (lo != 0) {
+                Unsafe.free(lo, hi - lo, MemoryTag.NATIVE_DEFAULT);
+                lo = hi = 0;
+            }
         }
 
         @Override
         public int length() {
-            return buf.length;
+            // This code is incorrect as it does not handle multi-byte characters.
+            // LogRecordSink compatibility.
+            return byteLength();
+        }
+
+        @Override
+        public char charAt(int index) {
+            // This code is incorrect as it does not decode multi-byte characters.
+            // It is, however the behaviour that `LogRecordSink.put` expects.
+            return (char) byteAt(index);
         }
 
         @Override
         public CharSequence subSequence(int start, int end) {
-            return new Utf8CharSequence(Arrays.copyOfRange(buf, start, end));
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public String toString() {
-            return new String(buf, Files.UTF_8);
+            final StringSink sink = new StringSink();
+            Chars.utf8Decode(lo, hi, sink);
+            return sink.toString();
         }
     }
 }
