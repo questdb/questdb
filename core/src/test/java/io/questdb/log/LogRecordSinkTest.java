@@ -24,7 +24,10 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
