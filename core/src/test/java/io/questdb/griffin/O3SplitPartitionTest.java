@@ -35,12 +35,30 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class O3SplitPartitionTest extends AbstractO3Test {
+    protected static final Log LOG = LogFactory.getLog(O3SplitPartitionTest.class);
     private final StringBuilder tstData = new StringBuilder();
+    private final int workerCount;
     @Rule
     public TestName name = new TestName();
-    protected static final Log LOG = LogFactory.getLog(O3SplitPartitionTest.class);
+
+    public O3SplitPartitionTest(ParallelMode mode) {
+        this.workerCount = mode == ParallelMode.Contended ? 0 : 2;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {ParallelMode.Parallel}, {ParallelMode.Contended}
+        });
+    }
 
     @Before
     public void setUp4() {
@@ -70,192 +88,248 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     }
 
     @Test
-    public void testSplitLastPartitionContended() throws Exception {
-        executeWithPool(0, O3SplitPartitionTest::testSplitLastPartition0);
+    public void testSplitLastPartition() throws Exception {
+        executeWithPool(workerCount, (engine, compiler, executionContext) -> {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                            " from long_sequence(60*24*2+300)" +
+                            ") timestamp (ts) partition by DAY",
+                    executionContext
+            );
+
+            compiler.compile(
+                    "create table z as (" +
+                            "select" +
+                            " cast(x as int) * 1000000 i," +
+                            " -x - 1000000L as j," +
+                            " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
+                            " from long_sequence(50))",
+                    executionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select * from x union all select * from z)",
+                    executionContext
+            );
+
+            compiler.compile("insert into x select * from z", executionContext);
+
+            TestUtils.assertEquals(
+                    compiler,
+                    executionContext,
+                    "y order by ts",
+                    "x"
+            );
+        });
     }
 
     @Test
-    public void testSplitMidPartitionContended() throws Exception {
-        executeWithPool(0, O3SplitPartitionTest::testSplitMidPartition0);
+    public void testSplitMidPartition() throws Exception {
+        executeWithPool(workerCount,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext executionContext
+                ) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " from long_sequence(50))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table y as (select * from x union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    TestUtils.assertEquals(
+                            compiler,
+                            executionContext,
+                            "y order by ts",
+                            "x"
+                    );
+                });
     }
 
     @Test
-    public void testSplitOverrunLastPartitionContended() throws Exception {
-        executeWithPool(0, O3SplitPartitionTest::testSplitOverrunLastPartition0);
+    public void testSplitOverrunLastPartition() throws Exception {
+        executeWithPool(workerCount, (
+                CairoEngine engine,
+                SqlCompiler compiler,
+                SqlExecutionContext executionContext
+        ) -> {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                            " from long_sequence(60*24*2+300)" +
+                            ") timestamp (ts) partition by DAY",
+                    executionContext
+            );
+
+            compiler.compile(
+                    "create table z as (" +
+                            "select" +
+                            " cast(x as int) * 1000000 i," +
+                            " -x - 1000000L as j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
+                            " from long_sequence(1000))",
+                    executionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select * from x union all select * from z)",
+                    executionContext
+            );
+
+            compiler.compile("insert into x select * from z", executionContext);
+
+            TestUtils.assertEquals(
+                    compiler,
+                    executionContext,
+                    "y order by ts",
+                    "x"
+            );
+        });
     }
 
     @Test
-    public void testSplitPartitionWithFixedColumnTopContended() throws Exception {
-        executeWithPool(0, O3SplitPartitionTest::testSplitPartitionWithFixedColumnTop0);
+    public void testSplitPartitionWithColumnTop() throws Exception {
+        executeWithPool(workerCount,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table y as (select * from x union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    String limit = "";// " limit 3120, 3140";
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            executionContext,
+                            "y order by ts" + limit,
+                            "x" + limit,
+                            LOG
+                    );
+                });
     }
 
-    private static void testSplitLastPartition0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " -x j," +
-                        " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
-                        " from long_sequence(60*24*2+300)" +
-                        ") timestamp (ts) partition by DAY",
-                executionContext
-        );
+    @Test
+    public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop() throws Exception {
+        executeWithPool(workerCount,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
 
-        compiler.compile(
-                "create table z as (" +
-                        "select" +
-                        " cast(x as int) * 1000000 i," +
-                        " -x - 1000000L as j," +
-                        " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
-                        " from long_sequence(50))",
-                executionContext
-        );
+                    compiler.compile(
+                            "create table y as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
 
-        compiler.compile(
-                "create table y as (select * from x union all select * from z)",
-                executionContext
-        );
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
 
-        compiler.compile("insert into x select * from z", executionContext);
+                    compiler.compile(
+                            "create table zz as (select * from x union all select * from y union all select * from z)",
+                            executionContext
+                    );
 
-        TestUtils.assertEquals(
-                compiler,
-                executionContext,
-                "y order by ts",
-                "x"
-        );
+                    compiler.compile("insert into x select * from y", executionContext);
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    String limit = "";
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            executionContext,
+                            "zz order by ts" + limit,
+                            "x" + limit,
+                            LOG
+                    );
+                });
     }
 
-    private static void testSplitMidPartition0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " -x j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
-                        " from long_sequence(60*24*2)" +
-                        ") timestamp (ts) partition by DAY",
-                executionContext
-        );
-
-        compiler.compile(
-                "create table z as (" +
-                        "select" +
-                        " cast(x as int) * 1000000 i," +
-                        " -x - 1000000L as j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
-                        " from long_sequence(50))",
-                executionContext
-        );
-
-        compiler.compile(
-                "create table y as (select * from x union all select * from z)",
-                executionContext
-        );
-
-        compiler.compile("insert into x select * from z", executionContext);
-
-        TestUtils.assertEquals(
-                compiler,
-                executionContext,
-                "y order by ts",
-                "x"
-        );
-    }
-
-    private static void testSplitOverrunLastPartition0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " -x j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
-                        " from long_sequence(60*24*2+300)" +
-                        ") timestamp (ts) partition by DAY",
-                executionContext
-        );
-
-        compiler.compile(
-                "create table z as (" +
-                        "select" +
-                        " cast(x as int) * 1000000 i," +
-                        " -x - 1000000L as j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
-                        " from long_sequence(1000))",
-                executionContext
-        );
-
-        compiler.compile(
-                "create table y as (select * from x union all select * from z)",
-                executionContext
-        );
-
-        compiler.compile("insert into x select * from z", executionContext);
-
-        TestUtils.assertEquals(
-                compiler,
-                executionContext,
-                "y order by ts",
-                "x"
-        );
-    }
-
-    private static void testSplitPartitionWithFixedColumnTop0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " -x j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
-                        " from long_sequence(60*24*2+300)" +
-                        ") timestamp (ts) partition by DAY",
-                executionContext
-        );
-        compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-
-        compiler.compile(
-                "create table z as (" +
-                        "select" +
-                        " cast(x as int) * 1000000 i," +
-                        " -x - 1000000L as j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
-                        " 1 as k" +
-                        " from long_sequence(1000))",
-                executionContext
-        );
-
-        compiler.compile(
-                "create table y as (select * from x union all select * from z)",
-                executionContext
-        );
-
-        compiler.compile("insert into x select * from z", executionContext);
-
-        String limit = "";// " limit 3120, 3140";
-        TestUtils.assertSqlCursors(
-                compiler,
-                executionContext,
-                "y order by ts" + limit,
-                "x" + limit,
-                LOG
-        );
-    }
 }

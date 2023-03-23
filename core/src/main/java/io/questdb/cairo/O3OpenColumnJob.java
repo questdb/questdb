@@ -1309,15 +1309,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
-                    srcDataFixOffset = srcDataActualBytes;
+                    // It is also fine in case when last partition contains WAL LAG, since
+                    // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
                     if (prefixType == O3_BLOCK_NONE) {
                         // This is partition split, prefix will not be copied anyway.
-//                        srcDataMaxBytes = (srcDataMax - prefixHi - 1) << shl;
-//                        srcDataTop -= prefixHi + 1;
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);//prefixHi + 1);
-//                        srcDataFixOffset -= (prefixHi + 1) << shl;
-                        // TODO: allocate 2 values in column top sink
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     }
+                    srcDataFixOffset = srcDataActualBytes;
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -1908,14 +1906,24 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             pDirNameLen = pathToPartition.length();
 
             if (srcDataTop > 0) {
+                // Size of data actually in the index (fixed) file.
                 final long srcDataActualBytes = (srcDataMax - srcDataTop) * Long.BYTES;
+                // Size of data in the index (fixed) file if it didn't have column top.
                 final long srcDataMaxBytes = srcDataMax * Long.BYTES;
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
-                    // extend the existing column down, we will be discarding it anyway
+                    // Extend the existing column down, we will be discarding it anyway.
+                    // Materialize nulls at the end of the column and add non-null data to merge.
+                    // Do all of this beyond existing written data, using column as a buffer.
+                    // It is also fine in case when last partition contains WAL LAG, since
+                    // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
+
+                    if (prefixType == O3_BLOCK_NONE) {
+                        // This is partition split, prefix will not be copied anyway.
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                    }
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
-
                     if (srcDataActualBytes > 0) {
                         srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataActualBytes);
                     }
@@ -1924,83 +1932,59 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // as srcDataTop value.
                     srcDataVarOffset = srcDataVarSize;
                     long reservedBytesForColTopNulls;
+                    // We need to reserve null values for every column top value
+                    // in the variable len file. Each null value takes 4 bytes for string
+                    reservedBytesForColTopNulls = srcDataTop * (ColumnType.isString(columnType) ? Integer.BYTES : Long.BYTES);
+                    srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
+                    srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
+
+                    // Set var column values to null first srcDataTop times
+                    // Next line should be:
+                    // Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
+                    // But we can replace it with memset setting each byte to -1
+                    // because binary repr of int -1 is 4 bytes of -1
+                    // memset is faster than any SIMD implementation we can come with
+                    Vect.memset(srcDataVarAddr + srcDataVarOffset, (int) reservedBytesForColTopNulls, -1);
+
+                    // Copy var column data
+                    Vect.memcpy(srcDataVarAddr + srcDataVarOffset + reservedBytesForColTopNulls, srcDataVarAddr, srcDataVarOffset);
+
+                    // we need to shift copy the original column so that new block points at strings "below" the
+                    // nulls we created above
+                    long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
+                    assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
+                    O3Utils.shiftCopyFixedSizeColumnData(
+                            -reservedBytesForColTopNulls,
+                            srcDataFixAddr,
+                            0,
+                            hiInclusive,
+                            srcDataFixAddr + srcDataMaxBytes
+                    );
+
+                    // now set the "empty" bit of fixed size column with references to those
+                    // null strings we just added
+                    // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
+                    // because data first have to be shifted before overwritten
                     if (ColumnType.isString(columnType)) {
-                        // We need to reserve null values for every column top value
-                        // in the variable len file. Each null value takes 4 bytes for string
-                        reservedBytesForColTopNulls = srcDataTop * Integer.BYTES;
-                        srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
-                        srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
-                        ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
-
-                        // Set var column values to null first srcDataTop times
-                        // Next line should be:
-                        // Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
-                        // But we can replace it with memset setting each byte to -1
-                        // because binary repr of int -1 is 4 bytes of -1
-                        // memset is faster than any SIMD implementation we can come with
-                        Vect.memset(srcDataVarAddr + srcDataVarOffset, (int) reservedBytesForColTopNulls, -1);
-
-                        // Copy var column data
-                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + reservedBytesForColTopNulls, srcDataVarAddr, srcDataVarOffset);
-
-                        // we need to shift copy the original column so that new block points at strings "below" the
-                        // nulls we created above
-                        long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
-                        assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
-                        O3Utils.shiftCopyFixedSizeColumnData(
-                                -reservedBytesForColTopNulls,
-                                srcDataFixAddr,
-                                0,
-                                hiInclusive,
-                                srcDataFixAddr + srcDataMaxBytes
-                        );
-
-                        // now set the "empty" bit of fixed size column with references to those
-                        // null strings we just added
-                        // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
-                        // because data first have to be shifted before overwritten
                         Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                     } else {
-                        // We need to reserve null values for every column top value
-                        // in the variable len file. Each null value takes 8 bytes for binary
-                        reservedBytesForColTopNulls = srcDataTop * Long.BYTES;
-                        srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
-                        srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
-                        ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
-
-                        // Set var column values to null first srcDataTop times
-                        // Next line should be:
-                        // Vect.setMemoryLong(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
-                        // But we can replace it with memset setting each byte to -1
-                        // because binary repr of int -1 is 4 bytes of -1
-                        // memset is faster than any SIMD implementation we can come with
-                        Vect.memset(srcDataVarAddr + srcDataVarOffset, (int) reservedBytesForColTopNulls, -1);
-
-                        // Copy var column data
-                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + reservedBytesForColTopNulls, srcDataVarAddr, srcDataVarOffset);
-
-                        // we need to shift copy the original column so that new block points at strings "below" the
-                        // nulls we created above
-                        long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
-                        assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
-                        O3Utils.shiftCopyFixedSizeColumnData(
-                                -reservedBytesForColTopNulls,
-                                srcDataFixAddr,
-                                0,
-                                hiInclusive,
-                                srcDataFixAddr + srcDataMaxBytes
-                        );
-
-                        // now set the "empty" bit of fixed size column with references to those
-                        // null strings we just added
                         Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                     }
+
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data
-                    Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                    if (prefixType == O3_BLOCK_NONE) {
+                        // Split partition.
+                        assert false; // todo: solve this
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, prefixHi + 1);
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop - prefixHi - 1);
+                    } else {
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                    }
                     srcDataFixSize = srcDataActualBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);

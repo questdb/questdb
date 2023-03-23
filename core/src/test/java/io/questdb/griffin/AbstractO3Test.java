@@ -415,4 +415,8 @@ public class AbstractO3Test {
     ) throws SqlException {
         TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
     }
+
+    protected enum ParallelMode {
+        Contended, Parallel
+    }
 }
