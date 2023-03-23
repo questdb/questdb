@@ -40,8 +40,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     static final int SCAN_DOWN = 1;
     static final int SCAN_UP = -1;
 
-    static final int THRESHOLD = 65;
-
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
     protected final int timestampIndex;

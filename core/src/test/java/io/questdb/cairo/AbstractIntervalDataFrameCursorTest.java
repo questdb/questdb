@@ -30,10 +30,11 @@ import org.junit.Test;
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.binarySearch;
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_DOWN;
-import static io.questdb.cairo.AbstractIntervalDataFrameCursor.THRESHOLD;
 import static org.junit.Assert.assertEquals;
 
 public class AbstractIntervalDataFrameCursorTest extends AbstractCairoTest {
+    // see implementation of Vect.binarySearch64Bit 
+    static final int THRESHOLD = 65;
 
     @Test
     public void testBinarySearchOnArrayWithSingleValue() throws Exception {
