@@ -148,7 +148,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Returns the direction of scanning used in this factory:
      * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
      * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values
-     * where order is 'random'.
+     * where order is 'random'.<br>
+     * Note: tables with designated timestamp keep rows in timestamp order, so :
+     * - forward scan produces rows in ascending ts order
+     * - backward scan produces rows in descending ts order
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
