@@ -24,10 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -70,9 +68,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     // Buffer used to accumulate all filtered row ids.
     private DirectLongList rows;
 
-    public AsyncFilteredNegativeLimitRecordCursor(boolean hasDescendingOrder) {
+    public AsyncFilteredNegativeLimitRecordCursor(int scanDirection) {
         this.record = new PageAddressCacheRecord();
-        this.hasDescendingOrder = hasDescendingOrder;
+        this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
     }
 
     @Override

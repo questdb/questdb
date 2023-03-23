@@ -81,8 +81,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         return pageFrameCursor.of(baseCursor);
     }
 
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
     }
 
     @Override
