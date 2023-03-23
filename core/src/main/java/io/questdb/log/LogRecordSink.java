@@ -57,10 +57,6 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         return level;
     }
 
-    public void setLevel(int level) {
-        this.level = level;
-    }
-
     public int length() {
         return (int) (_wptr - address);
     }
@@ -184,6 +180,10 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
             put((char) Unsafe.getUnsafe().getByte(lo + i));
         }
         return this;
+    }
+
+    public void setLevel(int level) {
+        this.level = level;
     }
 
     @Override

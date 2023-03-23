@@ -334,8 +334,8 @@ public class LogRecordSinkTest {
      * bytes even when the signature says chars.
      */
     static final class Utf8 implements LPSZ, CharSequence, Closeable {
-        private long lo;
         private long hi;
+        private long lo;
 
         public Utf8(String msg) {
             final byte[] buf = msg.getBytes(Files.UTF_8);
@@ -356,17 +356,24 @@ public class LogRecordSinkTest {
             return lo;
         }
 
-        @Override
-        public int capacity() {
-            return byteLength();
-        }
-
         public byte byteAt(int index) {
             return Unsafe.getUnsafe().getByte(lo + index);
         }
 
         public int byteLength() {
             return (int) (hi - lo);
+        }
+
+        @Override
+        public int capacity() {
+            return byteLength();
+        }
+
+        @Override
+        public char charAt(int index) {
+            // This code is incorrect as it does not decode multi-byte characters.
+            // It is, however the behaviour that `LogRecordSink.put` expects.
+            return (char) byteAt(index);
         }
 
         @Override
@@ -382,13 +389,6 @@ public class LogRecordSinkTest {
             // This code is incorrect as it does not handle multi-byte characters.
             // LogRecordSink compatibility.
             return byteLength();
-        }
-
-        @Override
-        public char charAt(int index) {
-            // This code is incorrect as it does not decode multi-byte characters.
-            // It is, however the behaviour that `LogRecordSink.put` expects.
-            return (char) byteAt(index);
         }
 
         @Override
