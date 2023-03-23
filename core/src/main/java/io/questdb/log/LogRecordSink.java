@@ -230,7 +230,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
                 lookback:
                 for (; ptr >= boundary; --ptr) {
-                    byte prev = Unsafe.getUnsafe().getByte(ptr);
+                    final byte prev = Unsafe.getUnsafe().getByte(ptr);
                     multibyteLength = utf8byteClass(prev);
                     switch (multibyteLength) {
                         case UTF8_BYTE_CLASS_BAD:

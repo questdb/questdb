@@ -169,12 +169,14 @@ public class LogRecordSinkTest {
                 {lead5, inter, inter},
                 {inter, inter},
                 {ascii, inter, inter},
+                {lead5, inter, inter, inter, inter}
         };
 
         final String[] expectedMsgs = {
                 "???",
                 "??",
-                "a??"
+                "a??",
+                ""
         };
 
         for (int bufIndex = 0; bufIndex < buffers.length; bufIndex++) {
