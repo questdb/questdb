@@ -113,6 +113,16 @@ public class BoolList implements Mutable {
         return NO_ENTRY_VALUE;
     }
 
+    public int getTrueCount() {
+        int cnt = 0;
+        for (int i = 0, n = pos; i < n; i++) {
+            if (buffer[i]) {
+                cnt++;
+            }
+        }
+        return cnt;
+    }
+
     public void insert(int index, boolean element) {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);

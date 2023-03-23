@@ -426,7 +426,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' : ");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
-        assertIdentifierError("select 'a' ) ");
+        assertSyntaxError("select 'a' ) ", 11, "unexpected token: )");
         assertIdentifierError("select 'a' $ ");
         assertIdentifierError("select 'a' 0 ");
         assertIdentifierError("select 'a' 12 ");
@@ -2833,13 +2833,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadSql1() throws Exception {
-        assertSyntaxError("explain select 1)", 16, "identifier should start with a letter or '_'",
+        assertSyntaxError("explain select 1)", 16, "unexpected token: )",
                 modelOf("x").col("x", ColumnType.INT));
     }
 
     @Test
     public void testExplainWithBadSql2() throws Exception {
-        assertSyntaxError("explain select 1))", 16, "identifier should start with a letter or '_'",
+        assertSyntaxError("explain select 1))", 16, "unexpected token: )",
                 modelOf("x").col("x", ColumnType.INT));
     }
 
@@ -3882,7 +3882,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnPropagation() throws SqlException {
         assertQuery(
-                "select-group-by city, max(temp) max from (select [temp, sensorId] from readings timestamp (ts) join select [city, sensId] from (select-choose [city, ID sensId] ID sensId, city from (select [city, ID] from sensors)) _xQdbA1 on sensId = readings.sensorId)",
+                "select-group-by city, max(temp) max from (select-choose [city, readings.temp temp] city, readings.temp temp from (select [temp, sensorId] from readings timestamp (ts) join select [city, sensId] from (select-choose [city, ID sensId] ID sensId, city from (select [city, ID] from sensors)) _xQdbA1 on sensId = readings.sensorId))",
                 "SELECT city, max(temp)\n" +
                         "FROM readings\n" +
                         "JOIN(\n" +
@@ -3904,7 +3904,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery() throws SqlException {
         assertQuery(
-                "select-group-by sum(timestamp) sum from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join (select-choose ccy from (select [ccy] from x)) _xQdbA2)",
+                "select-group-by sum(timestamp) sum from (select-choose [_xQdbA1.timestamp timestamp] _xQdbA1.timestamp timestamp from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join (select-choose ccy from (select [ccy] from x)) _xQdbA2))",
                 "select sum(timestamp) from (select * from y) cross join (x)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
@@ -3914,7 +3914,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery2() throws SqlException {
         assertQuery(
-                "select-group-by sum(timestamp) sum from (select [timestamp, ccy, sym] from (select-choose [timestamp, ccy, sym] ccy, timestamp, sym from (select [timestamp, ccy, sym] from y)) _xQdbA1 join select [ccy, sym] from (select-choose [ccy, sym] ccy, sym from (select [ccy, sym] from x)) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym)",
+                "select-group-by sum(timestamp) sum from (select-choose [_xQdbA1.timestamp timestamp] _xQdbA1.timestamp timestamp from (select [timestamp, ccy, sym] from (select-choose [timestamp, ccy, sym] ccy, timestamp, sym from (select [timestamp, ccy, sym] from y)) _xQdbA1 join select [ccy, sym] from (select-choose [ccy, sym] ccy, sym from (select [ccy, sym] from x)) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym))",
                 "select sum(timestamp) from (select * from y) join (select * from x) on (ccy, sym)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL).col("sym", ColumnType.INT),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP).col("sym", ColumnType.INT)
@@ -3924,7 +3924,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery3() throws SqlException {
         assertQuery(
-                "select-group-by sum(timestamp) sum from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join x)",
+                "select-group-by sum(timestamp) sum from (select-choose [_xQdbA1.timestamp timestamp] _xQdbA1.timestamp timestamp from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join x))",
                 "select sum(timestamp) from (select * from y) cross join x",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
@@ -4005,7 +4005,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinGroupBy() throws Exception {
-        assertQuery("select-group-by country, sum(quantity) sum from (select [customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [quantity, orderId] from orderDetails d on d.orderId = o.orderId) o",
+        assertQuery("select-group-by country, sum(quantity) sum from (select-choose [country, d.quantity quantity] country, d.quantity quantity from (select [customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [quantity, orderId] from orderDetails d on d.orderId = o.orderId) o) o",
                 "select country, sum(quantity) from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -4018,8 +4018,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinGroupByFilter() throws Exception {
-        assertQuery(
-                "select-choose country, sum from (select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o where sum > 2)",
+        assertQuery("select-choose country, sum from (select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select-choose [country, o.quantity quantity] country, o.quantity quantity from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o) o where sum > 2)",
                 "(select country, sum(quantity) sum " +
                         "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
@@ -6468,7 +6467,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimestampAscOrderWithJoin() throws Exception {
         assertQuery(
-                "select-group-by x, sum(y) sum from (select-choose [tab.x x, y] tab.x x, y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
+                "select-group-by x, sum(y) sum from (select-choose [tab.x x, tab.y y] tab.x x, tab.y y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
                 "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
