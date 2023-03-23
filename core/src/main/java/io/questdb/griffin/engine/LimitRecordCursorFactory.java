@@ -62,8 +62,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    public int getScanDirection() {
+        return base.getScanDirection();
     }
 
     @Override
