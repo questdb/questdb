@@ -32,7 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
 public abstract class AbstractSymbolWrapOverCursor implements NoRandomAccessRecordCursor {
-    protected final int columnSplit;
+    protected final int masterSlaveSplit;
     private final ColumnFilter masterTableKeyColumns;
     private final IntList slaveColumnIndex;
     private final int slaveWrappedOverMaster;
@@ -40,8 +40,8 @@ public abstract class AbstractSymbolWrapOverCursor implements NoRandomAccessReco
     protected RecordCursor slaveCursor;
 
 
-    public AbstractSymbolWrapOverCursor(int columnSplit, int slaveWrappedOverMaster, ColumnFilter masterTableKeyColumns, IntList slaveColumnIndex) {
-        this.columnSplit = columnSplit;
+    public AbstractSymbolWrapOverCursor(int masterSlaveSplit, int slaveWrappedOverMaster, ColumnFilter masterTableKeyColumns, IntList slaveColumnIndex) {
+        this.masterSlaveSplit = masterSlaveSplit;
         this.slaveWrappedOverMaster = slaveWrappedOverMaster;
         this.masterTableKeyColumns = masterTableKeyColumns;
         this.slaveColumnIndex = slaveColumnIndex;
@@ -55,10 +55,10 @@ public abstract class AbstractSymbolWrapOverCursor implements NoRandomAccessReco
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        if (columnIndex < columnSplit) {
+        if (columnIndex < masterSlaveSplit) {
             return masterCursor.getSymbolTable(columnIndex);
         }
-        int slaveCol = columnIndex - columnSplit;
+        int slaveCol = columnIndex - masterSlaveSplit;
         if (slaveCol >= slaveWrappedOverMaster) {
             slaveCol -= slaveWrappedOverMaster;
             int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
@@ -71,18 +71,19 @@ public abstract class AbstractSymbolWrapOverCursor implements NoRandomAccessReco
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         // everything before columnSplit is from master. all columns are mapped 1:1.
-        if (columnIndex < columnSplit) {
+        if (columnIndex < masterSlaveSplit) {
             return masterCursor.newSymbolTable(columnIndex);
         }
 
-        // everything after columnSplit is from slave
-        int slaveCol = columnIndex - columnSplit;
+        // everything after is from slave
+        int slaveCol = columnIndex - masterSlaveSplit;
         if (slaveCol >= slaveWrappedOverMaster) {
-            // ok, this is technically a slave column, but we get the symbol table from master cursor.
-            // why? key symbols from slave cursors are converted to strings. that's undisiarable.
-            // so let's use the fact it's a join key column. keys are present in both master and slave cursors
-            // this is a bit of a hack, but it works
-            // LtJoinRecord getInt() and getSym() and getSym() methods are aware of this
+            // ok, this is technically a slave column, but we get the symbol table from a master cursor.
+            // why? key symbols from the slave cursor are converted to strings before
+            // copying them to the map used as slave record. this means symbol IDs are lost.
+            // so let's use the fact it's a join key column and keys are present in both master and slave cursors
+            // this is a bit of a hack, but it works.
+            // SymbolWrapOverJoinRecord getInt() is aware of this logic.
             slaveCol -= slaveWrappedOverMaster;
             int masterCol = masterTableKeyColumns.getColumnIndexFactored(slaveCol);
             return masterCursor.newSymbolTable(masterCol);

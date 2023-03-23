@@ -904,6 +904,48 @@ public class AsOfJoinTest extends AbstractGriffinTest {
         assertQuery(expected, query, "ts", false, true);
     }
 
+    @Test
+    public void testNestedLT_keySymbol_moreColumns() throws Exception {
+        compiler.setFullFatJoins(true);
+        compile("CREATE TABLE 'tests' (\n" +
+                "  UnusedTag SYMBOL,\n" + // just filler to make the joining a bit more interesting
+                "  Ticker SYMBOL capacity 256 CACHE,\n" +
+                "  ts timestamp,\n" +
+                "  price int\n" +
+                ") timestamp (ts) PARTITION BY MONTH");
+        compile("insert into tests VALUES ('Whatever', 'AAPL', '2000', 0),('Whatever', 'AAPL', '2001', 1),('Whatever', 'AAPL', '2002', 2),('Whatever', 'AAPL', '2003', 3),('Whatever', 'AAPL', '2004', 4),('Whatever', 'AAPL', '2005', 5)");
+        compile("insert into tests VALUES ('Whatever', 'QSTDB', '2003', 6),('Whatever', 'QSTDB', '2004', 7),('Whatever', 'QSTDB', '2005', 8),('Whatever', 'QSTDB', '2006', 9),('Whatever', 'QSTDB', '2007', 10),('Whatever', 'QSTDB', '2008', 11)");
+
+        String query = "select t2unused, Ticker as t0ticker, ts as t0ts, t1ticker, t1ts, t2ticker, t2ts, t3ticker, t3ts \n" +
+                "from tests \n" +
+                "LT JOIN (\n" +
+                "    select t2unused, Ticker as t1ticker, UnusedTag as t1unused, ts as t1ts, t3unused, t2ticker, t2ts, t3ticker, t3ts \n" +
+                "    from tests \n" +
+                "    LT JOIN (\n" +
+                "        select UnusedTag as t2unused, Ticker as t2ticker, t3unused, ts as t2ts, t3ticker, t3ts \n" +
+                "        from tests \n" +
+                "        LT JOIN (\n" +
+                "            select UnusedTag as t3unused, Ticker as t3ticker, ts as t3ts from tests\n" +
+                "        ) t3 on (ticker = t3.t3ticker)\n" +
+                "    ) t2 ON (Ticker = t2ticker)\n" +
+                ") t1 ON (Ticker = t1ticker)";
+        
+        String expected = "t2unused\tt0ticker\tt0ts\tt1ticker\tt1ts\tt2ticker\tt2ts\tt3ticker\tt3ts\n" +
+                "\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                "\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                "Whatever\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                "\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                "Whatever\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
+                "\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                "Whatever\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
+                "Whatever\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
+                "Whatever\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\n" +
+                "Whatever\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
+                "Whatever\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
+                "Whatever\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
+        assertQuery(expected, query, "t0ts", false, true);
+    }
+
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
         assertQuery("ts\ty\tts1\ty1\n",
                 "select * from " +
