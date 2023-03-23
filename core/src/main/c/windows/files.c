@@ -70,8 +70,8 @@ jboolean set_file_pos(HANDLE fd, jlong offset) {
     return TRUE;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong length) {
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong destOffset, jlong length) {
 
     char buf[16 * 4096];
     DWORD read_sz;
@@ -86,6 +86,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
     }
 
     if (!set_file_pos(FD_TO_HANDLE(srcFd), fromOffset)) {
+        return -1;
+    }
+
+    if (!set_file_pos(FD_TO_HANDLE(destFd), destOffset)) {
         return -1;
     }
 
@@ -126,6 +130,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
 
     SaveLastError();
     return rd_off - fromOffset;
+}
+
+
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong length) {
+    return Java_io_questdb_std_Files_copyDataToOffset(e, cls, srcFd, destFd, fromOffset, 0, length);
 }
 
 HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {
