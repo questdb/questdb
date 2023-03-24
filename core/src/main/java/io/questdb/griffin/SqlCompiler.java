@@ -468,6 +468,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCairoSecurityContext().checkLockTablePermission();
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);

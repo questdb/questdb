@@ -178,7 +178,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             try {
                 compile("alter system unlock writer x", readOnlyContext);
                 fail("write lock cannot be released in the read-only mode");
-            } catch (SqlException expected) {
+            } catch (CairoException expected) {
                 // check the writer wasn't actually released
                 TestUtils.assertEquals("alterSystem", engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock"));
                 engine.unlockWriter(x);
