@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.DenyAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -43,8 +43,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.Iterator;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
@@ -213,12 +211,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
-        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
+        this.authenticator = new PGBasicAuthenticator(
+                configuration.getSecurityContextFactory(),
+                configuration.getDefaultUsername(),
+                configuration.getDefaultPassword(),
+                configuration.readOnlySecurityContext()
+        );
         this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
-                ? new PGBasicAuthenticator(configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true)
+                ? new PGBasicAuthenticator(
+                configuration.getSecurityContextFactory(),
+                configuration.getReadOnlyUsername(),
+                configuration.getReadOnlyPassword(),
+                true
+        )
                 : null;
         this.sqlExecutionContext = sqlExecutionContext;
-        this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
+        this.sqlExecutionContext.with(DenyAllCairoSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
@@ -342,7 +350,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndUpdateIsCached = false;
         clear();
         this.fd = -1;
-        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+        sqlExecutionContext.with(DenyAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
         Misc.free(circuitBreaker);

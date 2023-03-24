@@ -343,8 +343,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private void configureSecurityContext() {
         if (securityContext == DenyAllCairoSecurityContext.INSTANCE) {
-            System.out.println(this);
-            securityContext = configuration.getSecurityContextFactory().getInstance(headerParser.getHeader("Authorization"));
+            securityContext = configuration.getSecurityContextFactory().getInstance(
+                    headerParser.getHeader("Authorization"),
+                    configuration.readOnlySecurityContext()
+            );
         }
     }
 

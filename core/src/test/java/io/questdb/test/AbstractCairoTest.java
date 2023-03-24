@@ -201,7 +201,7 @@ public abstract class AbstractCairoTest {
         node1 = newNode(1, "dbRoot", new StaticOverrides());
         root = node1.getRoot();
         configuration = node1.getConfiguration();
-        securityContext = configuration.getCairoSecurityContextFactory().getInstance(null);
+        securityContext = configuration.getCairoSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();
@@ -439,14 +439,14 @@ public abstract class AbstractCairoTest {
 
     protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
         return engine.getReader(
-                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 engine.getTableToken(tableName)
         );
     }
 
     protected static TableReader getReader(CharSequence tableName) {
         return engine.getReader(
-                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 engine.getTableToken(tableName)
         );
     }
@@ -457,7 +457,7 @@ public abstract class AbstractCairoTest {
 
     protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
         return engine.getTableWriterAPI(
-                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 engine.getTableToken(tableName),
                 "test"
         );
@@ -466,7 +466,7 @@ public abstract class AbstractCairoTest {
     @NotNull
     protected static WalWriter getWalWriter(CharSequence tableName) {
         return engine.getWalWriter(
-                engine.getConfiguration().getCairoSecurityContextFactory().getInstance(null),
+                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                 engine.getTableToken(tableName)
         );
     }

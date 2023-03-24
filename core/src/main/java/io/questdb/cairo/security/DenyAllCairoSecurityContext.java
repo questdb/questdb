@@ -24,13 +24,6 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoSecurityContext;
-
-public class DenyAllCairoSecurityContext implements CairoSecurityContext {
+public class DenyAllCairoSecurityContext extends ReadOnlyCairoSecurityContext {
     public static final DenyAllCairoSecurityContext INSTANCE = new DenyAllCairoSecurityContext();
-
-    @Override
-    public boolean canWrite() {
-        return false;
-    }
 }

@@ -288,11 +288,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
-    private final double walSquashUncommittedRowsMultiplier;
     private final boolean walEnabledDefault;
     private final long walPurgeInterval;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
+    private final double walSquashUncommittedRowsMultiplier;
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
     private final long workStealTimeoutNanos;
@@ -2285,11 +2285,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getWalSquashUncommittedRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
-        }
-
-        @Override
         public boolean getWalEnabledDefault() {
             return walEnabledDefault;
         }
@@ -2307,6 +2302,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverRowCount() {
             return walSegmentRolloverRowCount;
+        }
+
+        @Override
+        public double getWalSquashUncommittedRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
@@ -3361,6 +3361,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRecvBufferSize() {
             return pgRecvBufferSize;
+        }
+
+        @Override
+        public CairoSecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
         }
 
         @Override

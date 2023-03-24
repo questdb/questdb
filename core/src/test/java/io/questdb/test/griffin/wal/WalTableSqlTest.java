@@ -547,8 +547,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             TableToken table2directoryName = engine.getTableToken(tableName);
             compile("rename table " + tableName + " to " + newTableName);
 
-            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
+            TableToken newTableDirectoryName = engine.getTableToken(newTableName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
 

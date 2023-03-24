@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -103,4 +104,6 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
+
+    CairoSecurityContextFactory getSecurityContextFactory();
 }

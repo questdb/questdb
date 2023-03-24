@@ -27,17 +27,17 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.*;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -161,7 +161,7 @@ public class SecurityTest extends AbstractGriffinTest {
 
         readOnlyExecutionContext = new SqlExecutionContextImpl(memoryRestrictedEngine, 1)
                 .with(
-                        new CairoSecurityContextImpl(false),
+                        ReadOnlyCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
@@ -410,7 +410,7 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testMemoryResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(new CairoSecurityContextImpl(false),
+                .with(ReadOnlyCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
@@ -934,7 +934,7 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testTreeResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(new CairoSecurityContextImpl(false),
+                .with(ReadOnlyCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,

@@ -26,7 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -34,18 +34,19 @@ import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.fail;
 
 public class CairoEngineTest extends AbstractCairoTest {
 
@@ -222,7 +223,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testLockWriter_ReadOnlyContext() throws Exception {
         assertMemoryLeak(() -> {
-            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
+            CairoSecurityContext readOnlyContext = ReadOnlyCairoSecurityContext.INSTANCE;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
                 TableToken x = CreateTableTestUtils.create(model);
                 try {
