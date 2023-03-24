@@ -110,7 +110,6 @@ public class PGJobContextTest extends BasePGTest {
                     | CONN_AWARE_EXTENDED_PREPARED_TEXT
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
-
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
@@ -119,7 +118,6 @@ public class PGJobContextTest extends BasePGTest {
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
-
     private final boolean walEnabled;
 
     public PGJobContextTest(WalMode walMode) {
@@ -2677,6 +2675,46 @@ if __name__ == "__main__":
                 script,
                 getHexPgWireConfig()
         );
+    }
+
+    @Test
+    public void testGroupByExpressionNotAppearingInSelectClause() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n1000\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByExpressionNotAppearingInSelectClauseWhenTableIsEmpty() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table t1 ( s string );", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+?")) {
+                statement.setLong(1, 1);
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n1000\n", sink, rs);
+                }
+            }
+        });
     }
 
     @Test
@@ -5662,6 +5700,44 @@ nodejs code:
     }
 
     @Test
+    public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table table (" +
+                    "id symbol, " +
+                    "timestamp timestamp) " +
+                    "timestamp(timestamp) partition by day", sqlExecutionContext);
+            compiler.compile("insert into table " +
+                    " select rnd_symbol(16, 10,10,0), dateadd('s', x::int, '2023-03-23T00:00:00.000000Z') " +
+                    " from long_sequence(10000)", sqlExecutionContext);
+
+            conn.setAutoCommit(false);
+            String queryBase = "select * from table "
+                    + " WHERE timestamp >= '2023-03-23T00:00:00.000000Z'"
+                    + " ORDER BY timestamp ";
+
+            int countStar = getCountStar("SELECT COUNT(*) FROM table", conn);
+            int ascCount = getRowCount(queryBase + "ASC", conn);
+            int ascLimitCount = getRowCount(queryBase + "ASC LIMIT 100000", conn);
+            int descCount = getRowCount(queryBase + "DESC", conn);
+            int descLimitCount = getRowCount(queryBase + "DESC LIMIT 100000", conn);
+
+            String message =
+                    String.format("%n -- QUERY RESULTS -- %n"
+                            + "  count(*)       = [%d]%n"
+                            + "  descCount      = [%d]%n"
+                            + "  descLimitCount = [%d]%n"
+                            + "  ascCount       = [%d]%n"
+                            + "  ascLimitCount  = [%d]%n"
+                            + " -----------------%n", countStar, descCount, descLimitCount, ascCount, ascLimitCount);
+
+            boolean allEqual = countStar == descCount
+                    && descCount == descLimitCount && descCount == ascCount && descCount == ascLimitCount;
+
+            Assert.assertTrue(message, allEqual);
+        });
+    }
+
+    @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
         // This test doesn't use tables.
         Assume.assumeFalse(walEnabled);
@@ -7721,10 +7797,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
@@ -7814,10 +7886,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -7932,6 +8000,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAsync() throws Exception {
         testUpdateAsync(null, writer -> {
@@ -7941,6 +8013,10 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0\n" +
                         "9,3.0,2020-06-01 00:00:12.0\n");
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
@@ -8334,6 +8410,31 @@ create table tab as (
         });
     }
 
+    private static int getCountStar(String query, Connection conn) throws Exception {
+        int count = -1;
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+            try (ResultSet result = stmt.executeQuery()) {
+                if (result.next()) {
+                    count = result.getInt(1);
+                }
+            }
+        }
+        return count;
+    }
+
+    private static int getRowCount(String query, Connection conn) throws Exception {
+        int count = 0;
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+            stmt.setFetchSize(100_000);
+            try (ResultSet result = stmt.executeQuery()) {
+                while (result.next()) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     private void assertHexScript(String script) throws Exception {
         skipOnWalRun();
         final Rnd rnd = new Rnd();
@@ -8582,13 +8683,10 @@ create table tab as (
         );
     }
 
+    @SuppressWarnings("unchecked")
     private List<Tuple> getRows(ResultSet rs) {
         try {
             Field field = PgResultSet.class.getDeclaredField("rows");
-
-            if (!field.isAccessible()) {
-                field.setAccessible(true);
-            }
             field.setAccessible(true);
             return (List<Tuple>) field.get(rs);
         } catch (IllegalAccessException | NoSuchFieldException e) {

@@ -7310,6 +7310,54 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTableReaderRemainsUsableAfterClosingAllButNLatestOpenPartitions() throws Exception {
+        maxOpenPartitions = 2;
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (" +
+                    "select" +
+                    " rnd_symbol('foo','bar') s," +
+                    " timestamp_sequence(0, 10000000000) ts" +
+                    " from long_sequence(50)" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // we need have more partitions than maxOpenPartitions for this test
+            assertSql(
+                    "select count_distinct(timestamp_floor('d', ts)) from x",
+                    "count_distinct\n" +
+                            "6\n"
+            );
+
+            for (int i = 0; i < 10; i++) {
+                printSqlResult(
+                        "ts\ts\tcount\n" +
+                                "1970-01-01T00:00:00.000000Z\tfoo\t4\n" +
+                                "1970-01-01T00:00:00.000000Z\tbar\t5\n" +
+                                "1970-01-02T00:00:00.000000Z\tfoo\t6\n" +
+                                "1970-01-02T00:00:00.000000Z\tbar\t3\n" +
+                                "1970-01-03T00:00:00.000000Z\tbar\t5\n" +
+                                "1970-01-03T00:00:00.000000Z\tfoo\t3\n" +
+                                "1970-01-04T00:00:00.000000Z\tfoo\t5\n" +
+                                "1970-01-04T00:00:00.000000Z\tbar\t4\n" +
+                                "1970-01-05T00:00:00.000000Z\tbar\t5\n" +
+                                "1970-01-05T00:00:00.000000Z\tfoo\t4\n" +
+                                "1970-01-06T00:00:00.000000Z\tbar\t3\n" +
+                                "1970-01-06T00:00:00.000000Z\tfoo\t3\n",
+                        "select ts, s, count() from x sample by 1d",
+                        "ts",
+                        false,
+                        false
+                );
+                // verify that the reader doesn't keep all partitions open once it's returned back to the pool
+                try (TableReader reader = engine.getReader(securityContext, engine.getTableToken("x"))) {
+                    Assert.assertEquals(6, reader.getPartitionCount());
+                    Assert.assertEquals(maxOpenPartitions, reader.getOpenPartitionCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimestampCrossReference() throws Exception {
         compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
         compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);

@@ -28,13 +28,15 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.wal.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
@@ -964,20 +966,36 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     public void testQueryNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+
+            compile("create table temp as (" +
                     "select " +
                     " cast(case when x % 2 = 0 then null else 'abc' end as symbol) sym, " +
+                    " x," +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(5)" +
-                    "), index(sym) timestamp(ts) partition by DAY WAL");
+                    ")");
+
+            compile("create table " + tableName + " as (" +
+                    "select * from temp), index(sym) timestamp(ts) partition by DAY WAL");
+
 
             drainWalQueue();
 
+            String allRows = "sym\tx\tts\n" +
+                    "abc\t1\t2022-02-24T00:00:00.000000Z\n" +
+                    "\t2\t2022-02-24T00:00:01.000000Z\n" +
+                    "abc\t3\t2022-02-24T00:00:02.000000Z\n" +
+                    "\t4\t2022-02-24T00:00:03.000000Z\n" +
+                    "abc\t5\t2022-02-24T00:00:04.000000Z\n";
+
+            assertSql("temp", allRows);
+            assertSql(tableName, allRows);
+
             assertSql(
                     "select * from " + tableName + " where sym != 'abc'",
-                    "sym\tts\n" +
-                            "\t2022-02-24T00:00:01.000000Z\n" +
-                            "\t2022-02-24T00:00:03.000000Z\n"
+                    "sym\tx\tts\n" +
+                            "\t2\t2022-02-24T00:00:01.000000Z\n" +
+                            "\t4\t2022-02-24T00:00:03.000000Z\n"
             );
         });
     }
@@ -1056,8 +1074,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
             compile("rename table " + tableName + " to " + newTableName);
 
-            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
+            TableToken newTableDirectoryName = engine.getTableToken(newTableName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
 
@@ -1216,6 +1234,61 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSavedDataInTxnFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "str string," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            // In order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
+
+            // Out of order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
+
+            // In order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+
+
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            runApplyOnce();
+
+            TableToken token = engine.getTableToken(tableName);
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(1, txReader.getLagTxnCount());
+                Assert.assertEquals(1, txReader.getLagRowCount());
+                Assert.assertTrue(txReader.isLagOrdered());
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
+
+                runApplyOnce();
+
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(2, txReader.getLagTxnCount());
+                Assert.assertEquals(2, txReader.getLagRowCount());
+                Assert.assertFalse(txReader.isLagOrdered());
+                Assert.assertEquals("2022-02-24T00:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
+            }
+        });
+    }
+
+    private void runApplyOnce() {
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.run(0);
+        }
+    }
+
+    @Test
     public void testVarSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -1249,7 +1322,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenApplyJobTerminatesEarlierLagFlushed() throws Exception {
+    public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();
         Job.RunStatus runStatus = isTerminating::get;
 
@@ -1286,13 +1359,14 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 walApplyJob.run(0, runStatus);
 
-                assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                        "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
-                        "1\tAB\t2022-02-24T02:00:00.000000Z\tEF\n");
+                engine.releaseInactive();
 
                 isTerminating.set(false);
-                while (walApplyJob.run(0, runStatus)) {
-                }
+
+                while (walApplyJob.run(0, runStatus)) ;
+
+                engine.releaseInactive();
+
                 assertSql(tableName, "x\tsym\tts\tsym2\n" +
                         "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
                         "102\tdfd\t2022-02-24T01:02:00.000000Z\tasd\n" +

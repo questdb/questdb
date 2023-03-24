@@ -47,7 +47,6 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private long o3MinLag = -1;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
@@ -60,9 +59,11 @@ public class Overrides implements ConfigurationOverrides {
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private boolean mangleTableDirNames = true;
     private int maxFileNameLength = -1;
+    private int maxOpenPartitions = -1;
     private int maxUncommittedRows = -1;
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
+    private long o3MinLag = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
@@ -71,6 +72,7 @@ public class Overrides implements ConfigurationOverrides {
     private int parallelImportStatusLogKeepNDays = -1;
     private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
+    private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
@@ -82,6 +84,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
     private int tableRegistryCompactionThreshold;
+    private long walApplyTableTimeQuote = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private int walTxnNotificationQueueCapacity = -1;
@@ -166,6 +169,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return maxOpenPartitions;
+    }
+
+    @Override
     public String getInputRoot() {
         return inputRoot;
     }
@@ -236,6 +244,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return repeatMigrationsFromVersion;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return rndFunctionMemoryMaxPages;
     }
@@ -293,6 +306,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
+    }
+
+    @Override
+    public long getWalApplyTableTimeQuote() {
+        return walApplyTableTimeQuote;
     }
 
     @Override
@@ -403,6 +421,9 @@ public class Overrides implements ConfigurationOverrides {
         mangleTableDirNames = true;
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
+        maxOpenPartitions = -1;
+        walApplyTableTimeQuote = -1;
+        repeatMigrationsFromVersion = -1;
     }
 
     @Override
@@ -488,6 +509,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setHideTelemetryTable(boolean hideTelemetryTable) {
         this.hideTelemetryTable = hideTelemetryTable;
+    }
+
+    @Override
+    public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
+        this.maxOpenPartitions = maxOpenPartitions;
     }
 
     @Override
@@ -586,6 +612,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setRepeatMigrationsFromVersion(int value) {
+        repeatMigrationsFromVersion = value;
+    }
+
+    @Override
     public void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
         this.rndFunctionMemoryMaxPages = rndFunctionMemoryMaxPages;
     }
@@ -638,6 +669,10 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         this.testMicrosClock = testMicrosClock;
+    }
+
+    public void setWalApplyTableTimeQuote(long walApplyTableTimeQuote) {
+        this.walApplyTableTimeQuote = walApplyTableTimeQuote;
     }
 
     @Override

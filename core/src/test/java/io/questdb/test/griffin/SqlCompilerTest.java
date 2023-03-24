@@ -3824,6 +3824,136 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertNullSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            compile("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+
+            assertSql("symbolic_index_other", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
+            assertSql("symbolic_index_other WHERE s = NULL", "s\n");
+            assertSql("symbolic_index_other WHERE s IS NULL", "s\n");
+            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n");
+            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE NULL = s", "s\n");
+            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n");
+            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+
+            executeInsert("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
+            assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
+            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
+            assertSql("symbolic_index_other WHERE s = NULL", "s\n\n");
+            assertSql("symbolic_index_other WHERE s IS NULL", "s\n\n");
+            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE NULL = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+        });
+    }
+
+    @Test
+    public void testInsertNullSymbolWithIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+
+            assertSql("symbolic_index", "s\n123456\n1\n\n\n");
+            assertSql("symbolic_index WHERE s = ''", "s\n\n");
+            assertSql("symbolic_index WHERE s = NULL", "s\n\n");
+            assertSql("symbolic_index WHERE s IS NULL", "s\n\n");
+            assertSql("symbolic_index WHERE s != ''", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE s != NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE s IS NOT NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE '' = s", "s\n\n");
+            assertSql("symbolic_index WHERE NULL = s", "s\n\n");
+            assertSql("symbolic_index WHERE '' != s", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE NULL != s", "s\n123456\n1\n\n");
+        });
+    }
+
+    @Test
+    public void testInsertNullSymbolWithIndexFromAnotherTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            compile("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+
+            assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
+            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
+            assertSql("symbolic_index_other WHERE s = NULL", "s\n\n");
+            assertSql("symbolic_index_other WHERE s IS NULL", "s\n\n");
+            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE NULL = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+        });
+    }
+
+    @Test
+    public void testInsertNullSymbolWithoutIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+
+            assertSql("symbolic_index", "s\n123456\n1\n\n\n");
+            assertSql("symbolic_index WHERE s = ''", "s\n\n");
+            assertSql("symbolic_index WHERE s = NULL", "s\n\n");
+            assertSql("symbolic_index WHERE s IS NULL", "s\n\n");
+            assertSql("symbolic_index WHERE s != ''", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE s != NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE s IS NOT NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE '' = s", "s\n\n");
+            assertSql("symbolic_index WHERE NULL = s", "s\n\n");
+            assertSql("symbolic_index WHERE '' != s", "s\n123456\n1\n\n");
+            assertSql("symbolic_index WHERE NULL != s", "s\n123456\n1\n\n");
+        });
+    }
+
+    @Test
+    public void testInsertNullSymbolWithoutIndexFromAnotherTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            executeInsert("INSERT INTO symbolic_index VALUES ('123456')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('1')");
+            executeInsert("INSERT INTO symbolic_index VALUES ('')"); // not null
+            executeInsert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            compile("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+
+            assertSql("symbolic_index_other", "s\n123456\n1\n\n\n");
+            assertSql("symbolic_index_other WHERE s = ''", "s\n\n");
+            assertSql("symbolic_index_other WHERE s = NULL", "s\n\n");
+            assertSql("symbolic_index_other WHERE s IS NULL", "s\n\n");
+            assertSql("symbolic_index_other WHERE s != ''", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s != NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE s IS NOT NULL", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE '' = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE NULL = s", "s\n\n");
+            assertSql("symbolic_index_other WHERE '' != s", "s\n123456\n1\n\n");
+            assertSql("symbolic_index_other WHERE NULL != s", "s\n123456\n1\n\n");
+        });
+    }
+
+    @Test
     public void testInsertTimestampAsStr() throws Exception {
         final String expected = "ts\n" +
                 "2020-01-10T15:00:01.000143Z\n" +

@@ -39,6 +39,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.cairo.TableReaderTest.assertOpenPartitionCount;
+
+
 public class TableReaderReloadTest extends AbstractCairoTest {
 
     @Test
@@ -155,18 +158,23 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);
+                assertOpenPartitionCount(reader);
+
                 writer.truncate();
                 Assert.assertTrue(reader.reload());
+                assertOpenPartitionCount(reader);
                 cursor = reader.getCursor();
                 Assert.assertFalse(cursor.hasNext());
 
                 rnd.reset();
                 populateTable(rnd, buffer, timestamp, increment, writer);
                 Assert.assertTrue(reader.reload());
+                assertOpenPartitionCount(reader);
 
                 rnd.reset();
                 cursor = reader.getCursor();
                 assertTable(rnd, buffer, cursor, record);
+                assertOpenPartitionCount(reader);
             }
         }
     }
@@ -198,6 +206,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);
+                assertOpenPartitionCount(reader);
 
                 writer.truncate();
 
@@ -205,11 +214,13 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 rnd.reset(123, 123);
                 populateTable(rnd, buffer, timestamp, increment / 2, writer);
                 Assert.assertTrue(reader.reload());
+                assertOpenPartitionCount(reader);
 
                 // Assert the data is what was written the second time
                 rnd.reset(123, 123);
                 cursor = reader.getCursor();
                 assertTable(rnd, buffer, cursor, record);
+                assertOpenPartitionCount(reader);
             }
         }
     }

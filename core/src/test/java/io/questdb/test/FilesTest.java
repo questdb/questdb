@@ -685,6 +685,19 @@ public class FilesTest {
 
                     long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);
+
+                    // Copy with destination offset
+                    Files.close(fd2);
+                    Files.remove(path2);
+                    fd2 = Files.openRW(path2.$());
+
+                    // Check copy call works
+                    long destOffset = 1057;
+                    copiedLen = Files.copyDataToOffset(fd1, fd2, offset, destOffset, fileSize - offset);
+                    Assert.assertEquals(fileSize - offset, copiedLen);
+
+                    long1 = Files.readNonNegativeLong(fd2, destOffset + fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
                 } finally {
                     // Release mem, fd
                     Files.close(fd1);

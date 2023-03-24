@@ -116,7 +116,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // Migrate database files.
         try {
-            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
+            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
         } catch (Throwable e) {
             close();
             throw e;

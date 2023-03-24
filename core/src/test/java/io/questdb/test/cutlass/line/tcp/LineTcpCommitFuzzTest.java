@@ -30,6 +30,7 @@ import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
@@ -98,6 +99,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         runTest();
     }
 
+    @Ignore("TableWriter.getSeqTxn() has been removed")
     @Test
     public void testCommitIntervalBasedFractionConstantLowRate() throws Exception {
 
