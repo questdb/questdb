@@ -1405,6 +1405,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
 
         try {
+            final long maxLagRows = getMaxWalSquashRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
             mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
             txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
@@ -1424,7 +1425,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
-                if (copyToLagOnly && totalUncommitted <= getMaxWalSquashRows()) {
+                if (copyToLagOnly && totalUncommitted <= maxLagRows) {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
 
                     // Don't commit anything, move everything to memory instead.
@@ -1485,7 +1486,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copiedToMemory = false;
                 }
 
-                if (commitToTimestamp < txWriter.getLagMaxTimestamp()) {
+                if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
                     final long lagThresholdRow = 1 +
                             Vect.boundedBinarySearchIndexT(
                                     timestampAddr,
@@ -1494,11 +1495,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     o3Hi - 1,
                                     BinarySearch.SCAN_DOWN
                             );
-                    walLagRowCount = Math.min(o3Hi - o3Lo - lagThresholdRow, getMaxWalSquashRows());
-                    assert walLagRowCount >= 0 && walLagRowCount < o3Hi - o3Lo;
+
+                    final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
+                    walLagRowCount = lagTrimmedToMax ? maxLagRows : o3Hi - lagThresholdRow;
+                    assert walLagRowCount > 0 && walLagRowCount < o3Hi - o3Lo;
+
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
                     commitMinTimestamp = txWriter.getLagMinTimestamp();
+
+                    // Assert that LAG row count is calculated correctly.
+                    // If lag is not trimmed, timestamp at o3Hi must be the last point <= commitToTimestamp
+                    assert lagTrimmedToMax ||
+                            (commitMaxTimestamp <= commitToTimestamp
+                                    && commitToTimestamp < getTimestampIndexValue(timestampAddr, o3Hi))
+                            : "commit lag calculation error";
+
+                    // If lag is trimmed, timestamp at o3Hi must > commitToTimestamp
+                    assert !lagTrimmedToMax || commitMaxTimestamp > commitToTimestamp : "commit lag calculation error 2";
+
                     txWriter.setLagMinTimestamp(getTimestampIndexValue(timestampAddr, o3Hi));
 
                     LOG.debug().$("committing WAL with LAG [table=").$(tableToken)
@@ -3289,7 +3304,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long getMaxWalSquashRows() {
-        return (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows();
+        return Math.max(0L, (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows());
     }
 
     private long getO3RowCount0() {
