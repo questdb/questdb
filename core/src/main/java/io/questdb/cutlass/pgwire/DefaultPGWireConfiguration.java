@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -212,5 +214,10 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public boolean readOnlySecurityContext() {
         return false;
+    }
+
+    @Override
+    public CairoSecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
     }
 }

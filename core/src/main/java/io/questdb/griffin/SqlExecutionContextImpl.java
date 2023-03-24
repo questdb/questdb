@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -72,7 +71,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
         cairoConfiguration = cairoEngine.getConfiguration();
         clock = cairoConfiguration.getMicrosecondClock();
-        cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
+        cairoSecurityContext = cairoEngine.getConfiguration().getCairoSecurityContextFactory().getRootContext();
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();
@@ -253,7 +252,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker;
     }
 
-    public SqlExecutionContextImpl with(@NotNull CairoSecurityContext cairoSecurityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd, long requestFd, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+    public SqlExecutionContextImpl with(@NotNull CairoSecurityContext cairoSecurityContext, @Nullable BindVariableService bindVariableService) {
+        return with(cairoSecurityContext, bindVariableService, null, -1, null);
+    }
+
+    public SqlExecutionContextImpl with(
+            @NotNull CairoSecurityContext cairoSecurityContext,
+            @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd,
+            long requestFd,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;

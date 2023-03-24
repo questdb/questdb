@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -120,7 +120,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken x = createX();
             SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+                    .with(ReadOnlyCairoSecurityContext.INSTANCE, bindVariableService, null, -1, null);
             try {
                 compile("alter system lock writer x", readOnlyContext);
                 fail("write lock cannot be acquired in the read-only mode");
@@ -167,7 +167,13 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken x = createX();
             SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+                    .with(
+                            ReadOnlyCairoSecurityContext.INSTANCE,
+                            bindVariableService,
+                            null,
+                            -1,
+                            null
+                    );
             compile("alter system lock writer x", sqlExecutionContext);
             try {
                 compile("alter system unlock writer x", readOnlyContext);

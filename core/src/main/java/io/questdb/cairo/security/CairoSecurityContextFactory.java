@@ -27,7 +27,7 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoSecurityContext;
 
 public interface CairoSecurityContextFactory {
-    CairoSecurityContext getInstance(CharSequence principal);
+    CairoSecurityContext getInstance(CharSequence principal, boolean readOnlyContext);
 
     default CairoSecurityContext getRootContext() {
         return AllowAllCairoSecurityContext.INSTANCE;

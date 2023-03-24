@@ -33,7 +33,7 @@ public class AllowAllSecurityContextFactory implements CairoSecurityContextFacto
     }
 
     @Override
-    public CairoSecurityContext getInstance(CharSequence principal) {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public CairoSecurityContext getInstance(CharSequence principal, boolean readOnlyContext) {
+        return readOnlyContext ? ReadOnlyCairoSecurityContext.INSTANCE : AllowAllCairoSecurityContext.INSTANCE;
     }
 }
