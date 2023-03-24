@@ -15,7 +15,7 @@ lto = true  # Link-time optimization.
 [dependencies]
 lazy_static = "1.4.0"
 log = "0.4.17"
-jni = "0.20.0"
+jni = "0.21.0"
 dashmap = "5.4.0"
 tokio = { version = "1", features = ["full"] }
 aws-config = "0.54.1"

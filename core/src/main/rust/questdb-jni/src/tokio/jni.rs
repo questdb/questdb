@@ -29,7 +29,7 @@ use tokio::runtime::{Builder, Runtime};
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_tokio_TokioRuntime_create(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     worker_threads: jint) -> jlong {
     if worker_threads < 0 {

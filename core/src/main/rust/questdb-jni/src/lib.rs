@@ -45,7 +45,7 @@ macro_rules! unwrap_or_throw {
 /// Entry point to register the JAVA_VM static.
 /// See `Os.java` for the Java side of this.
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_initQuestdbJni(env: JNIEnv, _class: JClass) {
+pub extern "system" fn Java_io_questdb_std_Os_initQuestdbJni(mut env: JNIEnv, _class: JClass) {
     let vm = unwrap_or_throw!(env, env.get_java_vm());
     unsafe { JAVA_VM = Some(vm); }
 }

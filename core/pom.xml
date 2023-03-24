@@ -36,6 +36,12 @@
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <web.console.version>0.1.1</web.console.version>
+
+        <!--
+            To cut down on Rust build times during development run:
+                mvn ... -Dcargo.release=false
+        -->
+        <cargo.release>true</cargo.release>
     </properties>
 
     <version>7.0.2-SNAPSHOT</version>
