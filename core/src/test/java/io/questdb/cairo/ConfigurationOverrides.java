@@ -62,6 +62,8 @@ public interface ConfigurationOverrides {
 
     FilesFacade getFilesFacade();
 
+    int getInactiveReaderMaxOpenPartitions();
+
     String getInputRoot();
 
     String getInputWorkRoot();
@@ -179,6 +181,8 @@ public interface ConfigurationOverrides {
     void setFilesFacade(FilesFacade ff);
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
+
+    void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions);
 
     void setInputRoot(String inputRoot);
 

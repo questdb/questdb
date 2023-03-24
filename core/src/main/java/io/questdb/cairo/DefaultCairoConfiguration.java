@@ -274,6 +274,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return 128;
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return -10000;
     }

@@ -931,7 +931,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 expectSize,
-                sizeCanBeVariable);
+                sizeCanBeVariable
+        );
     }
 
     protected static void assertQueryExpectSize(CharSequence expected,
