@@ -103,11 +103,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCiFailure() throws Exception {
-        Assert.fail("testFailures");
-    }
-
-    @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01);
