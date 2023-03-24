@@ -692,10 +692,9 @@ public class FilesTest {
                     fd2 = Files.openRW(path2.$());
 
                     // Check copy call works
-                    offset = 3051;
                     long destOffset = 1057;
                     copiedLen = Files.copyDataToOffset(fd1, fd2, offset, destOffset, fileSize - offset);
-                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+                    Assert.assertEquals(fileSize - offset, copiedLen);
 
                     long1 = Files.readNonNegativeLong(fd2, destOffset + fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);

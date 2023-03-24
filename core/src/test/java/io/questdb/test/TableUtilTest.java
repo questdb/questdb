@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mig.Mig702;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;

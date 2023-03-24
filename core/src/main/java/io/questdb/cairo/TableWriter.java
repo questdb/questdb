@@ -842,6 +842,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void closeActivePartition(boolean truncate) {
+        LOG.debug().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
+        closeAppendMemoryTruncate(truncate);
+        freeIndexers();
+    }
+
     @Override
     public long commit() {
         return commit(defaultCommitMode);
@@ -1090,12 +1096,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public int getColumnCount() {
-        return columns.size();
-    }
-
     public long getAppliedSeqTxn() {
         return txWriter.getSeqTxn() + txWriter.getLagTxnCount();
+    }
+
+    public int getColumnCount() {
+        return columns.size();
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -1176,6 +1182,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getRowCount() {
         return txWriter.getRowCount();
+    }
+
+    public long getSeqTxn() {
+        return txWriter.getSeqTxn();
+    }
+
+    public MemoryMA getStorageColumn(int index) {
+        return columns.getQuick(index);
     }
 
     @Override
@@ -1398,7 +1412,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int walRootPathLen = walPath.length();
         long maxTimestamp = txWriter.getMaxTimestamp();
         if (maxTimestamp == Long.MIN_VALUE) {
-            if (!isLastPartitionColumnsOpen()) {
+            if (isLastPartitionClosed()) {
                 openPartition(o3TimestampMin);
                 // If data is kept in lag on empty table, mark the partition it's stored
                 // as maxTimestamp.
@@ -3231,7 +3245,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!o3InError) {
             updateO3ColumnTops();
         }
-        if (!isLastPartitionColumnsOpen() || partitionTimestampHi > partitionTimestampHiLimit) {
+        if (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit) {
             openPartition(txWriter.getMaxTimestamp());
         }
 
@@ -3403,14 +3417,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
     }
 
-    private boolean isLastPartitionColumnsOpen() {
+    private boolean isLastPartitionClosed() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0) {
-                return columns.getQuick(getPrimaryColumnIndex(i)).isOpen();
+                return !columns.getQuick(getPrimaryColumnIndex(i)).isOpen();
             }
         }
         // No columns, doesn't matter
-        return true;
+        return false;
     }
 
     private void lock() {
@@ -6711,16 +6725,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             latch.countDown();
         }
-    }
-
-    public void closeActivePartition(boolean truncate) {
-        LOG.debug().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
-        closeAppendMemoryTruncate(truncate);
-        freeIndexers();
-    }
-
-    public MemoryMA getStorageColumn(int index) {
-        return columns.getQuick(index);
     }
 
     void closeActivePartition(long size) {

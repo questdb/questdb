@@ -21,8 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-package io.questdb.griffin;
+package io.questdb.test;
 
+import io.questdb.griffin.SqlException;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -623,7 +624,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t3\t2\n" +
                         "1\t1\t3\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, false, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
     }
 
     @Test
@@ -634,7 +635,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "2\t3\t2\n" +
                         "2\t1\t3\n",
                 "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, false, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
     }
 
     @Test
@@ -643,7 +644,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100))", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100))", null, true, true);
     }
 
     @Test
@@ -652,7 +653,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by 1, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -661,7 +662,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "0\t50\n" +
                         "1\t50\n",
                 "select key, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -670,7 +671,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by key+1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -679,7 +680,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1 as z, count(*) from t group by key, 1 order by z",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -688,7 +689,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t50\n" +
                         "2\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -697,7 +698,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "2\t50\n" +
                         "1\t50\n",
                 "select key+1, count(*) from t group by key, 1 order by key+3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -706,7 +707,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t0\t0\t50\n" +
                         "2\t1\t1\t50\n",
                 "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, false, true);
+                "create table t as ( select x%2 as key, x as value from long_sequence(100)); ", null, true, true);
     }
 
     @Test
@@ -717,7 +718,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t1\t3\n" +
                         "1\t3\t2\n",
                 "select key1 as k1, key2 as k2, count(*) from t group by k2, k1, k2 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, false, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
     }
 
     @Test
@@ -940,7 +941,7 @@ public class GroupByTest extends AbstractGriffinTest {
                         "1\t1\t1\t3\n" +
                         "1\t3\t3\t2\n",
                 "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, false, true);
+                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ", null, true, true);
     }
 
     @Test
@@ -1013,5 +1014,4 @@ public class GroupByTest extends AbstractGriffinTest {
             Assert.assertEquals(errorMessage, sqle.getMessage());
         }
     }
-
 }

@@ -22,10 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.test.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -35,6 +37,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
