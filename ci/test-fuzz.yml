@@ -22,8 +22,7 @@ variables:
 stages:
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
-    dependsOn:
-      - CheckChanges
+
     jobs:
       - job: RunOn
         displayName: "on"
