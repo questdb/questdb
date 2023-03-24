@@ -257,6 +257,8 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
+    int getRepeatMigrationsFromVersion();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
@@ -416,7 +418,9 @@ public interface CairoConfiguration {
 
     int getWalApplyLookAheadTransactionCount();
 
-    int getWalCommitSquashRowLimit();
+    long getWalApplyTableTimeQuota();
+
+    double getWalSquashUncommittedRowsMultiplier();
 
     boolean getWalEnabledDefault();
 

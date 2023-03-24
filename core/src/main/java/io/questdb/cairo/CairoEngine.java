@@ -123,7 +123,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // Migrate database files.
         try {
-            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
+            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
         } catch (Throwable e) {
             close();
             throw e;
@@ -841,11 +841,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableInVolumeUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         securityContext.checkWritePermission();
 
         // only create the table after it has been registered
-        TableUtils.createTable(
+        TableUtils.createTableInVolume(
                 configuration.getFilesFacade(),
                 configuration.getRoot(),
                 configuration.getMkDirMode(),
@@ -863,11 +863,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableInVolumeUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         securityContext.checkWritePermission();
 
         // only create the table after it has been registered
-        TableUtils.createTableInVolume(
+        TableUtils.createTable(
                 configuration.getFilesFacade(),
                 configuration.getRoot(),
                 configuration.getMkDirMode(),

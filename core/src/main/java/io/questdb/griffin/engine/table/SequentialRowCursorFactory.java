@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 /**
  * Returns rows from current data frame in order of cursors list :
  * - first fetches and returns all records from first cursor
- * - then from second cursors,
+ * - then from second cursor, third, ...
  * until all cursors are exhausted .
  */
 public class SequentialRowCursorFactory implements RowCursorFactory {

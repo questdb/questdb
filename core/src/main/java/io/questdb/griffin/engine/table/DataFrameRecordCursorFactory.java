@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -36,8 +37,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final DataFrameRecordCursor cursor;
@@ -107,8 +107,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return null;
     }
 
-    public boolean hasDescendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
+    @Override
+    public int getScanDirection() {
+        switch (dataFrameCursorFactory.getOrder()) {
+            case ORDER_ASC:
+                return SCAN_DIRECTION_FORWARD;
+            case ORDER_DESC:
+                return SCAN_DIRECTION_BACKWARD;
+            default:
+                throw CairoException.critical(0).put("Unexpected factory order [order=").put(dataFrameCursorFactory.getOrder()).put("]");
+        }
     }
 
     @Override
