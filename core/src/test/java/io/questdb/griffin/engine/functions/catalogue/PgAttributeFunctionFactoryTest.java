@@ -30,6 +30,38 @@ import org.junit.Test;
 public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table y (a int, b int)", sqlExecutionContext);
+            compiler.compile("insert into y select x/4, x from long_sequence(10)", sqlExecutionContext);
+            engine.releaseAllWriters();
+
+            String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +
+                    " from y b " +
+                    "order by b.b";
+
+            assertQuery(
+                    "a\tb\n" +
+                            "0\t3\n" +
+                            "0\t2\n" +
+                            "0\t1\n" +
+                            "1\t4\n" +
+                            "1\t3\n" +
+                            "1\t2\n" +
+                            "1\t1\n" +
+                            "2\t3\n" +
+                            "2\t2\n" +
+                            "2\t1\n",
+                    query,
+                    null,
+                    true,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testKafkaMetadataQuery() throws Exception {
         String query = "\n" +
                 "SELECT\n" +
