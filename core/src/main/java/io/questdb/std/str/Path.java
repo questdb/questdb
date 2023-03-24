@@ -151,6 +151,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public void extend(int newCapacity) {
+        assert newCapacity > capacity;
+        int len = length();
+        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
+        tailPtr = headPtr + len;
+        capacity = newCapacity;
+    }
+
     @Override
     public void flush() {
         $();
@@ -326,7 +334,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public String toString() {
         if (headPtr != 0L) {
             // Don't use Misc.getThreadLocalBuilder() to convert Path to String.
-            // This leads difficulties in debugging / running tests when FilesFacade tracks open files 
+            // This leads difficulties in debugging / running tests when FilesFacade tracks open files
             // when this method called implicitly
             final StringSink b = tlBuilder.get();
             b.clear();
@@ -351,13 +359,5 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
             Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);
         }
-    }
-
-    void extend(int newCapacity) {
-        assert newCapacity > capacity;
-        int len = length();
-        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
-        tailPtr = headPtr + len;
-        capacity = newCapacity;
     }
 }

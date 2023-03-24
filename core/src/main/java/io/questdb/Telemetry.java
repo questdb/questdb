@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -101,7 +100,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
         final TableToken tableToken = engine.getTableToken(tableName);
         try {
-            writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetry");
+            writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "telemetry");
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(tableToken.getTableName())

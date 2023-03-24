@@ -48,7 +48,7 @@ public class Metrics implements Scrapable {
     private final TableWriterMetrics tableWriter;
     private final WalMetrics walMetrics;
 
-    Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
+    public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.gcMetrics = new GCMetrics();
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);

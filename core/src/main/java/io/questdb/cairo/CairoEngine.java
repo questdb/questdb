@@ -30,7 +30,6 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -142,9 +141,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         if (convertedTables != null) {
+            final CairoSecurityContext securityContext = configuration.getCairoSecurityContextFactory().getInstance(null);
             for (int i = 0, n = convertedTables.size(); i < n; i++) {
                 final TableToken token = convertedTables.get(i);
-                try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "tableTypeConversion")) {
+                try (TableWriter writer = getWriter(securityContext, token, "tableTypeConversion")) {
                     writer.commitSeqTxn(0);
                 }
             }
@@ -236,7 +236,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    public TableToken createTableInVolume(
+    public void createTableInVolume(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
@@ -252,7 +252,7 @@ public class CairoEngine implements Closeable, WriterSource {
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
         if (tableToken == null) {
             if (ifNotExists) {
-                return null;
+                return;
             }
             throw EntryUnavailableException.instance("table exists");
         }
@@ -288,7 +288,6 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             tableNameRegistry.unlockTableName(tableToken);
         }
-        return tableToken;
     }
 
     public void drop(
@@ -528,7 +527,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
 
         if (!tableToken.isWal()) {
-            return writerPool.get(tableToken, lockReason, true);
+            return writerPool.get(tableToken, lockReason);
 
         }
         return walWriterPool.get(tableToken);
@@ -584,7 +583,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         verifyTableToken(tableToken);
-        return writerPool.get(tableToken, lockReason, true);
+        return writerPool.get(tableToken, lockReason);
     }
 
     public TableWriter getWriterOrPublishCommand(
@@ -597,8 +596,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
-    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason, boolean logBusy) {
-        return writerPool.get(tableToken, lockReason, logBusy);
+    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
+        return writerPool.get(tableToken, lockReason);
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -909,7 +908,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         try {
             securityContext.checkWritePermission();
-            writerPool.get(tableToken, "repair", false).close();
+            writerPool.get(tableToken, "repair").close();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
             throw rethrow;

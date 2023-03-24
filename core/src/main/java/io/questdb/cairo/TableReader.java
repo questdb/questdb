@@ -157,6 +157,19 @@ public class TableReader implements Closeable, SymbolTableSource {
         return 2 + base + index * 2;
     }
 
+    @TestOnly
+    public int calculateOpenPartitionCount() {
+        int openPartitionCount = 0;
+        for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+            if (partitionSize > -1L) {
+                ++openPartitionCount;
+            }
+        }
+        return openPartitionCount;
+    }
+
     @Override
     public void close() {
         if (isOpen()) {
@@ -246,6 +259,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return partitionIndex << columnCountShl;
     }
 
+    public int getColumnCount() {
+        return columnCount;
+    }
+
     public long getColumnTop(int base, int columnIndex) {
         return columnTops.getQuick(base / 2 + columnIndex);
     }
@@ -301,6 +318,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return end / PARTITIONS_SLOT_SIZE;
     }
 
+    public long getPartitionRowCount(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+    }
+
     public long getPartitionTimestampByIndex(int partitionIndex) {
         return txFile.getPartitionTimestamp(partitionIndex);
     }
@@ -332,6 +353,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getTxn() {
         return txn;
+    }
+
+    public TxnScoreboard getTxnScoreboard() {
+        return txnScoreboard;
     }
 
     public long getTxnStructureVersion() {
@@ -368,6 +393,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
         }
+    }
+
+    public boolean isColumnCached(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
     public boolean isOpen() {
@@ -1351,36 +1380,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    @TestOnly
-    int calculateOpenPartitionCount() {
-        int openPartitionCount = 0;
-        for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
-            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1L) {
-                ++openPartitionCount;
-            }
-        }
-        return openPartitionCount;
-    }
-
-    int getColumnCount() {
-        return columnCount;
-    }
-
     int getPartitionIndex(int columnBase) {
         return columnBase >>> columnCountShl;
-    }
-
-    long getPartitionRowCount(int partitionIndex) {
-        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-    }
-
-    TxnScoreboard getTxnScoreboard() {
-        return txnScoreboard;
-    }
-
-    boolean isColumnCached(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 }
