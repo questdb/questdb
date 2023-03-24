@@ -127,6 +127,8 @@ public final class Files {
 
     public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
 
+    public static native long copyDataToOffset(int srcFd, int destFd, long offsetSrc, long offsetDest, long length);
+
     /**
      * close(fd) should be used instead of this method in most cases
      * unless you don't need close sys call to happen.

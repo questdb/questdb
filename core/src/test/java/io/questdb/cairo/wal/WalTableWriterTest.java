@@ -290,6 +290,9 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                     LOG.info().$("verifying wal [").$("iteration:").$(i).I$();
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
+                    engine.releaseInactive();
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
                     start += rowCount * tsIncrement + 1;
                 }
             }

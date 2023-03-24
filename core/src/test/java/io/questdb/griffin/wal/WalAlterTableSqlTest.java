@@ -353,6 +353,10 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
             engine.releaseInactive();
             drainWalQueue();
 
+            assertSql(tableName, "x\tts\ts1\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\tstr2\n");
+
             // Release TableWriter, WAL and Sequencer
             engine.releaseInactive();
 

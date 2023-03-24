@@ -175,6 +175,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return this;
     }
 
+    public void setPosition(int position) {
+        this.position = position;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(position).put("]: ").put(message);

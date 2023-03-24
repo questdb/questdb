@@ -29,6 +29,8 @@ import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
@@ -57,6 +59,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.*;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
@@ -1058,6 +1061,28 @@ public final class TestUtils {
         return insertFromSelect.toString();
     }
 
+    public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
+        path.concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
+        try (MemoryMARW txFile = Vm.getCMARWInstance(
+                ff,
+                path.$(),
+                Files.PAGE_SIZE,
+                -1,
+                MemoryTag.NATIVE_MIG_MMAP,
+                CairoConfiguration.O_NONE
+        )) {
+            long version = txFile.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+            boolean isA = (version & 1L) == 0L;
+            long baseOffset = isA ? txFile.getInt(TX_BASE_OFFSET_A_32) : txFile.getInt(TX_BASE_OFFSET_B_32);
+            long start = baseOffset + TX_OFFSET_SEQ_TXN_64 + 8;
+            long lim = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32;
+            for (long i = start; i < lim; i++) {
+                txFile.putByte(i, rnd.nextByte());
+            }
+            txFile.close(false);
+        }
+    }
+
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
         printColumn(r, m, i, sink, false);
     }
@@ -1283,7 +1308,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getDate(i), lr.getDate(i));
                         break;
                     case ColumnType.TIMESTAMP:
-                        Assert.assertEquals(rr.getTimestamp(i), lr.getTimestamp(i));
+                        if (rr.getTimestamp(i) != lr.getTimestamp(i)) {
+                            Assert.assertEquals(Timestamps.toString(rr.getTimestamp(i)), Timestamps.toString(lr.getTimestamp(i)));
+                        }
                         break;
                     case ColumnType.DOUBLE:
                         Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
