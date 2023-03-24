@@ -1143,15 +1143,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
 
+    public long getPartitionO3SplitThreshold() {
+        return configuration.getPartitionO3SplitThreshold();
+    }
+
     public long getPartitionSize(int partitionIndex) {
         if (partitionIndex == txWriter.getPartitionCount() - 1 || !PartitionBy.isPartitioned(partitionBy)) {
             return txWriter.getTransientRowCount();
         }
         return txWriter.getPartitionSize(partitionIndex);
-    }
-
-    public long getPartitionO3SplitThreshold() {
-        return configuration.getPartitionO3SplitThreshold();
     }
 
     public long getPartitionTimestamp(int partitionIndex) {
@@ -5065,7 +5065,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcDataMax,
                                 srcNameTxn,
                                 o3Basket,
-                                columnTopPartitionSinkAddr + Long.BYTES
+                                columnTopPartitionSinkAddr
                         );
                     }
                 } catch (CairoException | CairoError e) {

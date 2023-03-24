@@ -48,6 +48,7 @@ public class O3OpenColumnTask {
     private int mergeType;
     private long newPartitionSize;
     private long oldPartitionSize;
+    private long oldPartitionTimestamp;
     private long oooTimestampLo;
     private int openColumnMode;
     private AtomicInteger partCounter;
@@ -143,6 +144,10 @@ public class O3OpenColumnTask {
 
     public long getOldPartitionSize() {
         return oldPartitionSize;
+    }
+
+    public long getOldPartitionTimestamp() {
+        return oldPartitionTimestamp;
     }
 
     public long getOooTimestampLo() {
@@ -274,7 +279,8 @@ public class O3OpenColumnTask {
             long timestampMin,
             long timestampMax,
             long oooTimestampLo,
-            long oooTimestampHi,
+            long partitionTimestamp,
+            long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
@@ -320,7 +326,8 @@ public class O3OpenColumnTask {
         this.timestampMin = timestampMin;
         this.timestampMax = timestampMax;
         this.oooTimestampLo = oooTimestampLo;
-        this.partitionTimestamp = oooTimestampHi;
+        this.partitionTimestamp = partitionTimestamp;
+        this.oldPartitionTimestamp = oldPartitionTimestamp;
         this.srcDataTop = srcDataTop;
         this.srcDataMax = srcDataMax;
         this.srcDataTxn = srcDataTxn;

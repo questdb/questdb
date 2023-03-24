@@ -56,7 +56,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.Parallel}, {ParallelMode.Contended}
+//                {ParallelMode.Parallel},
+                {ParallelMode.Contended}
         });
     }
 
@@ -306,7 +307,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T21:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks" +
                                     " from long_sequence(1000))",

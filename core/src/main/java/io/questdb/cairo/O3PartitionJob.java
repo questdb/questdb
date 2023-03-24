@@ -88,6 +88,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long dataTimestampLo;
         long dataTimestampHi;
         final FilesFacade ff = tableWriter.getFilesFacade();
+        long oldPartitionTimestamp;
 
         if (srcDataMax < 1) {
 
@@ -113,6 +114,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             final long newPartitionSize = srcOooHi - srcOooLo + 1;
+            Unsafe.getUnsafe().putLong(colTopSinkAddr, partitionTimestamp);
             publishOpenColumnTasks(
                     txn,
                     columns,
@@ -124,6 +126,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3TimestampMin,
                     o3TimestampMax,
                     o3TimestampLo,
+                    partitionTimestamp,
                     partitionTimestamp,
                     // below parameters are unused by this type of append
                     0,
@@ -150,7 +153,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     columnCounter,
                     o3Basket,
-                    colTopSinkAddr
+                    colTopSinkAddr + Long.BYTES
             );
         } else {
             long srcTimestampAddr = 0;
@@ -486,6 +489,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 newPartitionSize = partitionSize;
                 oldPartitionSize = partitionSize;
+                oldPartitionTimestamp = partitionTimestamp;
 
                 if (prefixType == O3_BLOCK_DATA && prefixHi > tableWriter.getPartitionO3SplitThreshold()) {
                     // large prefix copy, better to split the partition
@@ -512,6 +516,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // When partition is new, the data timestamp is MIN_LONG
             final long timestampMax = Math.max(o3TimestampMax, dataTimestampHi);
 
+            Unsafe.getUnsafe().putLong(colTopSinkAddr, partitionTimestamp);
             publishOpenColumnTasks(
                     txn,
                     columns,
@@ -524,6 +529,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMax, // <-- this is max of OOO and data chunk
                     o3TimestampLo,
                     partitionTimestamp,
+                    oldPartitionTimestamp,
                     prefixType,
                     prefixLo,
                     prefixHi,
@@ -548,7 +554,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     columnCounter,
                     o3Basket,
-                    colTopSinkAddr
+                    colTopSinkAddr + Long.BYTES
             );
         }
     }
@@ -654,6 +660,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long oooTimestampMax,
             long oooTimestampLo,
             long partitionTimestamp,
+            long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
@@ -707,6 +714,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     oooTimestampMax,
                     oooTimestampLo,
                     partitionTimestamp,
+                    oldPartitionTimestamp,
                     srcDataTop,
                     srcDataMax,
                     srcDataTxn,
@@ -755,6 +763,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     oooTimestampMax,
                     oooTimestampLo,
                     partitionTimestamp,
+                    oldPartitionTimestamp,
                     srcDataTop,
                     srcDataMax,
                     srcDataTxn,
@@ -806,6 +815,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long oooTimestampMax,
             long oooTimestampLo,
             long partitionTimestamp,
+            long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
@@ -854,6 +864,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oooTimestampMax,
                 oooTimestampLo,
                 partitionTimestamp,
+                oldPartitionTimestamp,
                 srcDataTop,
                 srcDataMax,
                 srcDataTxn,
@@ -898,6 +909,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long oooTimestampMax,
             long oooTimestampLo,
             long partitionTimestamp,
+            long oldPartitionTimestamp,
             int prefixType,
             long prefixLo,
             long prefixHi,
@@ -1032,6 +1044,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 oooTimestampMax,
                                 oooTimestampLo,
                                 partitionTimestamp,
+                                oldPartitionTimestamp,
                                 srcDataTop,
                                 srcDataMax,
                                 srcDataTxn,
@@ -1081,6 +1094,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 oooTimestampMax,
                                 oooTimestampLo,
                                 partitionTimestamp,
+                                oldPartitionTimestamp,
                                 srcDataTop,
                                 srcDataMax,
                                 srcDataTxn,

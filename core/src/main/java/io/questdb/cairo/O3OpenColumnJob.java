@@ -193,6 +193,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long timestampMax = task.getTimestampMax();
         final long oooTimestampLo = task.getOooTimestampLo();
         final long partitionTimestamp = task.getPartitionTimestamp();
+        final long oldPartitionTimestamp = task.getOldPartitionTimestamp();
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataTxn = task.getSrcDataTxn();
         final int srcTimestampFd = task.getSrcTimestampFd();
@@ -248,6 +249,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 timestampMax,
                 oooTimestampLo,
                 partitionTimestamp,
+                oldPartitionTimestamp,
                 srcDataTop,
                 srcDataMax,
                 srcDataTxn,
@@ -297,6 +299,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMax,
             long oooTimestampLo,
             long partitionTimestamp,
+            long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
@@ -349,6 +352,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         timestampMin,
                         timestampMax,
                         partitionTimestamp,
+                        oldPartitionTimestamp,
                         srcDataTop,
                         srcDataMax,
                         indexBlockCapacity,
@@ -408,6 +412,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         indexWriter,
                         colTopSinkAddr,
                         partitionTimestamp,
+                        oldPartitionTimestamp,
                         columnIndex,
                         columnNameTxn
                 );
@@ -646,6 +651,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
+            long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             int indexBlockCapacity,
@@ -665,7 +671,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
         if (srcDataTop == -1) {
             try {
-                srcDataTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, srcDataMax);
+                srcDataTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax);
                 if (srcDataTop == srcDataMax) {
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
                 }
@@ -1311,10 +1317,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Do all of this beyond existing written data, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since
                     // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    if (prefixType == O3_BLOCK_NONE) {
-                        // This is partition split, prefix will not be copied anyway.
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
-                    }
                     srcDataFixOffset = srcDataActualBytes;
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
@@ -1327,9 +1329,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // of moving data
                     if (prefixType == O3_BLOCK_NONE) {
                         // Split partition.
-                        assert false; // todo: solve this
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, prefixHi + 1);
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop - prefixHi - 1);
+                        srcDataTop -= prefixHi + 1;
                     } else {
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     }
@@ -1660,6 +1661,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
             long partitionTimestamp,
+            long oldPartitionTimestamp,
             int columnIndex,
             long columnNameTxn
     ) {
@@ -1667,7 +1669,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         // not set, we need to check file existence and read
         if (srcDataTop == -1) {
             try {
-                srcDataTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, srcDataMax);
+                srcDataTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax);
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 1 [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
@@ -1917,10 +1919,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // It is also fine in case when last partition contains WAL LAG, since
                     // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
 
-                    if (prefixType == O3_BLOCK_NONE) {
-                        // This is partition split, prefix will not be copied anyway.
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
-                    }
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -1979,9 +1977,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // of moving data
                     if (prefixType == O3_BLOCK_NONE) {
                         // Split partition.
-                        assert false; // todo: solve this
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, prefixHi + 1);
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop - prefixHi - 1);
+                        srcDataTop -= prefixHi + 1;
                     } else {
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     }
@@ -2013,6 +2010,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
             if (prefixType == O3_BLOCK_NONE) {
+                // split partition
                 dstFixSize -= (prefixHi + 1) * Long.BYTES;
             }
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
@@ -2028,6 +2026,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
 
             if (prefixType == O3_BLOCK_NONE) {
+                // split partition
                 dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr);
             }
 
