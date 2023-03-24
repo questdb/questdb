@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-package io.questdb.cairo;
+package io.questdb.test;
 
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.std.MemoryTag;

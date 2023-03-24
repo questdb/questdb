@@ -157,6 +157,19 @@ public class TableReader implements Closeable, SymbolTableSource {
         return 2 + base + index * 2;
     }
 
+    @TestOnly
+    public int calculateOpenPartitionCount() {
+        int openPartitionCount = 0;
+        for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+            if (partitionSize > -1L) {
+                ++openPartitionCount;
+            }
+        }
+        return openPartitionCount;
+    }
+
     @Override
     public void close() {
         if (isOpen()) {
@@ -1365,19 +1378,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
             }
         }
-    }
-
-    @TestOnly
-    int calculateOpenPartitionCount() {
-        int openPartitionCount = 0;
-        for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
-            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1L) {
-                ++openPartitionCount;
-            }
-        }
-        return openPartitionCount;
     }
 
     int getPartitionIndex(int columnBase) {

@@ -40,7 +40,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.TableReaderTest.assertOpenPartitionCount;
+import static io.questdb.test.cairo.TableReaderTest.assertOpenPartitionCount;
 import static org.junit.Assert.assertEquals;
 
 public class TableReaderReloadFuzzTest extends AbstractGriffinTest {

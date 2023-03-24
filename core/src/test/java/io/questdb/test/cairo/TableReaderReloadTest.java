@@ -39,7 +39,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.TableReaderTest.assertOpenPartitionCount;
+import static io.questdb.test.cairo.TableReaderTest.assertOpenPartitionCount;
+
 
 public class TableReaderReloadTest extends AbstractCairoTest {
 

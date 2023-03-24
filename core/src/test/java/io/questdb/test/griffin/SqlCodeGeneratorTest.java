@@ -7345,16 +7345,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                 "1970-01-06T00:00:00.000000Z\tfoo\t3\n",
                         "select ts, s, count() from x sample by 1d",
                         "ts",
-                        null,
-                        null,
                         false,
-                        true,
-                        false,
-                        false,
-                        null
+                        false
                 );
                 // verify that the reader doesn't keep all partitions open once it's returned back to the pool
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("x"))) {
+                try (TableReader reader = engine.getReader(securityContext, engine.getTableToken("x"))) {
                     Assert.assertEquals(6, reader.getPartitionCount());
                     Assert.assertEquals(maxOpenPartitions, reader.getOpenPartitionCount());
                 }

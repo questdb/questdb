@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;

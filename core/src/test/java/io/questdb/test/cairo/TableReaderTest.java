@@ -2447,7 +2447,7 @@ public class TableReaderTest extends AbstractCairoTest {
         maxOpenPartitions = openPartitionsLimit;
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp()) {
-            CairoTestUtils.create(model);
+            TestUtils.create(model, engine);
         }
 
         try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {

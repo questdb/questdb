@@ -340,10 +340,6 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setO3MinLag(minLag);
     }
 
-    protected static void configOverrideO3MinLag(long minLag) {
-        node1.getConfigurationOverrides().setO3MinLag(minLag);
-    }
-
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
