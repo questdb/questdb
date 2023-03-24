@@ -77,6 +77,11 @@ class SqlOptimiser {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final ObjList<Function> functionsInFlight = new ObjList<>();
+    //list of group-by-model-level expressions with prefixes
+    //we've to use it because group by is likely to contain rewritten/aliased expressions that make matching input expressions by pure AST unreliable
+    private final ObjList<CharSequence> groupByAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> groupByNodes = new ObjList<>();
+    private final BoolList groupByUsed = new BoolList();
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
@@ -123,6 +128,26 @@ class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+    }
+
+    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return groupByAlises.getQuick(i);
+            }
+        }
+        return null;
+    }
+
+    public int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
@@ -324,6 +349,68 @@ class SqlOptimiser {
             jm.setContext(context);
         } else {
             jm.setContext(mergeContexts(parent, other, context));
+        }
+    }
+
+    //add table prefix to all column references to make it easier to compare expressions  
+    private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel) throws SqlException {
+        this.sqlNodeStack.clear();
+
+        ExpressionNode temp = replaceIfUnaliasedLiteral(node, baseModel);
+        if (temp != node) {
+            node.of(LITERAL, temp.token, node.precedence, node.position);
+            return;
+        }
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!this.sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        temp = replaceIfUnaliasedLiteral(node.rhs, baseModel);
+                        if (node.rhs == temp) {
+                            this.sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = temp;
+                        }
+                    }
+
+                    if (node.lhs != null) {
+                        temp = replaceIfUnaliasedLiteral(node.lhs, baseModel);
+                        if (temp == node.lhs) {
+                            node = node.lhs;
+                        } else {
+                            node.lhs = temp;
+                            node = null;
+                        }
+                    } else {
+                        node = null;
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        temp = replaceIfUnaliasedLiteral(e, baseModel);
+                        if (e == temp) {
+                            this.sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, temp);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    temp = replaceIfUnaliasedLiteral(e, baseModel);
+                    if (e == temp) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, temp);
+                        node = null;
+                    }
+                }
+            } else {
+                node = this.sqlNodeStack.poll();
+            }
         }
     }
 
@@ -793,6 +880,23 @@ class SqlOptimiser {
         return false;
     }
 
+    private void checkIsNotAggregateOrWindowFunction(ExpressionNode node, QueryModel model) throws SqlException {
+        if (node.type == FUNCTION) {
+            if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                throw SqlException.$(node.position, "aggregate functions are not allowed in GROUP BY");
+            }
+            if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isWindow(node.token)) {
+                throw SqlException.$(node.position, "window functions are not allowed in GROUP BY");
+            }
+        }
+        if (node.type == LITERAL) {
+            QueryColumn column = model.getAliasToColumnMap().get(node.token);
+            if (column != null) {
+                checkForAggregates(column.getAst());
+            }
+        }
+    }
+
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
         final ExpressionNode alias = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         if (parent.addModelAliasIndex(alias, modelIndex)) {
@@ -857,6 +961,50 @@ class SqlOptimiser {
         return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getAliasToColumnMap());
     }
 
+    //use only if input is a column literal !
+    private QueryColumn createGroupByColumn(
+            CharSequence columnName,
+            ExpressionNode columnAst,
+            QueryModel validatingModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel analyticModel,
+            QueryModel groupByModel
+    ) throws SqlException {
+        // add duplicate column names only to group-by model
+        // taking into account that column is pre-aliased, e.g.
+        // "col, col" will look like "col, col col1"
+
+        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
+        int index = translatingAliasMap.keyIndex(columnAst.token);
+        if (index < 0) {
+            // column is already being referenced by translating model
+            final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
+            final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
+            innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
+            groupByModel.addBottomUpColumn(translatedColumn);
+            return translatedColumn;
+        } else {
+            final CharSequence alias = createColumnAlias(columnName, translatingModel);
+            addColumnToTranslatingModel(
+                    queryColumnPool.next().of(
+                            alias,
+                            columnAst
+                    ),
+                    translatingModel,
+                    validatingModel
+            );
+
+            final QueryColumn translatedColumn = nextColumn(alias);
+            // create column that references inner alias we just created
+            innerModel.addBottomUpColumn(translatedColumn);
+            analyticModel.addBottomUpColumn(translatedColumn);
+            groupByModel.addBottomUpColumn(translatedColumn);
+            return translatedColumn;
+        }
+    }
+
     /**
      * Creates dependencies via implied columns, typically timestamp.
      * Dependencies like that are not explicitly expressed in SQL query and
@@ -916,6 +1064,23 @@ class SqlOptimiser {
         if (union != null) {
             createOrderHash(union);
         }
+    }
+
+    //add existing group by column to outer & distinct models
+    private boolean createSelectColumn(
+            CharSequence alias,
+            CharSequence columnName,
+            QueryModel groupByModel,
+            QueryModel outerModel,
+            QueryModel distinctModel
+    ) throws SqlException {
+        QueryColumn groupByColumn = groupByModel.getAliasToColumnMap().get(columnName);
+        QueryColumn outerColumn = nextColumn(alias, groupByColumn.getAlias());
+        outerColumn = ensureAliasUniqueness(outerModel, outerColumn);
+        outerModel.addBottomUpColumn(outerColumn);
+        distinctModel.addBottomUpColumn(outerColumn);
+
+        return Chars.equalsIgnoreCase(groupByColumn.getAlias(), outerColumn.getAlias());
     }
 
     private void createSelectColumn(
@@ -1292,7 +1457,9 @@ class SqlOptimiser {
             // add column to both models
             addColumnToTranslatingModel(column, translatingModel, validatingModel);
             if (innerModel != null) {
-                innerModel.addBottomUpColumn(column);
+                ExpressionNode innerToken = expressionNodePool.next().of(LITERAL, alias, node.precedence, node.position);
+                QueryColumn innerColumn = queryColumnPool.next().of(alias, innerToken);
+                innerModel.addBottomUpColumn(innerColumn);
             }
         } else {
             // It might be the case that we previously added the column to
@@ -1320,32 +1487,31 @@ class SqlOptimiser {
         }
     }
 
-    private boolean emitAggregates(@Transient ExpressionNode node, QueryModel model) throws SqlException {
-
-        boolean replaced = false;
+    private void emitAggregatesAndLiterals(
+            @Transient ExpressionNode node,
+            QueryModel groupByModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel validatingModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) throws SqlException {
         this.sqlNodeStack.clear();
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
         while (!this.sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-
                 if (node.rhs != null) {
-                    ExpressionNode n = replaceIfAggregate(node.rhs, model);
+                    ExpressionNode n = replaceIfAggregateOrLiteral(node.rhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
                     if (node.rhs == n) {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
-                        replaced = true;
                         node.rhs = n;
                     }
                 }
 
-                ExpressionNode n = replaceIfAggregate(node.lhs, model);
+                ExpressionNode n = replaceIfAggregateOrLiteral(node.lhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
-                    replaced = true;
                     node.lhs = n;
                     node = null;
                 }
@@ -1353,7 +1519,6 @@ class SqlOptimiser {
                 node = this.sqlNodeStack.poll();
             }
         }
-        return replaced;
     }
 
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
@@ -1378,7 +1543,6 @@ class SqlOptimiser {
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         boolean replaced = false;
         this.sqlNodeStack.clear();
 
@@ -1427,6 +1591,7 @@ class SqlOptimiser {
         return replaced;
     }
 
+    //warning: this method replaces literal with aliases (changes node)
     private void emitLiterals(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
@@ -1528,8 +1693,8 @@ class SqlOptimiser {
         }
     }
 
-    private QueryColumn ensureAliasUniqueness(QueryModel groupByModel, QueryColumn qc) {
-        CharSequence alias = createColumnAlias(qc.getAlias(), groupByModel);
+    private QueryColumn ensureAliasUniqueness(QueryModel model, QueryColumn qc) {
+        CharSequence alias = createColumnAlias(qc.getAlias(), model);
         if (alias != qc.getAlias()) {
             qc = queryColumnPool.next().of(alias, qc.getAst());
         }
@@ -1654,6 +1819,30 @@ class SqlOptimiser {
         return orderByAdvice;
     }
 
+    private QueryColumn getQueryColumn(QueryModel model, CharSequence columnName, int dot) {
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        QueryColumn column = null;
+        if (dot == -1) {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                QueryColumn qc = joinModels.getQuick(i).getAliasToColumnMap().get(columnName);
+                if (qc == null) {
+                    continue;
+                }
+                if (column != null) {
+                    return null;//more than one column match 
+                }
+                column = qc;
+            }
+        } else {
+            int index = model.getModelAliasIndex(columnName, 0, dot);
+            if (index == -1) {
+                return null;
+            }
+            return joinModels.getQuick(index).getAliasToColumnMap().get(columnName, dot + 1, columnName.length());
+        }
+        return column;
+    }
+
     private boolean hasAggregates(ExpressionNode node) {
 
         this.sqlNodeStack.clear();
@@ -1745,11 +1934,15 @@ class SqlOptimiser {
         }
     }
 
-    private boolean isSimpleIntegerColumn(ExpressionNode n, QueryModel model) {
-        if (n.type != LITERAL) {
+    private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
+        if (column.type != LITERAL) {
             return false;
         }
-        QueryColumn qc = model.getAliasToColumnMap().get(n.token);
+
+        CharSequence tok = column.token;
+        final int dot = Chars.indexOf(tok, '.');
+        QueryColumn qc = getQueryColumn(model, tok, dot);
+
         return qc != null &&
                 (qc.getColumnType() == ColumnType.BYTE ||
                         qc.getColumnType() == ColumnType.SHORT ||
@@ -2441,11 +2634,11 @@ class SqlOptimiser {
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model);
         final IntList orderByDirectionAdvice = model.getOrderByDirection();
-        final ObjList<QueryModel> jm = model.getJoinModels();//order by should not copy through group by 
+        final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                if (model.getGroupBy().size() == 0) {
+                if (model.getGroupBy().size() == 0) {//order by should not copy through group by
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -2779,14 +2972,32 @@ class SqlOptimiser {
         assert root != -1;
     }
 
-    private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) throws SqlException {
-        if (node != null && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-            QueryColumn c = model.findBottomUpColumnByAst(node);
-            if (c == null) {
-                c = queryColumnPool.next().of(createColumnAlias(node, model), node);
-                model.addBottomUpColumn(c);
+    private ExpressionNode replaceIfAggregateOrLiteral(
+            @Transient ExpressionNode node,
+            QueryModel groupByModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel validatingModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) throws SqlException {
+        if (node != null &&
+                ((node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) || node.type == LITERAL)) {
+            CharSequence alias = findColumnByAst(groupByNodes, groupByAliases, node);
+            if (alias == null) {
+                QueryColumn qc = queryColumnPool.next().of(createColumnAlias(node, groupByModel), node);
+                groupByModel.addBottomUpColumn(qc);
+                alias = qc.getAlias();
+
+                groupByNodes.add(deepClone(expressionNodePool, node));
+                groupByAliases.add(alias);
+
+                if (node.type == LITERAL) {
+                    doReplaceLiteral(node, translatingModel, innerModel, validatingModel, false);
+                }
             }
-            return nextLiteral(c.getAlias());
+
+            return nextLiteral(alias);
         }
         return node;
     }
@@ -2812,6 +3023,53 @@ class SqlOptimiser {
                     ).getAlias()
             );
         }
+        return node;
+    }
+
+    private ExpressionNode replaceIfGroupByExpressionOrAggregate(
+            ExpressionNode node,
+            QueryModel groupByModel,
+            ObjList<ExpressionNode> groupByNodes,
+            ObjList<CharSequence> groupByAliases
+    ) throws SqlException {
+        CharSequence alias = findColumnByAst(groupByNodes, groupByAliases, node);
+        if (alias != null) {
+            return nextLiteral(alias);
+        } else if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+            QueryColumn qc = queryColumnPool.next().of(createColumnAlias(node, groupByModel), node);
+            groupByModel.addBottomUpColumn(qc);
+            return nextLiteral(qc.getAlias());
+        }
+
+        if (node.type == LITERAL) {
+            throw SqlException.$(node.position, "column must appear in GROUP BY clause or aggregate function");
+        }
+
+        return node;
+    }
+
+    private ExpressionNode replaceIfUnaliasedLiteral(ExpressionNode node, QueryModel baseModel) throws SqlException {
+        if (node != null && node.type == LITERAL) {
+            CharSequence col = node.token;
+            final int dot = Chars.indexOf(col, '.');
+            int modelIndex = validateColumnAndGetModelIndex(baseModel, col, dot, node.position);
+
+            boolean addAlias = dot == -1 && baseModel.getJoinModels().size() > 1;
+            boolean removeAlias = dot > -1 && baseModel.getJoinModels().size() == 1;
+
+            if (addAlias || removeAlias) {
+                CharacterStoreEntry entry = characterStore.newEntry();
+                if (addAlias) {
+                    CharSequence alias = baseModel.getModelAliasIndexes().keys().get(modelIndex);
+                    entry.put(alias).put('.').put(col);
+                } else {
+                    entry.put(col, dot + 1, col.length());
+                }
+                CharSequence prefixedCol = entry.toImmutable();
+                return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
+            }
+        }
+
         return node;
     }
 
@@ -2920,6 +3178,75 @@ class SqlOptimiser {
         }
 
         return agg;
+    }
+
+    //push aggregate function calls to group by model, replace key column expressions with group by aliases
+    //raise error if raw column usage doesn't match one of expressions on group by list 
+    private ExpressionNode rewriteGroupBySelectExpression(final @Transient ExpressionNode topLevelNode,
+                                                          QueryModel groupByModel,
+                                                          ObjList<ExpressionNode> groupByNodes,
+                                                          ObjList<CharSequence> groupByAliases) throws SqlException {
+        this.sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        ExpressionNode temp = replaceIfGroupByExpressionOrAggregate(topLevelNode, groupByModel, groupByNodes, groupByAliases);
+        if (temp != topLevelNode) {
+            return temp;
+        }
+
+        ExpressionNode node = topLevelNode;
+
+        while (!this.sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        temp = replaceIfGroupByExpressionOrAggregate(node.rhs, groupByModel, groupByNodes, groupByAliases);
+                        if (node.rhs == temp) {
+                            this.sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = temp;
+                        }
+                    }
+
+                    if (node.lhs != null) {
+                        temp = replaceIfGroupByExpressionOrAggregate(node.lhs, groupByModel, groupByNodes, groupByAliases);
+                        if (temp == node.lhs) {
+                            node = node.lhs;
+                        } else {
+                            node.lhs = temp;
+                            node = null;
+                        }
+                    } else {
+                        node = null;
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        temp = replaceIfGroupByExpressionOrAggregate(e, groupByModel, groupByNodes, groupByAliases);
+                        if (e == temp) {
+                            this.sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, temp);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    temp = replaceIfGroupByExpressionOrAggregate(e, groupByModel, groupByNodes, groupByAliases);
+                    if (e == temp) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, temp);
+                        node = null;
+                    }
+                }
+            } else {
+                node = this.sqlNodeStack.poll();
+            }
+        }
+
+        return topLevelNode;
     }
 
     /**
@@ -3205,13 +3532,41 @@ class SqlOptimiser {
     private QueryModel rewriteOrderByPosition(QueryModel model) throws SqlException {
         QueryModel base = model;
         QueryModel baseParent = model;
-
+        QueryModel baseGroupBy = null;
+        QueryModel baseOuter = null;
+        QueryModel baseDistinct = null;
+        // while order by is initially kept in the base model (most inner one)
+        // columns used in order by could be stored in one of many models : inner model, group by model, analytical or outer model 
+        // here we've to descend and keep track of all of those 
         while (base.getBottomUpColumns().size() > 0) {
             // Check if the model contains the full list of selected columns and, thus, can be used as the parent.
             if (!base.isSelectTranslation()) {
                 baseParent = base;
             }
+            switch (base.getSelectModelType()) {
+                case QueryModel.SELECT_MODEL_DISTINCT:
+                    baseDistinct = base;
+                    break;
+                case QueryModel.SELECT_MODEL_GROUP_BY:
+                    baseGroupBy = base;
+                    break;
+                case QueryModel.SELECT_MODEL_VIRTUAL:
+                case QueryModel.SELECT_MODEL_CHOOSE:
+                    QueryModel nested = base.getNestedModel();
+                    if (nested != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
+                        baseOuter = base;
+                    }
+                    break;
+            }
             base = base.getNestedModel();
+        }
+
+        if (baseDistinct != null) {
+            baseParent = baseDistinct;
+        } else if (baseOuter != null) {
+            baseParent = baseOuter;
+        } else if (baseGroupBy != null) {
+            baseParent = baseGroupBy;
         }
 
         ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
@@ -3355,6 +3710,7 @@ class SqlOptimiser {
 
         if (baseModel.getGroupBy().size() > 0) {
             groupByModel.moveGroupByFrom(baseModel);
+            useGroupByModel = true;//group by should be implemented even if there are no aggregate functions 
         }
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
@@ -3414,6 +3770,117 @@ class SqlOptimiser {
         }
 
         boolean outerVirtualIsSelectChoose = true;
+        //if there are explicit group by columns then nothing else should go to group by model
+        //select columns should either match group by columns exactly or go to outer virtual model
+        ObjList<ExpressionNode> groupBy = groupByModel.getGroupBy();
+        boolean explicitGroupBy = groupBy.size() > 0;
+
+        if (explicitGroupBy) {
+            // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls   
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                ExpressionNode node = groupBy.getQuick(i);
+                CharSequence alias = null;
+                int originalNodePosition = -1;
+
+                //group by select clause alias
+                if (node.type == LITERAL) {
+                    // If literal is select clause alias then use its AST //sym1 -> ccy x -> a
+                    // NOTE: this is merely a shortcut and doesn't mean that alias exists at group by stage !
+                    // while 
+                    //   select a as d  from t group by d
+                    // works, the following does not 
+                    //  select a as d  from t group by d + d 
+                    QueryColumn qc = model.getAliasToColumnMap().get(node.token);
+                    if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
+                        originalNodePosition = node.position;
+                        node = qc.getAst();
+                        alias = qc.getAlias();
+                    }
+                } else if (node.type == CONSTANT) {//group by column index
+                    try {
+                        int columnIdx = Numbers.parseInt(node.token);
+                        //group by column index is 1-based
+                        if (columnIdx < 1 || columnIdx > columns.size()) {
+                            throw SqlException.$(node.position, "GROUP BY position ").put(columnIdx).put(" is not in select list");
+                        }
+                        columnIdx--;
+
+                        QueryColumn qc = columns.getQuick(columnIdx);
+
+                        originalNodePosition = node.position;
+                        node = qc.getAst();
+                        alias = qc.getAlias();
+                    } catch (NumericException e) {
+                        //ignore
+                    }
+                }
+
+                if (node.type == LITERAL && Chars.endsWith(node.token, '*')) {
+                    throw SqlException.$(node.position, "'*' is not allowed in GROUP BY");
+                }
+
+                addMissingTablePrefixes(node, baseModel);
+                //ignore duplicates in group by 
+                if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
+                    continue;
+                }
+
+                validateGroupByExpression(node, groupByModel, originalNodePosition);
+
+                if (node.type == LITERAL) {
+                    if (alias == null) {
+                        alias = createColumnAlias(node, groupByModel);
+                    } else {
+                        alias = createColumnAlias(alias, innerVirtualModel, true);
+                    }
+                    QueryColumn groupByColumn = createGroupByColumn(
+                            alias,
+                            node,
+                            baseModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            analyticModel,
+                            groupByModel
+                    );
+
+                    groupByNodes.add(node);
+                    groupByAliases.add(groupByColumn.getAlias());
+                }
+                // If there's at least one other group by column then we can ignore constant expressions, 
+                // otherwise we've to include not to affect the outcome, e.g.
+                // if table t is empty then 
+                // select count(*) from t  returns 0  but  
+                // select count(*) from t group by 12+3 returns empty result 
+                // if we removed 12+3 then we'd affect result
+                else if (!(isEffectivelyConstantExpression(node) && i > 0)) {
+                    //add expression
+                    //if group by element is an expression then we've to use inner model to compute it 
+                    useInnerModel = true;
+
+                    //expressions in GROUP BY clause should be pushed to inner model
+                    CharSequence innerAlias = createColumnAlias(node.token, innerVirtualModel, true);
+                    QueryColumn qc = queryColumnPool.next().of(innerAlias, node);
+                    innerVirtualModel.addBottomUpColumn(qc);
+
+                    if (alias != null) {
+                        alias = createColumnAlias(alias, groupByModel, true);
+                    } else {
+                        alias = qc.getAlias();
+                    }
+
+                    final QueryColumn groupByColumn = nextColumn(alias, qc.getAlias());
+                    groupByModel.addBottomUpColumn(groupByColumn);
+
+                    groupByNodes.add(deepClone(expressionNodePool, node));
+                    groupByAliases.add(groupByColumn.getAlias());
+
+                    emitLiterals(qc.getAst(), translatingModel, null, baseModel, false);
+                }
+            }
+        }
+
+        groupByUsed.setAll(groupBy.size(), false);
+        int nonAggSelectCount = 0;
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
@@ -3437,10 +3904,51 @@ class SqlOptimiser {
                             distinctModel
                     );
                 } else {
-                    createSelectColumn(
-                            qc.getAlias(),
-                            qc.getAst(),
-                            false,
+                    if (explicitGroupBy) {
+                        nonAggSelectCount++;
+                        addMissingTablePrefixes(qc.getAst(), baseModel);
+                        int matchingColIdx = findColumnIdxByAst(groupByNodes, qc.getAst());
+                        if (matchingColIdx == -1) {
+                            throw SqlException.$(qc.getAst().position, "column must appear in GROUP BY clause or aggregate function");
+                        }
+
+                        boolean sameAlias =
+                                createSelectColumn(
+                                        qc.getAlias(),
+                                        groupByAliases.get(matchingColIdx),
+                                        groupByModel,
+                                        outerVirtualModel,
+                                        distinctModel
+                                );
+                        if (sameAlias && i == matchingColIdx) {
+                            groupByUsed.set(matchingColIdx, true);
+                        } else {
+                            useOuterModel = true;
+                        }
+                    } else {
+                        createSelectColumn(
+                                qc.getAlias(),
+                                qc.getAst(),
+                                false,
+                                baseModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                analyticModel,
+                                groupByModel,
+                                outerVirtualModel,
+                                distinctModel
+                        );
+                    }
+                }
+            } else if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+                if (explicitGroupBy) {
+                    useOuterModel = true;
+                    outerVirtualIsSelectChoose = false;
+                    outerVirtualModel.addBottomUpColumn(qc);
+                    distinctModel.addBottomUpColumn(qc);
+                } else {
+                    addFunction(
+                            qc,
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
@@ -3450,17 +3958,6 @@ class SqlOptimiser {
                             distinctModel
                     );
                 }
-            } else if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
-                addFunction(
-                        qc,
-                        baseModel,
-                        translatingModel,
-                        innerVirtualModel,
-                        analyticModel,
-                        groupByModel,
-                        outerVirtualModel,
-                        distinctModel
-                );
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -3472,10 +3969,10 @@ class SqlOptimiser {
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        QueryColumn matchingCol = groupByModel.findBottomUpColumnByAst(qc.getAst());
-                        // reuse existing aggregate column in group by model
+                        addMissingTablePrefixes(qc.getAst(), baseModel);
+                        CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
                         if (useOuterModel && matchingCol != null) {
-                            QueryColumn ref = nextColumn(qc.getAlias(), matchingCol.getAlias());
+                            QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
                             ref = ensureAliasUniqueness(outerVirtualModel, ref);
                             outerVirtualModel.addBottomUpColumn(ref);
                             distinctModel.addBottomUpColumn(ref);
@@ -3485,13 +3982,16 @@ class SqlOptimiser {
 
                         qc = ensureAliasUniqueness(groupByModel, qc);
                         groupByModel.addBottomUpColumn(qc);
+
+                        groupByNodes.add(deepClone(expressionNodePool, qc.getAst()));
+                        groupByAliases.add(qc.getAlias());
+
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ....
                         QueryColumn ref = nextColumn(qc.getAlias());
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
-                        // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
@@ -3508,17 +4008,56 @@ class SqlOptimiser {
                     }
                 }
 
-                // this is not a direct call to aggregation function, in which case
-                // we emit aggregation function into group-by model and leave the
-                // rest in outer model
-                final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                if (emitAggregates(qc.getAst(), groupByModel)) {
+                if (explicitGroupBy) {
+                    nonAggSelectCount++;
+                    if (isEffectivelyConstantExpression(qc.getAst())) {
+                        useOuterModel = true;
+                        outerVirtualIsSelectChoose = false;
+                        outerVirtualModel.addBottomUpColumn(qc);
+                        distinctModel.addBottomUpColumn(qc);
+                        continue;
+                    }
+
+                    addMissingTablePrefixes(qc.getAst(), baseModel);
+                    final int beforeSplit = groupByModel.getBottomUpColumns().size();
+                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in  outer virtual model 
+                    ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
+                    if (qc.getAst() == en) {
+                        useOuterModel = true;
+                    } else {
+                        if (Chars.equals(qc.getAst().token, qc.getAlias())) {
+                            int idx = groupByAliases.indexOf(qc.getAst().token);
+                            if (i != idx) {
+                                useOuterModel = true;
+                            }
+                            groupByUsed.set(idx, true);
+                        } else {
+                            useOuterModel = true;
+                        }
+                        qc.of(qc.getAlias(), en, qc.isIncludeIntoWildcard(), qc.getColumnType());
+                    }
+
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
                     outerVirtualModel.addBottomUpColumn(qc);
                     distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
 
-                    // pull literals from newly created group-by columns into both of underlying models
+                    for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
+                        emitLiterals(groupByModel.getBottomUpColumns().getQuick(j).getAst(), translatingModel, innerVirtualModel, baseModel, false);
+                    }
+                    continue;
+                }
+
+                // this is not a direct call to aggregation function, in which case
+                // we emit aggregation function into group-by model and leave the rest in outer model
+                final int beforeSplit = groupByModel.getBottomUpColumns().size();
+                if (checkForAggregates(qc.getAst())) {
+                    //push aggregates and literals outside aggregate functions
+                    emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
+                    emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext);
+                    qc = ensureAliasUniqueness(outerVirtualModel, qc);
+                    outerVirtualModel.addBottomUpColumn(qc);
+                    distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
                     for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                         emitLiterals(groupByModel.getBottomUpColumns().getQuick(j).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
@@ -3547,6 +4086,10 @@ class SqlOptimiser {
                     );
                 }
             }
+        }
+
+        if (explicitGroupBy && !useOuterModel && (nonAggSelectCount != groupBy.size() || groupByUsed.getTrueCount() != groupBy.size())) {
+            useOuterModel = true;
         }
 
         // fail if we have both analytic and group-by models
@@ -3876,6 +4419,49 @@ class SqlOptimiser {
         return index;
     }
 
+    /* Throws exception if given node tree contains reference to aggregate or window function that are not allowed in GROUP BY clause. */
+    private void validateGroupByExpression(@Transient ExpressionNode node, QueryModel model, int originalNodePosition) throws SqlException {
+        try {
+            checkIsNotAggregateOrWindowFunction(node, model);
+
+            sqlNodeStack.clear();
+            while (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        checkIsNotAggregateOrWindowFunction(node.rhs, model);
+                        this.sqlNodeStack.push(node.rhs);
+                    }
+
+                    if (node.lhs != null) {
+                        checkIsNotAggregateOrWindowFunction(node.lhs, model);
+                        node = node.lhs;
+                    } else {
+                        if (!sqlNodeStack.isEmpty()) {
+                            node = this.sqlNodeStack.poll();
+                        } else {
+                            node = null;
+                        }
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        checkIsNotAggregateOrWindowFunction(e, model);
+                        this.sqlNodeStack.push(e);
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    checkIsNotAggregateOrWindowFunction(e, model);
+                    node = e;
+                }
+            }
+        } catch (SqlException sqle) {
+            if (originalNodePosition > -1) {
+                sqle.setPosition(originalNodePosition);
+            }
+            throw sqle;
+        }
+    }
+
     void clear() {
         contextPool.clear();
         intHashSetPool.clear();
@@ -3895,6 +4481,9 @@ class SqlOptimiser {
         clausesToSteal.clear();
         tmpCursorAliases.clear();
         functionsInFlight.clear();
+        groupByAliases.clear();
+        groupByNodes.clear();
+        groupByUsed.clear();
     }
 
     QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {

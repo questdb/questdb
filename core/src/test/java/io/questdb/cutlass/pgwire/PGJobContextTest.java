@@ -2675,6 +2675,46 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testGroupByExpressionNotAppearingInSelectClause() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n1000\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByExpressionNotAppearingInSelectClauseWhenTableIsEmpty() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table t1 ( s string );", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+?")) {
+                statement.setLong(1, 1);
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n1000\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGssApiRequestClosedGracefully() throws Exception {
         final String script = ">0000000804d21630\n" +
                 "<4e\n";

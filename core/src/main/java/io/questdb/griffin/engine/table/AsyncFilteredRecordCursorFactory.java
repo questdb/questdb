@@ -73,8 +73,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         super(base.getMetadata());
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
-        this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.hasDescendingOrder());
+        this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
         IntList preTouchColumnTypes = null;
         if (preTouchColumns) {
             preTouchColumnTypes = new IntList();
@@ -109,7 +109,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         long rowsRemaining;
-        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
+        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int order;
         if (limitLoFunction != null) {
             limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
@@ -143,8 +143,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    public int getScanDirection() {
+        return base.getScanDirection();
     }
 
     @Override
@@ -162,7 +162,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         sink.type("Async Filter");
         //calc order and limit if possible  
         long rowsRemaining;
-        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
+        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         int order;
         if (limitLoFunction != null) {
             try {

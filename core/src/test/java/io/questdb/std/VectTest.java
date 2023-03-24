@@ -558,7 +558,7 @@ public class VectTest {
             Vect.memcpy(aAddrCopy, aAddr, sizeA);
             Vect.memcpy(bAddrCopy, bAddr, sizeB);
 
-            Vect.radixSortABLongIndexAscInA(aAddr, aCount, bAddr, bCount, cpyAddr);
+            Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr);
             assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy);
         } finally {
             Unsafe.free(aAddr, resultSize, MemoryTag.NATIVE_DEFAULT);

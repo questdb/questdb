@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
@@ -131,12 +132,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            LOG.critical().$("could not alter table [table=").$(svc.getTableToken())
-                    .$(", command=").$(command)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", message=`").$(e.getFlyweightMessage()).$('`')
-                    .I$();
-
+            final LogRecord log = e.isCritical() ? LOG.critical() : LOG.error();
+            log.$("could not alter table [table=").$(svc.getTableToken())
+                .$(", command=").$(command)
+                .$(", errno=").$(e.getErrno())
+                .$(", message=`").$(e.getFlyweightMessage()).$('`')
+                .I$();
             throw e;
         }
         return 0;
