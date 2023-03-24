@@ -35,8 +35,8 @@ import io.questdb.std.ObjList;
 
 /**
  * Returns rows from current data frame in table (physical) order :
- * - fetches first record index per cursor into priority queue
- * - then returns record with smallest index and adds next record from related cursor into queue
+ * - fetches first record index/row id per cursor into priority queue
+ * - then returns record with the smallest available index and adds next record from related cursor into queue
  * until all cursors are exhausted .
  */
 public class HeapRowCursorFactory implements RowCursorFactory {

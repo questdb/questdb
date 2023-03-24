@@ -49,6 +49,7 @@ public enum PropertyKey {
     CAIRO_DEFAULT_SYMBOL_CAPACITY("cairo.default.symbol.capacity"),
     CAIRO_FILE_OPERATION_RETRY_COUNT("cairo.file.operation.retry.count"),
     CAIRO_IDLE_CHECK_INTERVAL("cairo.idle.check.interval"),
+    CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS("cairo.inactive.reader.max.open.partitions"),
     CAIRO_INACTIVE_READER_TTL("cairo.inactive.reader.ttl"),
     CAIRO_INACTIVE_WRITER_TTL("cairo.inactive.writer.ttl"),
     CAIRO_INDEX_VALUE_BLOCK_SIZE("cairo.index.value.block.size"),
@@ -392,11 +393,13 @@ public enum PropertyKey {
     TABLE_TYPE_CONVERSION_ENABLED("table.type.conversion.enabled"),
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
     CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
-    CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT("cairo.wal.commit.squash.row.limit"),
+    CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER("cairo.wal.squash.uncommitted.rows.multiplier"),
+    CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
-    CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold");
+    CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
+    CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

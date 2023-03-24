@@ -111,6 +111,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return overrides.getInactiveReaderMaxOpenPartitions() > 0 ? overrides.getInactiveReaderMaxOpenPartitions() : super.getInactiveReaderMaxOpenPartitions();
+    }
+
+    @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
     }
@@ -179,6 +184,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return overrides.getQueryCacheEventQueueCapacity() < 0 ? super.getQueryCacheEventQueueCapacity() : overrides.getQueryCacheEventQueueCapacity();
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return overrides.getRepeatMigrationsFromVersion();
     }
 
     @Override
@@ -264,6 +274,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
+    }
+
+    @Override
+    public long getWalApplyTableTimeQuota() {
+        return overrides.getWalApplyTableTimeQuote() >= 0 ? overrides.getWalApplyTableTimeQuote() : super.getWalApplyTableTimeQuota();
     }
 
     @Override

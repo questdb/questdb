@@ -81,8 +81,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    public int getScanDirection() {
+        return base.getScanDirection();
     }
 
     @Override

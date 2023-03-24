@@ -67,7 +67,7 @@ public class FuzzTransactionGenerator {
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
-        transactionCount = Math.min(transactionCount, 10 * 1_000_000 / rowCount);
+        transactionCount = Math.min(transactionCount, 1_500_000 / rowCount);
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = rnd.nextDouble();
