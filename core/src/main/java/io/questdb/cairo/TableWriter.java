@@ -2043,12 +2043,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
-     * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
-     * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
+     * Truncates table including symbol tables. When operation is unsuccessful it throws CairoException.
+     * With that truncate can be retried or alternatively table can be closed. Outcome of any other operation
+     * with the table is undefined and likely to cause segmentation fault. When table re-opens any partial
+     * truncate will be retried.
      */
     public final void truncate() {
-        truncate(true);
+        truncate(false);
     }
 
     /**
@@ -2057,10 +2058,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     @Override
-    public final void truncate(boolean purgeSymbolTables) {
+    public final void truncate(boolean keepSymbolTables) {
         rollback();
 
-        if (purgeSymbolTables) {
+        if (!keepSymbolTables) {
             // we do this before size check so that "old" corrupt symbol tables are brought back in line
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 denseSymbolMapWriters.getQuick(i).truncate();

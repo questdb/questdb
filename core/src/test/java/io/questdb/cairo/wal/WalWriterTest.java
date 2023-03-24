@@ -2820,6 +2820,20 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateWithoutKeepingSymbolTablesThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            try (WalWriter walWriter = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                walWriter.truncate(false);
+                Assert.fail();
+            } catch (UnsupportedOperationException ex) {
+                TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
+            }
+        });
+    }
+
+    @Test
     public void testWalEvenReaderConcurrentReadWrite() throws Exception {
         AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
 

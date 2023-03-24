@@ -136,10 +136,11 @@ public interface TableWriterAPI extends Closeable {
      * Truncates table. For non-WAL tables, this method has to be called when the
      * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
      *
-     * @param purgeSymbolTables defines whether the operation does or does not truncate symbol tables,
-     *                          i.e. internal symbol string to int symbol code mappings. Sometimes the symbols should
-     *                          be kept to make sure that DETACH/ATTACH PARTITION does not lose data for symbol columns.
-     *                          WAL tables ignore this parameter and always retain the symbol tables.
+     * @param keepSymbolTables defines whether the operation does not or does truncate symbol tables,
+     *                         i.e. internal symbol string to int symbol code mappings. Sometimes the symbols should
+     *                         be kept to make sure that DETACH/ATTACH PARTITION does not lose data for symbol columns.
+     *                         WAL tables always retain the symbol tables.
+     * @throws UnsupportedOperationException when keepSymbolTables is set to false on a WAL table.
      */
-    void truncate(boolean purgeSymbolTables);
+    void truncate(boolean keepSymbolTables);
 }

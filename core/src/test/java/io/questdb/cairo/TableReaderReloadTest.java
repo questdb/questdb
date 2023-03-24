@@ -64,13 +64,18 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadTruncatePurgeSymbolTables() {
+    public void testReloadTruncateKeepSymbolTables() {
         testReloadAfterTruncate(PartitionBy.DAY, 3000000000L, true);
     }
 
     @Test
     public void testTruncateInsertReloadDay() {
         testTruncateInsertReload(PartitionBy.DAY, 3000000000L, false);
+    }
+
+    @Test
+    public void testTruncateInsertReloadKeepSymbolTables() {
+        testTruncateInsertReload(PartitionBy.DAY, 3000000000L, true);
     }
 
     @Test
@@ -131,7 +136,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         writer.commit();
     }
 
-    private void testReloadAfterTruncate(int partitionBy, long increment, boolean purgeSymbolTables) {
+    private void testReloadAfterTruncate(int partitionBy, long increment, boolean keepSymbolTables) {
         if (Os.isWindows()) {
             return;
         }
@@ -159,7 +164,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 assertTable(rnd, buffer, cursor, record);
                 assertOpenPartitionCount(reader);
 
-                writer.truncate(purgeSymbolTables);
+                writer.truncate(keepSymbolTables);
                 Assert.assertTrue(reader.reload());
                 assertOpenPartitionCount(reader);
                 cursor = reader.getCursor();
@@ -178,7 +183,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
     }
 
-    private void testTruncateInsertReload(int partitionBy, long increment, boolean purgeSymbolTables) {
+    private void testTruncateInsertReload(int partitionBy, long increment, boolean keepSymbolTables) {
         if (Os.isWindows()) {
             return;
         }
@@ -207,7 +212,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 assertTable(rnd, buffer, cursor, record);
                 assertOpenPartitionCount(reader);
 
-                writer.truncate(purgeSymbolTables);
+                writer.truncate(keepSymbolTables);
 
                 // Write different data
                 rnd.reset(123, 123);

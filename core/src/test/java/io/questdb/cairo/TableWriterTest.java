@@ -1684,7 +1684,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     ts = populateProducts(writer, rnd, ts, N, increment);
                     writer.commit();
                     Assert.assertEquals(N, writer.size());
-                    writer.truncate(false);
+                    writer.truncate(true);
                 }
             }
 

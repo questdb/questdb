@@ -30,7 +30,7 @@ import io.questdb.std.Rnd;
 public class FuzzTruncateTableOperation implements FuzzTransactionOperation {
     @Override
     public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
-        tableWriter.truncate(false);
+        tableWriter.truncate(true);
         return true;
     }
 }

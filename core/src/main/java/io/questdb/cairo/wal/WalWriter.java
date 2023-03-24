@@ -499,7 +499,10 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void truncate(boolean purgeSymbolTables) {
+    public void truncate(boolean keepSymbolTables) {
+        if (!keepSymbolTables) {
+            throw new UnsupportedOperationException("cannot truncate symbol tables on WAL table");
+        }
         try {
             lastSegmentTxn = events.truncate();
             getSequencerTxn();

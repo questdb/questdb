@@ -2513,26 +2513,30 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                 }
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || Chars.equals(tok, ';') || isWithKeyword(tok)) {
+                if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
                     break;
                 }
                 if (!Chars.equalsNc(tok, ',')) {
-                    throw SqlException.$(lexer.getPosition(), "',' or 'with' expected");
+                    throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
                 }
 
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok != null && isWithKeyword(tok)) {
+                if (tok != null && isKeepKeyword(tok)) {
                     throw SqlException.$(lexer.getPosition(), "table name expected");
                 }
             } while (true);
 
-            boolean purgeSymbolTables = false;
-            if (tok != null && isWithKeyword(tok)) {
+            boolean keepSymbolTables = false;
+            if (tok != null && isKeepKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || !isSymbolsKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'symbols' expected");
+                if (tok == null || !isSymbolKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol' expected");
                 }
-                purgeSymbolTables = true;
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isTablesKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'tables' expected");
+                }
+                keepSymbolTables = true;
                 tok = SqlUtil.fetchNext(lexer);
             }
 
@@ -2544,12 +2548,12 @@ public class SqlCompiler implements Closeable {
                 final TableWriterAPI writer = tableWriters.getQuick(i);
                 try {
                     if (writer.getMetadata().isWalEnabled()) {
-                        writer.truncate(purgeSymbolTables);
+                        writer.truncate(true);
                     } else {
                         TableToken tableToken = writer.getTableToken();
                         if (engine.lockReaders(tableToken)) {
                             try {
-                                writer.truncate(purgeSymbolTables);
+                                writer.truncate(keepSymbolTables);
                             } finally {
                                 engine.unlockReaders(tableToken);
                             }
