@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -571,6 +573,46 @@ public class O3FailureTest extends AbstractO3Test {
                 return super.openRW(name, opts);
             }
         });
+    }
+
+    @Test
+    public void testFailMergeWalFixIntoLagContended() throws Exception {
+        executeWithPool(0, O3FailureTest::testFailMergeWalFixIntoLag0);
+    }
+
+    @Test
+    public void testFailMergeWalFixIntoLagParallel() throws Exception {
+        executeWithPool(2, O3FailureTest::testFailMergeWalFixIntoLag0);
+    }
+
+    @Test
+    public void testFailMergeWalVarIntoLagContended() throws Exception {
+        executeWithPool(0, O3FailureTest::testFailMergeWalVarIntoLag0);
+    }
+
+    @Test
+    public void testFailMergeWalVarIntoLagParallel() throws Exception {
+        executeWithPool(2, O3FailureTest::testFailMergeWalVarIntoLag0);
+    }
+
+    @Test
+    public void testFailMoveUncommittedContended() throws Exception {
+        executeWithPool(0, O3FailureTest::testFailMoveUncommitted0);
+    }
+
+    @Test
+    public void testFailMoveUncommittedParallel() throws Exception {
+        executeWithPool(2, O3FailureTest::testFailMoveUncommitted0);
+    }
+
+    @Test
+    public void testFailMoveWalToLagContended() throws Exception {
+        executeWithPool(0, O3FailureTest::testFailMoveWalToLag0);
+    }
+
+    @Test
+    public void testFailMoveWalToLagParallel() throws Exception {
+        executeWithPool(2, O3FailureTest::testFailMoveWalToLag0);
     }
 
     @Test
@@ -1205,11 +1247,23 @@ public class O3FailureTest extends AbstractO3Test {
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
 
-    private static void assertXCount(
+    private static void assertXCountAndMax(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
+    }
+
+    private static void assertXCountAndMax(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expectedCount,
+            CharSequence expectedMaxTimestamp
+    ) throws SqlException {
+        sink2.clear();
+        sink2.put(expectedCount);
         assertXCount(compiler, sqlExecutionContext);
         assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
     }
@@ -2077,7 +2131,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -2218,7 +2272,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -2321,7 +2375,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCount(compiler, executionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, executionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -2465,7 +2519,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignore) {
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -2606,7 +2660,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -2713,7 +2767,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -2726,6 +2780,231 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testFailMergeWalFixIntoLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        o3MemMaxPages = 1;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_long256(5) l256," +
+                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp (ts) partition by DAY WAL",
+                executionContext
+        );
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_long256(5) l256," +
+                        " timestamp_sequence('2020-02-24',100L) ts" +
+                        " from long_sequence(50000)",
+                executionContext);
+
+
+        drainWalQueue(engine);
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        engine.releaseInactive();
+
+        o3MemMaxPages = Integer.MAX_VALUE;
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        assertXCountAndMax(
+                compiler,
+                executionContext,
+                "count\n" +
+                        "50020\n",
+                "max\n" +
+                        "2020-02-24T00:00:04.999900Z\n"
+        );
+    }
+
+    private static void testFailMergeWalVarIntoLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        o3MemMaxPages = 1;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_str(5,16,2) str," +
+                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp (ts) partition by DAY WAL",
+                executionContext
+        );
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " rnd_str(5,160,2) str," +
+                        " timestamp_sequence('2020-02-24',100L) ts" +
+                        " from long_sequence(50000)",
+                executionContext);
+
+
+        drainWalQueue(engine);
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        engine.releaseInactive();
+
+        o3MemMaxPages = Integer.MAX_VALUE;
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+
+        drainWalQueue(engine);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        assertXCountAndMax(
+                compiler,
+                executionContext,
+                "count\n" +
+                        "50020\n",
+                "max\n" +
+                        "2020-02-24T00:00:04.999900Z\n"
+        );
+    }
+
+    private static void testFailMoveUncommitted0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        o3MemMaxPages = 1;
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " from long_sequence(500000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        try {
+            compiler.compile(
+                    "insert into x " +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_long() j," +
+                            " timestamp_sequence('2020-02-26',100L) ts" +
+                            " from long_sequence(500000)" +
+                            "union all " +
+                            "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
+                    executionContext);
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "commit failed");
+        }
+
+        compiler.compile(
+                "insert into x " +
+                        "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)" +
+                        "union all select -2, -2, CAST('2020-02-25T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
+                executionContext);
+
+        assertXCountAndMax(
+                compiler,
+                executionContext,
+                "count\n" +
+                        "500002\n",
+                "max\n" +
+                        "2020-02-25T00:00:00.000000Z\n"
+        );
+
+    }
+
+    private static void testFailMoveWalToLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        o3MemMaxPages = 1;
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp (ts) partition by DAY WAL",
+                executionContext
+        );
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence('2020-02-26',100L) ts" +
+                        " from long_sequence(500000)" +
+                        "union all " +
+                        "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
+                executionContext);
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence('2020-02-26',100L) ts" +
+                        " from long_sequence(500000)" +
+                        "union all " +
+                        "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
+                executionContext);
+
+
+        drainWalQueue(engine);
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        engine.releaseInactive();
+        o3MemMaxPages = Integer.MAX_VALUE;
+
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+        drainWalQueue(engine);
+
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
+                engine.getTableToken("x")
+        ));
+
+        assertXCountAndMax(
+                compiler,
+                executionContext,
+                "count\n" +
+                        "1000022\n",
+                "max\n" +
+                        "2020-02-26T00:00:49.999900Z\n"
+        );
     }
 
     private static void testInsertAsSelectNegativeTimestamp0(
@@ -2766,7 +3045,7 @@ public class O3FailureTest extends AbstractO3Test {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -2817,7 +3096,7 @@ public class O3FailureTest extends AbstractO3Test {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3156,7 +3435,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCount(compiler, executionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, executionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -3234,7 +3513,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3314,7 +3593,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3398,7 +3677,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
@@ -3529,7 +3808,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         if (reopenTableWriter) {
             engine.releaseAllWriters();
@@ -3630,7 +3909,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3815,5 +4094,14 @@ public class O3FailureTest extends AbstractO3Test {
                 return fd;
             }
         };
+    }
+
+    protected static void drainWalQueue(CairoEngine engine) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.drain(0);
+            new CheckWalTransactionsJob(engine).run(0);
+            // run once again as there might be notifications to handle now
+            walApplyJob.drain(0);
+        }
     }
 }

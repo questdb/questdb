@@ -36,12 +36,36 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@RunWith(Parameterized.class)
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
+    private final boolean walEnabled;
+
+    public LineTcpConnectionContextTest(WalMode walMode) {
+        walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
+
+    @Before
+    public void setUp() {
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        super.setUp();
+    }
 
     @Test
     public void testAddCastFieldColumnNoTable() throws Exception {
@@ -55,6 +79,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
+            drainWalQueue();
             String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
@@ -431,6 +456,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testCairoExceptionOnAddColumn() throws Exception {
+        Assume.assumeFalse(walEnabled);
+
         String table = "columnEx";
         runInContext(
                 new TestFilesFacadeImpl() {
@@ -469,6 +496,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testCairoExceptionOnCommit() throws Exception {
+        Assume.assumeFalse(walEnabled);
+
         String table = "commitException";
         configOverrideMaxUncommittedRows(1);
         netMsgBufferSize.set(60);
@@ -2166,6 +2195,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             }
             waitForIOCompletion();
             closeContext();
+            drainWalQueue();
             LOG.info().$("Completed ")
                     .$(nTotalUpdates)
                     .$(" measurements with ")
@@ -2178,5 +2208,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }
         });
+    }
+
+    @Override
+    protected void assertTable(CharSequence expected, String tableName) {
+        drainWalQueue();
+        super.assertTable(expected, tableName);
     }
 }

@@ -22,26 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.mig;
 
-public abstract class AbstractLockable {
-    private static final long TARGET_SEQUENCE_OFFSET;
-    private int srcSequence;
-    @SuppressWarnings({"FieldCanBeLocal", "unused"})
-    // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
-    // to "srcSequence+1". Executing thread must not be changing value of "srcSequence"
-    private int tgtSequence;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.str.Path;
 
-    public boolean tryLock() {
-        return Unsafe.cas(this, TARGET_SEQUENCE_OFFSET, srcSequence, srcSequence + 1);
-    }
+class MigrationUtils {
+    static MemoryCMARW openFileSafe(FilesFacade ff, Path path, long readOffset) {
+        long fileLen = ff.length(path);
 
-    protected void of(int initialSequence) {
-        this.tgtSequence = initialSequence;
-        this.srcSequence = initialSequence;
-    }
+        if (fileLen < 0) {
+            throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
+        }
 
-    static {
-        TARGET_SEQUENCE_OFFSET = Unsafe.getFieldOffset(AbstractLockable.class, "tgtSequence");
+        if (fileLen < readOffset + Long.BYTES) {
+            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+        }
+
+        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
     }
 }

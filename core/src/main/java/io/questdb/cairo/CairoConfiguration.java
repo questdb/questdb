@@ -213,6 +213,8 @@ public interface CairoConfiguration {
      */
     long getO3MaxLag();
 
+    int getO3MemMaxPages();
+
     long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
@@ -256,6 +258,8 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
+
+    int getRepeatMigrationsFromVersion();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -414,7 +418,9 @@ public interface CairoConfiguration {
 
     int getWalApplyLookAheadTransactionCount();
 
-    int getWalCommitSquashRowLimit();
+    long getWalApplyTableTimeQuota();
+
+    double getWalSquashUncommittedRowsMultiplier();
 
     boolean getWalEnabledDefault();
 

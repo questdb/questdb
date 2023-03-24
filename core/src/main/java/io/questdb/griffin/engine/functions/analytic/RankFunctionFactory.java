@@ -55,6 +55,11 @@ public class RankFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isWindow() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

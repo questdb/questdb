@@ -29,6 +29,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 
@@ -64,6 +65,10 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     @Override
     public Function getFunction() {
         return symbolFunction;
+    }
+
+    public int getSymbolKey() {
+        return cursor.getSymbolKey() == 0 ? SymbolTable.VALUE_IS_NULL : cursor.getSymbolKey() - 1;
     }
 
     @Override

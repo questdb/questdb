@@ -369,6 +369,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MemMaxPages() {
+        return conf.getO3MemMaxPages();
+    }
+
+    @Override
     public long getO3MinLag() {
         return conf.getO3MinLag();
     }
@@ -436,6 +441,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRenameTableModelPoolCapacity() {
         return conf.getRenameTableModelPoolCapacity();
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return conf.getRepeatMigrationsFromVersion();
     }
 
     @Override
@@ -789,8 +799,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return conf.getWalCommitSquashRowLimit();
+    public long getWalApplyTableTimeQuota() {
+        return conf.getWalApplyTableTimeQuota();
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return conf.getWalSquashUncommittedRowsMultiplier();
     }
 
     @Override

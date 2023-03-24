@@ -100,7 +100,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             BitmapIndexWriter indexWriter
     ) {
         final boolean directIoFlag = tableWriter.preferDirectIO();
-
         LOG.debug().$("o3 copy [blockType=").$(blockType)
                 .$(", columnType=").$(columnType)
                 .$(", dstFixFd=").$(dstFixFd)

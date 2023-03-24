@@ -375,6 +375,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MemMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public long getO3MinLag() {
         return 1_000_000;
     }
@@ -442,6 +447,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRenameTableModelPoolCapacity() {
         return 8;
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return -1;
     }
 
     @Override
@@ -797,8 +807,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return 512 * 1024;
+    public long getWalApplyTableTimeQuota() {
+        return 1000L;
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return 20;
     }
 
     @Override
