@@ -29,9 +29,9 @@ use std::sync::Once;
 
 use dashmap::DashMap;
 use jni::JNIEnv;
-use jni::objects::{GlobalRef, JClass, JMethodID, JObject, JStaticMethodID, JString, JValue};
+use jni::objects::{GlobalRef, JClass, JMethodID, JStaticMethodID, JString, JValue};
 use jni::signature::{Primitive, ReturnType};
-use jni::sys::{jint, jlong, jobject};
+use jni::sys::{jint, jlong};
 use log::{Level, Log};
 
 use crate::unwrap_or_throw;
@@ -42,27 +42,19 @@ pub struct JavaLog {
 }
 
 impl JavaLog {
-    fn new<'local>(call_state: &CallState, jenv: &mut JNIEnv, name: &str) -> Self {
-        impl JavaLog {
-            fn new<'local>(call_state: &CallState, jenv: &mut JNIEnv, name: &str) -> Self {
-                let j_name = jenv.new_string(name)
-                    .expect("could not construct logger name string");
-                let j_name = jenv.auto_local(j_name);
-
-                // Note: `call_state.log_factory_class.as_obj()` returns a `&JObject` whilst I need a JObject.
-                let j_class_obj: JObject = unsafe { JObject::from_raw(call_state.log_factory_class.as_obj().as_raw()) };
-                let j_class = JClass::from(j_class_obj);
-                let j_name_raw: jobject = j_name.as_raw();
-                let j_name_obj: JObject = unsafe { JObject::from_raw(j_name_raw) };
-                let j_name_value = JValue::Object(&j_name_obj);
-                let obj = unsafe { jenv.call_static_method_unchecked(
-                    j_class,
-                    call_state.log_factory_get_log_meth,
-                    ReturnType::Object,
-                    &[j_name_value.as_jni()])}
-                    .expect("io.questdb.log.LogFactory::getLog(String) call failed")
-                    .l()
-                    .expect("io.questdb.log.LogFactory::getLog(String) didn't return an object");
+    fn new(call_state: &CallState, jenv: &mut JNIEnv, name: &str) -> Self {
+        let j_name = jenv.new_string(name)
+            .expect("could not construct logger name string");
+        let j_name = jenv.auto_local(j_name);
+        let j_name_value = JValue::Object(j_name.as_ref());
+        let obj = unsafe { jenv.call_static_method_unchecked(
+            &call_state.log_factory_class,
+            call_state.log_factory_get_log_meth,
+            ReturnType::Object,
+            &[j_name_value.as_jni()])}
+            .expect("io.questdb.log.LogFactory::getLog(String) call failed")
+            .l()
+            .expect("io.questdb.log.LogFactory::getLog(String) didn't return an object");
         if obj.is_null() {
             panic!("io.questdb.log.LogFactory::getLog(String) returned null");
         }
