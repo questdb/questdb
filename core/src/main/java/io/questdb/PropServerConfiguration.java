@@ -123,6 +123,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long idleCheckInterval;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
+    private final int inactiveReaderMaxOpenPartitions;
     private final long inactiveReaderTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
@@ -755,6 +756,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
             this.idleCheckInterval = getLong(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
+            this.inactiveReaderMaxOpenPartitions = getInt(properties, env, PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 128);
             this.inactiveReaderTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_READER_TTL, 120_000);
             this.inactiveWriterTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
             this.inactiveWalWriterTTL = getLong(properties, env, PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL, 60_000);
@@ -1726,6 +1728,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getIdleCheckInterval() {
             return idleCheckInterval;
+        }
+
+        @Override
+        public int getInactiveReaderMaxOpenPartitions() {
+            return inactiveReaderMaxOpenPartitions;
         }
 
         @Override

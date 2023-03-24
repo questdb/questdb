@@ -147,6 +147,8 @@ public interface CairoConfiguration {
 
     long getIdleCheckInterval();
 
+    int getInactiveReaderMaxOpenPartitions();
+
     long getInactiveReaderTTL();
 
     long getInactiveWalWriterTTL();
