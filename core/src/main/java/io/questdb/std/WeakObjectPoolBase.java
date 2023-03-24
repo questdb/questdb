@@ -57,6 +57,22 @@ abstract class WeakObjectPoolBase<T> {
         return obj == null ? newInstance() : obj;
     }
 
+    public boolean push(T obj) {
+        assert obj != null;
+        if (cache.size() < maxSize) {
+            clear(obj);
+            cache.push(obj);
+            return true;
+        } else {
+            close(obj);
+            return false;
+        }
+    }
+
+    public int size() {
+        return cache.size();
+    }
+
     void clear(T obj) {
     }
 
@@ -70,16 +86,4 @@ abstract class WeakObjectPoolBase<T> {
     }
 
     abstract T newInstance();
-
-    boolean push(T obj) {
-        assert obj != null;
-        if (cache.size() < maxSize) {
-            clear(obj);
-            cache.push(obj);
-            return true;
-        } else {
-            close(obj);
-            return false;
-        }
-    }
 }

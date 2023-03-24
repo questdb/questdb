@@ -166,6 +166,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return keyMem.getLong(38L);
     }
 
+    @TestOnly
+    public long getValueMemSize() {
+        return valueMemSize;
+    }
+
     public boolean isOpen() {
         return keyMem.isOpen();
     }
@@ -359,6 +364,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(38L, maxValue);
     }
 
+    public void truncate() {
+        keyMem.truncate();
+        valueMem.truncate();
+        initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+        keyCount = 0;
+        valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;
+    }
+
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
         long newValueBlockOffset = allocateValueBlockAndStore(value);
 
@@ -463,24 +476,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
-    @TestOnly
-    long getValueMemSize() {
-        return valueMemSize;
-    }
-
     void rollbackConditionally(long row) {
         final long currentMaxRow;
         if (row > 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
             rollbackValues(row - 1);
         }
-    }
-
-    void truncate() {
-        keyMem.truncate();
-        valueMem.truncate();
-        initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-        keyCount = 0;
-        valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;
     }
 
     void updateKeyCount(int key) {

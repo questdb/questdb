@@ -62,6 +62,11 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
     }
 
+    @TestOnly
+    public long getCapacity() {
+        return capacity;
+    }
+
     @Override
     public int length() {
         return (int) (lo - ptr) / 2;
@@ -137,11 +142,6 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         this.capacity = cap;
         this.lo = ptr + len;
         this.hi = ptr + cap;
-    }
-
-    @TestOnly
-    long getCapacity() {
-        return capacity;
     }
 
     private class FloatingCharSequence extends AbstractCharSequence {

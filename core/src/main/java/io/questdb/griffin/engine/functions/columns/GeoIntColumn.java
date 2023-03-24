@@ -55,6 +55,11 @@ public class GeoIntColumn extends GeoIntFunction {
         return new GeoIntColumn(columnIndex, columnType);
     }
 
+    @TestOnly
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
     @Override
     public int getGeoInt(Record rec) {
         return rec.getGeoInt(columnIndex);
@@ -68,11 +73,6 @@ public class GeoIntColumn extends GeoIntFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 
     static {

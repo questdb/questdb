@@ -37,8 +37,8 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
-    static final int SCAN_DOWN = 1;
-    static final int SCAN_UP = -1;
+    public static final int SCAN_DOWN = 1;
+    public static final int SCAN_UP = -1;
 
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
@@ -64,6 +64,10 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         assert timestampIndex > -1;
         this.intervalsModel = intervals;
         this.timestampIndex = timestampIndex;
+    }
+
+    public static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
+        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     @Override
@@ -271,10 +275,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
-    }
-
-    protected static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
-        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     protected class IntervalDataFrame implements DataFrame {
