@@ -43,23 +43,27 @@ pub struct JavaLog {
 
 impl JavaLog {
     fn new(call_state: &CallState, jenv: &mut JNIEnv, name: &str) -> Self {
-        let j_name = jenv.new_string(name)
-            .expect("could not construct logger name string");
-        let j_name = jenv.auto_local(j_name);
-        let j_name_value = JValue::Object(j_name.as_ref());
-        let obj = unsafe { jenv.call_static_method_unchecked(
-            &call_state.log_factory_class,
-            call_state.log_factory_get_log_meth,
-            ReturnType::Object,
-            &[j_name_value.as_jni()])}
-            .expect("io.questdb.log.LogFactory::getLog(String) call failed")
-            .l()
-            .expect("io.questdb.log.LogFactory::getLog(String) didn't return an object");
-        if obj.is_null() {
-            panic!("io.questdb.log.LogFactory::getLog(String) returned null");
-        }
-        let obj = jenv.new_global_ref(obj)
-            .expect("could not create global reference to io.questdb.log.Log object");
+        let obj = jenv.with_local_frame(
+            2,  // Required number of local references in the frame.
+            |jenv| -> Result<GlobalRef, jni::errors::Error> {
+            let j_name = jenv.new_string(name)
+                .expect("could not construct logger name string");
+            let j_name_value = JValue::Object(&j_name);
+            let obj = unsafe { jenv.call_static_method_unchecked(
+                &call_state.log_factory_class,
+                call_state.log_factory_get_log_meth,
+                ReturnType::Object,
+                &[j_name_value.as_jni()])}
+                .expect("io.questdb.log.LogFactory::getLog(String) call failed")
+                .l()
+                .expect("io.questdb.log.LogFactory::getLog(String) didn't return an object");
+            if obj.is_null() {
+                panic!("io.questdb.log.LogFactory::getLog(String) returned null");
+            }
+            let obj = jenv.new_global_ref(obj)
+                .expect("could not create global reference to io.questdb.log.Log object");
+            Ok(obj)
+        }).expect("could not create local frame");
         JavaLog { obj }
     }
 
