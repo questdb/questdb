@@ -28,7 +28,7 @@ stages:
         displayName: "on"
         strategy:
           matrix:
-            mac-griffin:
+            ubuntu-latest:
               imageName: "ubuntu-latest"
               poolName: "Azure Pipelines"
               os: Linux
@@ -42,6 +42,7 @@ stages:
           name: $(poolName)
         timeoutInMinutes: 60
         variables:
+          SOURCE_CODE_CHANGED: true
           ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
         steps:
           - template: templates/steps.yml
