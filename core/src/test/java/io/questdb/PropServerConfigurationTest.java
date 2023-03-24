@@ -389,6 +389,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
+        Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
     }
@@ -1154,6 +1155,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
             Assert.assertEquals(120, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
+            Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
             Assert.assertEquals(32768, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         }
     }
