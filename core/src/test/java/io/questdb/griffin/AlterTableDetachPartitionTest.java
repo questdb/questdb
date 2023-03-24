@@ -254,8 +254,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                // It's important to have a symbol column here to make sure
-                // that we don't wipe symbol tables on TRUNCATE.
                 createPopulateTable(
                         src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
                         3,
@@ -281,12 +279,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 renameDetachedToAttachable(tableName, "2020-01-01");
                 compile("alter table " + tableName + " attach partition list '2020-01-01'");
 
-                // All symbols are kept.
+                // No symbols are present.
                 assertSql(
                         "select first(ts), sym from " + tableName + " sample by 1d",
                         "first\tsym\n" +
-                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
-                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T07:59:59.666666Z\t\n" +
+                                "2020-01-01T15:59:59.333332Z\t\n" +
                                 "2020-01-01T23:59:58.999998Z\t\n"
                 );
             }
@@ -294,10 +292,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testAttachPartitionAfterTruncateWithSymbols() throws Exception {
+    public void testAttachPartitionAfterTruncateKeepSymbolTables() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                // It's important to have a symbol column here to make sure
+                // that we don't wipe symbol tables on TRUNCATE.
                 createPopulateTable(
                         src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
                         3,
@@ -318,17 +318,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 compile("alter table " + tableName + " detach partition list '2020-01-01'");
 
-                compile("truncate table " + tableName + " with symbols");
+                compile("truncate table " + tableName + " keep symbol tables");
 
                 renameDetachedToAttachable(tableName, "2020-01-01");
                 compile("alter table " + tableName + " attach partition list '2020-01-01'");
 
-                // No symbols are present.
+                // All symbols are kept.
                 assertSql(
                         "select first(ts), sym from " + tableName + " sample by 1d",
                         "first\tsym\n" +
-                                "2020-01-01T07:59:59.666666Z\t\n" +
-                                "2020-01-01T15:59:59.333332Z\t\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
                                 "2020-01-01T23:59:58.999998Z\t\n"
                 );
             }
