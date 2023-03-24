@@ -62,6 +62,8 @@ public interface ConfigurationOverrides {
 
     FilesFacade getFilesFacade();
 
+    int getInactiveReaderMaxOpenPartitions();
+
     String getInputRoot();
 
     String getInputWorkRoot();
@@ -90,6 +92,8 @@ public interface ConfigurationOverrides {
 
     int getRecreateDistressedSequencerAttempts();
 
+    int getRepeatMigrationsFromVersion();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
@@ -113,6 +117,8 @@ public interface ConfigurationOverrides {
     int getTableRegistryCompactionThreshold();
 
     MicrosecondClock getTestMicrosClock();
+
+    long getWalApplyTableTimeQuote();
 
     long getWalPurgeInterval();
 
@@ -176,6 +182,8 @@ public interface ConfigurationOverrides {
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
 
+    void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions);
+
     void setInputRoot(String inputRoot);
 
     void setInputWorkRoot(String inputWorkRoot);
@@ -214,6 +222,8 @@ public interface ConfigurationOverrides {
 
     void setRegistryCompactionThreshold(int value);
 
+    void setRepeatMigrationsFromVersion(int value);
+
     void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages);
 
     void setRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize);
@@ -235,6 +245,8 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setWalApplyTableTimeQuote(long walApplyTableTimeQuote);
 
     void setWalPurgeInterval(long walPurgeInterval);
 

@@ -259,6 +259,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return conf.getInactiveReaderMaxOpenPartitions();
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return conf.getInactiveReaderTTL();
     }
@@ -436,6 +441,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRenameTableModelPoolCapacity() {
         return conf.getRenameTableModelPoolCapacity();
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return conf.getRepeatMigrationsFromVersion();
     }
 
     @Override
@@ -789,8 +799,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return conf.getWalCommitSquashRowLimit();
+    public long getWalApplyTableTimeQuota() {
+        return conf.getWalApplyTableTimeQuota();
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return conf.getWalSquashUncommittedRowsMultiplier();
     }
 
     @Override

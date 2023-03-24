@@ -59,6 +59,10 @@ public class JoinContext implements Mutable, Plannable {
         parents.clear();
     }
 
+    public boolean isEmpty() {
+        return aNodes.size() == 0 && bNodes.size() == 0;
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         for (int i = 0, n = aNodes.size(); i < n; i++) {
