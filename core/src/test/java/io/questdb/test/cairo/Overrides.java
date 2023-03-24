@@ -59,6 +59,7 @@ public class Overrides implements ConfigurationOverrides {
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private boolean mangleTableDirNames = true;
     private int maxFileNameLength = -1;
+    private int maxOpenPartitions = -1;
     private int maxUncommittedRows = -1;
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
@@ -165,6 +166,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return maxOpenPartitions;
     }
 
     @Override
@@ -415,6 +421,7 @@ public class Overrides implements ConfigurationOverrides {
         mangleTableDirNames = true;
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
+        maxOpenPartitions = -1;
         walApplyTableTimeQuote = -1;
         repeatMigrationsFromVersion = -1;
     }
@@ -502,6 +509,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setHideTelemetryTable(boolean hideTelemetryTable) {
         this.hideTelemetryTable = hideTelemetryTable;
+    }
+
+    @Override
+    public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
+        this.maxOpenPartitions = maxOpenPartitions;
     }
 
     @Override

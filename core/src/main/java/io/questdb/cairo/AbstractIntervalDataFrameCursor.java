@@ -33,11 +33,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_DOWN = 1;
     static final int SCAN_UP = -1;
+
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
     protected final int timestampIndex;
@@ -181,18 +183,17 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 }
 
                 // calculate intersection
-
                 long lo;
-                if (partitionTimestampLo == intervalLo) {
+                if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = search(column, intervalLo, partitionLimit, rowCount, AbstractIntervalDataFrameCursor.SCAN_UP);
+                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? rowCount - 1 : partitionLimit, rowCount, SCAN_UP);
                     if (lo < 0) {
                         lo = -lo - 1;
                     }
                 }
 
-                long hi = search(column, intervalHi, lo, rowCount, AbstractIntervalDataFrameCursor.SCAN_DOWN);
+                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, SCAN_DOWN);
 
                 if (hi < 0) {
                     hi = -hi - 1;
@@ -272,25 +273,8 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
-    protected static long search(MemoryR column, long value, long low, long high, int increment) {
-        while (low < high) {
-            long mid = (low + high - 1) >>> 1;
-            long midVal = column.getLong(mid * 8);
-
-            if (midVal < value)
-                low = mid + 1;
-            else if (midVal > value)
-                high = mid;
-            else {
-                // In case of multiple equal values, find the first
-                mid += increment;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
-                    mid += increment;
-                }
-                return mid - increment;
-            }
-        }
-        return -(low + 1);
+    protected static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
+        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     protected class IntervalDataFrame implements DataFrame {

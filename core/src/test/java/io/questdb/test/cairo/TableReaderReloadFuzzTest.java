@@ -40,6 +40,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableReaderTest.assertOpenPartitionCount;
 import static org.junit.Assert.assertEquals;
 
 public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
@@ -98,6 +99,7 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
 
                 reader.reload();
                 assertReaderWriterMetadata(writer, reader);
+                assertOpenPartitionCount(reader);
             }
         }
     }
@@ -220,6 +222,7 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
                     changeTableStructure(addFactor, removeFactor, renameFactor, writer);
                     reader.reload();
                     assertReaderWriterMetadata(writer, reader);
+                    assertOpenPartitionCount(reader);
                 }
             }
         }

@@ -266,6 +266,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return conf.getInactiveReaderMaxOpenPartitions();
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return conf.getInactiveReaderTTL();
     }

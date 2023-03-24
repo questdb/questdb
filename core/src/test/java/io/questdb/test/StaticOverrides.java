@@ -83,6 +83,11 @@ public class StaticOverrides extends Overrides {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return AbstractCairoTest.maxOpenPartitions;
+    }
+
+    @Override
     public String getInputRoot() {
         return AbstractCairoTest.inputRoot;
     }
@@ -189,6 +194,7 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.attachableDirSuffix = null;
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
+        AbstractCairoTest.maxOpenPartitions = -1;
     }
 
     @Override
@@ -239,6 +245,11 @@ public class StaticOverrides extends Overrides {
     @Override
     public void setFilesFacade(FilesFacade ff) {
         AbstractCairoTest.ff = ff;
+    }
+
+    @Override
+    public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
+        AbstractCairoTest.maxOpenPartitions = maxOpenPartitions;
     }
 
     @Override

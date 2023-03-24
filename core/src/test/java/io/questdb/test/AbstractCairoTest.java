@@ -96,6 +96,7 @@ public abstract class AbstractCairoTest {
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
+    protected static int maxOpenPartitions = -1;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
     protected static QuestDBTestNode node1;
@@ -333,6 +334,10 @@ public abstract class AbstractCairoTest {
 
     protected static void configOverrideO3MaxLag() {
         node1.getConfigurationOverrides().setO3MaxLag(28291);
+    }
+
+    protected static void configOverrideO3MinLag(long minLag) {
+        node1.getConfigurationOverrides().setO3MinLag(minLag);
     }
 
     protected static void configOverrideO3MinLag(long minLag) {

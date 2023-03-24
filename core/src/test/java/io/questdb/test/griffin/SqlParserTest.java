@@ -2938,19 +2938,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testFailureForOrderByOnAliasedColumnNotOnSelect() throws Exception {
-        assertFailure(
-                "select y from tab order by tab.x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")",
-                27,
-                "Invalid column: tab.x"
-        );
-    }
-
-    @Test
     public void testFailureOrderByGroupByColPrefixed() throws Exception {
         assertFailure(
                 "select a, sum(b) b from tab order by tab.b, a",
@@ -3055,6 +3042,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose tag, hi, lo from (select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where a.seq > b.seq + 1) a)",
                 "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
                 modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testForOrderByOnAliasedColumnNotOnSelect() throws Exception {
+        assertQuery("select-choose y from (select-choose [y, x] y, x from (select [y, x] from tab) order by x)",
+                "select y from tab order by tab.x",
+                modelOf("tab").col("x", ColumnType.DOUBLE).col("y", ColumnType.INT)
         );
     }
 

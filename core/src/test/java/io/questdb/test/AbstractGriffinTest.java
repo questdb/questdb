@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test;
+package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
@@ -724,7 +724,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertQuery9(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false
+        );
     }
 
     protected static void assertQueryExpectSize(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
