@@ -29,6 +29,57 @@ import org.junit.Test;
 public class GroupByRewriteTest extends AbstractGriffinTest {
 
     @Test
+    public void testRewriteAggregateOnJoin1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE taba ( ax int, aid int );");
+            compile("INSERT INTO taba values (1,1), (2,2)");
+            compile("CREATE TABLE tabb ( bx int, bid int );");
+            compile("INSERT INTO tabb values (3,1), (4,2)");
+
+            assertQuery("sum\tsum1\tsum2\tsum3\n" +
+                            "3\t7\t23\t27\n",
+                    "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
+                            "FROM taba " +
+                            "join tabb on aid = bid", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateOnJoin3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE taba ( x int, aid int );");
+            compile("CREATE TABLE tabb ( x int, bid int );");
+        });
+
+        assertFailure("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
+                "FROM taba " +
+                "join tabb on aid = bid", null, 11, "Invalid table name or alias");
+    }
+
+    @Test
+    public void testRewriteAggregateOnJoin4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE taba ( x int, aid int );");
+            compile("CREATE TABLE tabb ( x int, bid int );");
+        });
+
+        assertFailure("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
+                "FROM taba " +
+                "join tabb on aid = bid", null, 11, "Invalid column: taba.k");
+    }
+
+    @Test
+    public void testRewriteAggregateOnJoinFailsOnAmbiguousColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE taba ( x int, aid int );");
+            compile("  CREATE TABLE tabb ( x int, bid int );");
+        });
+        assertFailure("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
+                "FROM taba " +
+                "join tabb on aid = bid", null, 11, "Ambiguous column [name=x]");
+    }
+
+    @Test
     public void testSumOfAddition1() throws Exception {
         assertAggQuery("r\n" +
                         "65\n",
@@ -263,7 +314,6 @@ public class GroupByRewriteTest extends AbstractGriffinTest {
                 null
         );
     }
-
 
     private void assertAggQuery(String expected,
                                 String query,

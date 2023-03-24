@@ -79,8 +79,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return baseFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return baseFactory.getScanDirection();
     }
 
     @Override

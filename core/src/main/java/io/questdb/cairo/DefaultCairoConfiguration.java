@@ -445,6 +445,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return -1;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }
@@ -797,8 +802,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return 512 * 1024;
+    public long getWalApplyTableTimeQuota() {
+        return 1000L;
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return 20;
     }
 
     @Override
