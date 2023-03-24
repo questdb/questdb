@@ -1037,9 +1037,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                     long columnSize = columnRowCount * 8L + 8L;
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                     mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
-                    columnSize = mem2.getLong(columnRowCount * 8L);
+                    long column2Size = mem2.getLong(columnRowCount * 8L);
+                    assert column2Size > 0 && column2Size <= (1L << 40); // 1TB, e.g. reasonable size, not garbage
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, column2Size);
                 } else {
                     long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);

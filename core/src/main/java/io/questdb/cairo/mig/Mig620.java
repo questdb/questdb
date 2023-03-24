@@ -28,13 +28,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.mig.MigrationUtils.openFileSafe;
 
 public class Mig620 {
     private static final int COLUMN_VERSION_FILE_HEADER_SIZE_MIG = 40;
@@ -132,19 +133,6 @@ public class Mig620 {
         txMemory.jumpTo(TX_BASE_HEADER_SIZE_MIG + existingTotalSize);
     }
 
-    private static MemoryCMARW openFileSafe(FilesFacade ff, Path path, long readOffset) {
-        long fileLen = ff.length(path);
-
-        if (fileLen < 0) {
-            throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
-        }
-
-        if (fileLen < readOffset + Long.BYTES) {
-            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
-        }
-
-        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
-    }
 
     private static int openRO(FilesFacade ff, LPSZ path) {
         final int fd = ff.openRO(path);
@@ -334,6 +322,14 @@ public class Mig620 {
         int pathLen = path.length();
 
         path.concat(TXN_FILE_NAME_MIG).$();
+        EngineMigration.backupFile(
+                ff,
+                path,
+                migrationContext.getTablePath2(),
+                TXN_FILE_NAME_MIG,
+                425
+        );
+
         try (MemoryMARW txMemory = openFileSafe(ff, path, TX_OFFSET_MAP_WRITER_COUNT_MIG + 8)) {
             int symbolCount = txMemory.getInt(TX_OFFSET_MAP_WRITER_COUNT_MIG);
             long partitionSizeOffset = TX_OFFSET_MAP_WRITER_COUNT_MIG + 4 + symbolCount * 8L;

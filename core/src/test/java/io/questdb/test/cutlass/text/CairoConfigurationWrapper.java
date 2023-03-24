@@ -446,6 +446,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getRepeatMigrationsFromVersion() {
+        return conf.getRepeatMigrationsFromVersion();
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return conf.getRndFunctionMemoryMaxPages();
     }
@@ -796,8 +801,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return conf.getWalCommitSquashRowLimit();
+    public long getWalApplyTableTimeQuota() {
+        return conf.getWalApplyTableTimeQuota();
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return conf.getWalSquashUncommittedRowsMultiplier();
     }
 
     @Override

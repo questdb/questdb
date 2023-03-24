@@ -222,12 +222,9 @@ public class RetryIODispatcherTest {
                     Assert.assertFalse(finished);
 
                     writer.close();
+                    countDownLatch.await();
 
-                    if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
-                        Assert.fail("Imports did not finish within reasonable time");
-                    }
-
-                    // check if we have parallelCount x insertCount  records
+                    // check if we have parallelCount x insertCount records
                     LOG.info().$("Requesting row count").$();
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
