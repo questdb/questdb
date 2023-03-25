@@ -1327,12 +1327,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data
-                    if (prefixType == O3_BLOCK_NONE) {
-                        // Split partition.
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop - prefixHi - 1);
-                        srcDataTop -= prefixHi + 1;
-                    } else {
+                    if (prefixType != O3_BLOCK_NONE) {
+                        // Set column top if it's not split partition.
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                        // If it's split partiton, do nothing. Old partiton will have the old column top
+                        // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
@@ -1363,7 +1362,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) << shl;
                 prefixHi -= srcDataTop;
             } else if (prefixType == O3_BLOCK_NONE) {
+                // Split partition.
                 dstFixAppendOffset1 = 0;
+                prefixHi -= srcDataTop;
             } else {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
             }
@@ -1975,12 +1976,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data
-                    if (prefixType == O3_BLOCK_NONE) {
-                        // Split partition.
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop - prefixHi - 1);
-                        srcDataTop -= prefixHi + 1;
-                    } else {
+                    if (prefixType != O3_BLOCK_NONE) {
+                        // Set the column top if it's not split partition case.
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                        // For split partition, old partition column top will remain the same.
+                        // And the new partition will not have any column top since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
@@ -2011,7 +2011,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
             if (prefixType == O3_BLOCK_NONE) {
                 // split partition
-                dstFixSize -= (prefixHi + 1) * Long.BYTES;
+                dstFixSize -= (prefixHi - srcDataTop + 1) * Long.BYTES;
             }
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             if (directIoFlag) {
@@ -2027,7 +2027,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (prefixType == O3_BLOCK_NONE) {
                 // split partition
-                dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr);
+                dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi - srcDataTop, srcDataFixAddr);
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
