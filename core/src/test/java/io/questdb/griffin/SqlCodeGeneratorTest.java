@@ -2610,6 +2610,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinColumnTypeMismatch() throws Exception {
+        String expected="x\ty\n1\t1\n2\t2\n";
+        assertQuery(expected,
+                "select x, y\n" +
+                        "from long_sequence(2) ls\n" +
+                        "join (\n" +
+                        "  select cast(x as int) y from long_sequence(2)\n" +
+                        ") as ls2\n" +
+                        "on ls.x = ls2.y",
+                null, null, false);
+    }
+    @Test
     public void testLatestByAllIndexedFilterColumnDereference() throws Exception {
         final String expected = "b\tk\n" +
                 "RXGZ\t1970-01-12T13:46:40.000000Z\n";

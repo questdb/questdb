@@ -4469,12 +4469,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Key types have too much exactly except SYMBOL and STRING special case
             int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
             int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
-            if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
+            if (notSameColumnType(columnTypeA, columnTypeB) && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))){
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
             keyTypes.add(columnTypeB == ColumnType.SYMBOL ? ColumnType.STRING : columnTypeB);
         }
+    }
+
+    private static boolean notSameColumnType(int columnTypeA, int columnTypeB) {
+       if(columnTypeA== ColumnType.INT ) {columnTypeA= ColumnType.LONG;};
+        if(columnTypeB== ColumnType.INT) {columnTypeB= ColumnType.LONG;};
+        return columnTypeB != columnTypeA;
     }
 
     private void processNodeQueryModels(ExpressionNode node, ModelOperator operator) {
