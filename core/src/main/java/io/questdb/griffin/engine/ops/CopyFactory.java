@@ -100,6 +100,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
                 long importId = textImportExecutionContext.assignActiveImportId();
                 task.of(
+                        executionContext.getCairoSecurityContext(),
                         importId,
                         tableName,
                         fileName,
