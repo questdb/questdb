@@ -46,12 +46,12 @@ public final class PartitionBy {
     public static final int DAY = 0;
     public static final int HOUR = 4;
     public static final int MONTH = 1;
-    public static final int WEEK = 5;
     /**
      * Data is not partitioned at all,
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
+    public static final int WEEK = 5;
     public static final int YEAR = 2;
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
@@ -63,11 +63,6 @@ public final class PartitionBy {
     private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
     private static final PartitionCeilMethod CEIL_WW = Timestamps::ceilWW;
     private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
-    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
-    private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
-    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
-    private static final PartitionFloorMethod FLOOR_WW = Timestamps::floorWW;
-    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private final static DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
         public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
@@ -84,6 +79,11 @@ public final class PartitionBy {
             return 0;
         }
     };
+    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
+    private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
+    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
+    private static final PartitionFloorMethod FLOOR_WW = Timestamps::floorWW;
+    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
 
     private PartitionBy() {
@@ -105,6 +105,23 @@ public final class PartitionBy {
                 return ADD_HH;
             case WEEK:
                 return ADD_WW;
+            default:
+                return null;
+        }
+    }
+
+    public static PartitionCeilMethod getPartitionCeilMethod(int partitionBy) {
+        switch (partitionBy) {
+            case DAY:
+                return CEIL_DD;
+            case MONTH:
+                return CEIL_MM;
+            case YEAR:
+                return CEIL_YYYY;
+            case HOUR:
+                return CEIL_HH;
+            case WEEK:
+                return CEIL_WW;
             default:
                 return null;
         }
@@ -221,29 +238,6 @@ public final class PartitionBy {
         }
     }
 
-    private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int limit, int partitionBy) {
-        final CairoException ee = CairoException.critical(0).put('\'');
-        switch (partitionBy) {
-            case DAY:
-                ee.put(DAY_PATTERN);
-                break;
-            case WEEK:
-                ee.put(WEEK_PATTERN).put("' or '").put(DAY_PATTERN);
-                break;
-            case MONTH:
-                ee.put(MONTH_PATTERN);
-                break;
-            case YEAR:
-                ee.put(YEAR_PATTERN);
-                break;
-            case HOUR:
-                ee.put(HOUR_PATTERN);
-                break;
-        }
-        ee.put("' expected, found [ts=").put(partitionName.subSequence(0, limit)).put(']');
-        return ee;
-    }
-
     public static long setSinkForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
         int y, m, d;
         boolean leap;
@@ -343,21 +337,27 @@ public final class PartitionBy {
         }
     }
 
-    static PartitionCeilMethod getPartitionCeilMethod(int partitionBy) {
+    private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int limit, int partitionBy) {
+        final CairoException ee = CairoException.critical(0).put('\'');
         switch (partitionBy) {
             case DAY:
-                return CEIL_DD;
-            case MONTH:
-                return CEIL_MM;
-            case YEAR:
-                return CEIL_YYYY;
-            case HOUR:
-                return CEIL_HH;
+                ee.put(DAY_PATTERN);
+                break;
             case WEEK:
-                return CEIL_WW;
-            default:
-                return null;
+                ee.put(WEEK_PATTERN).put("' or '").put(DAY_PATTERN);
+                break;
+            case MONTH:
+                ee.put(MONTH_PATTERN);
+                break;
+            case YEAR:
+                ee.put(YEAR_PATTERN);
+                break;
+            case HOUR:
+                ee.put(HOUR_PATTERN);
+                break;
         }
+        ee.put("' expected, found [ts=").put(partitionName.subSequence(0, limit)).put(']');
+        return ee;
     }
 
     @FunctionalInterface

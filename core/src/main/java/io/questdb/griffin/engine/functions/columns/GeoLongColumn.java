@@ -55,6 +55,11 @@ public class GeoLongColumn extends GeoLongFunction {
         return new GeoLongColumn(columnIndex, columnType);
     }
 
+    @TestOnly
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
     @Override
     public long getGeoLong(Record rec) {
         return rec.getGeoLong(columnIndex);
@@ -68,11 +73,6 @@ public class GeoLongColumn extends GeoLongFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 
     static {

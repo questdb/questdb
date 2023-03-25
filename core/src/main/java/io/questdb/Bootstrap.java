@@ -154,22 +154,22 @@ public class Bootstrap {
             // /server.conf properties
             final Properties properties = loadProperties(rootPath);
             config = ffOverride == null
-                ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
-                : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
-                    private CairoConfiguration cairoConf;
+                    ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
+                    : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
+                private CairoConfiguration cairoConf;
 
-                    @Override
-                    public CairoConfiguration getCairoConfiguration() {
-                        if (cairoConf == null) {
-                            cairoConf = new PropCairoConfiguration() {
-                                @Override
-                                public FilesFacade getFilesFacade() {
-                                    return ffOverride;
-                                }
-                            };
-                        }
-                        return cairoConf;
+                @Override
+                public CairoConfiguration getCairoConfiguration() {
+                    if (cairoConf == null) {
+                        cairoConf = new PropCairoConfiguration() {
+                            @Override
+                            public FilesFacade getFilesFacade() {
+                                return ffOverride;
+                            }
+                        };
                     }
+                    return cairoConf;
+                }
             };
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
@@ -184,6 +184,125 @@ public class Bootstrap {
         } else {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
+        }
+    }
+
+    public static CharSequenceObjHashMap<String> processArgs(String... args) {
+        final int n = args.length;
+        if (n == 0) {
+            throw new BootstrapException("Arguments expected, non provided");
+        }
+        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
+        for (int i = 0; i < n; i++) {
+            String arg = args[i];
+            if (arg.length() > 1 && arg.charAt(0) == '-') {
+                if (i + 1 < n) {
+                    String nextArg = args[i + 1];
+                    if (nextArg.length() > 1 && nextArg.charAt(0) == '-') {
+                        optHash.put(arg, "");
+                    } else {
+                        optHash.put(arg, nextArg);
+                        i++;
+                    }
+                } else {
+                    optHash.put(arg, "");
+                }
+            } else {
+                optHash.put("$" + i, arg);
+            }
+        }
+        return optHash;
+    }
+
+    public static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
+        final CharSequence dbRoot = cairoConfiguration.getRoot();
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+        final int maxFiles = cairoConfiguration.getMaxCrashFiles();
+        NativeLPSZ name = new NativeLPSZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.length();
+            AtomicInteger counter = new AtomicInteger(0);
+            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
+                if (Files.notDots(pUtf8NameZ)) {
+                    name.of(pUtf8NameZ);
+                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                        path.trimTo(plen).concat(pUtf8NameZ).$();
+                        boolean shouldRename = false;
+                        do {
+                            other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
+                            if (!ff.exists(other)) {
+                                shouldRename = counter.get() <= maxFiles;
+                                break;
+                            }
+                        } while (counter.get() < maxFiles);
+                        if (shouldRename && ff.rename(path, other) == 0) {
+                            log.criticalW().$("found crash file [path=").$(other).I$();
+                        } else {
+                            log.criticalW().
+                                    $("could not rename crash file [path=").$(path)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(", index=").$(counter.get())
+                                    .$(", max=").$(maxFiles)
+                                    .I$();
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    public void extractSite() throws IOException {
+        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
+        long thisVersion = Long.MIN_VALUE;
+        if (resource == null) {
+            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
+        } else {
+            thisVersion = resource.openConnection().getLastModified();
+        }
+
+        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
+        final byte[] buffer = new byte[1024 * 1024];
+
+        boolean extracted = false;
+        final String oldVersionStr = getPublicVersion(publicDir);
+        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+        if (oldVersionStr == null) {
+            if (thisVersion != 0) {
+                extractSite0(publicDir, buffer, Long.toString(thisVersion));
+            } else {
+                extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+            }
+            extracted = true;
+        } else {
+            // This is a hack to deal with RT package problem
+            // in this package "thisVersion" is always 0, and we need to fall back
+            // to the database version.
+            if (thisVersion == 0) {
+                if (!Chars.equals(oldVersionStr, dbVersion)) {
+                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    extracted = true;
+                }
+            } else {
+                // it is possible that old version is the database version
+                // which means user might have switched from RT distribution to no-JVM on the same data dir
+                // in this case we might fail to parse the version string
+                try {
+                    final long oldVersion = Numbers.parseLong(oldVersionStr);
+                    if (thisVersion > oldVersion) {
+                        extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                        extracted = true;
+                    }
+                } catch (NumericException e) {
+                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                    extracted = true;
+                }
+            }
+        }
+        if (!extracted) {
+            log.infoW().$("Web Console is up to date").$();
         }
     }
 
@@ -415,125 +534,6 @@ public class Bootstrap {
             } else {
                 r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
             }
-        }
-    }
-
-    static CharSequenceObjHashMap<String> processArgs(String... args) {
-        final int n = args.length;
-        if (n == 0) {
-            throw new BootstrapException("Arguments expected, non provided");
-        }
-        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
-        for (int i = 0; i < n; i++) {
-            String arg = args[i];
-            if (arg.length() > 1 && arg.charAt(0) == '-') {
-                if (i + 1 < n) {
-                    String nextArg = args[i + 1];
-                    if (nextArg.length() > 1 && nextArg.charAt(0) == '-') {
-                        optHash.put(arg, "");
-                    } else {
-                        optHash.put(arg, nextArg);
-                        i++;
-                    }
-                } else {
-                    optHash.put(arg, "");
-                }
-            } else {
-                optHash.put("$" + i, arg);
-            }
-        }
-        return optHash;
-    }
-
-    static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
-        final CharSequence dbRoot = cairoConfiguration.getRoot();
-        final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        final int maxFiles = cairoConfiguration.getMaxCrashFiles();
-        NativeLPSZ name = new NativeLPSZ();
-        try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
-        ) {
-            int plen = path.length();
-            AtomicInteger counter = new AtomicInteger(0);
-            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
-                if (Files.notDots(pUtf8NameZ)) {
-                    name.of(pUtf8NameZ);
-                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
-                        path.trimTo(plen).concat(pUtf8NameZ).$();
-                        boolean shouldRename = false;
-                        do {
-                            other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
-                            if (!ff.exists(other)) {
-                                shouldRename = counter.get() <= maxFiles;
-                                break;
-                            }
-                        } while (counter.get() < maxFiles);
-                        if (shouldRename && ff.rename(path, other) == 0) {
-                            log.criticalW().$("found crash file [path=").$(other).I$();
-                        } else {
-                            log.criticalW().
-                                    $("could not rename crash file [path=").$(path)
-                                    .$(", errno=").$(ff.errno())
-                                    .$(", index=").$(counter.get())
-                                    .$(", max=").$(maxFiles)
-                                    .I$();
-                        }
-                    }
-                }
-            });
-        }
-    }
-
-    void extractSite() throws IOException {
-        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
-        long thisVersion = Long.MIN_VALUE;
-        if (resource == null) {
-            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
-        } else {
-            thisVersion = resource.openConnection().getLastModified();
-        }
-
-        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-        final byte[] buffer = new byte[1024 * 1024];
-
-        boolean extracted = false;
-        final String oldVersionStr = getPublicVersion(publicDir);
-        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
-        if (oldVersionStr == null) {
-            if (thisVersion != 0) {
-                extractSite0(publicDir, buffer, Long.toString(thisVersion));
-            } else {
-                extractSite0(publicDir, buffer, Chars.toString(dbVersion));
-            }
-            extracted = true;
-        } else {
-            // This is a hack to deal with RT package problem
-            // in this package "thisVersion" is always 0, and we need to fall back
-            // to the database version.
-            if (thisVersion == 0) {
-                if (!Chars.equals(oldVersionStr, dbVersion)) {
-                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));
-                    extracted = true;
-                }
-            } else {
-                // it is possible that old version is the database version
-                // which means user might have switched from RT distribution to no-JVM on the same data dir
-                // in this case we might fail to parse the version string
-                try {
-                    final long oldVersion = Numbers.parseLong(oldVersionStr);
-                    if (thisVersion > oldVersion) {
-                        extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                        extracted = true;
-                    }
-                } catch (NumericException e) {
-                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                    extracted = true;
-                }
-            }
-        }
-        if (!extracted) {
-            log.infoW().$("Web Console is up to date").$();
         }
     }
 

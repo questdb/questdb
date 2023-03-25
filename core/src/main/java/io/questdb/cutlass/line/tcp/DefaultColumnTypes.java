@@ -26,11 +26,11 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
 
-class DefaultColumnTypes {
+public class DefaultColumnTypes {
     final int[] DEFAULT_COLUMN_TYPES = new int[LineTcpParser.N_ENTITY_TYPES];
     final int[] MAPPED_COLUMN_TYPES = new int[LineTcpParser.N_MAPPED_ENTITY_TYPES];
 
-    DefaultColumnTypes(LineTcpReceiverConfiguration configuration) {
+    public DefaultColumnTypes(LineTcpReceiverConfiguration configuration) {
         // if not set it defaults to ColumnType.UNDEFINED
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = configuration.getDefaultColumnTypeForFloat();

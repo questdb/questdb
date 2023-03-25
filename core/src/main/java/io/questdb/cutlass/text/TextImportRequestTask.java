@@ -24,9 +24,11 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.std.Mutable;
 
 public class TextImportRequestTask implements Mutable {
+    private CairoSecurityContext securityContext;
     private int atomicity;
     private byte delimiter;
     private String fileName;
@@ -86,18 +88,13 @@ public class TextImportRequestTask implements Mutable {
         return headerFlag;
     }
 
-    public void of(
-            long importId,
-            String tableName,
-            String fileName,
-            boolean headerFlag,
-            String timestampColumnName,
-            byte delimiter,
-            String timestampFormat,
-            int partitionBy,
-            int atomicity
-    ) {
+    public CairoSecurityContext getSecurityContext() {
+        return securityContext;
+    }
+
+    public void of(CairoSecurityContext securityContext, long importId, String tableName, String fileName, boolean headerFlag, String timestampColumnName, byte delimiter, String timestampFormat, int partitionBy, int atomicity) {
         this.clear();
+        this.securityContext = securityContext;
         this.importId = importId;
         this.tableName = tableName;
         this.fileName = fileName;

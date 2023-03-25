@@ -55,6 +55,11 @@ public class GeoByteColumn extends GeoByteFunction {
         return new GeoByteColumn(columnIndex, columnType);
     }
 
+    @TestOnly
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
     @Override
     public byte getGeoByte(Record rec) {
         return rec.getGeoByte(columnIndex);
@@ -68,11 +73,6 @@ public class GeoByteColumn extends GeoByteFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 
     static {

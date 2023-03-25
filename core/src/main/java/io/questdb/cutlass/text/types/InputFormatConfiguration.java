@@ -137,13 +137,13 @@ public class InputFormatConfiguration {
         return timestampUtf8Flags;
     }
 
-    public void parseConfiguration(JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
+    public void parseConfiguration(Class<?> resourceLoader, JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
         clear();
         jsonLexer.clear();
 
         final JsonParser parser = this::onJsonEvent;
 
-        try (InputStream stream = openStream(confRoot, configFileName)) {
+        try (InputStream stream = openStream(resourceLoader, confRoot, configFileName)) {
             // here is where using direct memory is very disadvantageous
             // we will copy buffer twice to parse json, but luckily contents should be small,
             // and we should be parsing this only once on startup
@@ -314,7 +314,7 @@ public class InputFormatConfiguration {
         }
     }
 
-    private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
+    private InputStream openStream(Class<?> resourceLoader, String confRoot, String configFileName) throws IOException, JsonException {
         // First, check the user-provided file.
         if (confRoot != null) {
             final File configFile = new File(confRoot, configFileName);
@@ -324,7 +324,7 @@ public class InputFormatConfiguration {
             }
         }
         // Second, fall back to the default config.
-        final InputStream stream = this.getClass().getResourceAsStream(configFileName);
+        final InputStream stream = resourceLoader.getResourceAsStream(configFileName);
         if (stream != null) {
             LOG.info().$("loading input format config [resource=").$(configFileName).$(']').$();
             return stream;

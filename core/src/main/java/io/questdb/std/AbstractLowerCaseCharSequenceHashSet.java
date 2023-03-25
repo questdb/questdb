@@ -60,6 +60,14 @@ abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
         return keyIndex(key, lo, hi) > -1;
     }
 
+    public CharSequence getKey(int index) {
+        return keys[index];
+    }
+
+    public int getKeyCount() {
+        return keys.length;
+    }
+
     public int keyIndex(CharSequence key) {
         int index = Chars.lowerCaseHashCode(key) & mask;
 

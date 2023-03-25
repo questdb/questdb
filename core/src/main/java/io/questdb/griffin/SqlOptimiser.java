@@ -3396,8 +3396,8 @@ class SqlOptimiser {
             // for each order by column check how deep we need to go between "model" and "base"
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
-                final CharSequence column = orderBy.token;
-                final int dot = Chars.indexOf(column, '.');
+                CharSequence column = orderBy.token;
+                int dot = Chars.indexOf(column, '.');
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
@@ -3425,7 +3425,7 @@ class SqlOptimiser {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
                         } else {
-                            if (dot > -1) {
+                            if (dot > -1 && !base.getModelAliasIndexes().contains(column, 0, dot)) {
                                 throw SqlException.invalidColumn(orderBy.position, column);
                             }
 
@@ -3437,6 +3437,13 @@ class SqlOptimiser {
                                         .put("Invalid column: ")
                                         .put(column);
                             } else {
+                                if (dot > -1
+                                        && base.getModelAliasIndexes().contains(column, 0, dot)
+                                        && base.getModelAliasIndexes().size() == 1) {
+                                    column = column.subSequence(dot + 1, column.length());//remove alias
+                                    dot = -1;
+                                }
+
                                 if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
                                     QueryModel synthetic = queryModelPool.next();
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);

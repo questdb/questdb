@@ -29,7 +29,7 @@ import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
-class MonthTimestampSampler implements TimestampSampler {
+public class MonthTimestampSampler implements TimestampSampler {
     private final int monthCount;
     private int startDay;
     private int startHour;
@@ -38,7 +38,7 @@ class MonthTimestampSampler implements TimestampSampler {
     private int startMin;
     private int startSec;
 
-    MonthTimestampSampler(int monthCount) {
+    public MonthTimestampSampler(int monthCount) {
         this.monthCount = monthCount;
     }
 
