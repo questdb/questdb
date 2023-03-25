@@ -839,14 +839,18 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testReadPartitionWhileMergingVarColumnWithColumnTop() throws Exception {
+        // Read the partition with a column top at the same time
+        // when TableWriter is merges it with O3 data.
+
         AtomicReference<SqlCompiler> compilerRef = new AtomicReference<>();
         AtomicReference<SqlExecutionContext> executionContextRef = new AtomicReference<>();
         AtomicBoolean compared = new AtomicBoolean(false);
 
+        // Read the partition while it's being merged
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "2020-02-05.") && Chars.contains(name, Files.SEPARATOR + "ks.")) {
+                if (Chars.contains(name, "2020-02-05.") && Chars.contains(name, Files.SEPARATOR + "last.d")) {
                     try {
                         TestUtils.assertSqlCursors(
                                 compilerRef.get(),
@@ -884,6 +888,7 @@ public class O3Test extends AbstractO3Test {
                     compiler.compile("alter table x add column k uuid", executionContext).execute(null).await();
                     compiler.compile("alter table x add column kb binary", executionContext).execute(null).await();
                     compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column last int", executionContext).execute(null).await();
 
                     compiler.compile(
                             "create table y as (" +
@@ -893,7 +898,8 @@ public class O3Test extends AbstractO3Test {
                                     " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
                                     " rnd_uuid4() as k," +
                                     " rnd_bin() as kb," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " -1 as last" +
                                     " from long_sequence(10))",
                             executionContext
                     );
@@ -906,11 +912,13 @@ public class O3Test extends AbstractO3Test {
                                     " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                                     " rnd_uuid4() as k," +
                                     " rnd_bin() as kb," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " -2 as last" +
                                     " from long_sequence(100))",
                             executionContext
                     );
 
+                    // Create table zz with first 2 inserts to be ready to compare.
                     compiler.compile(
                             "create table zz as (select * from x union all select * from y)",
                             executionContext
