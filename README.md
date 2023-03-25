@@ -8,7 +8,7 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open-source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
@@ -46,7 +46,7 @@ We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
-- Trades: live crytocurrency market data with 30M+ rows per month
+- Trades: live cryptocurrency market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
@@ -57,7 +57,7 @@ QuestDB release and sample datasets:
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
 | `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-Our demo is running on `c5.metal` instance and using 24 cores out of 96.
+Our demo is running on a `c5.metal` instance and using 24 cores out of 96.
 
 ## Get started
 
@@ -108,10 +108,10 @@ languages:
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
-## How QuestDB compares to other open source TSDBs
+## How QuestDB compares to other open-source TSDBs
 
 [This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-compares QuestDB to other open source time series databases spanning
+compares QuestDB to other open-source time series databases spanning
 functionality, maturity and performance.
 
 Here are high-cardinality
@@ -155,7 +155,7 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 ## Contribute
 
 We are always happy to have contributions to the project whether it is source
-code, documentation, bug reports, feature requests or feedback. To get started
+code, documentation, bug reports, feature requests, or feedback. To get started
 with contributing:
 
 - Have a look through GitHub issues labeled
@@ -170,7 +170,7 @@ with contributing:
 ✨ As a sign of our gratitude, we also send **QuestDB swag** to our
 contributors. [Claim your swag here.](https://questdb.io/community)
 
-A big thanks goes to the following wonderful people who have contributed to
+A big thanks go to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
@@ -323,5 +323,5 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project adheres to the
-[all-contributors](https://github.com/all-contributors/all-contributors)
+[all-contributor's](https://github.com/all-contributors/all-contributors)
 specification. Contributions of any kind are welcome!
