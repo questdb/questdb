@@ -4438,6 +4438,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Key types have too much exactly except SYMBOL and STRING special case
             int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
             int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
+
+            if (columnTypeB != columnTypeA && ColumnType.isInt(columnTypeA) && ColumnType.isLong(columnTypeB)) {
+                //upcast columnTypeA to long
+                 columnTypeA = 6;
+            }
+
+            if (columnTypeB != columnTypeA && ColumnType.isLong(columnTypeA) && ColumnType.isInt(columnTypeB)) {
+                //upcast columnTypeB to long
+                columnTypeB = 6;
+            }
+
             if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");

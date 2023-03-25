@@ -8293,4 +8293,62 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "tab latest on ts partition by symbol");
         });
     }
-}
+        @Test
+        public void testMismatchCastIntToLongAtoB() throws Exception {
+                final String expected = "x\ty\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\t3\n" +
+                        "4\t4\n" +
+                        "5\t5\n" +
+                        "6\t6\n" +
+                        "7\t7\n" +
+                        "8\t8\n" +
+                        "9\t9\n" +
+                        "10\t10\n" ;
+
+                assertQuery(expected,
+                        "select x, y\n" +
+                                "from long_sequence(10) ls\n" +
+                                "join (\n" +
+                                "  select cast(x as int) y from long_sequence(10)\n" +
+                                ") as ls2\n" +
+                                "on ls.x = ls2.y",
+                        null,
+                        false,
+                        true,
+                        true
+                );
+        }
+
+    @Test
+    public void testMismatchCastIntToLongBtoA() throws Exception {
+        final String expected = "y\tx\n" +
+                "1\t1\n" +
+                "2\t2\n" +
+                "3\t3\n" +
+                "4\t4\n" +
+                "5\t5\n" +
+                "6\t6\n" +
+                "7\t7\n" +
+                "8\t8\n" +
+                "9\t9\n" +
+                "10\t10\n" ;
+
+        assertQuery(expected,
+                "select y, x\n" +
+                        "from long_sequence(10) ls\n" +
+                        "join (\n" +
+                        "  select cast(x as int) y from long_sequence(10)\n" +
+                        ") as ls2\n" +
+                        "on ls.x = ls2.y",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    }
+
+
