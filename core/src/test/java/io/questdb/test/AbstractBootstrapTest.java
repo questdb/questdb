@@ -101,6 +101,7 @@ public abstract class AbstractBootstrapTest {
             auxPath = new Path();
             Files.remove(dbPath.concat("sys.column_versions_purge_log.lock").$());
             Files.remove(dbPath.trimTo(dbPathLen).concat("telemetry_config.lock").$());
+            dbPath.trimTo(dbPathLen).$();
         } catch (IOException e) {
             throw new ExceptionInInitializerError();
         }
