@@ -44,6 +44,8 @@ public interface FilesFacade {
 
     long copyData(int srcFd, int destFd, long offsetSrc, long length);
 
+    long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length);
+
     int copyRecursive(Path src, Path dst, int dirMode);
 
     int errno();

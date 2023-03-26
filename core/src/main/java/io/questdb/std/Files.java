@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -126,6 +127,8 @@ public final class Files {
     }
 
     public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
+
+    public static native long copyDataToOffset(int srcFd, int destFd, long offsetSrc, long offsetDest, long length);
 
     /**
      * close(fd) should be used instead of this method in most cases
@@ -232,6 +235,14 @@ public final class Files {
 
     public static long getOpenFileCount() {
         return OPEN_FILE_COUNT.get();
+    }
+
+    public @NotNull static String getResourcePath(@Nullable URL url) {
+        assert url != null;
+        String file = url.getFile();
+        assert  file != null;
+        assert file.length() > 0;
+        return file;
     }
 
     public native static int getStdOutFd();
@@ -454,6 +465,17 @@ public final class Files {
         return softLink(src.address(), softLink.address());
     }
 
+    public static boolean strcmp(long lpsz, CharSequence s) {
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
+            if (b == 0 || b != (byte) s.charAt(i)) {
+                return false;
+            }
+        }
+        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
+    }
+
     public static native int sync();
 
     public static boolean touch(LPSZ lpsz) {
@@ -530,6 +552,9 @@ public final class Files {
 
     private static native boolean exists0(long lpsz);
 
+    //caller must call findClose to free allocated struct
+    private native static long findFirst(long lpszName);
+
     private static native long getDiskSize(long lpszPath);
 
     private static native int getFileSystemStatus(long lpszName);
@@ -573,20 +598,6 @@ public final class Files {
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
-
-    //caller must call findClose to free allocated struct
-    native static long findFirst(long lpszName);
-
-    static boolean strcmp(long lpsz, CharSequence s) {
-        int len = s.length();
-        for (int i = 0; i < len; i++) {
-            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
-            if (b == 0 || b != (byte) s.charAt(i)) {
-                return false;
-            }
-        }
-        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
-    }
 
     static {
         Os.init();

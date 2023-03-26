@@ -73,6 +73,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+        return Files.copyDataToOffset(srcFd, destFd, offsetSrc, destOffset, length);
+    }
+
+    @Override
     public int copyRecursive(Path src, Path dst, int dirMode) {
         return runRecursive(src, dst, dirMode, copyFsOperation);
     }

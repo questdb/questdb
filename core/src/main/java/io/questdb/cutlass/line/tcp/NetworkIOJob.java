@@ -30,7 +30,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
-interface NetworkIOJob extends Job, QuietCloseable {
+public interface NetworkIOJob extends Job, QuietCloseable {
     void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
     TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8);

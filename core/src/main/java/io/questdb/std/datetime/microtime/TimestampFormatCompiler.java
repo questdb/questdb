@@ -145,6 +145,18 @@ public class TimestampFormatCompiler {
         }
     }
 
+    public static int getOpCode(String opName) {
+        return opMap.get(opName);
+    }
+
+    public static int getOpCount() {
+        return opList.size();
+    }
+
+    public static String getOpName(int index) {
+        return opList.getQuick(index);
+    }
+
     public DateFormat compile(CharSequence pattern) {
         return compile(pattern, false);
     }

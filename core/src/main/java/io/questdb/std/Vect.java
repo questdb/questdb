@@ -48,6 +48,10 @@ public final class Vect {
     }
 
     public static long boundedBinarySearchIndexT(long pData, long value, long low, long high, int scanDirection) {
+        // Negative values are not supported in timestamp index.
+        if (value < 0) {
+            return low - 1;
+        }
         // Note: high is inclusive!
         long index = binarySearchIndexT(pData, value, low, high, scanDirection);
         if (index < 0) {
@@ -195,7 +199,7 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
-    public static native void radixSortABLongIndexAscInA(long pDataA, long countA, long pDataB, long countB, long pDataCpy);
+    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
 
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);

@@ -70,6 +70,14 @@ public class WalDataRecord implements Record, Sinkable {
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
     }
 
+    // only for tests
+    @SuppressWarnings("SameParameterValue")
+    public long getDesignatedTimestampRowId(int col) {
+        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
     @Override
     public double getDouble(int col) {
         final long offset = recordIndex * Double.BYTES;
@@ -238,14 +246,6 @@ public class WalDataRecord implements Record, Sinkable {
 
     private long getDesignatedTimestamp(int col) {
         final long offset = 2 * recordIndex * Long.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    // only for tests
-    @SuppressWarnings("SameParameterValue")
-    long getDesignatedTimestampRowId(int col) {
-        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }

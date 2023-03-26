@@ -65,6 +65,76 @@ public class SqlUtil {
         return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
     }
 
+    public static long expectMicros(CharSequence tok, int position) throws SqlException {
+        int k = -1;
+
+        final int len = tok.length();
+
+        // look for end of digits
+        for (int i = 0; i < len; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
+        }
+
+        try {
+            long interval = Numbers.parseLong(tok, 0, k);
+            int nChars = len - k;
+            if (nChars > 2) {
+                throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
+            }
+
+            switch (tok.charAt(k)) {
+                case 's':
+                    if (nChars == 1) {
+                        // seconds
+                        return interval * Timestamps.SECOND_MICROS;
+                    }
+                    break;
+                case 'm':
+                    if (nChars == 1) {
+                        // minutes
+                        return interval * Timestamps.MINUTE_MICROS;
+                    } else {
+                        if (tok.charAt(k + 1) == 's') {
+                            // millis
+                            return interval * Timestamps.MILLI_MICROS;
+                        }
+                    }
+                    break;
+                case 'h':
+                    if (nChars == 1) {
+                        // hours
+                        return interval * Timestamps.HOUR_MICROS;
+                    }
+                    break;
+                case 'd':
+                    if (nChars == 1) {
+                        // days
+                        return interval * Timestamps.DAY_MICROS;
+                    }
+                    break;
+                case 'u':
+                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
+                        return interval;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        } catch (NumericException ex) {
+            // Ignored
+        }
+
+        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
+    }
+
     /**
      * Fetches next non-whitespace token that's not part of single or multiline comment.
      *
@@ -571,76 +641,6 @@ public class SqlUtil {
                 return alias;
             }
         }
-    }
-
-    static long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
-        final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
-
-        try {
-            long interval = Numbers.parseLong(tok, 0, k);
-            int nChars = len - k;
-            if (nChars > 2) {
-                throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
-            }
-
-            switch (tok.charAt(k)) {
-                case 's':
-                    if (nChars == 1) {
-                        // seconds
-                        return interval * Timestamps.SECOND_MICROS;
-                    }
-                    break;
-                case 'm':
-                    if (nChars == 1) {
-                        // minutes
-                        return interval * Timestamps.MINUTE_MICROS;
-                    } else {
-                        if (tok.charAt(k + 1) == 's') {
-                            // millis
-                            return interval * Timestamps.MILLI_MICROS;
-                        }
-                    }
-                    break;
-                case 'h':
-                    if (nChars == 1) {
-                        // hours
-                        return interval * Timestamps.HOUR_MICROS;
-                    }
-                    break;
-                case 'd':
-                    if (nChars == 1) {
-                        // days
-                        return interval * Timestamps.DAY_MICROS;
-                    }
-                    break;
-                case 'u':
-                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
-                        return interval;
-                    }
-                    break;
-                default:
-                    break;
-            }
-        } catch (NumericException ex) {
-            // Ignored
-        }
-
-        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
     }
 
     static QueryColumn nextColumn(

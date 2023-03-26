@@ -91,6 +91,10 @@ public interface FunctionFactory {
         return false;
     }
 
+    default boolean isWindow() {
+        return false;
+    }
+
     Function newInstance(
             int position,
             @Transient ObjList<Function> args,

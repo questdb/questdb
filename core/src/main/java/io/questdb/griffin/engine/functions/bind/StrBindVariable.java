@@ -35,7 +35,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
+public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     private final int floatScale;
     private final StringSink sink = new StringSink();
     private boolean isNull = true;

@@ -29,12 +29,9 @@ import io.questdb.griffin.engine.functions.math.*;
 open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
-    requires static java.sql;
     requires static java.management;
 
     uses io.questdb.griffin.FunctionFactory;
-    exports io.questdb.std.fastdouble;
-
     exports io.questdb;
     exports io.questdb.cairo;
     exports io.questdb.cairo.vm;
@@ -44,6 +41,7 @@ open module io.questdb {
     exports io.questdb.cairo.pool.ex;
     exports io.questdb.cairo.security;
 
+    exports io.questdb.cutlass;
     exports io.questdb.cutlass.http;
     exports io.questdb.cutlass.http.processors;
     exports io.questdb.cutlass.http.ex;
@@ -74,16 +72,25 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.math;
     exports io.questdb.griffin.engine.functions.regex;
     exports io.questdb.griffin.engine.functions.str;
+    exports io.questdb.griffin.engine.functions.test;
+    exports io.questdb.griffin.engine.functions.geohash;
+    exports io.questdb.griffin.engine.functions.bin;
+    exports io.questdb.griffin.engine.functions.lock;
+    exports io.questdb.griffin.engine.functions.analytic;
+    exports io.questdb.griffin.engine.functions.table;
     exports io.questdb.griffin.engine.groupby;
     exports io.questdb.griffin.engine.groupby.vect;
+    exports io.questdb.griffin.engine.orderby;
     exports io.questdb.griffin.engine.analytic;
-
+    exports io.questdb.griffin.engine.table;
+    exports io.questdb.jit;
     exports io.questdb.std;
     exports io.questdb.std.datetime;
     exports io.questdb.std.datetime.microtime;
     exports io.questdb.std.datetime.millitime;
     exports io.questdb.std.str;
     exports io.questdb.std.ex;
+    exports io.questdb.std.fastdouble;
     exports io.questdb.network;
     exports io.questdb.log;
     exports io.questdb.mp;
