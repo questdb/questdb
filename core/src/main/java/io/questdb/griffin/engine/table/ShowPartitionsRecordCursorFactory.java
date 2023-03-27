@@ -267,7 +267,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                         dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
                                     }
                                 } finally {
-                                    detachedTxReader.clear();
+                                    if (detachedTxReader != null) {
+                                        detachedTxReader.clear();
+                                    }
                                 }
                             } else {
                                 LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
@@ -276,7 +278,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             LOG.error().$("detached partition meta does not match [path=").$(path).I$();
                         }
                     } finally {
-                        detachedMetaReader.clear();
+                        if (detachedMetaReader != null) {
+                            detachedMetaReader.clear();
+                        }
                     }
                 } else {
                     LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
