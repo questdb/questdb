@@ -27,9 +27,13 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
@@ -74,22 +78,21 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             String expected,
             CharSequence root,
             String tableName,
-            CairoEngine engine,
-            StringSink sink
+            CairoEngine engine
     ) {
         ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
         String[] lines = expected.split("\n");
         sink.clear();
         sink.put(lines[0]).put('\n');
+        StringSink auxSink = new StringSink();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i];
             String nameColumn = line.split("\t")[2];
             Long s = sizes.get(nameColumn);
             long size = s != null ? s.longValue() : 0L;
-            int z = Numbers.msb(size) / 10;
-            String human = String.format("%.1f %sB", (float) size / (1L << z * 10), " KMGTPEZ".charAt(z));
+            auxSink.clear();
             line = line.replaceAll("SIZE", String.valueOf(size));
-            line = line.replaceAll("HUMAN", human);
+            line = line.replaceAll("HUMAN", SizePrettyFunctionFactory.toSizePretty(auxSink, size).toString());
             sink.put(line).put('\n');
         }
         return sink.toString();
@@ -612,7 +615,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     }
 
     private String replaceSizeToMatchOS(String expected, String tableName) {
-        return replaceSizeToMatchOS(expected, configuration.getRoot(), tableName, engine, sink);
+        return replaceSizeToMatchOS(expected, configuration.getRoot(), tableName, engine);
     }
 
     private String testTableName(String tableName) {

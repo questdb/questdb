@@ -137,7 +137,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
 
-                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
+                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
                 assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
                 int numThreads = 5;
@@ -195,7 +195,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler0, context0, tableName);
-                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine, Misc.getThreadLocalBuilder());
+                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
                 assertShowPartitions(finallyExpected, tableToken, compiler0, context0);
 
                 CyclicBarrier start = new CyclicBarrier(2);

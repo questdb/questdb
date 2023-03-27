@@ -122,6 +122,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
+        private final StringSink sink = new StringSink();
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
@@ -149,6 +150,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionName.clear();
             partitionRecord.close();
             tableReader = Misc.free(tableReader);
+            sink.clear();
         }
 
         @Override
@@ -378,7 +380,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     return PartitionBy.toString(partitionBy);
                 }
                 if (Column.DISK_SIZE_HUMAN.is(col)) {
-                    return SizePrettyFunctionFactory.toSizePretty(partitionSize);
+                    sink.clear();
+                    return SizePrettyFunctionFactory.toSizePretty(sink, partitionSize);
                 }
                 if (Column.PARTITION_NAME.is(col)) {
                     return partitionName;
