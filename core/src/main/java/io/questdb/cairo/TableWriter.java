@@ -6736,7 +6736,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             indexer.refreshSourceAndIndex(lo, hi);
         } catch (CairoException e) {
             indexer.distress();
-            LOG.critical().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
+            LOG.critical().$("index error [fd=").$(indexer.getFd()).$("]{").$((Sinkable) e).$('}').$();
         } finally {
             latch.countDown();
         }

@@ -329,12 +329,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = extraInfo.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
-                        .put(", detachStatus=").put(attachDetachStatus.name())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
-                        .put(']')
-                        .position((int) extraInfo.getQuick(i * 2 + 1));
+                throw attachDetachStatus.getException(
+                        (int) extraInfo.getQuick(i * 2 + 1),
+                        attachDetachStatus,
+                        tableToken,
+                        svc.getPartitionBy(),
+                        partitionTimestamp
+                );
             }
         }
     }
@@ -344,12 +345,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = extraInfo.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
-                        .put(", detachStatus=").put(attachDetachStatus.name())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
-                        .put(']')
-                        .position((int) extraInfo.getQuick(i * 2 + 1));
+                throw attachDetachStatus.getException(
+                        (int) extraInfo.getQuick(i * 2 + 1),
+                        attachDetachStatus,
+                        tableToken,
+                        svc.getPartitionBy(),
+                        partitionTimestamp
+                );
             }
         }
     }
