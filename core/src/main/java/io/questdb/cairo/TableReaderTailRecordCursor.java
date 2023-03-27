@@ -57,7 +57,6 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
             } else {
                 seekToLastSeenRow();
             }
-            txn = reader.getTxn();
             return true;
         }
 
@@ -75,6 +74,14 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
         return false;
     }
 
+    @TestOnly
+    public void toBottom() {
+        lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);
+        startFrom(lastRowId);
+        txn = reader.getTxn();
+        dataVersion = reader.getDataVersion();
+    }
+
     private void seekToLastSeenRow() {
         if (lastRowId > -1) {
             startFrom(lastRowId);
@@ -83,13 +90,5 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
             toTop();
             dataVersion = reader.getDataVersion();
         }
-    }
-
-    @TestOnly
-    void toBottom() {
-        lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);
-        startFrom(lastRowId);
-        txn = reader.getTxn();
-        dataVersion = reader.getDataVersion();
     }
 }

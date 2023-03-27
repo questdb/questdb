@@ -446,7 +446,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    long getRolledCount() {
+    public long getRolledCount() {
         return rolledCounter.get();
     }
 

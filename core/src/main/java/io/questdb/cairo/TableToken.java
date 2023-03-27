@@ -82,12 +82,12 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
+    public boolean isWal() {
+        return isWal;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.encodeUtf8(tableName);
-    }
-
-    boolean isWal() {
-        return isWal;
     }
 }

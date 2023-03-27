@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -147,6 +148,8 @@ public interface CairoConfiguration {
 
     long getIdleCheckInterval();
 
+    int getInactiveReaderMaxOpenPartitions();
+
     long getInactiveReaderTTL();
 
     long getInactiveWalWriterTTL();
@@ -256,6 +259,8 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
+
+    int getRepeatMigrationsFromVersion();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -414,7 +419,9 @@ public interface CairoConfiguration {
 
     int getWalApplyLookAheadTransactionCount();
 
-    int getWalCommitSquashRowLimit();
+    long getWalApplyTableTimeQuota();
+
+    double getWalSquashUncommittedRowsMultiplier();
 
     boolean getWalEnabledDefault();
 
@@ -476,4 +483,6 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    CairoSecurityContextFactory getCairoSecurityContextFactory();
 }

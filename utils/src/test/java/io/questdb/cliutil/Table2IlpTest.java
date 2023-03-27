@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
@@ -104,7 +103,7 @@ public class Table2IlpTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
+                        engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                         bindVariableService,
                         null,
                         -1,

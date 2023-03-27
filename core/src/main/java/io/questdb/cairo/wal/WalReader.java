@@ -106,6 +106,10 @@ public class WalReader implements Closeable {
         return columns.getQuick(absoluteIndex);
     }
 
+    public int getColumnCount() {
+        return columnCount;
+    }
+
     public String getColumnName(int columnIndex) {
         return metadata.getColumnName(columnIndex);
     }
@@ -121,6 +125,10 @@ public class WalReader implements Closeable {
 
     public WalEventCursor getEventCursor() {
         return eventCursor;
+    }
+
+    public int getRealColumnCount() {
+        return metadata.getRealColumnCount();
     }
 
     public CharSequence getSymbolValue(int col, int key) {
@@ -259,13 +267,5 @@ public class WalReader implements Closeable {
 
     static int getPrimaryColumnIndex(int index) {
         return index * 2 + 2;
-    }
-
-    int getColumnCount() {
-        return columnCount;
-    }
-
-    int getRealColumnCount() {
-        return metadata.getRealColumnCount();
     }
 }

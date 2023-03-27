@@ -36,7 +36,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     protected long _wptr;
     private int level;
 
-    LogRecordSink(long address, long addressSize) {
+    public LogRecordSink(long address, long addressSize) {
         this.address = _wptr = address;
         this.lim = address + addressSize;
     }

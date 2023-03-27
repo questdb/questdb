@@ -1072,7 +1072,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn, executionContext.getCairoSecurityContext());
+            engine.getTableSequencerAPI().resumeTable(executionContext.getCairoSecurityContext(), tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetryOrigin.WAL_APPLY, WAL_APPLY_RESUME);
             return compiledQuery.ofTableResume();
         } catch (CairoException ex) {
@@ -2705,16 +2705,16 @@ public class SqlCompiler implements Closeable {
     }
 
     // used in tests
-    void setEnableJitNullChecks(boolean value) {
+    public void setEnableJitNullChecks(boolean value) {
         codeGenerator.setEnableJitNullChecks(value);
     }
 
-    void setFullFatJoins(boolean value) {
+    public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
     }
 
     @TestOnly
-    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
         return compileExecutionModel(executionContext);
@@ -2722,7 +2722,7 @@ public class SqlCompiler implements Closeable {
 
     // this exposed for testing only
     @TestOnly
-    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+    public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
         return parser.expr(lexer, model);
@@ -2730,7 +2730,7 @@ public class SqlCompiler implements Closeable {
 
     // test only
     @TestOnly
-    void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
+    public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);
         parser.expr(lexer, listener);

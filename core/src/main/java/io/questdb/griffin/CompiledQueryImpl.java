@@ -141,6 +141,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(type, null);
     }
 
+    public CompiledQuery ofAlter(AlterOperation statement) {
+        of(ALTER);
+        alterOp = statement;
+        return this;
+    }
+
     public CompiledQuery ofLock() {
         type = LOCK;
         return this;
@@ -185,12 +191,6 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
         return of(SELECT, recordCursorFactory);
-    }
-
-    CompiledQuery ofAlter(AlterOperation statement) {
-        of(ALTER);
-        alterOp = statement;
-        return this;
     }
 
     CompiledQuery ofBackupTable() {

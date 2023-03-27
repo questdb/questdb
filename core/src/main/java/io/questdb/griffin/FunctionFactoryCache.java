@@ -42,6 +42,7 @@ public class FunctionFactoryCache {
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -78,6 +79,8 @@ public class FunctionFactoryCache {
                         }
                     } else if (factory.isGroupBy()) {
                         groupByFunctionNames.add(name);
+                    } else if (factory.isWindow()) {
+                        windowFunctionNames.add(name);
                     } else if (factory.isCursor()) {
                         cursorFunctionNames.add(name);
                     } else if (factory.isRuntimeConstant()) {
@@ -93,6 +96,10 @@ public class FunctionFactoryCache {
     @TestOnly
     public LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> getFactories() {
         return factories;
+    }
+
+    public int getFunctionCount() {
+        return factories.size();
     }
 
     public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
@@ -127,6 +134,10 @@ public class FunctionFactoryCache {
         return false;
     }
 
+    public boolean isWindow(CharSequence name) {
+        return name != null && windowFunctionNames.contains(name);
+    }
+
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
         addFactoryToList(list, new FunctionFactoryDescriptor(factory));
     }
@@ -150,9 +161,5 @@ public class FunctionFactoryCache {
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
         return new SwappingArgsFunctionFactory(name, factory);
-    }
-
-    int getFunctionCount() {
-        return factories.size();
     }
 }
