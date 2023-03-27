@@ -218,9 +218,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 start.await();
                 try {
                     dropTable(engine, compiler0, context0, tableToken, false, null);
-                } catch (Error e) {
-                    Assert.assertTrue(isWal);
-                    Assert.assertTrue(e instanceof AssertionError); // times out on delete
                 } catch (CairoException ce) {
                     Assert.assertFalse(isWal);
                     TestUtils.assertContains(ce.getFlyweightMessage(), "[reason='busyReader']");
