@@ -24,12 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -299,46 +298,52 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws SqlException {
-        compiler.setFullFatJoins(true);
-        compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
-        compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
-        compile("insert into tab_a values ('ABC', '2022-01-01T00:00:00.000000Z', 'foo')");
-        compile("insert into tab_b values ('ABC', '2021-01-01T00:00:00.000000Z', 'bar')");
+    public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
+            compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
+            compile("insert into tab_a values ('ABC', '2022-01-01T00:00:00.000000Z', 'foo')");
+            compile("insert into tab_b values ('DCE', '2021-01-01T00:00:00.000000Z', 'bar')"); // make sure symbol table for tab_b differs from tab_a
+            compile("insert into tab_b values ('ABC', '2021-01-01T00:00:00.000000Z', 'bar')");
 
-        try (RecordCursorFactory factory = compiler.compile("select sym_a, sym_b from tab_a a lt join tab_b b on sym_a = sym_b", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                io.questdb.cairo.sql.Record record = cursor.getRecord();
-                RecordMetadata metadata = factory.getMetadata();
-                Assert.assertTrue(cursor.hasNext());
-                CharSequence sym0 = record.getSym(0);
-                CharSequence sym1 = record.getSym(1);
-                Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
-                Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
-                TestUtils.assertEquals("ABC", sym0);
-                TestUtils.assertEquals("ABC", sym1);
+            try (RecordCursorFactory factory = compiler.compile("select sym_a, sym_b from tab_a a lt join tab_b b on sym_a = sym_b", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    io.questdb.cairo.sql.Record record = cursor.getRecord();
+                    RecordMetadata metadata = factory.getMetadata();
+                    Assert.assertTrue(cursor.hasNext());
+                    CharSequence sym0 = record.getSym(0);
+                    CharSequence sym1 = record.getSym(1);
+                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
+                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
+                    TestUtils.assertEquals("ABC", sym0);
+                    TestUtils.assertEquals("ABC", sym1);
+                    Assert.assertFalse(cursor.hasNext());
+                }
             }
-        }
+        });
     }
 
     @Test
     public void testIssue2976() throws Exception {
-        compiler.setFullFatJoins(true);
-        compile("CREATE TABLE 'tests' (\n" +
-                "  Ticker SYMBOL capacity 256 CACHE,\n" +
-                "  ts timestamp\n" +
-                ") timestamp (ts) PARTITION BY MONTH");
-        compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            compile("CREATE TABLE 'tests' (\n" +
+                    "  Ticker SYMBOL capacity 256 CACHE,\n" +
+                    "  ts timestamp\n" +
+                    ") timestamp (ts) PARTITION BY MONTH");
+            compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
 
-        String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
-        String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
-                "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
-                "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
-                "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n";
-        assertQuery(expected, query, "ts", false, true);
+            String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+            String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
+                    "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                    "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                    "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n";
+            assertQuery(expected, query, "ts", false, true);
+        });
     }
 
     @Test
@@ -874,98 +879,104 @@ public class AsOfJoinTest extends AbstractGriffinTest {
 
     @Test
     public void testNestedASOF_keySymbol() throws Exception {
-        compiler.setFullFatJoins(true);
-        compile("CREATE TABLE 'tests' (\n" +
-                "  Ticker SYMBOL capacity 256 CACHE,\n" +
-                "  ts timestamp\n" +
-                ") timestamp (ts) PARTITION BY MONTH");
-        compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
-        compile("insert into tests VALUES ('QSTDB', '2003'),('QSTDB', '2004'),('QSTDB', '2005'),('QSTDB', '2006'),('QSTDB', '2007'),('QSTDB', '2008')");
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            compile("CREATE TABLE 'tests' (\n" +
+                    "  Ticker SYMBOL capacity 256 CACHE,\n" +
+                    "  ts timestamp\n" +
+                    ") timestamp (ts) PARTITION BY MONTH");
+            compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
+            compile("insert into tests VALUES ('QSTDB', '2003'),('QSTDB', '2004'),('QSTDB', '2005'),('QSTDB', '2006'),('QSTDB', '2007'),('QSTDB', '2008')");
 
-        String query = "select * from tests t0 ASOF JOIN (select * from tests t1 ASOF JOIN (select * from tests t2 ASOF JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
-        String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
-                "AAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2003-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2005-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\n";
-        assertQuery(expected, query, "ts", false, true);
+            String query = "select * from tests t0 ASOF JOIN (select * from tests t1 ASOF JOIN (select * from tests t2 ASOF JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+            String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
+                    "AAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2003-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2005-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\n";
+            assertQuery(expected, query, "ts", false, true);
+        });
     }
 
     @Test
     public void testNestedLT_keySymbol() throws Exception {
-        compiler.setFullFatJoins(true);
-        compile("CREATE TABLE 'tests' (\n" +
-                "  Ticker SYMBOL capacity 256 CACHE,\n" +
-                "  ts timestamp\n" +
-                ") timestamp (ts) PARTITION BY MONTH");
-        compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
-        compile("insert into tests VALUES ('QSTDB', '2003'),('QSTDB', '2004'),('QSTDB', '2005'),('QSTDB', '2006'),('QSTDB', '2007'),('QSTDB', '2008')");
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            compile("CREATE TABLE 'tests' (\n" +
+                    "  Ticker SYMBOL capacity 256 CACHE,\n" +
+                    "  ts timestamp\n" +
+                    ") timestamp (ts) PARTITION BY MONTH");
+            compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
+            compile("insert into tests VALUES ('QSTDB', '2003'),('QSTDB', '2004'),('QSTDB', '2005'),('QSTDB', '2006'),('QSTDB', '2007'),('QSTDB', '2008')");
 
-        String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
-        String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
-                "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
-                "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
-                "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                "QSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
-                "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\n" +
-                "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
-                "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\n" +
-                "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
-                "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
-        assertQuery(expected, query, "ts", false, true);
+            String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+            String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
+                    "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                    "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                    "AAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "QSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                    "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                    "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
+                    "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\n" +
+                    "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
+                    "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
+            assertQuery(expected, query, "ts", false, true);
+        });
     }
 
     @Test
     public void testNestedLT_keySymbol_moreColumns() throws Exception {
-        compiler.setFullFatJoins(true);
-        compile("CREATE TABLE 'tests' (\n" +
-                "  UnusedTag SYMBOL,\n" + // just filler to make the joining a bit more interesting
-                "  Ticker SYMBOL capacity 256 CACHE,\n" +
-                "  ts timestamp,\n" +
-                "  price int\n" +
-                ") timestamp (ts) PARTITION BY MONTH");
-        compile("insert into tests VALUES ('Whatever', 'AAPL', '2000', 0),('Whatever', 'AAPL', '2001', 1),('Whatever', 'AAPL', '2002', 2),('Whatever', 'AAPL', '2003', 3),('Whatever', 'AAPL', '2004', 4),('Whatever', 'AAPL', '2005', 5)");
-        compile("insert into tests VALUES ('Whatever', 'QSTDB', '2003', 6),('Whatever', 'QSTDB', '2004', 7),('Whatever', 'QSTDB', '2005', 8),('Whatever', 'QSTDB', '2006', 9),('Whatever', 'QSTDB', '2007', 10),('Whatever', 'QSTDB', '2008', 11)");
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+            compile("CREATE TABLE 'tests' (\n" +
+                    "  UnusedTag SYMBOL,\n" + // just filler to make the joining a bit more interesting
+                    "  Ticker SYMBOL capacity 256 CACHE,\n" +
+                    "  ts timestamp,\n" +
+                    "  price int\n" +
+                    ") timestamp (ts) PARTITION BY MONTH");
+            compile("insert into tests VALUES ('Whatever', 'AAPL', '2000', 0),('Whatever', 'AAPL', '2001', 1),('Whatever', 'AAPL', '2002', 2),('Whatever', 'AAPL', '2003', 3),('Whatever', 'AAPL', '2004', 4),('Whatever', 'AAPL', '2005', 5)");
+            compile("insert into tests VALUES ('Whatever', 'QSTDB', '2003', 6),('Whatever', 'QSTDB', '2004', 7),('Whatever', 'QSTDB', '2005', 8),('Whatever', 'QSTDB', '2006', 9),('Whatever', 'QSTDB', '2007', 10),('Whatever', 'QSTDB', '2008', 11)");
 
-        String query = "select t2unused, Ticker as t0ticker, ts as t0ts, t1ticker, t1ts, t2ticker, t2ts, t3ticker, t3ts \n" +
-                "from tests \n" +
-                "LT JOIN (\n" +
-                "    select t2unused, Ticker as t1ticker, UnusedTag as t1unused, ts as t1ts, t3unused, t2ticker, t2ts, t3ticker, t3ts \n" +
-                "    from tests \n" +
-                "    LT JOIN (\n" +
-                "        select UnusedTag as t2unused, Ticker as t2ticker, t3unused, ts as t2ts, t3ticker, t3ts \n" +
-                "        from tests \n" +
-                "        LT JOIN (\n" +
-                "            select UnusedTag as t3unused, Ticker as t3ticker, ts as t3ts from tests\n" +
-                "        ) t3 on (ticker = t3.t3ticker)\n" +
-                "    ) t2 ON (Ticker = t2ticker)\n" +
-                ") t1 ON (Ticker = t1ticker)";
+            String query = "select t2unused, Ticker as t0ticker, ts as t0ts, t1ticker, t1ts, t2ticker, t2ts, t3ticker, t3ts \n" +
+                    "from tests \n" +
+                    "LT JOIN (\n" +
+                    "    select t2unused, Ticker as t1ticker, UnusedTag as t1unused, ts as t1ts, t3unused, t2ticker, t2ts, t3ticker, t3ts \n" +
+                    "    from tests \n" +
+                    "    LT JOIN (\n" +
+                    "        select UnusedTag as t2unused, Ticker as t2ticker, t3unused, ts as t2ts, t3ticker, t3ts \n" +
+                    "        from tests \n" +
+                    "        LT JOIN (\n" +
+                    "            select UnusedTag as t3unused, Ticker as t3ticker, ts as t3ts from tests\n" +
+                    "        ) t3 on (ticker = t3.t3ticker)\n" +
+                    "    ) t2 ON (Ticker = t2ticker)\n" +
+                    ") t1 ON (Ticker = t1ticker)";
 
-        String expected = "t2unused\tt0ticker\tt0ts\tt1ticker\tt1ts\tt2ticker\tt2ts\tt3ticker\tt3ts\n" +
-                "\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
-                "\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
-                "Whatever\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                "\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
-                "Whatever\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
-                "\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\n" +
-                "Whatever\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
-                "Whatever\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
-                "Whatever\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\n" +
-                "Whatever\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
-                "Whatever\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
-                "Whatever\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
-        assertQuery(expected, query, "t0ts", false, true);
+            String expected = "t2unused\tt0ticker\tt0ts\tt1ticker\tt1ts\tt2ticker\tt2ts\tt3ticker\tt3ts\n" +
+                    "\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                    "\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                    "Whatever\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
+                    "Whatever\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
+                    "\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                    "Whatever\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
+                    "Whatever\tAAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n" +
+                    "Whatever\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\t\t\n" +
+                    "Whatever\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
+                    "Whatever\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
+                    "Whatever\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
+            assertQuery(expected, query, "t0ts", false, true);
+        });
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
