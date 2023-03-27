@@ -220,6 +220,21 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testShowPartitionsBadSyntax() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        String tabName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tabName, sqlExecutionContext);
+            try {
+                compile("SHOW PARTITIONS FROM " + tabName + " WHERE active=true", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [tok=WHERE]");
+            }
+        });
+    }
+
+    @Test
     public void testShowPartitionsDetachedPartitionPlusAttachable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
         String tableName = testTableName(testName.getMethodName());
