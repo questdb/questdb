@@ -42,16 +42,16 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
             assertQuery(
                     "a\tb\n" +
-                            "0\t3\n" +
-                            "0\t2\n" +
-                            "0\t1\n" +
-                            "1\t4\n" +
-                            "1\t3\n" +
-                            "1\t2\n" +
+                            "2\t1\n" +
                             "1\t1\n" +
-                            "2\t3\n" +
+                            "0\t1\n" +
                             "2\t2\n" +
-                            "2\t1\n",
+                            "1\t2\n" +
+                            "0\t2\n" +
+                            "2\t3\n" +
+                            "1\t3\n" +
+                            "0\t3\n" +
+                            "1\t4\n",
                     query,
                     null,
                     true,
