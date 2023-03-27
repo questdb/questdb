@@ -112,7 +112,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                     pgPort,
                     ILP_PORT + pgPortDelta,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
-            dbPath.parent().$();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
