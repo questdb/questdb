@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -46,9 +45,10 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) {
         final CharSequence tableName = args.getQuick(0).getStr(null);
-        final TableToken token = sqlExecutionContext.getTableToken(tableName);
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(token));
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(
+                context.getTableToken(tableName)
+        ));
     }
 }

@@ -122,7 +122,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
-        private final StringSink sink = new StringSink();
+        private final StringSink partitionSizeSink = new StringSink();
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
@@ -150,7 +150,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionName.clear();
             partitionRecord.close();
             tableReader = Misc.free(tableReader);
-            sink.clear();
+            partitionSizeSink.clear();
         }
 
         @Override
@@ -193,7 +193,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             path.of(cairoConfig.getRoot()).concat(tableToken).$();
             rootLen = path.length();
             scanDetachedAndAttachablePartitions();
-            limit = tableReader.getTxFile().getPartitionCount() + attachablePartitions.size() + detachedPartitions.size();
+            limit = tableReader.getTxFile().getPartitionCount() +
+                    attachablePartitions.size() +
+                    detachedPartitions.size();
             toTop();
             return this;
         }
@@ -283,6 +285,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
 
             partitionSize = ff.getDirectoryContentSize(path.$());
+            partitionSizeSink.clear();
+            SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                 TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
                 int fd = -1;
@@ -380,8 +384,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     return PartitionBy.toString(partitionBy);
                 }
                 if (Column.DISK_SIZE_HUMAN.is(col)) {
-                    sink.clear();
-                    return SizePrettyFunctionFactory.toSizePretty(sink, partitionSize);
+                    return partitionSizeSink;
                 }
                 if (Column.PARTITION_NAME.is(col)) {
                     return partitionName;

@@ -986,7 +986,18 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+    public static void resetTxn(
+            MemoryMW txMem,
+            long baseOffset,
+            int symbolMapCount,
+            long txn,
+            long seqTxn,
+            long dataVersion,
+            long partitionTableVersion,
+            long structureVersion,
+            long columnVersion,
+            long truncateVersion
+    ) {
         // txn to let readers know table is being reset
         txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
