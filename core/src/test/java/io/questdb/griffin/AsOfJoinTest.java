@@ -678,6 +678,30 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinOnSymbolsDifferentIDs() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x (s symbol, xi int, xts timestamp) timestamp(xts)");
+            compile("create table y (s symbol, yi int, yts timestamp) timestamp(yts)");
+            compile("insert into x values ('a', 0, '2000')");
+            compile("insert into x values ('b', 1, '2001')");
+            compile("insert into x values ('c', 2, '2001')");
+
+            compile("insert into y values ('c', 0, '1990')");
+            compile("insert into y values ('d', 1, '1991')");
+            compile("insert into y values ('a', 2, '1992')");
+            compile("insert into y values ('a', 3, '1993')");
+
+            String query = "select * from x LT JOIN y on (s)";
+            String expected = "s\txi\txts\ts1\tyi\tyts\n" +
+                    "a\t0\t2000-01-01T00:00:00.000000Z\ta\t3\t1993-01-01T00:00:00.000000Z\n" +
+                    "b\t1\t2001-01-01T00:00:00.000000Z\t\tNaN\t\n" +
+                    "c\t2\t2001-01-01T00:00:00.000000Z\tc\t0\t1990-01-01T00:00:00.000000Z\n";
+
+            assertQuery(expected, query, "xts", false, true);
+        });
+    }
+
+    @Test
     public void testLtJoinOneTableKeyed() throws Exception {
         assertMemoryLeak(() -> {
             //tabY
@@ -929,7 +953,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 "        ) t3 on (ticker = t3.t3ticker)\n" +
                 "    ) t2 ON (Ticker = t2ticker)\n" +
                 ") t1 ON (Ticker = t1ticker)";
-        
+
         String expected = "t2unused\tt0ticker\tt0ts\tt1ticker\tt1ts\tt2ticker\tt2ts\tt3ticker\tt3ts\n" +
                 "\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
                 "\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
