@@ -233,6 +233,22 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         currentValues++;
     }
 
+    //remove node and put on freelist (if holds only one value in chain)
+    public void removeAndCache(long node) {
+        if (hasMoreThanOneValue(node)) {
+            removeMostRecentChainValue(node);//don't change minmax
+        } else {
+            long nodeToRemove = super.remove(node);
+            clearBlock(nodeToRemove);
+            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
+
+            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
+            minMaxNode = -1;
+        }
+
+        currentValues--;
+    }
+
     @Override
     public long size() {
         return currentValues;
@@ -368,22 +384,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     @Override
     protected void putParent(long value) {
         root = allocateBlock(-1, value);
-    }
-
-    //remove node and put on freelist (if holds only one value in chain)
-    protected void removeAndCache(long node) {
-        if (hasMoreThanOneValue(node)) {
-            removeMostRecentChainValue(node);//don't change minmax
-        } else {
-            long nodeToRemove = super.remove(node);
-            clearBlock(nodeToRemove);
-            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
-
-            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
-            minMaxNode = -1;
-        }
-
-        currentValues--;
     }
 
     @FunctionalInterface

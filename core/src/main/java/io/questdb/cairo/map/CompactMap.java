@@ -142,7 +142,7 @@ public class CompactMap implements Map, Reopenable {
     }
 
     @TestOnly
-    CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunctionFactory hashFunctionFactory, int maxResizes, int maxPages) {
+    public CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunctionFactory hashFunctionFactory, int maxResizes, int maxPages) {
         this.entries = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
         this.entrySlots = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
         try {
@@ -180,6 +180,14 @@ public class CompactMap implements Map, Reopenable {
     public void close() {
         entries.close();
         entrySlots.close();
+    }
+
+    public long getActualCapacity() {
+        return mask + 1;
+    }
+
+    public long getAppendOffset() {
+        return currentEntryOffset + currentEntrySize;
     }
 
     @Override
@@ -294,14 +302,6 @@ public class CompactMap implements Map, Reopenable {
         this.mask = Numbers.ceilPow2((long) (keyCapacity / loadFactor)) - 1;
         entrySlots.jumpTo((mask + 1) * 8);
         entrySlots.zero();
-    }
-
-    long getActualCapacity() {
-        return mask + 1;
-    }
-
-    long getAppendOffset() {
-        return currentEntryOffset + currentEntrySize;
     }
 
     @FunctionalInterface

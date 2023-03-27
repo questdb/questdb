@@ -246,7 +246,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @TestOnly
-    int getCacheSize() {
+    public int getCacheSize() {
         return cache.size();
     }
 

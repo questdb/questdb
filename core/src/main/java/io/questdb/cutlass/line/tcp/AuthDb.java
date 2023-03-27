@@ -46,7 +46,7 @@ public class AuthDb {
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
     private final CharSequenceObjHashMap<PublicKey> publicKeyByKeyId = new CharSequenceObjHashMap<>();
 
-    AuthDb(LineTcpReceiverConfiguration configuration) {
+    public AuthDb(LineTcpReceiverConfiguration configuration) {
         int nLine = 0;
         String[] tokens = new String[4];
         try (BufferedReader r = new BufferedReader(new InputStreamReader(new BufferedInputStream(new FileInputStream(configuration.getAuthDbPath()))))) {

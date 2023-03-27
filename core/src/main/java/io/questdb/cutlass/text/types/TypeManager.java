@@ -90,6 +90,10 @@ public class TypeManager implements Mutable {
         timestampAdapterPool.clear();
     }
 
+    public ObjList<TypeAdapter> getAllAdapters() {
+        return probes;
+    }
+
     public InputFormatConfiguration getInputFormatConfiguration() {
         return inputFormatConfiguration;
     }
@@ -169,9 +173,5 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.BOOLEAN));
         probes.add(getTypeAdapter(ColumnType.LONG256));
         probes.add(getTypeAdapter(ColumnType.UUID));
-    }
-
-    ObjList<TypeAdapter> getAllAdapters() {
-        return probes;
     }
 }

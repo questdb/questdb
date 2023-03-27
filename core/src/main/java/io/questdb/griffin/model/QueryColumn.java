@@ -38,7 +38,7 @@ public class QueryColumn implements Mutable, Sinkable {
     private int columnType;
     private boolean includeIntoWildcard = true;
 
-    protected QueryColumn() {
+    public QueryColumn() {
     }
 
     @Override

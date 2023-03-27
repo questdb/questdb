@@ -75,7 +75,6 @@ public class FastMap implements Map, Reopenable {
 
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_INITIAL_CAPACITY = 128;
-    private static final long OFFSET_SLOT_SIZE = 2;
     private final FastMapCursor cursor;
     private final int initialKeyCapacity;
     private final int initialPageSize;
@@ -239,6 +238,10 @@ public class FastMap implements Map, Reopenable {
         }
     }
 
+    public long getAppendOffset() {
+        return kPos;
+    }
+
     public long getAreaSize() {
         return kLimit - kStart;
     }
@@ -255,6 +258,10 @@ public class FastMap implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    public int getValueColumnCount() {
+        return valueColumnCount;
     }
 
     public void reopen() {
@@ -409,14 +416,6 @@ public class FastMap implements Map, Reopenable {
 
     private FastMapValue valueOf(long address, boolean newValue, FastMapValue value) {
         return value.of(address, kLimit, newValue);
-    }
-
-    long getAppendOffset() {
-        return kPos;
-    }
-
-    int getValueColumnCount() {
-        return valueColumnCount;
     }
 
     int keySize() {
