@@ -63,6 +63,7 @@ public class O3Test extends AbstractO3Test {
     @Before
     public void setUp4() {
         Vect.resetPerformanceCounters();
+        partitionO3SplitThreshold = TestUtils.generateRandom(null).nextInt(10_000_000);
     }
 
     @After
@@ -84,6 +85,7 @@ public class O3Test extends AbstractO3Test {
             System.err.println(tstData);
             System.err.flush();
         }
+        partitionO3SplitThreshold = -1;
     }
 
     @Test
@@ -900,6 +902,8 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVarColumnCopyLargePrefix() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        partitionO3SplitThreshold = 10_000_000;
 
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(0,

@@ -56,14 +56,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-//                {ParallelMode.Parallel},
+                {ParallelMode.Parallel},
                 {ParallelMode.Contended}
         });
     }
 
     @Before
     public void setUp4() {
-        partitionO3SplitThreashold = 1000;
+        partitionO3SplitThreshold = 1000;
         Vect.resetPerformanceCounters();
     }
 
@@ -308,6 +308,69 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
                                     " timestamp_sequence('2020-02-05T21:01:05.2', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table zz as (select * from x union all select * from y union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from y", executionContext);
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    String limit = "";
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            executionContext,
+                            "zz order by ts" + limit,
+                            "x" + limit,
+                            LOG
+                    );
+                });
+    }
+
+    @Test
+    public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop2() throws Exception {
+        executeWithPool(workerCount,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+
+                    compiler.compile(
+                            "create table y as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T17:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks" +
                                     " from long_sequence(1000))",

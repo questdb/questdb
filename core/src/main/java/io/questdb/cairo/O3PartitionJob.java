@@ -495,7 +495,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // large prefix copy, better to split the partition
                     partitionTimestamp = o3TimestampLo;
                     prefixType = O3_BLOCK_NONE;
-                    mergeType = O3_BLOCK_MERGE;
                     newPartitionSize -= prefixHi + 1;
                     oldPartitionSize = prefixHi + 1;
                 }

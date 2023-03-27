@@ -1903,6 +1903,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final int srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
         final boolean directIoFlag = tableWriter.preferDirectIO();
+        final long initialScrDataTop = srcDataTop;
 
         try {
             txnPartition(pathToPartition.trimTo(pplen), txn);
@@ -2025,9 +2026,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
 
-            if (prefixType == O3_BLOCK_NONE) {
+            if (prefixType == O3_BLOCK_NONE && prefixHi > initialScrDataTop) {
                 // split partition
-                dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi - srcDataTop, srcDataFixAddr);
+                assert prefixLo == 0;
+                dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi - initialScrDataTop, srcDataFixAddr);
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);

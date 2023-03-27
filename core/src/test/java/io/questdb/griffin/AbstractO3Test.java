@@ -58,7 +58,7 @@ public class AbstractO3Test {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static int dataAppendPageSize = -1;
-    protected static int partitionO3SplitThreashold = -1;
+    protected static int partitionO3SplitThreshold = 100;
     protected static CharSequence root;
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -340,7 +340,7 @@ public class AbstractO3Test {
 
                     @Override
                     public long getPartitionO3SplitThreshold() {
-                        return partitionO3SplitThreashold;
+                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitThreshold();
                     }
                 };
 
@@ -395,7 +395,7 @@ public class AbstractO3Test {
 
                     @Override
                     public long getPartitionO3SplitThreshold() {
-                        return partitionO3SplitThreashold;
+                        return partitionO3SplitThreshold;
                     }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);
