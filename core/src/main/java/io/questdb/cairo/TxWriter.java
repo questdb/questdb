@@ -72,6 +72,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void bumpPartitionTableVersion() {
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion.incrementAndGet();
@@ -287,6 +292,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
         this.extensionListener = extensionListener;
+    }
+
+    public void setMaxTimestamp(long timestamp) {
+        this.maxTimestamp = timestamp;
     }
 
     public void setLagMaxTimestamp(long timestamp) {
@@ -606,11 +615,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);
         assert recordOffset + Integer.BYTES <= readRecordSize;
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
-    }
-
-    void bumpPartitionTableVersion() {
-        recordStructureVersion++;
-        partitionTableVersion++;
     }
 
     // It is possible that O3 commit will create partition just before

@@ -320,6 +320,10 @@ public class WalWriter implements TableWriterAPI {
         return initialSymbolCounts.get(columnIndex);
     }
 
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
+    }
+
     public TableToken getTableToken() {
         return tableToken;
     }
@@ -403,6 +407,15 @@ public class WalWriter implements TableWriterAPI {
                 row.timestamp = timestamp;
             }
             return row;
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
+    public void rollSegment() {
+        try {
+            openNewSegment();
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -1329,19 +1342,6 @@ public class WalWriter implements TableWriterAPI {
                     secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
                 }
             }
-        }
-    }
-
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
-    void rollSegment() {
-        try {
-            openNewSegment();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
         }
     }
 

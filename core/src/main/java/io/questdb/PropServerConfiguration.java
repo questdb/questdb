@@ -25,7 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -86,6 +87,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoPageFrameReduceTaskPoolCapacity;
+    private final CairoSecurityContextFactory cairoSecurityContextFactory = new AllowAllSecurityContextFactory();
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -874,7 +876,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-                inputFormatConfiguration.parseConfiguration(lexer, confRoot, sqlCopyFormatsFile);
+                inputFormatConfiguration.parseConfiguration(getClass(), lexer, confRoot, sqlCopyFormatsFile);
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
@@ -1107,6 +1109,77 @@ public class PropServerConfiguration implements ServerConfiguration {
             return sink.put(subdir).toString();
         }
         return null;
+    }
+
+    public static ValidationResult validate(Properties properties) {
+        // Settings that used to be valid but no longer are.
+        Map<String, String> obsolete = new HashMap<>();
+
+        // Settings that are still valid but are now superseded by newer ones.
+        Map<String, String> deprecated = new HashMap<>();
+
+        // Settings that are not recognized.
+        Set<String> incorrect = new HashSet<>();
+
+        for (String propName : properties.stringPropertyNames()) {
+            Optional<PropertyKey> prop = PropertyKey.getByString(propName);
+            if (prop.isPresent()) {
+                String deprecationMsg = DEPRECATED_SETTINGS.get(prop.get());
+                if (deprecationMsg != null) {
+                    deprecated.put(propName, deprecationMsg);
+                }
+            } else {
+                String obsoleteMsg = OBSOLETE_SETTINGS.get(propName);
+                if (obsoleteMsg != null) {
+                    obsolete.put(propName, obsoleteMsg);
+                } else {
+                    incorrect.add(propName);
+                }
+            }
+        }
+
+        if (obsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty()) {
+            return null;
+        }
+
+        boolean isError = false;
+
+        StringBuilder sb = new StringBuilder("Configuration issues:\n");
+
+        if (!incorrect.isEmpty()) {
+            isError = true;
+            sb.append("    Invalid settings (not recognized, probable typos):\n");
+            for (String key : incorrect) {
+                sb.append("        * ");
+                sb.append(key);
+                sb.append('\n');
+            }
+        }
+
+        if (!obsolete.isEmpty()) {
+            isError = true;
+            sb.append("    Obsolete settings (no longer recognized):\n");
+            for (Map.Entry<String, String> entry : obsolete.entrySet()) {
+                sb.append("        * ");
+                sb.append(entry.getKey());
+                sb.append(": ");
+                sb.append(entry.getValue());
+                sb.append('\n');
+            }
+        }
+
+        if (!deprecated.isEmpty()) {
+            sb.append("    Deprecated settings (recognized but superseded by newer settings):\n");
+            for (Map.Entry<String, String> entry : deprecated.entrySet()) {
+                sb.append("        * ");
+                sb.append(entry.getKey());
+                sb.append(": ");
+                sb.append(entry.getValue());
+                sb.append('\n');
+            }
+        }
+
+        return new ValidationResult(isError, sb.toString());
     }
 
     @Override
@@ -1362,77 +1435,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    static ValidationResult validate(Properties properties) {
-        // Settings that used to be valid but no longer are.
-        Map<String, String> obsolete = new HashMap<>();
-
-        // Settings that are still valid but are now superseded by newer ones.
-        Map<String, String> deprecated = new HashMap<>();
-
-        // Settings that are not recognized.
-        Set<String> incorrect = new HashSet<>();
-
-        for (String propName : properties.stringPropertyNames()) {
-            Optional<PropertyKey> prop = PropertyKey.getByString(propName);
-            if (prop.isPresent()) {
-                String deprecationMsg = DEPRECATED_SETTINGS.get(prop.get());
-                if (deprecationMsg != null) {
-                    deprecated.put(propName, deprecationMsg);
-                }
-            } else {
-                String obsoleteMsg = OBSOLETE_SETTINGS.get(propName);
-                if (obsoleteMsg != null) {
-                    obsolete.put(propName, obsoleteMsg);
-                } else {
-                    incorrect.add(propName);
-                }
-            }
-        }
-
-        if (obsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty()) {
-            return null;
-        }
-
-        boolean isError = false;
-
-        StringBuilder sb = new StringBuilder("Configuration issues:\n");
-
-        if (!incorrect.isEmpty()) {
-            isError = true;
-            sb.append("    Invalid settings (not recognized, probable typos):\n");
-            for (String key : incorrect) {
-                sb.append("        * ");
-                sb.append(key);
-                sb.append('\n');
-            }
-        }
-
-        if (!obsolete.isEmpty()) {
-            isError = true;
-            sb.append("    Obsolete settings (no longer recognized):\n");
-            for (Map.Entry<String, String> entry : obsolete.entrySet()) {
-                sb.append("        * ");
-                sb.append(entry.getKey());
-                sb.append(": ");
-                sb.append(entry.getValue());
-                sb.append('\n');
-            }
-        }
-
-        if (!deprecated.isEmpty()) {
-            sb.append("    Deprecated settings (recognized but superseded by newer settings):\n");
-            for (Map.Entry<String, String> entry : deprecated.entrySet()) {
-                sb.append("        * ");
-                sb.append(entry.getKey());
-                sb.append(": ");
-                sb.append(entry.getValue());
-                sb.append('\n');
-            }
-        }
-
-        return new ValidationResult(isError, sb.toString());
-    }
-
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, PropertyKey key, boolean defaultValue) {
         final String value = overrideWithEnv(properties, env, key);
         return value == null ? defaultValue : Boolean.parseBoolean(value);
@@ -1503,9 +1505,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         void onReady(int address, int port);
     }
 
-    static class ValidationResult {
-        final boolean isError;
-        final String message;
+    public static class ValidationResult {
+        public final boolean isError;
+        public final String message;
 
         private ValidationResult(boolean isError, String message) {
             this.isError = isError;
@@ -1573,6 +1575,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public BuildInformation getBuildInformation() {
             return buildInformation;
+        }
+
+        @Override
+        public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+            return cairoSecurityContextFactory;
         }
 
         @Override
@@ -2865,11 +2872,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
-        }
-
-        @Override
         public long getCommitInterval() {
             return LineTcpReceiverConfigurationHelper.calcCommitInterval(
                     cairoConfiguration.getO3MinLag(),
@@ -3141,11 +3143,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindIPv4Address() {
             return lineUdpBindIPV4Address;
-        }
-
-        @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
         }
 
         @Override

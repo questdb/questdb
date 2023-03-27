@@ -65,10 +65,10 @@ import java.util.Iterator;
  * closed.
  */
 public class WriterPool extends AbstractPool {
+    public static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
-    static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
@@ -99,6 +99,19 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    public int countFreeWriters() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            final long owner = e.owner;
+            if (owner == UNALLOCATED) {
+                count++;
+            } else {
+                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
+            }
+        }
+        return count;
+    }
+
     /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
@@ -118,11 +131,7 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, String lockReason) {
-        return get(tableToken, lockReason, true);
-    }
-
-    public TableWriter get(TableToken tableToken, String lockReason, boolean logBusy) {
-        return getWriterEntry(tableToken, lockReason, null, logBusy);
+        return getWriterEntry(tableToken, lockReason, null);
     }
 
     /**
@@ -156,7 +165,7 @@ public class WriterPool extends AbstractPool {
     ) {
         while (true) {
             try {
-                return getWriterEntry(tableToken, lockReason, asyncWriterCommand, true);
+                return getWriterEntry(tableToken, lockReason, asyncWriterCommand);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -220,10 +229,6 @@ public class WriterPool extends AbstractPool {
         return entries.size();
     }
 
-    public void unlock(TableToken tableToken) {
-        unlock(tableToken, null, false);
-    }
-
     public void unlock(TableToken tableToken, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
@@ -278,6 +283,10 @@ public class WriterPool extends AbstractPool {
             notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.critical(0).put("Not lock owner of ").put(tableToken.getDirName());
         }
+    }
+
+    public void unlock(TableToken tableToken) {
+        unlock(tableToken, null, false);
     }
 
     private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
@@ -376,8 +385,7 @@ public class WriterPool extends AbstractPool {
     private TableWriter getWriterEntry(
             TableToken tableToken,
             String lockReason,
-            @Nullable AsyncWriterCommand asyncWriterCommand,
-            boolean logBusy
+            @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
         assert null != lockReason;
         checkClosed();
@@ -434,13 +442,11 @@ public class WriterPool extends AbstractPool {
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
 
-                if (logBusy) {
-                    LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
-                            .$("`, owner=").$(owner)
-                            .$(", thread=").$(thread)
-                            .$(", reason=").$(reason)
-                            .I$();
-                }
+                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
+                        .$("`, owner=").$(owner)
+                        .$(", thread=").$(thread)
+                        .$(", reason=").$(reason)
+                        .I$();
                 throw EntryUnavailableException.instance(reason);
             }
         }
@@ -537,19 +543,6 @@ public class WriterPool extends AbstractPool {
     protected void closePool() {
         super.closePool();
         LOG.info().$("closed").$();
-    }
-
-    int countFreeWriters() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            final long owner = e.owner;
-            if (owner == UNALLOCATED) {
-                count++;
-            } else {
-                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
-            }
-        }
-        return count;
     }
 
     @Override

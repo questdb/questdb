@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -40,8 +39,6 @@ public interface LineTcpReceiverConfiguration {
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
-
-    CairoSecurityContext getCairoSecurityContext();
 
     long getCommitInterval();
 

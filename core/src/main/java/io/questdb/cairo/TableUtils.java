@@ -75,6 +75,26 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
+    public static final String META_PREV_FILE_NAME = "_meta.prev";
+    /**
+     * TXN file structure
+     * struct {
+     * long txn;
+     * long transient_row_count; // rows count in last partition
+     * long fixed_row_count; // row count in table excluding count in last partition
+     * long max_timestamp; // last timestamp written to table
+     * long struct_version; // data structure version; whenever columns added or removed this version changes.
+     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
+     * long txn_check; // same as txn - sanity check for concurrent reads and writes
+     * int  map_writer_count; // symbol writer count
+     * int  map_writer_position[map_writer_count]; // position of each of map writers
+     * }
+     * <p>
+     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
+     */
+
+    public static final String META_SWAP_FILE_NAME = "_meta.swp";
+    public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -86,9 +106,26 @@ public final class TableUtils {
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    /**
+     * TXN file structure
+     * struct {
+     * long txn;
+     * long transient_row_count; // rows count in last partition
+     * long fixed_row_count; // row count in table excluding count in last partition
+     * long max_timestamp; // last timestamp written to table
+     * long struct_version; // data structure version; whenever columns added or removed this version changes.
+     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
+     * long txn_check; // same as txn - sanity check for concurrent reads and writes
+     * int  map_writer_count; // symbol writer count
+     * int  map_writer_position[map_writer_count]; // position of each of map writers
+     * }
+     * <p>
+     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
+     */
+
+    public static final String TODO_FILE_NAME = "_todo_";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
-
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -117,9 +154,8 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
-    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     // @formatter:on
-
+    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
@@ -128,27 +164,6 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    static final String META_PREV_FILE_NAME = "_meta.prev";
-    /**
-     * TXN file structure
-     * struct {
-     * long txn;
-     * long transient_row_count; // rows count in last partition
-     * long fixed_row_count; // row count in table excluding count in last partition
-     * long max_timestamp; // last timestamp written to table
-     * long struct_version; // data structure version; whenever columns added or removed this version changes.
-     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
-     * long txn_check; // same as txn - sanity check for concurrent reads and writes
-     * int  map_writer_count; // symbol writer count
-     * int  map_writer_position[map_writer_count]; // position of each of map writers
-     * }
-     * <p>
-     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
-     */
-
-    static final String META_SWAP_FILE_NAME = "_meta.swp";
-    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
-    static final String TODO_FILE_NAME = "_todo_";
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -169,6 +184,16 @@ public final class TableUtils {
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
         return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
+    }
+
+    public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
+        long checkSum = lagMinTimestamp;
+        checkSum = checkSum * 31 + lagMaxTimestamp;
+        checkSum = checkSum * 31 + txn;
+        checkSum = checkSum * 31 + seqTxn;
+        checkSum = checkSum * 31 + lagRowCount;
+        checkSum = checkSum * 31 + lagTxnCount;
+        return (int) (checkSum ^ (checkSum >>> 32));
     }
 
     public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
@@ -622,7 +647,7 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009':
+                case '	':
                 case '\u000B':
                 case '\u000c':
                 case '\n':
@@ -681,7 +706,7 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009':
+                case '	':
                 case '\u000B':
                 case '\u000c':
                 case '\r':
@@ -1430,16 +1455,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
-    }
-
-    static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
-        long checkSum = lagMinTimestamp;
-        checkSum = checkSum * 31 + lagMaxTimestamp;
-        checkSum = checkSum * 31 + txn;
-        checkSum = checkSum * 31 + seqTxn;
-        checkSum = checkSum * 31 + lagRowCount;
-        checkSum = checkSum * 31 + lagTxnCount;
-        return (int) (checkSum ^ (checkSum >>> 32));
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

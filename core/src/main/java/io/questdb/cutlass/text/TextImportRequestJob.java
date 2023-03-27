@@ -223,7 +223,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
-                    parallelImporter.process();
+                    parallelImporter.process(task.getSecurityContext());
                 } else {
                     serialImporter.of(
                             task.getTableName(),
@@ -237,7 +237,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
-                    serialImporter.process();
+                    serialImporter.process(task.getSecurityContext());
                 }
             } catch (TextImportException e) {
                 updateStatus(
@@ -250,7 +250,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 );
             } finally {
                 requestSubSeq.done(cursor);
-                textImportExecutionContext.resetActiveImportId();
+                textImportExecutionContext.clear();
             }
             enforceLogRetention();
             return true;

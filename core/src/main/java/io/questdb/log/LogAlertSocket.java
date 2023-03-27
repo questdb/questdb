@@ -132,6 +132,36 @@ public class LogAlertSocket implements Closeable {
         }
     }
 
+    @TestOnly
+    public String[] getAlertHosts() {
+        return alertHosts;
+    }
+
+    @TestOnly
+    public int getAlertHostsCount() {
+        return alertHostsCount;
+    }
+
+    @TestOnly
+    public int[] getAlertPorts() {
+        return alertPorts;
+    }
+
+    @TestOnly
+    public String getAlertTargets() {
+        return alertTargets;
+    }
+
+    @TestOnly
+    public String getDefaultAlertHost() {
+        return defaultHost;
+    }
+
+    @TestOnly
+    public int getDefaultAlertPort() {
+        return defaultPort;
+    }
+
     public long getInBufferPtr() {
         return inBufferPtr;
     }
@@ -146,6 +176,63 @@ public class LogAlertSocket implements Closeable {
 
     public int getOutBufferSize() {
         return outBufferSize;
+    }
+
+    @TestOnly
+    public void logResponse(int len) {
+        responseSink.clear();
+        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
+        final int responseLen = responseSink.length();
+        int contentLength = 0;
+        int lineStart = 0;
+        int colonIdx = -1;
+        boolean headerEndFound = false;
+        for (int i = 0; i < responseLen; i++) {
+            switch (responseSink.charAt(i)) {
+                case ':':
+                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
+                        colonIdx = i;
+                    }
+                    break;
+
+                case '\n':
+                    if (colonIdx != -1) {
+                        if (isContentLength(responseSink, lineStart, colonIdx)) {
+                            int startSize = colonIdx + 1;
+                            int limSize = i - 1;
+                            while (startSize < responseLen && responseSink.charAt(startSize) == ' ') {
+                                startSize++;
+                            }
+                            while (limSize > startSize) {
+                                char c = responseSink.charAt(limSize);
+                                if (c == '\r' || c == ' ') {
+                                    limSize--;
+                                } else {
+                                    break;
+                                }
+                            }
+                            try {
+                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);
+                            } catch (NumericException e) {
+                                $currentAlertHost(log.info().$("Received")).$(": ").$(responseSink).$();
+                                return;
+                            }
+                        }
+                        colonIdx = -1;
+                    } else if (i - lineStart == 1 && responseSink.charAt(i - 1) == '\r') {
+                        lineStart = i + 1;
+                        headerEndFound = true;
+                        break; // for loop
+                    }
+                    lineStart = i + 1;
+                    break;
+            }
+        }
+        int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
+        $currentAlertHost(log.info().$("Received"))
+                .$(": ")
+                .$(responseSink, start, responseLen)
+                .$();
     }
 
     public boolean send(int len) {
@@ -404,95 +491,8 @@ public class LogAlertSocket implements Closeable {
     }
 
     @TestOnly
-    String[] getAlertHosts() {
-        return alertHosts;
-    }
-
-    @TestOnly
-    int getAlertHostsCount() {
-        return alertHostsCount;
-    }
-
-    @TestOnly
-    int[] getAlertPorts() {
-        return alertPorts;
-    }
-
-    @TestOnly
-    String getAlertTargets() {
-        return alertTargets;
-    }
-
-    @TestOnly
-    String getDefaultAlertHost() {
-        return defaultHost;
-    }
-
-    @TestOnly
-    int getDefaultAlertPort() {
-        return defaultPort;
-    }
-
-    @TestOnly
     long getReconnectDelay() {
         return reconnectDelay;
-    }
-
-    @TestOnly
-    void logResponse(int len) {
-        responseSink.clear();
-        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
-        final int responseLen = responseSink.length();
-        int contentLength = 0;
-        int lineStart = 0;
-        int colonIdx = -1;
-        boolean headerEndFound = false;
-        for (int i = 0; i < responseLen; i++) {
-            switch (responseSink.charAt(i)) {
-                case ':':
-                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
-                        colonIdx = i;
-                    }
-                    break;
-
-                case '\n':
-                    if (colonIdx != -1) {
-                        if (isContentLength(responseSink, lineStart, colonIdx)) {
-                            int startSize = colonIdx + 1;
-                            int limSize = i - 1;
-                            while (startSize < responseLen && responseSink.charAt(startSize) == ' ') {
-                                startSize++;
-                            }
-                            while (limSize > startSize) {
-                                char c = responseSink.charAt(limSize);
-                                if (c == '\r' || c == ' ') {
-                                    limSize--;
-                                } else {
-                                    break;
-                                }
-                            }
-                            try {
-                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);
-                            } catch (NumericException e) {
-                                $currentAlertHost(log.info().$("Received")).$(": ").$(responseSink).$();
-                                return;
-                            }
-                        }
-                        colonIdx = -1;
-                    } else if (i - lineStart == 1 && responseSink.charAt(i - 1) == '\r') {
-                        lineStart = i + 1;
-                        headerEndFound = true;
-                        break; // for loop
-                    }
-                    lineStart = i + 1;
-                    break;
-            }
-        }
-        int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
-        $currentAlertHost(log.info().$("Received"))
-                .$(": ")
-                .$(responseSink, start, responseLen)
-                .$();
     }
 
     static {

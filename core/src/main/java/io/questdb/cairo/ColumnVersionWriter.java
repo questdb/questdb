@@ -114,6 +114,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         return hasChanges;
     }
 
+    @Override
+    public long readUnsafe() {
+        this.hasChanges = false;
+        return this.version = super.readUnsafe();
+    }
+
     public void removeColumnTop(long partitionTimestamp, int columnIndex) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex >= 0) {
@@ -313,12 +319,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private void updateB(long bOffset, long bSize) {
         mem.putLong(OFFSET_OFFSET_B_64, bOffset);
         mem.putLong(OFFSET_SIZE_B_64, bSize);
-    }
-
-    @Override
-    long readUnsafe() {
-        this.hasChanges = false;
-        return this.version = super.readUnsafe();
     }
 
     static {

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.NetworkFacade;
 
@@ -35,8 +34,6 @@ public interface LineUdpReceiverConfiguration {
     boolean getAutoCreateNewTables();
 
     int getBindIPv4Address();
-
-    CairoSecurityContext getCairoSecurityContext();
 
     int getCommitMode();
 
