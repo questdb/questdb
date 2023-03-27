@@ -71,6 +71,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
+        public void trip() {
+        }
+
+        @Override
         public void unsetTimer() {
         }
     };
@@ -108,6 +112,11 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * It is meant to be used in more coarse-grained processing, e.g. before native operation on whole page frame.
      */
     void statefulThrowExceptionIfTrippedNoThrottle();
+
+    /**
+     * Trigger this circuit breaker to fail on next check.
+     */
+    void trip();
 
     /**
      * Unsets timer reset/power-up time, so it won't time out on any check (unless resetTimer() is called).

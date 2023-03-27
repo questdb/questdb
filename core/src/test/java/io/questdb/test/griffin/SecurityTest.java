@@ -155,6 +155,10 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public void trip() {
+            }
+
+            @Override
             public void unsetTimer() {
             }
         };
