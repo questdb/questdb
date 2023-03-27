@@ -40,8 +40,12 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
     public static final String SYMBOL = "size_pretty";
 
-    // _, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta (this last is out of range for a long)
-    private static final char[] SCALE = {' ', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
+    // https://en.wikipedia.org/wiki/Byte#Multiple-byte_units
+    // Bytes, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta
+    // bytes, kibibyte, mebibyte, gibibyte, tebibyte, pebibyte, exbibyte, zebibyte
+    // B, KiB, MiB, GiB, TiB, PiB, EiB, ZiB (this last is out of range for a long)
+
+    private static final char[] SCALE = {'B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
 
 
     public static void toSizePretty(StringSink sink, long size) {
@@ -50,7 +54,10 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         long scale = 1L << z * 10; // 1024 times z (z is index in SCALE)
         float value = (float) size / scale;
         Numbers.append(sink, value, 1);
-        sink.put(' ').put(SCALE[z]).put('B');
+        sink.put(' ').put(SCALE[z]);
+        if (z > 0) {
+            sink.put("iB");
+        }
     }
 
     @Override

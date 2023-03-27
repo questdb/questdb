@@ -35,22 +35,22 @@ public class SizePrettyFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testSizes() throws SqlException {
-        call(0L).andAssert("0.0  B");
+        call(0L).andAssert("0.0 B");
         call(Numbers.LONG_NaN).andAssert(null);
-        call(1L).andAssert("1.0  B");
-        call(1024L).andAssert("1.0 KB");
-        call(1024L * 1024).andAssert("1.0 MB");
-        call(1024L * 1024 * 1024).andAssert("1.0 GB");
-        call(1024L * 1024 * 1024 * 1024).andAssert("1.0 TB");
-        call(1024L * 1024 * 1024 * 1024 * 1024).andAssert("1.0 PB");
-        call(1024L * 1024 * 1024 * 1024 * 1024 * 1024).andAssert("1.0 EB");
-        call((long) (8.657 * 1024L * 1024 * 1024 * 1024 * 1024 * 1024)).andAssert("8.0 EB");
-        call((long) (8.657 * 1024L * 1024 * 1024 * 1024 * 1024)).andAssert("8.7 PB");
-        call((long) (8.657 * 1024L * 1024 * 1024 * 1024)).andAssert("8.7 TB");
-        call((long) (8.657 * 1024L * 1024 * 1024)).andAssert("8.7 GB");
-        call((long) (8.657 * 1024L * 1024)).andAssert("8.7 MB");
-        call((long) (8.657 * 1024L)).andAssert("8.7 KB");
-        call((long) 8.657).andAssert("8.0  B");
+        call(1L).andAssert("1.0 B");
+        call(1024L).andAssert("1.0 KiB");
+        call(1024L * 1024).andAssert("1.0 MiB");
+        call(1024L * 1024 * 1024).andAssert("1.0 GiB");
+        call(1024L * 1024 * 1024 * 1024).andAssert("1.0 TiB");
+        call(1024L * 1024 * 1024 * 1024 * 1024).andAssert("1.0 PiB");
+        call(1024L * 1024 * 1024 * 1024 * 1024 * 1024).andAssert("1.0 EiB");
+        call((long) (8.657 * 1024L * 1024 * 1024 * 1024 * 1024 * 1024)).andAssert("8.0 EiB");
+        call((long) (8.657 * 1024L * 1024 * 1024 * 1024 * 1024)).andAssert("8.7 PiB");
+        call((long) (8.657 * 1024L * 1024 * 1024 * 1024)).andAssert("8.7 TiB");
+        call((long) (8.657 * 1024L * 1024 * 1024)).andAssert("8.7 GiB");
+        call((long) (8.657 * 1024L * 1024)).andAssert("8.7 MiB");
+        call((long) (8.657 * 1024L)).andAssert("8.7 KiB");
+        call((long) 8.657).andAssert("8.0 B");
     }
 
     @Override
