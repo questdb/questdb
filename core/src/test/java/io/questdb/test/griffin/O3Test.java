@@ -41,6 +41,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -54,7 +55,9 @@ import org.junit.rules.TestName;
 import java.net.URISyntaxException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.vm.Vm.getStorageLength;
 
@@ -832,6 +835,112 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
         executeWithPool(4, O3Test::testPartitionedOOTopAndBottom0);
+    }
+
+    @Test
+    public void testReadPartitionWhileMergingVarColumnWithColumnTop() throws Exception {
+        // Read the partition with a column top at the same time
+        // when TableWriter is merges it with O3 data.
+
+        AtomicReference<SqlCompiler> compilerRef = new AtomicReference<>();
+        AtomicReference<SqlExecutionContext> executionContextRef = new AtomicReference<>();
+        AtomicBoolean compared = new AtomicBoolean(false);
+
+        // Read the partition while it's being merged
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "2020-02-05.") && Chars.contains(name, Files.SEPARATOR + "last.d")) {
+                    try {
+                        TestUtils.assertSqlCursors(
+                                compilerRef.get(),
+                                executionContextRef.get(),
+                                "zz order by ts",
+                                "x",
+                                LOG
+                        );
+                        compared.set(true);
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        executeWithPool(
+                0,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                    compilerRef.set(compiler);
+                    executionContextRef.set(executionContext);
+
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+
+                    compiler.compile("alter table x add column k uuid", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column kb binary", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column last int", executionContext).execute(null).await();
+
+                    compiler.compile(
+                            "create table y as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
+                                    " rnd_uuid4() as k," +
+                                    " rnd_bin() as kb," +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " -1 as last" +
+                                    " from long_sequence(10))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " rnd_uuid4() as k," +
+                                    " rnd_bin() as kb," +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " -2 as last" +
+                                    " from long_sequence(100))",
+                            executionContext
+                    );
+
+                    // Create table zz with first 2 inserts to be ready to compare.
+                    compiler.compile(
+                            "create table zz as (select * from x union all select * from y)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from y", executionContext);
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    compiler.compile("insert into zz select * from z", executionContext);
+
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            executionContext,
+                            "zz order by ts",
+                            "x",
+                            LOG
+                    );
+                },
+                ff
+        );
+
+        Assert.assertTrue("comparison did not happen", compared.get());
     }
 
     @Test
