@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 
-class YearTimestampSampler implements TimestampSampler {
+public class YearTimestampSampler implements TimestampSampler {
 
     private final int bucket;
     private int startDay;

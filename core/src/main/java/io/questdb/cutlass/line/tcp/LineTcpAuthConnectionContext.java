@@ -35,7 +35,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import java.security.*;
 import java.util.Base64;
 
-class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
+public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final int CHALLENGE_LEN = 512;
     private static final Log LOG = LogFactory.getLog(LineTcpAuthConnectionContext.class);
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
@@ -61,7 +61,12 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private boolean authenticated;
     private PublicKey pubKey;
 
-    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+    public LineTcpAuthConnectionContext(
+            LineTcpReceiverConfiguration configuration,
+            AuthDb authDb,
+            LineTcpMeasurementScheduler scheduler,
+            Metrics metrics
+    ) {
         super(configuration, scheduler, metrics);
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
@@ -238,7 +243,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    IOContextResult handleIO(NetworkIOJob netIoJob) {
+    public IOContextResult handleIO(NetworkIOJob netIoJob) {
         if (authenticated) {
             return super.handleIO(netIoJob);
         }

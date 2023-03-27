@@ -100,6 +100,11 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         }
     }
 
+    @Override
+    public boolean runSerially() {
+        return processInQueue() || sendToOutQueue();
+    }
+
     private static int compareRetriesInQueue(Retry r1, Retry r2) {
         // r1, r2 are always not null, null retries are not queued
         RetryAttemptAttributes a1 = r1.getAttemptDetails();
@@ -229,10 +234,5 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             outPubSequence.done(cursor);
             return true;
         }
-    }
-
-    @Override
-    protected boolean runSerially() {
-        return processInQueue() || sendToOutQueue();
     }
 }

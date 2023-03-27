@@ -34,7 +34,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.function.Function;
 
-class IOTableUpdateDetailsPool implements Closeable {
+public class IOTableUpdateDetailsPool implements Closeable {
     private static final int ABASE;
     private static final int ASHIFT;
     private final Log LOG = LogFactory.getLog(IOTableUpdateDetailsPool.class);

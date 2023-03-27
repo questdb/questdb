@@ -82,7 +82,6 @@ public class DateFormatCompiler {
     static final int OP_YEAR_ONE_DIGIT = 2;
     static final int OP_YEAR_THREE_DIGITS = 39;
     static final int OP_YEAR_TWO_DIGITS = 3;
-    static final ObjList<String> opList;
     static final CharSequenceIntHashMap opMap;
     private static final int FA_DAY = 5;
     private static final int FA_DAY_OF_WEEK = 10;
@@ -118,6 +117,7 @@ public class DateFormatCompiler {
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_LOCALE = 4;
+    private static final ObjList<String> opList;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList delimiterIndexes = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();
@@ -130,6 +130,18 @@ public class DateFormatCompiler {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
+    }
+
+    public static int getOpCode(String opName) {
+        return opMap.get(opName);
+    }
+
+    public static int getOpCount() {
+        return opList.size();
+    }
+
+    public static String getOpName(int index) {
+        return opList.getQuick(index);
     }
 
     public DateFormat compile(CharSequence pattern) {

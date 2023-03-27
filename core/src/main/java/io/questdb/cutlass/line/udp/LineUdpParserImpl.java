@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -51,7 +52,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private static final String WRITER_LOCK_REASON = "ilpUdp";
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
-    private final CairoSecurityContext cairoSecurityContext;
     private final MicrosecondClock clock;
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnNameType = new LongList();
@@ -99,7 +99,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.clock = configuration.getMicrosecondClock();
         this.engine = engine;
         this.udpConfiguration = udpConfiguration;
-        this.cairoSecurityContext = udpConfiguration.getCairoSecurityContext();
         this.timestampAdapter = udpConfiguration.getTimestampAdapter();
 
         defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
@@ -183,7 +182,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+        TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
@@ -228,7 +227,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
         try {
-            entry.writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+            entry.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
@@ -268,7 +267,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
         tableToken = engine.createTable(
-                cairoSecurityContext,
+                AllowAllCairoSecurityContext.INSTANCE,
                 ddlMem,
                 path,
                 true,
@@ -282,7 +281,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         TableToken tableToken = engine.getTableTokenIfExists(token);
         switch (entry.state) {
             case 0:
-                int exists = engine.getStatus(cairoSecurityContext, path, tableToken);
+                int exists = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;
