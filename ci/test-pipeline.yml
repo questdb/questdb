@@ -59,12 +59,27 @@ stages:
                   "buildid": "$(Build.BuildId)"
                 }
               outputVariable: "functionResult"
+          - task: LambdaInvokeFunction@1
+            displayName: "Start Agent 2"
+            name: "Start_Agent2"
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              functionName: "ondemand-pipeline"
+              payload: |
+                {
+                  "pool": "amd64-zfs",
+                  "buildid": "$(Build.BuildId)"
+                  "ami": "ami-005835ae1b11ea970"
+                }
+              outputVariable: "functionResult2"
           - bash: |
               echo "Instance: $(functionResult)"
+              echo "Instance: $(functionResult2)"
             name: "Display_Instance"
             displayName: "Display Instance"
           - bash: |
-              echo "Starting agent... for pool arm64"
+              echo "Check for agent on pool arm64"
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
               while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
               do
@@ -74,6 +89,17 @@ stages:
               echo "Agent found ..."
             name: "Check_agent"
             displayName: "Check agent"
+          - bash: |
+              echo "Check for agent on pool amd64-zfs"
+              POOLID=$(az pipelines pool list | jq '.[]| select(.name == "amd64-zfs") | .id' -r)
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "amd64-zfs-$(Build.BuildId)") | .enabled' -r)" != "true" ]
+              do
+                echo "Still waiting for agent amd64-zfs-$(Build.BuildId) ... "
+                sleep 3
+              done
+              echo "Agent found ..."
+            name: "Check_agent2"
+            displayName: "Check agent2"
       - template: templates/self-hosted-jobs.yml
 
   - stage: HostedRunTestsBranches
