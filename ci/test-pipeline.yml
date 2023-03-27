@@ -69,7 +69,7 @@ stages:
               payload: |
                 {
                   "pool": "amd64-zfs",
-                  "buildid": "$(Build.BuildId)"
+                  "buildid": "$(Build.BuildId)",
                   "ami": "ami-005835ae1b11ea970"
                 }
               outputVariable: "functionResult2"
