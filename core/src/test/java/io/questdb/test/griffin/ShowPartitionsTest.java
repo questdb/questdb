@@ -93,9 +93,9 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             String nameColumn = line.split("\t")[2];
             Long s = sizes.get(nameColumn);
             long size = s != null ? s.longValue() : 0L;
-            auxSink.clear();
+            SizePrettyFunctionFactory.toSizePretty(auxSink, size);
             line = line.replaceAll("SIZE", String.valueOf(size));
-            line = line.replaceAll("HUMAN", SizePrettyFunctionFactory.toSizePretty(auxSink, size).toString());
+            line = line.replaceAll("HUMAN", auxSink.toString());
             sink.put(line).put('\n');
         }
         return sink.toString();

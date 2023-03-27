@@ -43,13 +43,14 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     // _, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta (this last is out of range for a long)
     private static final char[] SCALE = {' ', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
 
-    public static CharSequence toSizePretty(StringSink sink, long size) {
+
+    public static void toSizePretty(StringSink sink, long size) {
+        sink.clear();
         int z = Numbers.msb(size) / 10;
         long scale = 1L << z * 10; // 1024 times z (z is index in SCALE)
         float value = (float) size / scale;
         Numbers.append(sink, value, 1);
         sink.put(' ').put(SCALE[z]).put('B');
-        return sink;
     }
 
     @Override
@@ -63,7 +64,8 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     }
 
     private static class SizePretty extends StrFunction implements UnaryFunction {
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
         private final Function size;
 
         private SizePretty(Function size) {
@@ -83,13 +85,21 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             long s = size.getLong(rec);
-            sink.clear();
-            return s != Long.MIN_VALUE ? toSizePretty(sink, s).toString() : null;
+            if (s != Long.MIN_VALUE) {
+                toSizePretty(sinkA, s);
+                return sinkA;
+            }
+            return null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            long s = size.getLong(rec);
+            if (s != Long.MIN_VALUE) {
+                toSizePretty(sinkB, s);
+                return sinkB;
+            }
+            return null;
         }
     }
 }
