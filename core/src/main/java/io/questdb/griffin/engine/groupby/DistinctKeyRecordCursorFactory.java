@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,8 +51,8 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             @Transient ArrayColumnTypes columnTypes,
             @Transient ObjList<VectorAggregateFunction> vafList,
             int workerCount,
-            @Transient IntList symbolTableSkewIndex) {
-
+            @Transient IntList symbolTableSkewIndex
+    ) {
         super(metadata);
 
         GenericRecordMetadata internalMeta = new GenericRecordMetadata();
@@ -70,7 +70,7 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
         symbolTableSkewIndex.clear();
         symbolTableSkewIndex.add(0);
 
-        this.baseAggregatorFactory = new GroupByRecordCursorFactory(
+        baseAggregatorFactory = new GroupByRecordCursorFactory(
                 configuration,
                 base,
                 internalMeta,
@@ -90,12 +90,12 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return this.baseAggregatorFactory.getCursor(executionContext);
+        return baseAggregatorFactory.getCursor(executionContext);
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return this.baseAggregatorFactory.recordCursorSupportsRandomAccess();
+        return baseAggregatorFactory.recordCursorSupportsRandomAccess();
     }
 
     @Override
@@ -106,6 +106,6 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        this.baseAggregatorFactory.close();
+        baseAggregatorFactory.close();
     }
 }

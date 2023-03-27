@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
     @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
         final long cursor = subSeq.next();
-        return cursor > -1 && doRun(workerId, cursor, runStatus);
+        return cursor == -2 || (cursor > -1 && doRun(workerId, cursor, runStatus));
     }
 
     protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);

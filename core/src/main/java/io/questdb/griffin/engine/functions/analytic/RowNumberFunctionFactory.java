@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,6 +52,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return SIGNATURE;
+    }
+
+    @Override
+    public boolean isWindow() {
+        return true;
     }
 
     @Override
@@ -113,8 +118,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
-            next++;
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next++);
         }
 
         @Override

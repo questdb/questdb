@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+
     protected final DataFrameCursorFactory dataFrameCursorFactory;
 
     public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
@@ -70,5 +71,8 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(dataFrameCursorFactory);
     }
 
-    protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException;
+    protected abstract RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException;
 }

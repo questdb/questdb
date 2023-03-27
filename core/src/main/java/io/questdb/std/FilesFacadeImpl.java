@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,6 +70,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
         return Files.copyData(srcFd, destFd, offsetSrc, length);
+    }
+
+    @Override
+    public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+        return Files.copyDataToOffset(srcFd, destFd, offsetSrc, destOffset, length);
     }
 
     @Override
@@ -181,6 +186,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return Os.isPosix() && errno == 18;
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDir(LPSZ path) {
+        return Files.isDirOrSoftLinkDir(path);
     }
 
     @Override

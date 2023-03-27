@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -149,6 +149,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         ensureSeparator();
         encodeUtf8(str, from, to);
         return this;
+    }
+
+    public void extend(int newCapacity) {
+        assert newCapacity > capacity;
+        int len = length();
+        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
+        tailPtr = headPtr + len;
+        capacity = newCapacity;
     }
 
     @Override
@@ -326,7 +334,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public String toString() {
         if (headPtr != 0L) {
             // Don't use Misc.getThreadLocalBuilder() to convert Path to String.
-            // This leads difficulties in debugging / running tests when FilesFacade tracks open files 
+            // This leads difficulties in debugging / running tests when FilesFacade tracks open files
             // when this method called implicitly
             final StringSink b = tlBuilder.get();
             b.clear();
@@ -351,13 +359,5 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
             Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);
         }
-    }
-
-    void extend(int newCapacity) {
-        assert newCapacity > capacity;
-        int len = length();
-        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
-        tailPtr = headPtr + len;
-        capacity = newCapacity;
     }
 }

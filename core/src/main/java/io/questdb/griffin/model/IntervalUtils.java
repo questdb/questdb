@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -172,6 +172,121 @@ public final class IntervalUtils {
                 )
         );
         return (char) (pts - (int) Short.MIN_VALUE);
+    }
+
+    /**
+     * Intersects two lists of intervals compacted in one list in place.
+     * Intervals to be chronologically ordered and result list will be ordered as well.
+     * <p>
+     * Treat a as 2 lists,
+     * a: first from 0 to divider
+     * b: from divider to the end of list
+     *
+     * @param concatenatedIntervals 2 lists of intervals concatenated in 1
+     */
+    public static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
+        final int sizeA = dividerIndex / 2;
+        final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;
+        int aLower = 0;
+
+        int intervalB = sizeA;
+        int writePoint = 0;
+
+        int aUpperSize = sizeB;
+        int aUpper = sizeB;
+
+        while ((aLower < sizeA || aUpper < aUpperSize) && intervalB < sizeB) {
+
+            int intervalA = aUpper < aUpperSize ? aUpper : aLower;
+            long aLo = concatenatedIntervals.getQuick(intervalA * 2);
+            long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);
+
+            long bLo = concatenatedIntervals.getQuick(intervalB * 2);
+            long bHi = concatenatedIntervals.getQuick(intervalB * 2 + 1);
+
+            if (aHi < bLo) {
+                // a fully above b
+                // a loses
+                if (aUpper < aUpperSize) {
+                    aUpper++;
+                } else {
+                    aLower++;
+                }
+            } else if (aLo > bHi) {
+                // a fully below b
+                // b loses
+                intervalB++;
+            } else {
+                if (aHi < bHi) {
+                    // b hanging lower than a
+                    // a loses
+                    if (aUpper < aUpperSize) {
+                        aUpper++;
+                    } else {
+                        aLower++;
+                    }
+                } else {
+                    // otherwise a lower than b
+                    // a loses
+                    intervalB++;
+                }
+
+                assert writePoint <= aLower || writePoint >= sizeA;
+                if (writePoint == aLower && aLower < sizeA) {
+                    // We cannot keep A position, it will be overwritten, hence intervalB++; is not possible
+                    // Copy a point to A area instead
+                    concatenatedIntervals.add(
+                            concatenatedIntervals.getQuick(writePoint * 2),
+                            concatenatedIntervals.getQuick(writePoint * 2 + 1)
+                    );
+                    aUpperSize = concatenatedIntervals.size() / 2;
+                    aLower++;
+                }
+
+                writePoint = append(concatenatedIntervals, writePoint, Math.max(aLo, bLo), Math.min(aHi, bHi));
+            }
+        }
+
+        concatenatedIntervals.setPos(2 * writePoint);
+    }
+
+    /**
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     *
+     * @param intervals collection of intervals
+     */
+    public static void invert(LongList intervals) {
+        invert(intervals, 0);
+    }
+
+    /**
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     *
+     * @param intervals collection of intervals
+     */
+    public static void invert(LongList intervals, int startIndex) {
+        long last = Long.MIN_VALUE;
+        int n = intervals.size();
+        int writeIndex = startIndex;
+        for (int i = startIndex; i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            if (lo > last) {
+                intervals.setQuick(writeIndex, last);
+                intervals.setQuick(writeIndex + 1, lo - 1);
+                writeIndex += 2;
+            }
+            last = hi + 1;
+        }
+
+        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
+        if (last != Long.MIN_VALUE) {
+            intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
+            intervals.setQuick(writeIndex, last);
+            writeIndex += 2;
+        }
+
+        intervals.setPos(writeIndex);
     }
 
     public static boolean isInIntervals(LongList intervals, long timestamp) {
@@ -632,13 +747,110 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Unions two lists of intervals compacted in one list in place.
+     * Intervals to be chronologically ordered and result list will be ordered as well.
+     * <p>
+     * Treat a as 2 lists,
+     * a: first from 0 to divider
+     * b: from divider to the end of list
+     *
+     * @param intervals 2 lists of intervals concatenated in 1
+     */
+    public static void unionInplace(LongList intervals, int dividerIndex) {
+        final int sizeB = dividerIndex + (intervals.size() - dividerIndex);
+        int aLower = 0;
+
+        int intervalB = dividerIndex;
+        int writePoint = 0;
+
+        int aUpperSize = sizeB;
+        int aUpper = sizeB;
+        long aLo = 0, aHi = 0, bLo = 0, bHi = 0;
+
+        while (aLower < dividerIndex || aUpper < aUpperSize || intervalB < sizeB) {
+
+            // This tries to get either interval from A or from B
+            // where it's available
+            // and union with last interval in writePoint position
+            boolean hasA = aLower < dividerIndex || aUpper < aUpperSize;
+            if (hasA) {
+                int intervalA = aUpper < aUpperSize ? aUpper : aLower;
+                aLo = intervals.getQuick(intervalA);
+                aHi = intervals.getQuick(intervalA + 1);
+            }
+
+            boolean hasB = intervalB < sizeB;
+            if (hasB) {
+                bLo = intervals.getQuick(intervalB);
+                bHi = intervals.getQuick(intervalB + 1);
+            }
+
+            long nextLo, nextHi;
+
+            if (hasA) {
+                if (hasB && bLo < aLo) {
+                    nextLo = bLo;
+                    nextHi = bHi;
+                    intervalB += 2;
+                } else {
+                    nextLo = aLo;
+                    nextHi = aHi;
+                    if (aUpper < aUpperSize) {
+                        aUpper += 2;
+                    } else {
+                        aLower += 2;
+                    }
+                }
+            } else {
+                nextLo = bLo;
+                nextHi = bHi;
+                intervalB += 2;
+            }
+
+            if (writePoint > 0) {
+                long prevHi = intervals.getQuick(writePoint - 1);
+                if (nextLo <= prevHi) {
+                    // Intersection with previously safed interval
+                    intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));
+                    continue;
+                }
+            }
+
+            // new interval to save
+            assert writePoint <= aLower || writePoint >= dividerIndex;
+            if (writePoint == aLower && aLower < dividerIndex) {
+                // We cannot keep A position, it will be overwritten
+                // Copy a point to A area instead
+                intervals.add(
+                        intervals.getQuick(writePoint),
+                        intervals.getQuick(writePoint + 1)
+                );
+                aUpperSize = intervals.size();
+                aLower += 2;
+            }
+            intervals.setQuick(writePoint++, nextLo);
+            intervals.setQuick(writePoint++, nextHi);
+        }
+
+        intervals.setPos(writePoint);
+    }
+
     private static void addMillisInterval(long period, int count, LongList out) {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
+        int n = count - 1;
+        if (period < 0) {
+            lo += period * n;
+            hi += period * n;
+            out.setQuick(k - 2, lo);
+            out.setQuick(k - 1, hi);
+            period = -period;
+        }
         int writePoint = k / 2;
 
-        for (int i = 0, n = count - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             lo += period;
             hi += period;
             writePoint = append(out, writePoint, lo, hi);
@@ -650,8 +862,16 @@ public final class IntervalUtils {
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
+        int n = count - 1;
+        if (period < 0) {
+            lo = Timestamps.addMonths(lo, period * n);
+            hi = Timestamps.addMonths(hi, period * n);
+            out.setQuick(k - 2, lo);
+            out.setQuick(k - 1, hi);
+            period = -period;
+        }
 
-        for (int i = 0, n = count - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             lo = Timestamps.addMonths(lo, period);
             hi = Timestamps.addMonths(hi, period);
             writePoint = append(out, writePoint, lo, hi);
@@ -663,8 +883,16 @@ public final class IntervalUtils {
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
+        int n = count - 1;
+        if (period < 0) {
+            lo = Timestamps.addYear(lo, period * n);
+            hi = Timestamps.addYear(hi, period * n);
+            out.setQuick(k - 2, lo);
+            out.setQuick(k - 1, hi);
+            period = -period;
+        }
 
-        for (int i = 0, n = count - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             lo = Timestamps.addYear(lo, period);
             hi = Timestamps.addYear(hi, period);
             writePoint = append(out, writePoint, lo, hi);
@@ -836,209 +1064,5 @@ public final class IntervalUtils {
         list.extendAndSet(2 * writePoint + 1, hi);
         list.setQuick(2 * writePoint, lo);
         return writePoint + 1;
-    }
-
-    /**
-     * Intersects two lists of intervals compacted in one list in place.
-     * Intervals to be chronologically ordered and result list will be ordered as well.
-     * <p>
-     * Treat a as 2 lists,
-     * a: first from 0 to divider
-     * b: from divider to the end of list
-     *
-     * @param concatenatedIntervals 2 lists of intervals concatenated in 1
-     */
-    static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
-        final int sizeA = dividerIndex / 2;
-        final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;
-        int aLower = 0;
-
-        int intervalB = sizeA;
-        int writePoint = 0;
-
-        int aUpperSize = sizeB;
-        int aUpper = sizeB;
-
-        while ((aLower < sizeA || aUpper < aUpperSize) && intervalB < sizeB) {
-
-            int intervalA = aUpper < aUpperSize ? aUpper : aLower;
-            long aLo = concatenatedIntervals.getQuick(intervalA * 2);
-            long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);
-
-            long bLo = concatenatedIntervals.getQuick(intervalB * 2);
-            long bHi = concatenatedIntervals.getQuick(intervalB * 2 + 1);
-
-            if (aHi < bLo) {
-                // a fully above b
-                // a loses
-                if (aUpper < aUpperSize) {
-                    aUpper++;
-                } else {
-                    aLower++;
-                }
-            } else if (aLo > bHi) {
-                // a fully below b
-                // b loses
-                intervalB++;
-            } else {
-                if (aHi < bHi) {
-                    // b hanging lower than a
-                    // a loses
-                    if (aUpper < aUpperSize) {
-                        aUpper++;
-                    } else {
-                        aLower++;
-                    }
-                } else {
-                    // otherwise a lower than b
-                    // a loses
-                    intervalB++;
-                }
-
-                assert writePoint <= aLower || writePoint >= sizeA;
-                if (writePoint == aLower && aLower < sizeA) {
-                    // We cannot keep A position, it will be overwritten, hence intervalB++; is not possible
-                    // Copy a point to A area instead
-                    concatenatedIntervals.add(
-                            concatenatedIntervals.getQuick(writePoint * 2),
-                            concatenatedIntervals.getQuick(writePoint * 2 + 1)
-                    );
-                    aUpperSize = concatenatedIntervals.size() / 2;
-                    aLower++;
-                }
-
-                writePoint = append(concatenatedIntervals, writePoint, Math.max(aLo, bLo), Math.min(aHi, bHi));
-            }
-        }
-
-        concatenatedIntervals.setPos(2 * writePoint);
-    }
-
-    /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
-     *
-     * @param intervals collection of intervals
-     */
-    static void invert(LongList intervals) {
-        invert(intervals, 0);
-    }
-
-    /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
-     *
-     * @param intervals collection of intervals
-     */
-    static void invert(LongList intervals, int startIndex) {
-        long last = Long.MIN_VALUE;
-        int n = intervals.size();
-        int writeIndex = startIndex;
-        for (int i = startIndex; i < n; i += 2) {
-            final long lo = intervals.getQuick(i);
-            final long hi = intervals.getQuick(i + 1);
-            if (lo > last) {
-                intervals.setQuick(writeIndex, last);
-                intervals.setQuick(writeIndex + 1, lo - 1);
-                writeIndex += 2;
-            }
-            last = hi + 1;
-        }
-
-        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
-        if (last != Long.MIN_VALUE) {
-            intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
-            intervals.setQuick(writeIndex, last);
-            writeIndex += 2;
-        }
-
-        intervals.setPos(writeIndex);
-    }
-
-    /**
-     * Unions two lists of intervals compacted in one list in place.
-     * Intervals to be chronologically ordered and result list will be ordered as well.
-     * <p>
-     * Treat a as 2 lists,
-     * a: first from 0 to divider
-     * b: from divider to the end of list
-     *
-     * @param intervals 2 lists of intervals concatenated in 1
-     */
-    static void unionInplace(LongList intervals, int dividerIndex) {
-        final int sizeB = dividerIndex + (intervals.size() - dividerIndex);
-        int aLower = 0;
-
-        int intervalB = dividerIndex;
-        int writePoint = 0;
-
-        int aUpperSize = sizeB;
-        int aUpper = sizeB;
-        long aLo = 0, aHi = 0, bLo = 0, bHi = 0;
-
-        while (aLower < dividerIndex || aUpper < aUpperSize || intervalB < sizeB) {
-
-            // This tries to get either interval from A or from B
-            // where it's available
-            // and union with last interval in writePoint position
-            boolean hasA = aLower < dividerIndex || aUpper < aUpperSize;
-            if (hasA) {
-                int intervalA = aUpper < aUpperSize ? aUpper : aLower;
-                aLo = intervals.getQuick(intervalA);
-                aHi = intervals.getQuick(intervalA + 1);
-            }
-
-            boolean hasB = intervalB < sizeB;
-            if (hasB) {
-                bLo = intervals.getQuick(intervalB);
-                bHi = intervals.getQuick(intervalB + 1);
-            }
-
-            long nextLo, nextHi;
-
-            if (hasA) {
-                if (hasB && bLo < aLo) {
-                    nextLo = bLo;
-                    nextHi = bHi;
-                    intervalB += 2;
-                } else {
-                    nextLo = aLo;
-                    nextHi = aHi;
-                    if (aUpper < aUpperSize) {
-                        aUpper += 2;
-                    } else {
-                        aLower += 2;
-                    }
-                }
-            } else {
-                nextLo = bLo;
-                nextHi = bHi;
-                intervalB += 2;
-            }
-
-            if (writePoint > 0) {
-                long prevHi = intervals.getQuick(writePoint - 1);
-                if (nextLo <= prevHi) {
-                    // Intersection with previously safed interval
-                    intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));
-                    continue;
-                }
-            }
-
-            // new interval to save
-            assert writePoint <= aLower || writePoint >= dividerIndex;
-            if (writePoint == aLower && aLower < dividerIndex) {
-                // We cannot keep A position, it will be overwritten
-                // Copy a point to A area instead
-                intervals.add(
-                        intervals.getQuick(writePoint),
-                        intervals.getQuick(writePoint + 1)
-                );
-                aUpperSize = intervals.size();
-                aLower += 2;
-            }
-            intervals.setQuick(writePoint++, nextLo);
-            intervals.setQuick(writePoint++, nextHi);
-        }
-
-        intervals.setPos(writePoint);
     }
 }

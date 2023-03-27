@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -318,7 +318,6 @@ public class GroupByUtils {
                     throw SqlException.$(key.position, "bind variable is not allowed here");
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.OPERATION:
-                case ExpressionNode.CONSTANT:
                     final ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
                     boolean invalid = true;
                     for (int j = 0, n = availableColumns.size(); j < n; j++) {
@@ -333,6 +332,9 @@ public class GroupByUtils {
                     if (invalid) {
                         throw SqlException.$(key.position, "group by expression does not match anything select in statement");
                     }
+                    break;
+                case ExpressionNode.CONSTANT:
+                    //ignore
                     break;
                 default:
                     throw SqlException.$(key.position, "unsupported type of expression");

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -499,6 +499,27 @@ namespace questdb::x86 {
         Gp r = c.newInt64();
         c.xor_(r, r);
         c.cmp(lhs, rhs);
+        c.setne(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
+    inline void int128_cmp(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        Gp mask = c.newInt16();
+        c.pcmpeqb(lhs, rhs);
+        c.pmovmskb(mask, lhs);
+        c.cmp(mask, 0xffff);
+    }
+
+    inline Gpq int128_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        int128_cmp(c, lhs, rhs);
+        Gp r = c.newInt64();
+        c.sete(r.r8Lo());
+        return r.as<Gpq>();
+    }
+
+    inline Gpq int128_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        int128_cmp(c, lhs, rhs);
+        Gp r = c.newInt64();
         c.setne(r.r8Lo());
         return r.as<Gpq>();
     }

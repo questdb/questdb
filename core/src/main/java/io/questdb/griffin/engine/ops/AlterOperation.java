@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
@@ -131,12 +132,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            LOG.critical().$("could not alter table [table=").$(svc.getTableToken())
-                    .$(", command=").$(command)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", message=`").$(e.getFlyweightMessage()).$('`')
-                    .I$();
-
+            final LogRecord log = e.isCritical() ? LOG.critical() : LOG.error();
+            log.$("could not alter table [table=").$(svc.getTableToken())
+                .$(", command=").$(command)
+                .$(", errno=").$(e.getErrno())
+                .$(", message=`").$(e.getFlyweightMessage()).$('`')
+                .I$();
             throw e;
         }
         return 0;
@@ -328,12 +329,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = extraInfo.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
-                        .put(", detachStatus=").put(attachDetachStatus.name())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
-                        .put(']')
-                        .position((int) extraInfo.getQuick(i * 2 + 1));
+                throw attachDetachStatus.getException(
+                        (int) extraInfo.getQuick(i * 2 + 1),
+                        attachDetachStatus,
+                        tableToken,
+                        svc.getPartitionBy(),
+                        partitionTimestamp
+                );
             }
         }
     }
@@ -343,12 +345,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = extraInfo.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
-                        .put(", detachStatus=").put(attachDetachStatus.name())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
-                        .put(']')
-                        .position((int) extraInfo.getQuick(i * 2 + 1));
+                throw attachDetachStatus.getException(
+                        (int) extraInfo.getQuick(i * 2 + 1),
+                        attachDetachStatus,
+                        tableToken,
+                        svc.getPartitionBy(),
+                        partitionTimestamp
+                );
             }
         }
     }

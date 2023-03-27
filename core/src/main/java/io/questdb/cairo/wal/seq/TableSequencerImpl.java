@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,8 +48,8 @@ public class TableSequencerImpl implements TableSequencer {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
-    private final MicrosecondClock microClock;
     private final SequencerMetadataService metadataSvc;
+    private final MicrosecondClock microClock;
     private final int mkDirMode;
     private final Path path;
     private final int rootLen;
@@ -279,6 +279,23 @@ public class TableSequencerImpl implements TableSequencer {
             walIdGenerator.open(path);
             metadata.open(path, rootLen);
             tableTransactionLog.open(path);
+        } catch (CairoException ex) {
+            closeLocked();
+            if (ex.isTableDropped()) {
+                throw ex;
+            }
+            if (ex.errnoReadPathDoesNotExist()) {
+                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
+                        .$(", path=").$(path)
+                        .$(", error=").$(ex.getMessage())
+                        .I$();
+                throw CairoException.tableDropped(tableToken);
+            }
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(ex.getMessage())
+                    .I$();
+            throw ex;
         } catch (Throwable th) {
             LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
                     .$(", path=").$(path)
@@ -319,7 +336,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void checkDropped() {
         if (metadata.isDropped()) {
-            throw CairoException.nonCritical().put("table is dropped [dirName=").put(tableToken.getDirName()).put(']');
+            throw CairoException.tableDropped(tableToken);
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionContext> implements WriterSource {
+public class PGConnectionContext extends IOContext<PGConnectionContext> implements WriterSource {
 
     public static final char STATUS_IDLE = 'I';
     public static final char STATUS_IN_ERROR = 'E';
@@ -172,7 +172,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBufferPtr;
     private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
-    private boolean sendRNQ = true;
+    private boolean sendRNQ = true;/* send ReadyForQuery message */
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
     private SuspendEvent suspendEvent;
@@ -1191,7 +1191,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException {
-
         this.sendParameterDescription = statementName != null;
 
         if (wrapper != null) {
@@ -1643,18 +1642,26 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 processExec(msgLo, msgLimit, compiler);
                 break;
             case 'S': // sync
+                // At completion of each series of extended-query messages, the frontend should issue a Sync message. 
+                // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block 
+                // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued. 
+                // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message, 
+                // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing. 
+                // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.) 
                 processSyncActions();
                 prepareReadyForQuery();
                 prepareForNewQuery();
                 sendRNQ = true;
                 // fall thru
             case 'H': // flush
+                // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers. 
+                //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands. 
+                //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
                 // some clients (asyncpg) chose not to send 'S' (sync) message
                 // but instead fire 'H'. Can't wrap my head around as to why
                 // query execution is so ambiguous
                 if (syncActions.size() > 0) {
                     processSyncActions();
-                    prepareForNewQuery();
                 }
                 sendAndReset();
                 break;
@@ -1720,19 +1727,25 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareDescribePortalResponse();
     }
 
+    private void prepareEmptyQueryResponse() {
+        LOG.debug().$("empty").$();
+        responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
+        responseAsciiSink.putIntDirect(INT_BYTES_X);
+    }
+
     private void prepareError(CairoException ex) {
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
         prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (errno == CairoException.NON_CRITICAL) {
-            LOG.error()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+        if (ex.isCritical()) {
+            LOG.critical()
+                    .$("error [msg=`").utf8(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         } else {
-            LOG.critical()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+            LOG.error()
+                    .$("error [msg=`").utf8(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         }
     }
@@ -1807,7 +1820,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareErrorResponse(position, message);
         LOG.error()
                 .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
+                .$(", msg=`").utf8(message).$('`')
                 .I$();
     }
 
@@ -1901,7 +1914,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             if (parameterFormatCount == 1) {
                 // same format applies to all parameters
                 bindSingleFormatForAll(lo, msgLimit, activeBindVariableTypes);
-            } else if (parameterFormatCount == parsePhaseBindVariableCount) {
+            } else if (activeBindVariableTypes.size() > 0) {//client doesn't need to specify types in Parse message and can use those returned in ParameterDescription
                 bindParameterFormats(lo, msgLimit, parameterFormatCount, activeBindVariableTypes);
             }
         }
@@ -1919,7 +1932,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
         try {
             if (parameterValueCount > 0) {
-                if (this.parsePhaseBindVariableCount == parameterValueCount) {
+                //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message    
+                if (this.parsePhaseBindVariableCount == parameterValueCount || activeBindVariableTypes.size() > 0) {
                     lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
                 } else {
                     lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
@@ -2033,7 +2047,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.EXPLAIN:
-                //explain results should not be cached 
+                //explain results should not be cached
                 typesAndSelectIsCached = false;
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
@@ -2363,12 +2377,16 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             @Transient SqlCompiler compiler
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException {
         prepareForNewQuery();
+        isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
         CharacterStoreEntry e = characterStore.newEntry();
 
         if (Chars.utf8Decode(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
             try {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                if (isEmptyQuery) {
+                    prepareEmptyQueryResponse();
+                }
                 // we need to continue parsing receive buffer even if we errored out
                 // this is because PG client might expect separate responses to everything it sent
             } catch (SqlException ex) {
@@ -2529,7 +2547,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         sqlExecutionContext.getCairoSecurityContext(),
                         path,
                         tableToken
-                )) {
+                )
+        ) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
@@ -2566,8 +2585,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final long cursorRowCount = currentCursor.size();
-        this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
-        this.resumeProcessor = cursorResumeProcessor;
+        if (maxRows > 0) {
+            this.maxRows = cursorRowCount > 0 ? Long.min(maxRows, cursorRowCount) : maxRows;
+        } else {
+            this.maxRows = Long.MAX_VALUE;
+        }
+        resumeProcessor = cursorResumeProcessor;
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, commandCompleteResumeProcessor);
     }
@@ -2747,9 +2770,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     void prepareCommandComplete(boolean addRowCount) {
         if (isEmptyQuery) {
-            LOG.debug().$("empty").$();
-            responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
-            responseAsciiSink.putIntDirect(INT_BYTES_X);
+            prepareEmptyQueryResponse();
         } else {
             responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
             long addr = responseAsciiSink.skip();

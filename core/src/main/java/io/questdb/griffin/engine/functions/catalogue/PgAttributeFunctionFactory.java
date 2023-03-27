@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
-    private static final String SIGNATURE = "pg_catalog.pg_attribute()";
+    private static final String SIGNATURE = "pg_attribute()";
 
     @Override
     public String getSignature() {

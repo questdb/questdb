@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,6 +58,11 @@ import java.io.Closeable;
  * }
  */
 public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
+
+    int SCAN_DIRECTION_BACKWARD = 2;
+    int SCAN_DIRECTION_FORWARD = 1;
+    int SCAN_DIRECTION_OTHER = 0;
+
     @Override
     default void close() {
     }
@@ -87,7 +92,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     // that key read from symbol column map to symbol values unambiguously.
     // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
     // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // Such factories cannot be used in multithreaded execution and cannot be tested
     // via `testSymbolAPI()` call.
     default boolean fragmentedSymbolTables() {
         return false;
@@ -139,8 +144,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default boolean hasDescendingOrder() {
-        return false;
+    /**
+     * Returns the direction of scanning used in this factory:
+     * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
+     * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values
+     * where order is 'random'.<br>
+     * Note: tables with designated timestamp keep rows in timestamp order, so :
+     * - forward scan produces rows in ascending ts order
+     * - backward scan produces rows in descending ts order
+     */
+    default int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
     }
 
     /* Returns true if this factory handles limit M , N clause already and false otherwise .

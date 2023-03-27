@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected final int timezoneNameFuncPos;
     protected long fixedOffset;
     protected long localEpoch;
-    protected long nextDstUTC;
+    protected long nextDstUtc;
     protected long prevDst;
     protected TimeZoneRules rules;
     protected long tzOffset;
@@ -78,7 +78,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         // factory guarantees that base cursor is not empty
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
-        this.rules = null;
+        rules = null;
 
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
@@ -87,21 +87,21 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
                 if (opt == Long.MIN_VALUE) {
                     // this is timezone name
                     // fixed rules means the timezone does not have historical or daylight time changes
-                    this.rules = TimestampFormatUtils.enLocale.getZoneRules(
+                    rules = TimestampFormatUtils.enLocale.getZoneRules(
                             Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
                             RESOLUTION_MICROS
                     );
                 } else {
                     // here timezone is in numeric offset format
                     tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
-                    nextDstUTC = Long.MAX_VALUE;
+                    nextDstUtc = Long.MAX_VALUE;
                 }
             } catch (NumericException e) {
                 throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
             }
         } else {
-            this.tzOffset = 0;
-            this.nextDstUTC = Long.MAX_VALUE;
+            tzOffset = 0;
+            nextDstUtc = Long.MAX_VALUE;
         }
 
         final CharSequence offset = offsetFunc.getStr(null);
@@ -111,7 +111,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
                 // bad value for offset
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }
-            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+            fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
         } else {
             fixedOffset = Long.MIN_VALUE;
         }

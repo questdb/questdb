@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -97,7 +97,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         "rows_handled long," + // 7
                         "rows_imported long," + // 8
                         "errors long" + // 9
-                        ") timestamp(ts) partition by DAY",
+                        ") timestamp(ts) partition by DAY BYPASS WAL",
                 sqlExecutionContext
         );
         this.statusTableToken = engine.getTableToken(statusTableName);
@@ -223,7 +223,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
-                    parallelImporter.process();
+                    parallelImporter.process(task.getSecurityContext());
                 } else {
                     serialImporter.of(
                             task.getTableName(),
@@ -237,7 +237,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
-                    serialImporter.process();
+                    serialImporter.process(task.getSecurityContext());
                 }
             } catch (TextImportException e) {
                 updateStatus(
@@ -250,7 +250,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 );
             } finally {
                 requestSubSeq.done(cursor);
-                textImportExecutionContext.resetActiveImportId();
+                textImportExecutionContext.clear();
             }
             enforceLogRetention();
             return true;

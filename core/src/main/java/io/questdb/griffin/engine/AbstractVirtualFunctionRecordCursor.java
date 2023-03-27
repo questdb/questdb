@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     public void of(RecordCursor cursor) {
-        this.baseCursor = cursor;
+        baseCursor = cursor;
         recordA.of(baseCursor.getRecord());
         if (recordB != null) {
             recordB.of(baseCursor.getRecordB());
@@ -94,7 +94,9 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public void recordAt(Record record, long atRowId) {
         if (supportsRandomAccess) {
-            baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+            if (baseCursor != null) {
+                baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+            }
         } else {
             throw new UnsupportedOperationException();
         }
@@ -102,12 +104,14 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public long size() {
-        return baseCursor.size();
+        return baseCursor != null ? baseCursor.size() : -1;
     }
 
     @Override
     public void toTop() {
-        baseCursor.toTop();
-        GroupByUtils.toTop(functions);
+        if (baseCursor != null) {
+            baseCursor.toTop();
+            GroupByUtils.toTop(functions);
+        }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -146,6 +148,8 @@ public interface CairoConfiguration {
 
     long getIdleCheckInterval();
 
+    int getInactiveReaderMaxOpenPartitions();
+
     long getInactiveReaderTTL();
 
     long getInactiveWalWriterTTL();
@@ -192,6 +196,8 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
+    int getO3LagCalculationWindowsSize();
+
     default double getO3LagDecreaseFactor() {
         return 0.5;
     }
@@ -207,6 +213,8 @@ public interface CairoConfiguration {
      * @return upper bound of "commit lag" in micros
      */
     long getO3MaxLag();
+
+    int getO3MemMaxPages();
 
     long getO3MinLag();
 
@@ -253,6 +261,8 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
+
+    int getRepeatMigrationsFromVersion();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -397,6 +407,8 @@ public interface CairoConfiguration {
 
     long getTableRegistryAutoReloadFrequency();
 
+    int getTableRegistryCompactionThreshold();
+
     TelemetryConfiguration getTelemetryConfiguration();
 
     TextConfiguration getTextConfiguration();
@@ -405,9 +417,13 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    VolumeDefinitions getVolumeDefinitions();
+
     int getWalApplyLookAheadTransactionCount();
 
-    int getWalCommitSquashRowLimit();
+    long getWalApplyTableTimeQuota();
+
+    double getWalSquashUncommittedRowsMultiplier();
 
     boolean getWalEnabledDefault();
 
@@ -469,4 +485,6 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    CairoSecurityContextFactory getCairoSecurityContextFactory();
 }

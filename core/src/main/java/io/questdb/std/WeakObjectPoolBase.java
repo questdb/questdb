@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,6 +57,22 @@ abstract class WeakObjectPoolBase<T> {
         return obj == null ? newInstance() : obj;
     }
 
+    public boolean push(T obj) {
+        assert obj != null;
+        if (cache.size() < maxSize) {
+            clear(obj);
+            cache.push(obj);
+            return true;
+        } else {
+            close(obj);
+            return false;
+        }
+    }
+
+    public int size() {
+        return cache.size();
+    }
+
     void clear(T obj) {
     }
 
@@ -70,16 +86,4 @@ abstract class WeakObjectPoolBase<T> {
     }
 
     abstract T newInstance();
-
-    boolean push(T obj) {
-        assert obj != null;
-        if (cache.size() < maxSize) {
-            clear(obj);
-            cache.push(obj);
-            return true;
-        } else {
-            close(obj);
-            return false;
-        }
-    }
 }

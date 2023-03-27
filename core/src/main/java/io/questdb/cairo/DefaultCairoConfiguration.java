@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -43,9 +45,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final CharSequence root;
+    private final CairoSecurityContextFactory securityContextFactory = new AllowAllSecurityContextFactory();
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
+    private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
@@ -115,6 +119,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
+    }
+
+    @Override
+    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+        return securityContextFactory;
     }
 
     @Override
@@ -273,6 +282,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return 128;
+    }
+
+    @Override
     public long getInactiveReaderTTL() {
         return -10000;
     }
@@ -358,9 +372,19 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3LagCalculationWindowsSize() {
+        return 4;
+    }
+
+    @Override
     public long getO3MaxLag() {
         // 5 min
         return 300_000_000L;
+    }
+
+    @Override
+    public int getO3MemMaxPages() {
+        return Integer.MAX_VALUE;
     }
 
     @Override
@@ -414,13 +438,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionPurgeListCapacity() {
-        return 64;
+    public long getPartitionO3SplitThreshold() {
+        return 1_000_000L;
     }
 
     @Override
-    public long getPartitionO3SplitThreshold() {
-        return 1_000_000L;
+    public int getPartitionPurgeListCapacity() {
+        return 64;
     }
 
     @Override
@@ -436,6 +460,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRenameTableModelPoolCapacity() {
         return 8;
+    }
+
+    @Override
+    public int getRepeatMigrationsFromVersion() {
+        return -1;
     }
 
     @Override
@@ -756,6 +785,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getTableRegistryCompactionThreshold() {
+        return 100;
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
@@ -776,13 +810,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
     }
 
     @Override
-    public int getWalCommitSquashRowLimit() {
-        return 512 * 1024;
+    public long getWalApplyTableTimeQuota() {
+        return 1000L;
     }
 
     @Override
@@ -803,6 +842,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return 200000;
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return 20;
     }
 
     @Override
@@ -901,7 +945,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalSupported() {
-        return false;
+        return true;
     }
 
     @Override

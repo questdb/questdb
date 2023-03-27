@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
+    private boolean isHasNextPending;
+    private boolean isMapBuildPending;
     private boolean isOpen;
 
     public SampleByFillNoneRecordCursor(
@@ -67,9 +69,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         );
         this.map = map;
         this.keyMapSink = keyMapSink;
-        this.record.of(map.getRecord());
-        this.mapCursor = map.getCursor();
-        this.isOpen = true;
+        record.of(map.getRecord());
+        mapCursor = map.getCursor();
+        isOpen = true;
     }
 
     @Override
@@ -83,80 +85,89 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public boolean hasNext() {
+        initTimestamps();
+
         if (mapCursor.hasNext()) {
             return true;
         }
 
         if (baseRecord == null) {
             return false;
-
         }
-        this.map.clear();
 
-        this.sampleLocalEpoch = this.localEpoch;
-        long next = timestampSampler.nextTimestamp(this.localEpoch);
+        buildMap();
 
-        // looks like we need to populate key map
-        // at the start of this loop 'lastTimestamp' will be set to timestamp
-        // of first record in base cursor
-        do {
-            long timestamp = getBaseRecordTimestamp();
-            if (timestamp < next) {
-                adjustDSTInFlight(timestamp - tzOffset);
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    groupByFunctionsUpdater.updateNew(value, baseRecord);
-                } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
-                }
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            } else {
-                // map value is conditional and only required when clock goes back
-                // we override base method for when this happens
-                // see: updateValueWhenClockMovesBack()
-                timestamp = adjustDST(timestamp, null, next);
-                if (timestamp != Long.MIN_VALUE) {
-                    nextSamplePeriod(timestamp);
-                    return createMapCursor();
-                }
-            }
-        } while (base.hasNext());
-
-        // we ran out of data, make sure hasNext() returns false at the next
-        // opportunity, after we stream map that is.
-        baseRecord = null;
-        return createMapCursor();
+        return mapCursor.hasNext();
     }
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         super.of(base, executionContext);
         if (!isOpen) {
-            this.map.reopen();
-            this.isOpen = true;
+            map.reopen();
+            isOpen = true;
         }
+        isHasNextPending = false;
+        isMapBuildPending = true;
     }
 
     @Override
     public void toTop() {
         super.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-            map.clear();
-        }
+        isHasNextPending = false;
+        isMapBuildPending = true;
     }
 
-    private boolean createMapCursor() {
+    private void buildMap() {
+        if (isMapBuildPending) {
+            map.clear();
+            sampleLocalEpoch = localEpoch;
+            isMapBuildPending = false;
+        }
+
+        final long next = timestampSampler.nextTimestamp(localEpoch);
+        boolean baseHasNext = true;
+        while (baseHasNext) {
+            if (!isHasNextPending) {
+                long timestamp = getBaseRecordTimestamp();
+                if (timestamp < next) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+
+                    adjustDstInFlight(timestamp - tzOffset);
+                    final MapKey key = map.withKey();
+                    keyMapSink.copy(baseRecord, key);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    } else {
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    }
+                } else {
+                    // map value is conditional and only required when clock goes back
+                    // we override base method for when this happens
+                    // see: updateValueWhenClockMovesBack()
+                    timestamp = adjustDst(timestamp, null, next);
+                    if (timestamp != Long.MIN_VALUE) {
+                        nextSamplePeriod(timestamp);
+                        // reset map iterator
+                        map.getCursor();
+                        isMapBuildPending = true;
+                        return;
+                    }
+                }
+            }
+
+            isHasNextPending = true;
+            baseHasNext = baseCursor.hasNext();
+            isHasNextPending = false;
+        }
+
+        // we ran out of data, make sure hasNext() returns false at the next
+        // opportunity, after we stream map that is.
+        baseRecord = null;
         // reset map iterator
         map.getCursor();
-        // we do not have any more data, let map take over
-        return mapHasNext();
-    }
-
-    private boolean mapHasNext() {
-        return mapCursor.hasNext();
+        isMapBuildPending = true;
     }
 
     @Override

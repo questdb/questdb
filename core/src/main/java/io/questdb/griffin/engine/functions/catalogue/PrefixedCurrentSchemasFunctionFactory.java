@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,69 +24,10 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrArrayFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
-
-public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
+public class PrefixedCurrentSchemasFunctionFactory extends CurrentSchemasFunctionFactory {
 
     @Override
     public String getSignature() {
         return "pg_catalog.current_schemas(T)";
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CurrentSchemaFunction();
-    }
-
-    private static class CurrentSchemaFunction extends StrArrayFunction {
-
-        @Override
-        public int getArrayLength() {
-            return 1;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
-            return "public";
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink, int arrayIndex) {
-            sink.put(getStr(rec, arrayIndex));
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex);
-        }
-
-        @Override
-        public int getStrLen(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex).length();
-        }
-
-        @Override
-        public boolean isConstant() {
-            return true;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("pg_catalog.current_schemas()");
-        }
     }
 }

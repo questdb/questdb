@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,8 +59,15 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
         this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
         this.filter = filter;
-        this.frameSymbolIndex = columnIndexes.getQuick(columnIndex);
-        this.cursor = new LatestByValueListRecordCursor(columnIndex, filter, columnIndexes, configuration.getDefaultSymbolCapacity(), includedSymbolFuncs != null);
+        frameSymbolIndex = columnIndexes.getQuick(columnIndex);
+        cursor = new LatestByValueListRecordCursor(
+                columnIndex,
+                filter,
+                columnIndexes,
+                configuration.getDefaultSymbolCapacity(),
+                includedSymbolFuncs != null && includedSymbolFuncs.size() > 0,
+                excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0
+        );
     }
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(

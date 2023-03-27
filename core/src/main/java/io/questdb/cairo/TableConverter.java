@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,73 +39,10 @@ import io.questdb.std.str.StringSink;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
-class TableConverter {
+public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
-    private static boolean readWalEnabled(Path path, FilesFacade ff) {
-        int fd = -1;
-        try {
-            fd = ff.openRO(path);
-            if (fd < 1) {
-                throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
-            }
-
-            final byte walType = ff.readNonNegativeByte(fd, 0);
-            switch (walType) {
-                case TABLE_TYPE_WAL:
-                    return true;
-                case TABLE_TYPE_NON_WAL:
-                    return false;
-                default:
-                    throw CairoException.critical(ff.errno()).put("Could not read walType from file [path=").put(path).put(']');
-            }
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, StringSink sink, String dirName) {
-        path.trimTo(rootLen).concat(dirName).concat(WalUtils.SEQ_DIR).$();
-        if (ff.rmdir(path) != 0) {
-            LOG.error()
-                    .$("Could not remove sequencer dir [errno=").$(ff.errno())
-                    .$(", path=").$(path)
-                    .I$();
-        }
-
-        path.trimTo(rootLen).concat(dirName).$();
-        final long pFind = ff.findFirst(path);
-        if (pFind > 0) {
-            try {
-                do {
-                    sink.clear();
-                    Chars.utf8DecodeZ(ff.findName(pFind), sink);
-                    if (Chars.startsWith(sink, WalUtils.WAL_NAME_BASE)) {
-                        path.trimTo(rootLen).concat(dirName).concat(sink).$();
-                        if (Chars.endsWith(sink, ".lock")) {
-                            if (!ff.remove(path)) {
-                                LOG.error()
-                                        .$("Could not remove wal lock file [errno=").$(ff.errno())
-                                        .$(", path=").$(path)
-                                        .I$();
-                            }
-                        } else {
-                            if (ff.rmdir(path) != 0) {
-                                LOG.error()
-                                        .$("Could not remove wal dir [errno=").$(ff.errno())
-                                        .$(", path=").$(path)
-                                        .I$();
-                            }
-                        }
-                    }
-                } while (ff.findNext(pFind) > 0);
-            } finally {
-                ff.findClose(pFind);
-            }
-        }
-    }
-
-    static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
             LOG.info().$("Table type conversion is disabled").$();
@@ -174,6 +111,70 @@ class TableConverter {
             ff.findClose(findPtr);
         }
         return convertedTables;
+    }
+
+    private static boolean readWalEnabled(Path path, FilesFacade ff) {
+        int fd = -1;
+        try {
+            fd = ff.openRO(path);
+            if (fd < 1) {
+                throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
+            }
+
+            final byte walType = ff.readNonNegativeByte(fd, 0);
+            switch (walType) {
+                case TABLE_TYPE_WAL:
+                    return true;
+                case TABLE_TYPE_NON_WAL:
+                    return false;
+                default:
+                    throw CairoException.critical(ff.errno()).put("Could not read walType from file [path=").put(path).put(']');
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, StringSink sink, String dirName) {
+        path.trimTo(rootLen).concat(dirName).concat(WalUtils.SEQ_DIR).$();
+        if (ff.rmdir(path) != 0) {
+            LOG.error()
+                    .$("Could not remove sequencer dir [errno=").$(ff.errno())
+                    .$(", path=").$(path)
+                    .I$();
+        }
+
+        path.trimTo(rootLen).concat(dirName).$();
+        final long pFind = ff.findFirst(path);
+        if (pFind > 0) {
+            try {
+                do {
+                    sink.clear();
+                    boolean validUtf8 = Chars.utf8DecodeZ(ff.findName(pFind), sink);
+                    assert validUtf8 : "invalid utf8 in wal file name";
+                    if (Chars.startsWith(sink, WalUtils.WAL_NAME_BASE)) {
+                        path.trimTo(rootLen).concat(dirName).concat(sink).$();
+                        if (Chars.endsWith(sink, ".lock")) {
+                            if (!ff.remove(path)) {
+                                LOG.error()
+                                        .$("Could not remove wal lock file [errno=").$(ff.errno())
+                                        .$(", path=").$(path)
+                                        .I$();
+                            }
+                        } else {
+                            if (ff.rmdir(path) != 0) {
+                                LOG.error()
+                                        .$("Could not remove wal dir [errno=").$(ff.errno())
+                                        .$(", path=").$(path)
+                                        .I$();
+                            }
+                        }
+                    }
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+            }
+        }
     }
 
     private static class TableDescriptorImpl implements TableDescriptor {

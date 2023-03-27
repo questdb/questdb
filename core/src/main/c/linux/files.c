@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -113,6 +113,15 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
     }
 
     return offset - srcOffset;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong destOffset, jlong length) {
+
+    if (destOffset != 0) {
+        lseek64(destFd, destOffset, SEEK_SET);
+    }
+    return Java_io_questdb_std_Files_copyData(e, cls, srcFd, destFd, srcOffset, length);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0

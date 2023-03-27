@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,15 +39,16 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
     private final Map map;
     private final RecordSink recordSink;
+    private boolean isCursorBHashed;
     private boolean isOpen;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
 
     public ExceptCastRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.map = map;
-        this.isOpen = true;
+        isOpen = true;
         this.recordSink = recordSink;
-        this.castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
+        castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
     }
 
     @Override
@@ -77,6 +78,12 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (!isCursorBHashed) {
+            hashCursorB();
+            castRecord.setAb(true);
+            toTop();
+            isCursorBHashed = true;
+        }
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(castRecord, recordSink);
@@ -113,19 +120,18 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
         // this is an optimisation to release TableReader in case "this"
         // cursor lingers around. If there is exception or circuit breaker fault
         // we will rely on close() method to release reader.
-        this.cursorB = Misc.free(this.cursorB);
+        cursorB = Misc.free(cursorB);
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        this.castRecord.of(cursorA.getRecord(), cursorB.getRecord());
-        this.castRecord.setAb(false);
         if (!isOpen) {
             isOpen = true;
             map.reopen();
         }
-        hashCursorB();
-        castRecord.setAb(true);
-        toTop();
+
+        super.of(cursorA, cursorB, circuitBreaker);
+        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+        castRecord.setAb(false);
+        isCursorBHashed = false;
     }
 }

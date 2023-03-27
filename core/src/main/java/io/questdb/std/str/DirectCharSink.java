@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,6 +60,11 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     @Override
     public void close() {
         Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+    }
+
+    @TestOnly
+    public long getCapacity() {
+        return capacity;
     }
 
     @Override
@@ -137,11 +142,6 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         this.capacity = cap;
         this.lo = ptr + len;
         this.hi = ptr + cap;
-    }
-
-    @TestOnly
-    long getCapacity() {
-        return capacity;
     }
 
     private class FloatingCharSequence extends AbstractCharSequence {

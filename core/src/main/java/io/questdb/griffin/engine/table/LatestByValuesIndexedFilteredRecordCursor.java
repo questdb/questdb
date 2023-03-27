@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,12 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -40,13 +36,19 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor implements Plannable {
+class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
     private final IntHashSet found = new IntHashSet();
+    private final DirectLongList rows;
     private final IntHashSet symbolKeys;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private long index;
+    private boolean isTreeMapBuilt;
+    private int keyCount;
+    private long lim;
 
     public LatestByValuesIndexedFilteredRecordCursor(
             int columnIndex,
@@ -56,11 +58,44 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
             Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(rows, columnIndexes);
+        super(columnIndexes);
+        this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.deferredSymbolKeys = deferredSymbolKeys;
         this.filter = filter;
+    }
+
+    @Override
+    public boolean hasNext() {
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            isTreeMapBuilt = true;
+        }
+        if (index < lim) {
+            long row = rows.get(index++);
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
+        circuitBreaker = executionContext.getCircuitBreaker();
+        rows.clear();
+        found.clear();
+        keyCount = -1;
+        isTreeMapBuilt = false;
+    }
+
+    @Override
+    public long size() {
+        return isTreeMapBuilt ? lim : -1;
     }
 
     @Override
@@ -71,7 +106,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
 
     @Override
     public void toTop() {
-        super.toTop();
+        index = 0;
         filter.toTop();
     }
 
@@ -91,22 +126,19 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
         }
     }
 
-    @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        filter.init(this, executionContext);
-
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        int keyCount = symbolKeys.size();
-        if (deferredSymbolKeys != null) {
-            keyCount += deferredSymbolKeys.size();
+    private void buildTreeMap() {
+        if (keyCount < 0) {
+            keyCount = symbolKeys.size();
+            if (deferredSymbolKeys != null) {
+                keyCount += deferredSymbolKeys.size();
+            }
         }
-        found.clear();
+
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+        while ((frame = dataFrameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
@@ -127,6 +159,9 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
                 }
             }
         }
+
         rows.sortAsUnsigned();
+        index = 0;
+        lim = rows.size();
     }
 }

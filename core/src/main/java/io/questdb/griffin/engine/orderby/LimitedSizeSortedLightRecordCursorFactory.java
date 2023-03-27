@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -94,22 +94,26 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
+    public int getScanDirection() {
+        return SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
+    }
+
+    @Override
     public boolean implementsLimit() {
         return true;
     }
 
     /*
      * 1. "limit L" means we only need to keep :
-     *      L >=0 - first L records
-     *      L < 0 - last L records
+     * L >=0 - first L records
+     * L < 0 - last L records
      * 2. "limit L, H" means we need to keep :
-     *    L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything    )
-     *    L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
-     *    L >= 0, H < 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
-     *                     H-th from the end, and we don't  ) and need to revert to default behavior -
-     *                     produce the whole set and skip .
-     *
-     *  Similar to LimitRecordCursorFactory.LimitRecordCursor but doesn't check underlying count .
+     * L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything)
+     * L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
+     * L >= 0, H < 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
+     * H-th from the end, and we don't) and need to revert to default behavior - produce the whole set and skip.
+     * <p>
+     * Similar to LimitRecordCursorFactory.LimitRecordCursor, but doesn't check the underlying count.
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor base) throws SqlException {
         loFunction.init(base, executionContext);
@@ -171,7 +175,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 configuration.getSqlSortLightValuePageSize(),
                 configuration.getSqlSortLightValueMaxPages(),
                 isFirstN,
-                limit);
+                limit
+        );
 
         this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast);
     }
@@ -221,9 +226,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
-                configuration
-                        .getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages());
+                configuration.getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxPages()
+        );
         this.cursor = new SortedLightRecordCursor(chain, comparator);
     }
 

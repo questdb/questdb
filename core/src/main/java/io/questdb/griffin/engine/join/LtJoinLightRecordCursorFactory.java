@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -98,8 +98,8 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
     }
 
     @Override
@@ -128,8 +128,10 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         private final int masterTimestampIndex;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
+        private boolean isMasterHasNextPending;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
+        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -165,14 +167,16 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public boolean hasNext() {
-
-            if (masterCursor.hasNext()) {
+            if (isMasterHasNextPending) {
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            }
+            if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
                 if (slaveTimestamp < masterTimestamp) {
-
                     if (lastSlaveRowID != Numbers.LONG_NaN) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
                         key = joinKeyMap.withKey();
@@ -208,6 +212,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                     record.hasSlave(false);
                 }
 
+                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -225,20 +230,22 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
+            isMasterHasNextPending = true;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            if (!this.isOpen) {
-                this.isOpen = true;
-                this.joinKeyMap.reopen();
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reopen();
             }
-            this.slaveTimestamp = Long.MIN_VALUE;
-            this.lastSlaveRowID = Long.MIN_VALUE;
+            slaveTimestamp = Long.MIN_VALUE;
+            lastSlaveRowID = Long.MIN_VALUE;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecordB();
-            this.record.of(masterRecord, slaveRecord);
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecordB();
+            record.of(masterRecord, slaveRecord);
+            isMasterHasNextPending = true;
         }
     }
 }

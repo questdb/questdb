@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -100,8 +100,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public int getScanDirection() {
+        return masterFactory.getScanDirection();
     }
 
     @Override
@@ -132,7 +132,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
         private boolean danglingSlaveRecord = false;
+        private boolean isMasterHasNextPending;
         private boolean isOpen;
+        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -170,13 +172,16 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (masterCursor.hasNext()) {
+            if (isMasterHasNextPending) {
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            }
+            if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
                 if (slaveTimestamp <= masterTimestamp) {
-
                     if (danglingSlaveRecord) {
                         key = joinKeyMap.withKey();
                         key.put(slaveRecord, slaveKeySink);
@@ -200,6 +205,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     this.slaveTimestamp = slaveTimestamp;
                 }
+
                 key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();
@@ -210,6 +216,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     record.hasSlave(false);
                 }
 
+                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -227,22 +234,24 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             danglingSlaveRecord = false;
             masterCursor.toTop();
             slaveCursor.toTop();
+            isMasterHasNextPending = true;
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            if (!this.isOpen) {
-                this.joinKeyMap.reopen();
-                this.isOpen = true;
+            if (!isOpen) {
+                joinKeyMap.reopen();
+                isOpen = true;
             }
-            this.slaveTimestamp = Long.MIN_VALUE;
-            this.danglingSlaveRecord = false;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
+            slaveTimestamp = Long.MIN_VALUE;
+            danglingSlaveRecord = false;
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecord();
             MapRecord mapRecord = joinKeyMap.getRecord();
             mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
             record.of(masterRecord, mapRecord);
+            isMasterHasNextPending = true;
         }
     }
 }

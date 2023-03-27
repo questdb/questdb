@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -72,8 +70,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public long getCommitInterval() {
+        return LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                1_000_000,
+                getCommitIntervalFraction(),
+                getCommitIntervalDefault()
+        );
     }
 
     @Override

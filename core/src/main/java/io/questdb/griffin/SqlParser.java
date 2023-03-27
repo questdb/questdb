@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
@@ -346,8 +343,11 @@ public final class SqlParser {
         return tok;
     }
 
-    private QueryModel parseAsSubQueryAndExpectClosingBrace(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
-        final QueryModel model = parseAsSubQuery(lexer, withClauses);
+    private QueryModel parseAsSubQueryAndExpectClosingBrace(GenericLexer lexer,
+                                                            LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+                                                            boolean useTopLevelWithClauses)
+            throws SqlException {
+        final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses);
         expectTok(lexer, ')');
         return model;
     }
@@ -503,8 +503,6 @@ public final class SqlParser {
             model.setTimestamp(timestamp);
             tok = optTok(lexer);
         }
-        int maxUncommittedRows = configuration.getMaxUncommittedRows();
-        long o3MaxLag = configuration.getO3MaxLag();
 
         int walSetting = WAL_NOT_SET;
 
@@ -539,41 +537,60 @@ public final class SqlParser {
                     }
                 }
             }
+        }
+        final boolean isWalEnabled = configuration.isWalSupported() &&
+                PartitionBy.isPartitioned(model.getPartitionBy()) &&
+                ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
+        model.setWalEnabled(isWalEnabled);
 
-            if (tok != null && isWithKeyword(tok)) {
-                ExpressionNode expr;
-                while ((expr = expr(lexer, (QueryModel) null)) != null) {
-                    if (Chars.equals(expr.token, '=')) {
-                        if (isMaxUncommittedRowsKeyword(expr.lhs.token)) {
-                            try {
-                                maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
-                            } catch (NumericException e) {
-                                throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
-                            }
-                        } else if (isO3MaxLagKeyword(expr.lhs.token)) {
-                            o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
-                        } else {
-                            throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
+        int maxUncommittedRows = configuration.getMaxUncommittedRows();
+        long o3MaxLag = configuration.getO3MaxLag();
+
+        if (tok != null && isWithKeyword(tok)) {
+            ExpressionNode expr;
+            while ((expr = expr(lexer, (QueryModel) null)) != null) {
+                if (Chars.equals(expr.token, '=')) {
+                    if (isMaxUncommittedRowsKeyword(expr.lhs.token)) {
+                        try {
+                            maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
+                        } catch (NumericException e) {
+                            throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                         }
-                        tok = optTok(lexer);
-                        if (null != tok && Chars.equals(tok, ',')) {
-                            continue;
-                        }
-                        break;
+                    } else if (isO3MaxLagKeyword(expr.lhs.token)) {
+                        o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                    } else {
+                        throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                     }
-                    throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
+                    tok = optTok(lexer);
+                    if (null != tok && Chars.equals(tok, ',')) {
+                        CharSequence peek = optTok(lexer);
+                        if (peek != null && isInKeyword(peek)) { // in volume
+                            tok = peek;
+                            break;
+                        }
+                        lexer.unparseLast();
+                        continue;
+                    }
+                    break;
                 }
+                throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
             }
         }
-
         model.setMaxUncommittedRows(maxUncommittedRows);
         model.setO3MaxLag(o3MaxLag);
-        final boolean isWalEnabled =
-                configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
-                        (walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED
-                );
 
-        model.setWalEnabled(isWalEnabled);
+        if (tok != null && isInKeyword(tok)) {
+            tok = tok(lexer, "volume");
+            if (!isVolumeKeyword(tok)) {
+                throw SqlException.position(lexer.getPosition()).put("expected 'volume'");
+            }
+            tok = tok(lexer, "path for volume");
+            if (Os.isWindows()) {
+                throw SqlException.position(0).position(lexer.getPosition()).put("'in volume' is not supported on Windows");
+            }
+            model.setVolumeAlias(GenericLexer.unquote(tok));
+            tok = optTok(lexer);
+        }
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -583,7 +600,7 @@ public final class SqlParser {
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         expectTok(lexer, '(');
-        QueryModel queryModel = optimiser.optimise(parseDml(lexer, null, lexer.getPosition()), executionContext);
+        QueryModel queryModel = optimiser.optimise(parseDml(lexer, null, lexer.getPosition(), true), executionContext);
         ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
 
@@ -782,14 +799,15 @@ public final class SqlParser {
     private QueryModel parseDml(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
-            int modelPosition
+            int modelPosition,
+            boolean useTopLevelWithClauses
     ) throws SqlException {
         QueryModel model = null;
         QueryModel prevModel = null;
-        while (true) {
 
+        while (true) {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
-            LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses = model == null ? topLevelWithModel : null;
+            LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses = useTopLevelWithClauses && model == null ? topLevelWithModel : null;
 
             QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition);
             if (prevModel == null) {
@@ -872,7 +890,7 @@ public final class SqlParser {
                 tok = null;
             }
 
-            if (tok == null || Chars.equals(tok, ';')) { //token can also be ';' on query boundary
+            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) { //token can also be ';' on query boundary
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
@@ -1011,7 +1029,9 @@ public final class SqlParser {
         return parseSelect(lexer);
     }
 
-    private int parseExplainOptions(GenericLexer lexer) throws SqlException {
+    private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
+        int parenthesisPos = lexer.getPosition();
+        CharSequence explainTok = GenericLexer.immutableOf(prevTok);
         CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "'format'");
@@ -1028,7 +1048,8 @@ public final class SqlParser {
                     throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain format found");
                 }
             } else {
-                throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+                lexer.backTo(parenthesisPos, explainTok);
+                return ExplainModel.FORMAT_TEXT;
             }
         } else {
             lexer.unparseLast();
@@ -1041,7 +1062,7 @@ public final class SqlParser {
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
-            QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses());
+            QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true);
             tok = optTok(lexer);
 
             // do not collapse aliased sub-queries or those that have timestamp()
@@ -1316,7 +1337,7 @@ public final class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());
+            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true);
             model.setQueryModel(queryModel);
             return model;
         }
@@ -1371,7 +1392,7 @@ public final class SqlParser {
         tok = expectTableNameOrSubQuery(lexer);
 
         if (Chars.equals(tok, '(')) {
-            joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent));
+            joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, true));
         } else {
             lexer.unparseLast();
             parseSelectFrom(lexer, joinModel, parent);
@@ -1522,7 +1543,7 @@ public final class SqlParser {
 
     private ExecutionModel parseSelect(GenericLexer lexer) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition());
+        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -1625,8 +1646,11 @@ public final class SqlParser {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
-                    alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
+                    CharSequence aliasTok = GenericLexer.immutableOf(tok(lexer, "alias"));
+                    validateIdentifier(lexer, aliasTok);
+                    alias = GenericLexer.unquote(aliasTok);
                 } else {
+                    validateIdentifier(lexer, tok);
                     alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                 }
                 tok = optTok(lexer);
@@ -1648,7 +1672,7 @@ public final class SqlParser {
                 throw err(lexer, null, "'from' expected");
             }
 
-            if (tok == null || Chars.equals(tok, ';')) {
+            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as 
                 lexer.unparseLast();
                 break;
             }
@@ -1682,7 +1706,7 @@ public final class SqlParser {
                 final ExpressionNode literal = literal(name, expr.position);
                 final WithClauseModel withClause = masterModel.get(name);
                 if (withClause != null) {
-                    model.setNestedModel(parseWith(lexer, withClause, masterModel));
+                    model.setNestedModel(parseWith(lexer, withClause));
                     model.setAlias(literal);
                 } else {
                     model.setTableNameExpr(literal);
@@ -1784,7 +1808,7 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
             lexer.unparseLast();
-            return parseDml(lexer, null, lexer.lastTokenPosition());
+            return parseDml(lexer, null, lexer.lastTokenPosition(), true);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -1798,7 +1822,7 @@ public final class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
-    private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm) throws SqlException {
         QueryModel m = wcm.popModel();
         if (m != null) {
             return m;
@@ -1808,7 +1832,7 @@ public final class SqlParser {
         lexer.goToPosition(wcm.getPosition());
         // this will not throw exception because this is second pass over the same sub-query
         // we wouldn't be here is syntax was wrong
-        m = parseAsSubQueryAndExpectClosingBrace(lexer, withClauses);
+        m = parseAsSubQueryAndExpectClosingBrace(lexer, wcm.getWithClauses(), false);
         lexer.unstash();
         return m;
     }
@@ -1828,7 +1852,7 @@ public final class SqlParser {
             expectTok(lexer, '(');
             int lo = lexer.lastTokenPosition();
             WithClauseModel wcm = withClauseModelPool.next();
-            wcm.of(lo + 1, parseAsSubQueryAndExpectClosingBrace(lexer, model));
+            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true));
             model.put(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
@@ -2095,6 +2119,35 @@ public final class SqlParser {
         return tok;
     }
 
+    private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (tok == null || tok.length() == 0) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            if (tok.length() == 2) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+            }
+            return;
+        }
+
+        char c = tok.charAt(0);
+
+        if (!(Character.isLetter(c) || c == '_')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("identifier should start with a letter or '_'");
+        }
+
+        for (int i = 1, n = tok.length(); i < n; i++) {
+            c = tok.charAt(i);
+            if (!(Character.isLetter(c) ||
+                    Character.isDigit(c) ||
+                    c == '_' ||
+                    c == '$')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
+            }
+        }
+    }
+
     private void validateLiteral(int pos, CharSequence tok) throws SqlException {
         switch (tok.charAt(0)) {
             case '(':
@@ -2148,7 +2201,7 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
-            int format = parseExplainOptions(lexer);
+            int format = parseExplainOptions(lexer, tok);
             ExecutionModel model = parseExplain(lexer, executionContext);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
@@ -2187,11 +2240,14 @@ public final class SqlParser {
         return parseSelect(lexer);
     }
 
-    QueryModel parseAsSubQuery(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    QueryModel parseAsSubQuery(GenericLexer lexer,
+                               @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+                               boolean useTopLevelWithClauses)
+            throws SqlException {
         QueryModel model;
         this.subQueryMode = true;
         try {
-            model = parseDml(lexer, withClauses, lexer.getPosition());
+            model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses);
         } finally {
             this.subQueryMode = false;
         }
@@ -2228,6 +2284,7 @@ public final class SqlParser {
         columnAliasStop.add("union");
         columnAliasStop.add("except");
         columnAliasStop.add("intersect");
+        columnAliasStop.add(")");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1921,7 +1921,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // It is also fine in case when last partition contains WAL LAG, since
                     // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
 
-                    srcDataFixSize = srcDataActualBytes + srcDataMaxBytes + Long.BYTES;
+                    srcDataFixSize = srcDataActualBytes + Long.BYTES + srcDataMaxBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     if (srcDataActualBytes > 0) {
@@ -1959,7 +1959,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             srcDataFixAddr,
                             0,
                             hiInclusive,
-                            srcDataFixAddr + srcDataMaxBytes
+                            srcDataFixAddr + srcDataMaxBytes + Long.BYTES
                     );
 
                     // now set the "empty" bit of fixed size column with references to those
@@ -1967,13 +1967,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
                     // because data first have to be shifted before overwritten
                     if (ColumnType.isString(columnType)) {
-                        Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
+                        Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes + Long.BYTES, 0, srcDataTop);
                     } else {
-                        Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
+                        Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes + Long.BYTES, 0, srcDataTop);
                     }
 
                     srcDataTop = 0;
-                    srcDataFixOffset = srcDataActualBytes;
+                    srcDataFixOffset = srcDataActualBytes + Long.BYTES;
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data
@@ -2043,6 +2043,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) * Long.BYTES;
                 prefixHi -= srcDataTop;
             } else if (prefixType == O3_BLOCK_NONE) {
+                // split partition
                 dstFixAppendOffset1 = 0;
             } else {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) * Long.BYTES;

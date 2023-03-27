@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -87,13 +87,13 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(
+    protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStr(null);

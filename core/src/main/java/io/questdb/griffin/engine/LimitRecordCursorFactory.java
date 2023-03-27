@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,6 +62,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return true;
     }
@@ -96,9 +101,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class LimitRecordCursor implements RecordCursor {
         private final Function hiFunction;
         private final Function loFunction;
+        private boolean areRowsCounted;
         private RecordCursor base;
+        private long hi;
+        private boolean isLimitCounted;
         private long limit;
+        private long lo;
+        private long rowCount;
         private long size;
+        private long skipToRows;
 
         public LimitRecordCursor(Function loFunction, Function hiFunction) {
             this.loFunction = loFunction;
@@ -127,7 +138,18 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            return limit-- > 0 && base.hasNext();
+            if (!isLimitCounted) {
+                countLimit();
+                isLimitCounted = true;
+            }
+            if (limit <= 0) {
+                return false;
+            }
+            if (base.hasNext()) {
+                limit--;
+                return true;
+            }
+            return false;
         }
 
         @Override
@@ -151,38 +173,42 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            if (size > -1) {
-                return size;
-            }
-            return -1;
-        }
-
-        public void skipTo(long rowCount) {
-            base.skipTo(Math.max(0, rowCount));
+            return size > -1 ? size : -1;
         }
 
         @Override
         public void toTop() {
             base.toTop();
-            long lo = loFunction.getLong(null);
+            rowCount = -1;
+            size = -1;
+            skipToRows = -1;
+            lo = loFunction.getLong(null);
+            hi = hiFunction != null ? hiFunction.getLong(null) : -1;
+            isLimitCounted = false;
+            areRowsCounted = false;
+        }
+
+        private void countLimit() {
             if (lo < 0 && hiFunction == null) {
                 // last N rows
-                long count = countRows();
+                countRows();
 
-                base.toTop();
+
                 // lo is negative, -5 for example
-                // if we have 12 records we need to skip 12-5 = 7
-                // if we have 4 records = return all of them
-                if (count > -lo) {
-                    skipTo(count + lo);
+                // if we have 12 records, we need to skip 12-5 = 7
+                // if we have 4 records, return all of them
+                if (rowCount > -lo) {
+                    skipRows(rowCount + lo);
+                } else {
+                    base.toTop();
                 }
                 // set limit to return remaining rows
-                limit = Math.min(count, -lo);
+                limit = Math.min(rowCount, -lo);
                 size = limit;
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
                 long baseRowCount = base.size();
-                if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
+                if (baseRowCount > -1) { // we don't want to cause a pass-through whole data set
                     limit = Math.min(baseRowCount, lo);
                 } else {
                     limit = lo;
@@ -190,24 +216,22 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 size = limit;
             } else {
                 // at this stage we have 'hi'
-                long hi = hiFunction.getLong(null);
                 if (lo < 0) {
                     // right, here we are looking for something like
                     // -10,-5 five rows away from tail
 
                     if (lo < hi) {
-                        long count = countRows();
+                        countRows();
                         // when count < -hi we have empty cursor
-                        if (count >= -hi) {
-                            base.toTop();
-
-                            if (count < -lo) {
+                        if (rowCount >= -hi) {
+                            if (rowCount < -lo) {
+                                base.toTop();
                                 // if we asked for -9,-4 but there are 7 records in cursor
                                 // we would first ignore last 4 and return first 3
-                                limit = count + hi;
+                                limit = rowCount + hi;
                             } else {
-                                skipTo(count + lo);
-                                limit = Math.min(count, -lo + hi);
+                                skipRows(rowCount + lo);
+                                limit = Math.min(rowCount, -lo + hi);
                             }
                             size = limit;
                         }
@@ -218,9 +242,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 } else {
                     if (hi < 0) {
-                        limit = Math.max(countRows() - lo + hi, 0);
+                        countRows();
+                        limit = Math.max(rowCount - lo + hi, 0);
                         size = limit;
-                        base.toTop();
+
+                        if (lo > 0 && limit > 0) {
+                            skipRows(lo);
+                        } else {
+                            base.toTop();
+                        }
                     } else {
                         long baseRowCount = base.size();
                         if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
@@ -229,26 +259,46 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                             limit = Math.max(0, hi - lo); // doesn't handle hi exceeding number of rows
                         }
                         size = limit;
-                    }
 
-                    if (lo > 0 && limit > 0) {
-                        skipTo(lo);
+                        if (lo > 0 && limit > 0) {
+                            skipRows(lo);
+                        }
                     }
                 }
             }
         }
 
-        private long countRows() {
-            long count = base.size();
-            if (count > -1L) {
-                return count;
+        private void countRows() {
+            if (rowCount == -1) {
+                rowCount = base.size();
+                if (rowCount > -1) {
+                    areRowsCounted = true;
+                    return;
+                }
+                rowCount = 0;
             }
 
-            count = 0L;
-            while (base.hasNext()) {
-                count++;
+            if (!areRowsCounted) {
+                while (base.hasNext()) {
+                    rowCount++;
+                }
+                areRowsCounted = true;
             }
-            return count;
+        }
+
+        private void skipRows(long rowCount) {
+            if (skipToRows == -1) {
+                skipToRows = Math.max(0, rowCount);
+                base.toTop();
+            }
+            if (skipToRows > 0) {
+                if (base.skipTo(rowCount)) {
+                    skipToRows = 0;
+                }
+                while (skipToRows > 0 && base.hasNext()) {
+                    skipToRows--;
+                }
+            }
         }
     }
 }

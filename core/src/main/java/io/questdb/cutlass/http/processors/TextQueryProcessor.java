@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -116,21 +116,21 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             );
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                if (cc.getType() == CompiledQuery.SELECT) {
+                if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                     state.recordCursorFactory = cc.getRecordCursorFactory();
                 } else if (isExpRequest) {
                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                 }
-                info(state).$("execute-new [q=`").utf8(state.query).
-                        $("`, skip: ").$(state.skip).
-                        $(", stop: ").$(state.stop).
-                        $(']').$();
+                info(state).$("execute-new [q=`").utf8(state.query)
+                        .$("`, skip: ").$(state.skip)
+                        .$(", stop: ").$(state.stop)
+                        .I$();
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
             } else {
-                info(state).$("execute-cached [q=`").utf8(state.query).
-                        $("`, skip: ").$(state.skip).
-                        $(", stop: ").$(state.stop).
-                        $(']').$();
+                info(state).$("execute-cached [q=`").utf8(state.query)
+                        .$("`, skip: ").$(state.skip)
+                        .$(", stop: ").$(state.stop)
+                        .I$();
                 sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
             }
 
@@ -160,9 +160,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
-                    internalError(context.getChunkedResponseSocket(), e, state);
+                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
                 } catch (CairoError e) {
-                    internalError(context.getChunkedResponseSocket(), e, state);
+                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
                 }
             } else {
                 headerNoContentDisposition(context.getChunkedResponseSocket());
@@ -173,7 +173,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             syntaxError(context.getChunkedResponseSocket(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
-            internalError(context.getChunkedResponseSocket(), e, state);
+            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
     }
@@ -264,8 +264,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
+        LOG.info().$("all sent [fd=").$(context.getFd())
+                .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
+                .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
     private LogRecord critical(TextQueryProcessorState state) {
@@ -282,7 +284,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
         // copy random during query resume
         sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
-        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+        LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         if (!state.pausedQuery) {
             context.resumeResponseSend();
@@ -395,10 +397,16 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void internalError(
             HttpChunkedResponseSocket socket,
+            long bytesSent,
             Throwable e,
             TextQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state);
+        if (bytesSent > 0) {
+            // We already sent a partial response to the client.
+            // Give up and close the connection.
+            throw ServerDisconnectException.INSTANCE;
+        }
         sendException(socket, 0, e.getMessage(), state);
     }
 
@@ -421,7 +429,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             return false;
         }
 
-        // Url Params.
+        // URL params.
         long skip = 0;
         long stop = Long.MAX_VALUE;
 
@@ -593,7 +601,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence message,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, state, 400);
+        headerJsonError(socket);
         JsonQueryProcessorState.prepareExceptionJson(socket, position, message, state.query);
     }
 
@@ -602,22 +610,29 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state)
-                .$("syntax-error [q=`").utf8(state.query)
+        info(state).$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(container.getPosition())
-                .$(", message=`").$(container.getFlyweightMessage()).$('`')
-                .$(']').$();
+                .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
         sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
     }
 
-    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(status_code, "text/csv; charset=utf-8");
+    protected void header(
+            HttpChunkedResponseSocket socket,
+            TextQueryProcessorState state,
+            int statusCode
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(statusCode, "text/csv; charset=utf-8");
         if (state.fileName != null && state.fileName.length() > 0) {
             socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
         } else {
             socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
         }
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        socket.sendHeader();
+    }
 
+    protected void headerJsonError(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(400, "application/json; charset=utf-8");
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }

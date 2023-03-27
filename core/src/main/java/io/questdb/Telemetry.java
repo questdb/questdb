@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -101,7 +100,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
         final TableToken tableToken = engine.getTableToken(tableName);
         try {
-            writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetry");
+            writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "telemetry");
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(tableToken.getTableName())

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -247,7 +247,7 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     radix_shuffle<56u>(counts.c1, cpy, array, size);
 }
 
-void radix_sort_ab_long_index_asc_in_a(index_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB, index_t *cpy) {
+void radix_sort_ab_long_index_asc(const index_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB, index_t *out, index_t *cpy) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
@@ -329,13 +329,13 @@ void radix_sort_ab_long_index_asc_in_a(index_t *arrayA, const uint64_t sizeA, co
     radix_shuffle_ab<0u>(counts.c8, arrayA, sizeA, arrayB, sizeB, cpy);
 
     auto size = sizeA + sizeB;
-    radix_shuffle<8u>(counts.c7, cpy, arrayA, size);
-    radix_shuffle<16u>(counts.c6, arrayA, cpy, size);
-    radix_shuffle<24u>(counts.c5, cpy, arrayA, size);
-    radix_shuffle<32u>(counts.c4, arrayA, cpy, size);
-    radix_shuffle<40u>(counts.c3, cpy, arrayA, size);
-    radix_shuffle<48u>(counts.c2, arrayA, cpy, size);
-    radix_shuffle<56u>(counts.c1, cpy, arrayA, size);
+    radix_shuffle<8u>(counts.c7, cpy, out, size);
+    radix_shuffle<16u>(counts.c6, out, cpy, size);
+    radix_shuffle<24u>(counts.c5, cpy, out, size);
+    radix_shuffle<32u>(counts.c4, out, cpy, size);
+    radix_shuffle<40u>(counts.c3, cpy, out, size);
+    radix_shuffle<48u>(counts.c2, out, cpy, size);
+    radix_shuffle<56u>(counts.c1, cpy, out, size);
 }
 
 template<typename T>
@@ -642,8 +642,9 @@ Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jl
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_radixSortABLongIndexAscInA(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB, jlong countB, jlong pDataCpy) {
-    radix_sort_ab_long_index_asc_in_a(reinterpret_cast<index_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB), countB, reinterpret_cast<index_t *>(pDataCpy));
+Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB, jlong countB, jlong pDataOut, jlong pDataCpy) {
+    radix_sort_ab_long_index_asc(reinterpret_cast<index_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
+                                 countB, reinterpret_cast<index_t *>(pDataOut), reinterpret_cast<index_t *>(pDataCpy));
 }
 
 JNIEXPORT void JNICALL

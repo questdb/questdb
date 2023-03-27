@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,23 +30,27 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public final class BitmapIndexUtils {
-    static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 24;
-    static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
-    static final int KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET = 16;
-    static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
-    static final long KEY_ENTRY_SIZE = 32;
+    public static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 24;
+    public static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
+    public static final int KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET = 16;
+    public static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
+    public static final long KEY_ENTRY_SIZE = 32;
     /**
      * key file header offsets
      */
-    static final int KEY_FILE_RESERVED = 64;
-    static final int KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT = 17;
-    static final int KEY_RESERVED_OFFSET_KEY_COUNT = 21;
-    static final int KEY_RESERVED_OFFSET_SEQUENCE = 1;
-    static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 29;
-    static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
-    static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;
-    static final byte SIGNATURE = (byte) 0xfa;
-    static final int VALUE_BLOCK_FILE_RESERVED = 16;
+    public static final int KEY_FILE_RESERVED = 64;
+    public static final int KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT = 17;
+    public static final int KEY_RESERVED_OFFSET_KEY_COUNT = 21;
+    public static final int KEY_RESERVED_OFFSET_SEQUENCE = 1;
+    public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 29;
+    public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
+    public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;
+    public static final byte SIGNATURE = (byte) 0xfa;
+    public static final int VALUE_BLOCK_FILE_RESERVED = 16;
+
+    public static long getKeyEntryOffset(int key) {
+        return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
+    }
 
     public static Path keyFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".k");
@@ -54,18 +58,6 @@ public final class BitmapIndexUtils {
             path.put('.').put(columnNameTxn);
         }
         return path.$();
-    }
-
-    public static Path valueFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".v");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    static long getKeyEntryOffset(int key) {
-        return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
     }
 
     /**
@@ -92,7 +84,7 @@ public final class BitmapIndexUtils {
      * @return index directly behind the searched value or group of values if list contains duplicate values
      * @throws CairoException when the index is corrupted
      */
-    static long searchValueBlock(MemoryR memory, long offset, long cellCount, long value) {
+    public static long searchValueBlock(MemoryR memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
             // this will definitely exit because we had checked that at least the last value is greater than value
@@ -127,6 +119,14 @@ public final class BitmapIndexUtils {
                 .put(", cellCount=").put(cellCount)
                 .put(", value=").put(value)
                 .put(']');
+    }
+
+    public static Path valueFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".v");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     /**

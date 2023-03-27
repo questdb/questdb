@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,8 @@ public interface FilesFacade {
     int copy(LPSZ from, LPSZ to);
 
     long copyData(int srcFd, int destFd, long offsetSrc, long length);
+
+    long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length);
 
     int copyRecursive(Path src, Path dst, int dirMode);
 
@@ -81,6 +83,8 @@ public interface FilesFacade {
     int hardLinkDirRecursive(Path src, Path dst, int dirMode);
 
     boolean isCrossDeviceCopyError(int errno);
+
+    boolean isDirOrSoftLinkDir(LPSZ path);
 
     boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
 

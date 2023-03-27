@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ import java.util.regex.Pattern;
 
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
 
-    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
+    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) throws SqlException {
         int len = pattern.length();
 
         StringSink sink = Misc.getThreadLocalBuilder();
@@ -58,9 +58,20 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 sink.put('.');
             else if (c == '%')
                 sink.put(".*?");
-            else if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
+            else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
                 sink.put("\\");
                 sink.put(c);
+            } else if (c == '\\') {
+                i += 1;
+                if (i >= len)
+                    throw SqlException.parserErr(i - 1, pattern, "LIKE pattern must not end with escape character");
+                c = pattern.charAt(i);
+                if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
+                    sink.put("\\");
+                    sink.put(c);
+                } else {
+                    sink.put(c);
+                }
             } else
                 sink.put(c);
         }

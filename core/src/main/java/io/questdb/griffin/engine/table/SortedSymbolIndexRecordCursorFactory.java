@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
 
     public SortedSymbolIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -46,11 +46,12 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new DataFrameRecordCursor(
+        cursor = new DataFrameRecordCursorImpl(
                 new SortedSymbolIndexRowCursorFactory(
                         columnIndex,
                         columnOrderAsc,
-                        indexDirection
+                        indexDirection,
+                        columnIndexes
                 ),
                 true,
                 null,
@@ -69,7 +70,6 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
         return true;
     }
 
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("SortedSymbolIndex");
         sink.child(cursor.getRowCursorFactory());
@@ -77,9 +77,11 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
-            throws SqlException {
-        this.cursor.of(dataFrameCursor, executionContext);
-        return this.cursor;
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        cursor.of(dataFrameCursor, executionContext);
+        return cursor;
     }
 }

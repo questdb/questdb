@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,8 +37,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class PgDatabaseFunctionFactory implements FunctionFactory {
+
     private final static RecordMetadata METADATA;
-    private final static String SIGNATURE = "pg_catalog.pg_database()";
+    private final static String SIGNATURE = "pg_database()";
 
     @Override
     public String getSignature() {
@@ -67,6 +68,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
     }
 
     private static class PgDatabaseRecord implements Record {
+
         @Override
         public boolean getBool(int col) {
             // datistemplate
@@ -113,6 +115,11 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getRowId() {
+            return 0;
+        }
+
+        @Override
         public CharSequence getStr(int col) {
             switch (col) {
                 case 1:
@@ -140,6 +147,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
     }
 
     private static class PgDatabaseRecordCursor implements RecordCursor {
+
         private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
         private boolean hasNext = true;
 

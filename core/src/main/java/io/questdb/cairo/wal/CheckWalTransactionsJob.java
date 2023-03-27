@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
-    private final TableSequencerAPI.RegisteredTable checkNotifyOutstandingTxnInWal;
+    private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -51,12 +51,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         dbRoot = engine.getConfiguration().getRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-        checkNotifyOutstandingTxnInWal = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
+        checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
     }
 
     public void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
-        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWal);
+        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
     public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long txn) {
@@ -88,7 +88,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     @Override
-    protected boolean runSerially() {
+    public boolean runSerially() {
         long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
         if (unpublishedWalTxnCount == lastProcessedCount) {
             return false;

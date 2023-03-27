@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -232,7 +232,10 @@ public class WalWriter implements TableWriterAPI {
     public void close() {
         if (isOpen()) {
             try {
-                rollback();
+                // If distressed, no need to rollback, WalWriter will not be used anymore
+                if (!distressed) {
+                    rollback();
+                }
             } finally {
                 doClose(true);
             }
@@ -245,10 +248,12 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction()) {
-                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
+                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                        .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
+                        .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.getWalMetrics().addRowsWritten(rowsToCommit);
@@ -258,8 +263,8 @@ public class WalWriter implements TableWriterAPI {
             distressed = true;
             throw ex;
         } catch (Throwable th) {
+            // If distressed, no need to rollback, WalWriter will not be used anymore
             if (!isDistressed()) {
-                // If distressed, not point to rollback, WalWriter will be not re-used anymore.
                 rollback();
             }
             throw th;
@@ -313,6 +318,10 @@ public class WalWriter implements TableWriterAPI {
             return 0;
         }
         return initialSymbolCounts.get(columnIndex);
+    }
+
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     public TableToken getTableToken() {
@@ -404,6 +413,15 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    public void rollSegment() {
+        try {
+            openNewSegment();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
     public void rollUncommittedToNewSegment() {
         final long uncommittedRows = getUncommittedRowCount();
         final int newSegmentId = segmentId + 1;
@@ -421,7 +439,8 @@ public class WalWriter implements TableWriterAPI {
             try {
                 final int timestampIndex = metadata.getTimestampIndex();
                 LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                        .$(path).$(Files.SEPARATOR).$(newSegmentId)
+                        .$(path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", newSegment=").$(newSegmentId)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -1320,19 +1339,6 @@ public class WalWriter implements TableWriterAPI {
                     secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
                 }
             }
-        }
-    }
-
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
-    void rollSegment() {
-        try {
-            openNewSegment();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
         }
     }
 

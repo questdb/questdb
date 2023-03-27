@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ int64_t find_latest_for_key(int64_t k,
     const auto vblock_capacity = vblock_capacity_mask + 1;
     const auto key_count = static_cast<int64_t>(keys.key_count()); // assert(key_count <= Long.MAX_VALUE)
 
-    if (k > key_count) {
+    if (k >= key_count) {
         return -1;
     }
 

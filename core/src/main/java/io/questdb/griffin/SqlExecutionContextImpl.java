@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,6 +59,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int jitMode;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
+    private boolean parallelFilterEnabled;
     private Rnd random;
     private long requestFd = -1;
 
@@ -73,6 +74,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         clock = cairoConfiguration.getMicrosecondClock();
         cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
+        parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
     }
@@ -87,20 +89,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void configureAnalyticContext(
-            @Nullable VirtualRecord partitionByRecord,
-            @Nullable RecordSink partitionBySink,
-            @Transient @Nullable ColumnTypes partitionByKeyTypes,
-            boolean ordered,
-            boolean baseSupportsRandomAccess
-    ) {
-        analyticContext.of(
-                partitionByRecord,
-                partitionBySink,
-                partitionByKeyTypes,
-                ordered,
-                baseSupportsRandomAccess
-        );
+    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Transient @Nullable ColumnTypes partitionByKeyTypes, boolean ordered, boolean baseSupportsRandomAccess) {
+        analyticContext.of(partitionByRecord, partitionBySink, partitionByKeyTypes, ordered, baseSupportsRandomAccess);
     }
 
     @Override
@@ -184,6 +174,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelFilterEnabled() {
+        return parallelFilterEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -225,6 +220,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
+        this.parallelFilterEnabled = parallelFilterEnabled;
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
     }
@@ -234,11 +234,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetryFacade.store(event, origin);
     }
 
-    public SqlExecutionContextImpl with(
-            @NotNull CairoSecurityContext cairoSecurityContext,
-            @Nullable BindVariableService bindVariableService,
-            @Nullable Rnd rnd
-    ) {
+    public SqlExecutionContextImpl with(@NotNull CairoSecurityContext cairoSecurityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
@@ -249,13 +245,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
     }
 
-    public SqlExecutionContextImpl with(
-            @NotNull CairoSecurityContext cairoSecurityContext,
-            @Nullable BindVariableService bindVariableService,
-            @Nullable Rnd rnd,
-            long requestFd,
-            @Nullable SqlExecutionCircuitBreaker circuitBreaker
-    ) {
+    public void with(BindVariableService bindVariableService) {
+        this.bindVariableService = bindVariableService;
+    }
+
+    public void with(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
+    }
+
+    public SqlExecutionContextImpl with(@NotNull CairoSecurityContext cairoSecurityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd, long requestFd, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,6 +62,11 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected long lagMaxTimestamp;
+    protected long lagMinTimestamp;
+    protected boolean lagOrdered;
+    protected int lagRowCount;
+    protected int lagTxnCount;
     protected long maxTimestamp;
     protected long minTimestamp;
     protected int partitionBy;
@@ -119,6 +124,10 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+        mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+        mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -153,6 +162,22 @@ public class TxReader implements Closeable, Mutable {
 
     public long getFixedRowCount() {
         return fixedRowCount;
+    }
+
+    public long getLagMaxTimestamp() {
+        return lagMaxTimestamp;
+    }
+
+    public long getLagMinTimestamp() {
+        return lagMinTimestamp;
+    }
+
+    public int getLagRowCount() {
+        return lagRowCount;
+    }
+
+    public int getLagTxnCount() {
+        return lagTxnCount;
     }
 
     public long getLastPartitionTimestamp() {
@@ -306,6 +331,10 @@ public class TxReader implements Closeable, Mutable {
         this.partitionBy = partitionBy;
     }
 
+    public boolean isLagOrdered() {
+        return lagOrdered;
+    }
+
     public boolean isPartitionReadOnly(int i) {
         return isPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -351,6 +380,12 @@ public class TxReader implements Closeable, Mutable {
             truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             symbolColumnCount = symbolsSize / Long.BYTES;
+            lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
+            lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+            lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+            int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
+            lagTxnCount = Math.abs(lagTxnCountRaw);
+            lagOrdered = lagTxnCountRaw > -1;
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
             Unsafe.getUnsafe().loadFence();

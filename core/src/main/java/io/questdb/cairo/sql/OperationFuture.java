@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,45 +33,46 @@ public interface OperationFuture extends Closeable {
     int QUERY_NO_RESPONSE = 0;
     int QUERY_STARTED = 1;
 
-    /***
-     * Blocking wait for query completion. Returns immediately if query has executed synchronously
-     * Waits in busy waiting for cairo.writer.alter.busy.wait.timeout.micro microseconds and throws timeout
+    /**
+     * Blocking wait for query completion. Returns immediately if query was executed synchronously.
+     * Waits in busy waiting for cairo.writer.alter.busy.wait.timeout milliseconds and throws timeout.
+     *
      * @throws SqlException when query execution times out or fails
      */
     void await() throws SqlException;
 
-    /***
+    /**
      * Waits for completion within specified timeout. Can be called multiple times on the same OperationFuture instance.
+     *
      * @param timeout - millisecond timeout
-     * @return
-     *  - QUERY_NO_RESPONSE if no writer response received
-     *  - QUERY_STARTED if writer command ACK received
-     *  - QUERY_COMPLETE if writer completed response received
+     * @return - QUERY_NO_RESPONSE if no writer response received
+     * - QUERY_STARTED if writer command ACK received
+     * - QUERY_COMPLETE if writer completed response received
      * @throws SqlException when query execution fails
      */
     int await(long timeout) throws SqlException;
 
-    /***
-     * In case of async execution close must be called to remove sequence
+    /**
+     * In case of async execution close must be called to remove sequence.
      */
     @Override
     void close();
 
-    /***
-     * Returns the number of rows affected by the command run asynchronously
-     * @return
-     *  - number of rows changed
+    /**
+     * Returns the number of rows affected by the command run asynchronously.
+     *
+     * @return - number of rows changed
      */
     long getAffectedRowsCount();
 
     long getInstanceId();
 
-    /***
-     * True if operation completed, false otherwise
-     * @return
-     *  - QUERY_NO_RESPONSE if no writer response received
-     *  - QUERY_STARTED if writer command ACK received
-     *  - QUERY_COMPLETE if writer completed response received
+    /**
+     * True if operation completed, false otherwise.
+     *
+     * @return - QUERY_NO_RESPONSE if no writer response received
+     * - QUERY_STARTED if writer command ACK received
+     * - QUERY_COMPLETE if writer completed response received
      */
     int getStatus();
 }

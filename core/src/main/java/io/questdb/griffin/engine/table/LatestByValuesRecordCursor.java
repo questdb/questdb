@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,27 +26,29 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
+class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
+    private boolean isMapPrepared;
 
     public LatestByValuesRecordCursor(
             int columnIndex,
             DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
-            @NotNull IntList columnIndexes) {
+            @NotNull IntList columnIndexes
+    ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
@@ -55,11 +57,17 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor impl
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        isMapPrepared = false;
+        super.of(dataFrameCursor, executionContext);
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
     }
 
-    private void prepare() {
+    private void prepareMap() {
         if (deferredSymbolKeys != null) {
             // We need to clean up the map when there are deferred keys since
             // they may contain bind variables.
@@ -68,17 +76,21 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor impl
                 map.put(deferredSymbolKeys.get(i), 0);
             }
         }
+
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             map.put(symbolKeys.get(i), 0);
         }
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        prepare();
+    protected void buildTreeMap() {
+        if (!isMapPrepared) {
+            prepareMap();
+            isMapPrepared = true;
+        }
+
         DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

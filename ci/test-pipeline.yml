@@ -11,6 +11,11 @@ variables:
   DIFF_COVER_THRESHOLD_PCT: 50
   includeTests: ""
   excludeTests: ""
+  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30"
+  MAVEN_VERSION: "version"
+  MAVEN_VERSION_OPTION: "Default"
 
 stages:
   - stage: CheckChanges
@@ -98,7 +103,6 @@ stages:
         variables:
           SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
-          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |
           and(
@@ -123,7 +127,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options: "compile -DskipTests"
+              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
@@ -135,7 +139,8 @@ stages:
               options:
                 "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
                 -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
-                -DcoverDiff=$(COVERAGE_DIFF)"
+                -DcoverDiff=$(COVERAGE_DIFF)
+                -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar

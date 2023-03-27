@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -127,6 +128,8 @@ public final class Files {
 
     public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
 
+    public static native long copyDataToOffset(int srcFd, int destFd, long offsetSrc, long offsetDest, long length);
+
     /**
      * close(fd) should be used instead of this method in most cases
      * unless you don't need close sys call to happen.
@@ -207,12 +210,33 @@ public final class Files {
         return OPEN_FILE_COUNT.get();
     }
 
+    public @NotNull static String getResourcePath(@Nullable URL url) {
+        assert url != null;
+        String file = url.getFile();
+        assert  file != null;
+        assert file.length() > 0;
+        return file;
+    }
+
     public native static int getStdOutFd();
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
 
     public static int hardLink(LPSZ src, LPSZ hardLink) {
         return hardLink(src.address(), hardLink.address());
+    }
+
+    public static boolean isDirOrSoftLinkDir(LPSZ path) {
+        long ptr = findFirst(path);
+        if (ptr < 1L) {
+            return false;
+        }
+        try {
+            int type = findType(ptr);
+            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+        } finally {
+            findClose(ptr);
+        }
     }
 
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
@@ -415,6 +439,17 @@ public final class Files {
         return softLink(src.address(), softLink.address());
     }
 
+    public static boolean strcmp(long lpsz, CharSequence s) {
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
+            if (b == 0 || b != (byte) s.charAt(i)) {
+                return false;
+            }
+        }
+        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
+    }
+
     public static native int sync();
 
     public static boolean touch(LPSZ lpsz) {
@@ -468,6 +503,9 @@ public final class Files {
 
     private static native boolean exists0(long lpsz);
 
+    //caller must call findClose to free allocated struct
+    private native static long findFirst(long lpszName);
+
     private static native long getDiskSize(long lpszPath);
 
     private static native int getFileSystemStatus(long lpszName);
@@ -511,20 +549,6 @@ public final class Files {
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
-
-    //caller must call findClose to free allocated struct
-    native static long findFirst(long lpszName);
-
-    static boolean strcmp(long lpsz, CharSequence s) {
-        int len = s.length();
-        for (int i = 0; i < len; i++) {
-            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
-            if (b == 0 || b != (byte) s.charAt(i)) {
-                return false;
-            }
-        }
-        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
-    }
 
     static {
         Os.init();
