@@ -385,6 +385,30 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testShowPartitionsSelectActiveByWeek() throws Exception {
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            compile(createTable(tableName, PartitionBy.WEEK), sqlExecutionContext);
+            if (isWal) {
+                drainWalQueue();
+            }
+            assertQuery(
+                    replaceSizeToMatchOS(
+                            "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
+                                    (isWal ?
+                                            "25\tWEEK\t2023-W25\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\t8421376\t8.0 MB\tfalse\ttrue\ttrue\tfalse\tfalse\n"
+                                            :
+                                            "25\tWEEK\t2023-W25\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\t9453568\t9.0 MB\tfalse\ttrue\ttrue\tfalse\tfalse\n"),
+                            tableName),
+                    "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
+                    null,
+                    false,
+                    false,
+                    true);
+        });
+    }
+
+    @Test
     public void testShowPartitionsSelectActiveMaterializing() throws Exception {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
@@ -567,6 +591,11 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     }
 
     private String createTable(String tableName) {
+        return createTable(tableName, PartitionBy.MONTH);
+    }
+
+    private String createTable(String tableName, int partitionBy) {
+        assert partitionBy != PartitionBy.NONE;
         String create = "CREATE TABLE " + tableName + " AS (" +
                 "    SELECT" +
                 "        rnd_symbol('EURO', 'USD', 'OTHER') symbol," +
@@ -574,7 +603,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 "        rnd_double() * 20.0 amount," +
                 "        to_timestamp('2023-01-01', 'yyyy-MM-dd') + x * 6 * 3600 * 1000000L timestamp" +
                 "    FROM long_sequence(700)" +
-                "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY MONTH";
+                "), INDEX(symbol capacity 32) TIMESTAMP(timestamp) PARTITION BY " + PartitionBy.toString(partitionBy);
         if (isWal) {
             create += " WAL";
         }
