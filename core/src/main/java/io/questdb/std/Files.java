@@ -237,10 +237,11 @@ public final class Files {
         return OPEN_FILE_COUNT.get();
     }
 
-    public @NotNull static String getResourcePath(@Nullable URL url) {
+    public @NotNull
+    static String getResourcePath(@Nullable URL url) {
         assert url != null;
         String file = url.getFile();
-        assert  file != null;
+        assert file != null;
         assert file.length() > 0;
         return file;
     }
@@ -424,18 +425,20 @@ public final class Files {
         if (pFind > 0L) {
             int len = path.length();
             int errno;
+            int type;
             long nameUtf8Ptr;
             try {
                 do {
                     nameUtf8Ptr = findName(pFind);
                     Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
                     path.$();
-                    if (findType(pFind) == Files.DT_FILE) {
+                    type = findType(pFind);
+                    if (type == Files.DT_FILE) {
                         if (!remove(pathUtf8Ptr)) {
                             return Os.errno();
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        errno = isSoftLink(pathUtf8Ptr) ? unlink(pathUtf8Ptr) : rmdir(path);
+                        errno = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path);
                         if (errno != 0) {
                             return errno;
                         }
