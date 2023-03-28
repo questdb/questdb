@@ -57,7 +57,6 @@ stages:
                 {
                   "pool": "arm64",
                   "buildid": "$(Build.BuildId)",
-                  "shutdownflag": ""
                 }
               outputVariable: "functionResult"
           - task: LambdaInvokeFunction@1
@@ -72,9 +71,8 @@ stages:
                   "pool": "amd64-zfs",
                   "buildid": "$(Build.BuildId)",
                   "instancetype": "c6a.xlarge",
-                  "ami": "ami-0db6c20a374237bdd",
+                  "ami": "ami-0cec1668c46870d65",
                   "user": "ubuntu",
-                  "shutdownflag": ""
                 }
               outputVariable: "functionResult2"
           - bash: |
