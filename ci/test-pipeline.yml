@@ -56,7 +56,7 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)",
+                  "buildid": "$(Build.BuildId)"
                 }
               outputVariable: "functionResult"
           - task: LambdaInvokeFunction@1
@@ -72,7 +72,7 @@ stages:
                   "buildid": "$(Build.BuildId)",
                   "instancetype": "c6a.xlarge",
                   "ami": "ami-0cec1668c46870d65",
-                  "user": "ubuntu",
+                  "user": "ubuntu"
                 }
               outputVariable: "functionResult2"
           - bash: |
