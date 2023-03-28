@@ -65,7 +65,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -554,63 +554,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             listColumnFilterB.clear();
             valueTypes.clear();
             ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
-            if (slaveMetadata instanceof AbstractRecordMetadata) {
-                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                    if (intHashSet.excludes(i)) {
-                        // this is not a key column. Add it to metadata as it is. Symbols columns are kept as symbols
-                        final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(i);
-                        metadata.add(slaveAlias, m);
-                        listColumnFilterB.add(i + 1);
-                        columnIndex.add(i);
-                        valueTypes.add(m.getType());
-                        slaveTypes.add(m.getType());
-                    }
-                }
-
-                // now add key columns to metadata
-                for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                    int index = listColumnFilterA.getColumnIndexFactored(i);
-                    final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(index);
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                if (intHashSet.excludes(i)) {
+                    // this is not a key column. Add it to metadata as it is. Symbols columns are kept as symbols
+                    final TableColumnMetadata m = slaveMetadata.getColumnMetadata(i);
                     metadata.add(slaveAlias, m);
+                    listColumnFilterB.add(i + 1);
+                    columnIndex.add(i);
+                    valueTypes.add(m.getType());
                     slaveTypes.add(m.getType());
-                    columnIndex.add(index);
                 }
-            } else {
-                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                    if (intHashSet.excludes(i)) {
-                        int type = slaveMetadata.getColumnType(i);
-                        metadata.add(
-                                slaveAlias,
-                                slaveMetadata.getColumnName(i),
-                                type,
-                                slaveMetadata.isColumnIndexed(i),
-                                slaveMetadata.getIndexValueBlockCapacity(i),
-                                slaveMetadata.isSymbolTableStatic(i),
-                                slaveMetadata.getMetadata(i)
-                        );
-                        listColumnFilterB.add(i + 1);
-                        columnIndex.add(i);
-                        valueTypes.add(type);
-                        slaveTypes.add(type);
-                    }
-                }
+            }
 
-                // now add key columns to metadata
-                for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                    int index = listColumnFilterA.getColumnIndexFactored(i);
-                    int type = slaveMetadata.getColumnType(index);
-                    metadata.add(
-                            slaveAlias,
-                            slaveMetadata.getColumnName(index),
-                            type,
-                            slaveMetadata.isColumnIndexed(i),
-                            slaveMetadata.getIndexValueBlockCapacity(i),
-                            slaveMetadata.isSymbolTableStatic(i),
-                            slaveMetadata.getMetadata(i)
-                    );
-                    columnIndex.add(index);
-                    slaveTypes.add(type);
-                }
+            // now add key columns to metadata
+            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                int index = listColumnFilterA.getColumnIndexFactored(i);
+                final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
+                metadata.add(slaveAlias, m);
+                slaveTypes.add(m.getType());
+                columnIndex.add(index);
             }
 
 
