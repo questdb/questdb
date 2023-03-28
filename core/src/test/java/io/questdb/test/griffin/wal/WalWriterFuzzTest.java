@@ -44,7 +44,10 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -220,6 +223,25 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         );
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd, testName.getMethodName(), tableCount, false, true);
+    }
+
+    @Test
+    public void testWalWriteManySmallTransactions() throws Exception {
+        configOverrideO3QuickSortEnabled(true);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
+        setFuzzCounts(
+                true,
+                1000,
+                800,
+                10,
+                10,
+                10,
+                50,
+                1
+        );
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        runFuzz(rnd, testName.getMethodName(), 1, false, false);
     }
 
     @Test

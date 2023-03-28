@@ -816,6 +816,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalDataAppendPageSize() {
+        return conf.getWalDataAppendPageSize();
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return conf.getWalEnabledDefault();
     }
