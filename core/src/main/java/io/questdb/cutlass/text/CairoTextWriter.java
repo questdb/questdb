@@ -154,7 +154,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         final TableWriter.Row w = writer.newRow();
-        for (int i = 0; i < valuesLength; i++) {
+        for (int i = 0, n = Math.min(valuesLength, types.size()); i < n; i++) {
             final DirectByteCharSequence dbcs = values.getQuick(i);
             if (dbcs.length() == 0) {
                 continue;
@@ -169,7 +169,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
         try {
             final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));
-            for (int i = 0; i < valuesLength; i++) {
+            for (int i = 0, n = Math.min(valuesLength, types.size()); i < n; i++) {
                 dbcs = values.getQuick(i);
                 if (i == timestampIndex || dbcs.length() == 0) {
                     continue;
@@ -218,8 +218,18 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     private void logError(long line, int i, DirectByteCharSequence dbcs) {
-        LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
-        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        if (i < types.size()) {
+            TypeAdapter type = types.getQuick(i);
+            assert type != null && dbcs != null;
+            String columnType = ColumnType.nameOf(type.getType());
+            assert columnType != null;
+            LogRecord logRecord = LOG.error().$("type syntax [type=").$(columnType).$("]\n\t");
+            logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        } else {
+            LOG.info().$("csv import error, row has more columns than the header, column is ignored [column=")
+                    .$(i).$(", headerColumns=").$(types.size()).I$();
+        }
+
         columnErrorCounts.increment(i);
     }
 

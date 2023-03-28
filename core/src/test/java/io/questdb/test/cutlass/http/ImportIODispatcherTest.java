@@ -38,10 +38,11 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -294,6 +295,40 @@ public class ImportIODispatcherTest {
 
     private SqlCompiler compiler;
     private SqlExecutionContext sqlExecutionContext;
+
+    @Test
+    public void testImportRowsWiderThanHeader() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    setupSql(engine);
+                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getTableName())) {
+                            waitForData.countDown();
+                        }
+                    });
+                    StringSink sink = new StringSink();
+                    sink.put(PostHeader +
+                            Request1DataHeader);
+
+                    int rowCount = 10;
+                    for (int i = 0; i < rowCount; i++) {
+                        sink.put("B00008,2017-02-01 00:30:00\r\n");
+                    }
+                    sink.put("B00008,2017-02-02 00:30:00,abcd,,123,44\r\n");
+                    sink.put(REQUEST_FOOTER);
+
+                    new SendAndReceiveRequestBuilder().execute(
+                            sink.toString(),
+                            ValidImportResponse1.replace(" 24", String.valueOf(rowCount))
+                    );
+                    compiler.close();
+                });
+    }
 
     @Test
     public void testImportDesignatedTsFromSchema() throws Exception {
