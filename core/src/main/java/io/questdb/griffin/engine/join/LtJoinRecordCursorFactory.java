@@ -61,7 +61,8 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns) {
+            ColumnFilter masterTableKeyColumns
+    ) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
