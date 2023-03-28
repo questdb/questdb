@@ -2708,7 +2708,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final QueryColumn qc = columns.getQuick(i);
             if (!(qc instanceof AnalyticColumn)) {
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m = AbstractRecordMetadata.copyOf(baseMetadata, columnIndex);
+                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                 chainMetadata.add(i, m);
                 factoryMetadata.add(i, m);
                 chainTypes.add(i, m.getType());
@@ -2729,7 +2729,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int addAt = columnCount;
         for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
             if (intHashSet.excludes(i)) {
-                final TableColumnMetadata m = AbstractRecordMetadata.copyOf(baseMetadata, i);
+                final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
                 chainMetadata.add(addAt, m);
                 chainTypes.add(addAt, m.getType());
                 listColumnFilterA.extendAndSet(addAt, addAt + 1);
@@ -2976,7 +2976,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             columnCrossIndex.add(index);
 
             if (queryColumn.getAlias() == null) {
-                selectMetadata.add(AbstractRecordMetadata.copyOf(metadata, index));
+                selectMetadata.add(metadata.getColumnMetadata(index));
             } else {
                 selectMetadata.add(
                         new TableColumnMetadata(
@@ -2997,7 +2997,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
-            selectMetadata.add(AbstractRecordMetadata.copyOf(metadata, timestampIndex));
+            selectMetadata.add(metadata.getColumnMetadata(timestampIndex));
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -3040,7 +3040,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = readerMetadata.getColumnType(columnIndex);
 
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
-                distinctColumnMetadata.add(AbstractRecordMetadata.copyOf(readerMetadata, columnIndex));
+                distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
                 if (ColumnType.isSymbol(columnType) || columnType == ColumnType.INT) {
 
                     final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
@@ -4570,10 +4570,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int typeB = typesB.getColumnType(i);
 
             if (typeA == typeB && typeA != ColumnType.SYMBOL) {
-                metadata.add(AbstractRecordMetadata.copyOf(typesA, i));
+                metadata.add(typesA.getColumnMetadata(i));
             } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
                 // CHAR is "specially" assignable from SHORT, but we don't want that
-                metadata.add(AbstractRecordMetadata.copyOf(typesA, i));
+                metadata.add(typesA.getColumnMetadata(i));
             } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL) {
                 // even though A is assignable to B (e.g. A union B)
                 // set metadata will use A column names

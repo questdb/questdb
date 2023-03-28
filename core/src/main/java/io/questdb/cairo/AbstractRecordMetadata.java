@@ -36,20 +36,6 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     protected int columnCount;
     protected int timestampIndex = -1;
 
-    public static TableColumnMetadata copyOf(RecordMetadata metadata, int columnIndex) {
-        if (metadata instanceof AbstractRecordMetadata) {
-            return metadata.getColumnMetadata(columnIndex);
-        }
-        return new TableColumnMetadata(
-                metadata.getColumnName(columnIndex),
-                metadata.getColumnType(columnIndex),
-                metadata.isColumnIndexed(columnIndex),
-                metadata.getIndexValueBlockCapacity(columnIndex),
-                metadata.isSymbolTableStatic(columnIndex),
-                metadata.getMetadata(columnIndex)
-        );
-    }
-
     @Override
     public void clear() {
         columnMetadata.clear();
