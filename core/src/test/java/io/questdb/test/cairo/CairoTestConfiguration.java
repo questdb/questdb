@@ -307,6 +307,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitThreshold() {
+        return overrides.getPartitionO3SplitThreshold() > 0 ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitThreshold();
+    }
+
+    @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return overrides.getWriterAsyncCommandBusyWaitTimeout() < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : overrides.getWriterAsyncCommandBusyWaitTimeout();
     }

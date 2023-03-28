@@ -4567,11 +4567,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (newPartitionTimestamp != partitionTimestamp) {
             LOG.info()
-                    .$("split partition [table=`").utf8(tableToken.getTableName())
-                    .$("`, ts=").$ts(partitionTimestamp)
+                    .$("split partition [table=").utf8(tableToken.getTableName())
+                    .$(", ts=").$ts(partitionTimestamp)
+                    .$(", txn=").$(txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp))
+                    .$(", oldPartitionSize=").$(oldPartitionSize)
+                    .$(", ts=").$ts(newPartitionTimestamp)
                     .$(", txn=").$(txWriter.txn)
-                    .$(", size1=").$(oldPartitionSize)
-                    .$(", size2=").$(newPartitionSize)
+                    .$(", newPartitionSize=").$(newPartitionSize)
                     .I$();
             txWriter.bumpPartitionTableVersion();
             txWriter.updateAttachedPartitionSizeByIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
@@ -5116,6 +5118,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableWriterTask cmd = commandQueue.get(cursor);
             processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
         }
+    }
+
+    void setColumnTop(long partitionTimestamp, long columnTop) {
+
     }
 
     private void processO3Block(

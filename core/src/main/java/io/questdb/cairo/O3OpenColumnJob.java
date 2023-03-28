@@ -1308,22 +1308,22 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (srcDataTop > 0) {
                 // Size of data actually in the file.
-                long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
+                final long srcDataActualBytes = Math.max(0, srcDataMax - srcDataTop) << shl;
                 // Size of data in the file if it didn't have column top.
-                long srcDataMaxBytes = srcDataMax << shl;
+                final long srcDataMaxBytes = srcDataMax << shl;
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since
                     // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    srcDataFixOffset = srcDataActualBytes;
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
+                    srcDataFixOffset = srcDataActualBytes;
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data

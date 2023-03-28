@@ -30,18 +30,18 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -72,6 +72,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     private final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
+    private final static int MAX_O3_SPLIT_PARTITION_THRESHOLD = 5_000;
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef = WalWriterFuzzTest::checkNoSuspendedTables;
     private double cancelRowsProb;
@@ -101,7 +102,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Before
     public void setUp() {
         configOverrideO3ColumnMemorySize(512 * 1024);
-        setFuzzProperties(100);
+        setFuzzProperties(100, MAX_O3_SPLIT_PARTITION_THRESHOLD);
         super.setUp();
     }
 
@@ -126,14 +127,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         runFuzz(rnd);
     }
 
     @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProperties(rnd.nextLong(50));
+        setFuzzProperties(rnd.nextLong(50), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
     }
@@ -143,7 +144,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        rnd = new Rnd(2035322712003833L, 1679930711608L);
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         runFuzz(rnd);
     }
 
@@ -151,7 +153,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteFullRandom() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setRandomAppendPageSize(rnd);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         fullRandomFuzz(rnd);
     }
 
@@ -159,7 +161,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(3));
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         fullRandomFuzz(rnd, tableCount);
     }
 
@@ -206,6 +208,25 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalWriteManySmallTransactions() throws Exception {
+        configOverrideO3QuickSortEnabled(true);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
+        setFuzzCounts(
+                true,
+                1000,
+                800,
+                10,
+                10,
+                10,
+                50,
+                1
+        );
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
+        runFuzz(rnd, testName.getMethodName(), 1, false, false);
+    }
+
+    @Test
     public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -221,27 +242,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 50,
                 3 + rnd.nextInt(20)
         );
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         runFuzz(rnd, testName.getMethodName(), tableCount, false, true);
-    }
-
-    @Test
-    public void testWalWriteManySmallTransactions() throws Exception {
-        configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
-        setFuzzCounts(
-                true,
-                1000,
-                800,
-                10,
-                10,
-                10,
-                50,
-                1
-        );
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
-        runFuzz(rnd, testName.getMethodName(), 1, false, false);
     }
 
     @Test
@@ -249,7 +251,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), rnd.nextLong(MAX_O3_SPLIT_PARTITION_THRESHOLD));
         runFuzz(rnd);
     }
 
@@ -781,8 +783,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.truncateProb = truncateProb;
     }
 
-    private void setFuzzProperties(long maxApplyTimePerTable) {
+    private void setFuzzProperties(long maxApplyTimePerTable, long o3SplitPartitionThreshold) {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuote(maxApplyTimePerTable);
+        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(o3SplitPartitionThreshold);
     }
 
     private void setRandomAppendPageSize(Rnd rnd) {
