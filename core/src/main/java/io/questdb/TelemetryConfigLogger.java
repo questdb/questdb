@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,11 +44,10 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import java.io.Closeable;
 
 public class TelemetryConfigLogger implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
+    public static final String OS_NAME = "os.name";
     public static final CharSequence TELEMETRY_CONFIG_TABLE_NAME = "telemetry_config";
-    static final String OS_NAME = "os.name";
     static final String QDB_PACKAGE = "QDB_PACKAGE";
-
+    private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
     private final CharSequence questDBVersion;
     private final TelemetryConfiguration telemetryConfiguration;
     private final SCSequence tempSequence = new SCSequence();
@@ -110,7 +108,11 @@ public class TelemetryConfigLogger implements Closeable {
             SqlExecutionContextImpl sqlExecutionContext,
             TableToken tableToken
     ) throws SqlException {
-        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetryConfig");
+        final TableWriter configWriter = compiler.getEngine().getWriter(
+                sqlExecutionContext.getCairoSecurityContext(),
+                tableToken,
+                "telemetryConfig"
+        );
         final CompiledQuery cc = compiler.compile(TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sqlExecutionContext);
         try (
                 final RecordCursorFactory factory = cc.getRecordCursorFactory();

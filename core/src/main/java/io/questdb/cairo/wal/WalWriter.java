@@ -248,10 +248,12 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction()) {
-                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
+                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                        .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
+                        .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.getWalMetrics().addRowsWritten(rowsToCommit);
@@ -316,6 +318,10 @@ public class WalWriter implements TableWriterAPI {
             return 0;
         }
         return initialSymbolCounts.get(columnIndex);
+    }
+
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     public TableToken getTableToken() {
@@ -407,6 +413,15 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    public void rollSegment() {
+        try {
+            openNewSegment();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
     public void rollUncommittedToNewSegment() {
         final long uncommittedRows = getUncommittedRowCount();
         final int newSegmentId = segmentId + 1;
@@ -424,7 +439,8 @@ public class WalWriter implements TableWriterAPI {
             try {
                 final int timestampIndex = metadata.getTimestampIndex();
                 LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                        .$(path).$(Files.SEPARATOR).$(newSegmentId)
+                        .$(path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", newSegment=").$(newSegmentId)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -1021,7 +1037,7 @@ public class WalWriter implements TableWriterAPI {
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name),
-                    configuration.getDataAppendPageSize(),
+                    configuration.getWalDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -1033,7 +1049,7 @@ public class WalWriter implements TableWriterAPI {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
                 mem2.of(ff,
                         iFile(path.trimTo(pathTrimToLen), name),
-                        configuration.getDataAppendPageSize(),
+                        configuration.getWalDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
@@ -1323,19 +1339,6 @@ public class WalWriter implements TableWriterAPI {
                     secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
                 }
             }
-        }
-    }
-
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
-    void rollSegment() {
-        try {
-            openNewSegment();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
         }
     }
 

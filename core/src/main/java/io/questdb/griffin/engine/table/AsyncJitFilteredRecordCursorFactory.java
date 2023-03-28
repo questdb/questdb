@@ -81,8 +81,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
-        this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.hasDescendingOrder());
+        this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
         MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         IntList preTouchColumnTypes = null;
@@ -127,7 +127,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         long rowsRemaining;
-        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
+        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int order;
         if (limitLoFunction != null) {
             limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
@@ -160,8 +160,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return cursor;
     }
 
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    @Override
+    public int getScanDirection() {
+        return base.getScanDirection();
     }
 
     @Override
@@ -179,7 +180,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         sink.type("Async JIT Filter");
         //calc order and limit if possible 
         long rowsRemaining;
-        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
+        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         int order;
         if (limitLoFunction != null) {
             try {

@@ -42,6 +42,10 @@ abstract class AbstractLowerCaseCharSequenceHashMap extends AbstractLowerCaseCha
         return keyIndex(key) < 0;
     }
 
+    public boolean contains(CharSequence key, int lo, int hi) {
+        return keyIndex(key, lo, hi) < 0;
+    }
+
     public ObjList<CharSequence> keys() {
         return list;
     }

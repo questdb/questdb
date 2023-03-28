@@ -160,7 +160,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         }
     }
 
-    protected void updateKeyCount() {
+    public void updateKeyCount() {
         int keyCount;
         final long deadline = clock.getTicks() + spinLockTimeoutUs;
         while (true) {

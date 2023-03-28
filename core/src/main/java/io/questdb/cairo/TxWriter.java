@@ -72,6 +72,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void bumpPartitionTableVersion() {
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion.incrementAndGet();
@@ -144,6 +149,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
             putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+            putLagValues();
 
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
@@ -288,6 +294,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
         this.extensionListener = extensionListener;
+    }
+
+    public void setMaxTimestamp(long timestamp) {
+        this.maxTimestamp = timestamp;
+    }
+
+    public void setLagMaxTimestamp(long timestamp) {
+        lagMaxTimestamp = timestamp;
+    }
+
+    public void setLagMinTimestamp(long timestamp) {
+        lagMinTimestamp = timestamp;
+    }
+
+    public void setLagOrdered(boolean ordered) {
+        lagOrdered = ordered;
+    }
+
+    public void setLagRowCount(int rowCount) {
+        lagRowCount = rowCount;
+    }
+
+    public void setLagTxnCount(int txnCount) {
+        lagTxnCount = txnCount;
     }
 
     public void setMinTimestamp(long timestamp) {
@@ -442,7 +472,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
+        putLagValues();
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
+        putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));
 
         // store symbol counts
         storeSymbolCounts(symbolCountProviders);
@@ -522,6 +554,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(writeBaseOffset + offset, value);
     }
 
+    private void putLagValues() {
+        putLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+        putLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+        putInt(TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+        int lagTxnRaw = lagOrdered ? lagTxnCount : -lagTxnCount;
+        putInt(TX_OFFSET_LAG_TXN_COUNT_32, lagTxnRaw);
+        putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnRaw));
+    }
+
     private void putLong(long offset, long value) {
         txMemBase.putLong(writeBaseOffset + offset, value);
     }
@@ -575,11 +616,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);
         assert recordOffset + Integer.BYTES <= readRecordSize;
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
-    }
-
-    void bumpPartitionTableVersion() {
-        recordStructureVersion++;
-        partitionTableVersion++;
     }
 
     // It is possible that O3 commit will create partition just before

@@ -26,17 +26,19 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 
 import java.util.Objects;
 
-public class QueryColumn implements Mutable {
+public class QueryColumn implements Mutable, Sinkable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
     private ExpressionNode ast;
     private int columnType;
     private boolean includeIntoWildcard = true;
 
-    protected QueryColumn() {
+    public QueryColumn() {
     }
 
     @Override
@@ -98,5 +100,10 @@ public class QueryColumn implements Mutable {
 
     public void setAlias(CharSequence alias) {
         this.alias = alias;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(ast).put(" as ").put(alias);
     }
 }

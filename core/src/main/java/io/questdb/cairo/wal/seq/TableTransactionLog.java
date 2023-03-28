@@ -383,30 +383,29 @@ public class TableTransactionLog implements Closeable {
 
             final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
-                final long oldSize = getMappedLen();
-                txnCount = newTxnCount;
-                final long newSize = getMappedLen();
-                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-
-                return hasNext(newSize);
+                remap(newTxnCount);
+                return hasNext(getMappedLen());
             }
             return false;
         }
 
         @Override
-        public boolean reset() {
+        public boolean setPosition() {
             final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
-                final long oldSize = getMappedLen();
-                txnCount = newTxnCount;
-                final long newSize = getMappedLen();
-                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                remap(newTxnCount);
 
                 this.txnLo = txn - 1;
                 this.txnOffset -= RECORD_SIZE;
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public void setPosition(long txn) {
+            this.txnOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+            this.txn = txn;
         }
 
         @Override
@@ -442,6 +441,13 @@ public class TableTransactionLog implements Closeable {
             this.txnLo = txnLo;
             txn = txnLo;
             return this;
+        }
+
+        private void remap(long newTxnCount) {
+            final long oldSize = getMappedLen();
+            txnCount = newTxnCount;
+            final long newSize = getMappedLen();
+            address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
         }
     }
 }
