@@ -303,11 +303,17 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             compiler.setFullFatJoins(true);
             compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
             compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
-            compile("insert into tab_a values ('ABC', '2022-01-01T00:00:00.000000Z', 'foo')");
-            compile("insert into tab_b values ('DCE', '2021-01-01T00:00:00.000000Z', 'bar')"); // make sure symbol table for tab_b differs from tab_a
-            compile("insert into tab_b values ('ABC', '2021-01-01T00:00:00.000000Z', 'bar')");
 
-            try (RecordCursorFactory factory = compiler.compile("select sym_a, sym_b from tab_a a lt join tab_b b on sym_a = sym_b", sqlExecutionContext).getRecordCursorFactory()) {
+            compile("insert into tab_a values " +
+                    "('ABC', '2022-01-01T00:00:00.000000Z', 'foo')"
+            );
+            compile("insert into tab_b values " +
+                    "('DCE', '2021-01-01T00:00:00.000000Z', 'bar')," + // first INSERT a row with DCE to make sure symbol table for tab_b differs from tab_a
+                    "('ABC', '2021-01-01T00:00:00.000000Z', 'bar')"
+            );
+
+            String query = "select sym_a, sym_b from tab_a a lt join tab_b b on sym_a = sym_b";
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     io.questdb.cairo.sql.Record record = cursor.getRecord();
                     RecordMetadata metadata = factory.getMetadata();
@@ -332,9 +338,28 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "  Ticker SYMBOL capacity 256 CACHE,\n" +
                     "  ts timestamp\n" +
                     ") timestamp (ts) PARTITION BY MONTH");
-            compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
+            compile("INSERT INTO tests VALUES " +
+                    "('AAPL', '2000')," +
+                    "('AAPL', '2001')," +
+                    "('AAPL', '2002')," +
+                    "('AAPL', '2003')," +
+                    "('AAPL', '2004')," +
+                    "('AAPL', '2005')"
+            );
 
-            String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+            String query = "SELECT * " +
+                    "FROM tests t0 " +
+                    "LT JOIN (" +
+                    "   SELECT * " +
+                    "   FROM tests t1 " +
+                    "   LT JOIN (" +
+                    "       SELECT * " +
+                    "       FROM tests t2 " +
+                    "       LT JOIN (" +
+                    "           SELECT * FROM tests t3" +
+                    "       ) ON (Ticker)" +
+                    "   ) ON (Ticker)" +
+                    ") ON (Ticker)";
             String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
                     "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
                     "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
