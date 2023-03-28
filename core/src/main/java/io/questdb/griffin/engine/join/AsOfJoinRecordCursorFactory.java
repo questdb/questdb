@@ -147,7 +147,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 RecordValueSink valueSink,
-                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex) {
+                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex
+        ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
             this.joinKeyMap = joinKeyMap;
