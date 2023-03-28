@@ -71,7 +71,8 @@ stages:
                   "pool": "amd64-zfs",
                   "buildid": "$(Build.BuildId)",
                   "instancetype": "c6a.xlarge",
-                  "ami": "ami-005835ae1b11ea970"
+                  "ami": "ami-0db6c20a374237bdd",
+                  "user": "ubuntu"
                 }
               outputVariable: "functionResult2"
           - bash: |
