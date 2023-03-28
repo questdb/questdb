@@ -885,10 +885,36 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "  Ticker SYMBOL capacity 256 CACHE,\n" +
                     "  ts timestamp\n" +
                     ") timestamp (ts) PARTITION BY MONTH");
-            compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
-            compile("insert into tests VALUES ('QSTDB', '2003'),('QSTDB', '2004'),('QSTDB', '2005'),('QSTDB', '2006'),('QSTDB', '2007'),('QSTDB', '2008')");
+            compile("insert into tests VALUES " +
+                    "('AAPL', '2000')," +
+                    "('AAPL', '2001')," +
+                    "('AAPL', '2002')," +
+                    "('AAPL', '2003')," +
+                    "('AAPL', '2004')," +
+                    "('AAPL', '2005')"
+            );
+            compile("insert into tests VALUES " +
+                    "('QSTDB', '2003')," +
+                    "('QSTDB', '2004')," +
+                    "('QSTDB', '2005')," +
+                    "('QSTDB', '2006')," +
+                    "('QSTDB', '2007')," +
+                    "('QSTDB', '2008')"
+            );
 
-            String query = "select * from tests t0 ASOF JOIN (select * from tests t1 ASOF JOIN (select * from tests t2 ASOF JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+            String query = "SELECT * " +
+                    "FROM tests t0 " +
+                    "ASOF JOIN (" +
+                    "   SELECT * " +
+                    "   FROM tests t1" +
+                    "   ASOF JOIN (" +
+                    "       SELECT * " +
+                    "       FROM tests t2" +
+                    "       ASOF JOIN (" +
+                    "           SELECT * FROM tests t3" +
+                    "       ) on (Ticker)" +
+                    "   ) ON (Ticker)" +
+                    ") ON (Ticker)";
             String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
                     "AAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
                     "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
@@ -914,10 +940,36 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "  Ticker SYMBOL capacity 256 CACHE,\n" +
                     "  ts timestamp\n" +
                     ") timestamp (ts) PARTITION BY MONTH");
-            compile("insert into tests VALUES ('AAPL', '2000'),('AAPL', '2001'),('AAPL', '2002'),('AAPL', '2003'),('AAPL', '2004'),('AAPL', '2005')");
-            compile("insert into tests VALUES ('QSTDB', '2003'),('QSTDB', '2004'),('QSTDB', '2005'),('QSTDB', '2006'),('QSTDB', '2007'),('QSTDB', '2008')");
+            compile("insert into tests VALUES " +
+                    "('AAPL', '2000')," +
+                    "('AAPL', '2001')," +
+                    "('AAPL', '2002')," +
+                    "('AAPL', '2003')," +
+                    "('AAPL', '2004')," +
+                    "('AAPL', '2005')"
+            );
+            compile("insert into tests VALUES " +
+                    "('QSTDB', '2003')," +
+                    "('QSTDB', '2004')," +
+                    "('QSTDB', '2005')," +
+                    "('QSTDB', '2006')," +
+                    "('QSTDB', '2007')," +
+                    "('QSTDB', '2008')"
+            );
 
-            String query = "select * from tests t0 LT JOIN (select * from tests t1 LT JOIN (select * from tests t2 LT JOIN (select * from tests t3) on (Ticker)) ON (Ticker)) ON (Ticker)";
+            String query = "SELECT * " +
+                    "FROM tests t0 " +
+                    "LT JOIN (" +
+                    "   SELECT * " +
+                    "   FROM tests t1 " +
+                    "   LT JOIN (" +
+                    "       SELECT * " +
+                    "       FROM tests t2 " +
+                    "       LT JOIN (" +
+                    "           SELECT * FROM tests t3" +
+                    "       ) on (Ticker)" +
+                    "   ) ON (Ticker)" +
+                    ") ON (Ticker)";
             String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
                     "AAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\t\t\n" +
                     "AAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\t\t\t\t\n" +
@@ -945,20 +997,34 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "  ts timestamp,\n" +
                     "  price int\n" +
                     ") timestamp (ts) PARTITION BY MONTH");
-            compile("insert into tests VALUES ('Whatever', 'AAPL', '2000', 0),('Whatever', 'AAPL', '2001', 1),('Whatever', 'AAPL', '2002', 2),('Whatever', 'AAPL', '2003', 3),('Whatever', 'AAPL', '2004', 4),('Whatever', 'AAPL', '2005', 5)");
-            compile("insert into tests VALUES ('Whatever', 'QSTDB', '2003', 6),('Whatever', 'QSTDB', '2004', 7),('Whatever', 'QSTDB', '2005', 8),('Whatever', 'QSTDB', '2006', 9),('Whatever', 'QSTDB', '2007', 10),('Whatever', 'QSTDB', '2008', 11)");
+            compile("insert into tests VALUES " +
+                    "('Whatever', 'AAPL', '2000', 0)," +
+                    "('Whatever', 'AAPL', '2001', 1)," +
+                    "('Whatever', 'AAPL', '2002', 2)," +
+                    "('Whatever', 'AAPL', '2003', 3)," +
+                    "('Whatever', 'AAPL', '2004', 4)," +
+                    "('Whatever', 'AAPL', '2005', 5)"
+            );
+            compile("insert into tests VALUES " +
+                    "('Whatever', 'QSTDB', '2003', 6)," +
+                    "('Whatever', 'QSTDB', '2004', 7)," +
+                    "('Whatever', 'QSTDB', '2005', 8)," +
+                    "('Whatever', 'QSTDB', '2006', 9)," +
+                    "('Whatever', 'QSTDB', '2007', 10)," +
+                    "('Whatever', 'QSTDB', '2008', 11)"
+            );
 
-            String query = "select t2unused, Ticker as t0ticker, ts as t0ts, t1ticker, t1ts, t2ticker, t2ts, t3ticker, t3ts \n" +
-                    "from tests \n" +
+            String query = "SELECT t2unused, Ticker AS t0ticker, ts AS t0ts, t1ticker, t1ts, t2ticker, t2ts, t3ticker, t3ts \n" +
+                    "FROM tests \n" +
                     "LT JOIN (\n" +
-                    "    select t2unused, Ticker as t1ticker, UnusedTag as t1unused, ts as t1ts, t3unused, t2ticker, t2ts, t3ticker, t3ts \n" +
-                    "    from tests \n" +
+                    "    SELECT t2unused, Ticker AS t1ticker, UnusedTag AS t1unused, ts AS t1ts, t3unused, t2ticker, t2ts, t3ticker, t3ts \n" +
+                    "    FROM tests \n" +
                     "    LT JOIN (\n" +
-                    "        select UnusedTag as t2unused, Ticker as t2ticker, t3unused, ts as t2ts, t3ticker, t3ts \n" +
-                    "        from tests \n" +
+                    "        SELECT UnusedTag AS t2unused, Ticker AS t2ticker, t3unused, ts AS t2ts, t3ticker, t3ts \n" +
+                    "        FROM tests \n" +
                     "        LT JOIN (\n" +
-                    "            select UnusedTag as t3unused, Ticker as t3ticker, ts as t3ts from tests\n" +
-                    "        ) t3 on (ticker = t3.t3ticker)\n" +
+                    "            SELECT UnusedTag AS t3unused, Ticker AS t3ticker, ts AS t3ts FROM tests\n" +
+                    "        ) t3 ON (ticker = t3.t3ticker)\n" +
                     "    ) t2 ON (Ticker = t2ticker)\n" +
                     ") t1 ON (Ticker = t1ticker)";
 
