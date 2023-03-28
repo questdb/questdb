@@ -93,7 +93,7 @@ public class CircuitBreakerRegistry implements Closeable {
             throw CairoException.nonCritical().put("wrong circuit breaker secret [idx=").put(circuitBreakerIdx).put("]");
         }
 
-        cb.trip();
+        cb.cancel();
     }
 
     @Override

@@ -56,6 +56,7 @@ import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
+import org.postgresql.PGConnection;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -1774,30 +1775,46 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testCancelRunningQuery() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(100000)) timestamp(ts) partition by day", sqlExecutionContext);
-            mayDrainWalQueue();
-            AtomicBoolean isCancelled = new AtomicBoolean(false);
+    public void testCancelRunningCreateQuery() throws Exception {
+        String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
+                "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
+                "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
+                "update dest set l = 1 from tab t1 where " +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = " +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA100000' "
+        };
 
-            try (final PreparedStatement stmt = connection.prepareStatement("select count(*) from tab t1 cross join tab t2 where t1.x > 0")) {
-                new Thread(() -> {
-                    try {
-                        while (!isCancelled.get()) {
-                            Os.sleep(100);
-                            stmt.cancel();
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            compiler.compile("create table if not exists dest as (select 1::long l)", sqlExecutionContext);
+            mayDrainWalQueue();
+
+            for (String query : queries) {
+                AtomicBoolean isCancelled = new AtomicBoolean(false);
+                CountDownLatch finished = new CountDownLatch(1);
+
+                try (final PreparedStatement stmt = connection.prepareStatement(query)) {
+                    new Thread(() -> {
+                        PGConnection pgCon = (PGConnection) connection;
+                        try {
+                            while (!isCancelled.get()) {
+                                Os.sleep(1);
+                                pgCon.cancelQuery();
+                            }
+                        } catch (SQLException e) {
+                            throw new RuntimeException(e);
+                        } finally {
+                            finished.countDown();
                         }
-                    } catch (SQLException e) {
-                        throw new RuntimeException(e);
+                    }, "cancellation thread").start();
+                    try {
+                        stmt.execute();
+                        Assert.fail("expected PSQLException with cancel message");
+                    } catch (PSQLException e) {
+                        isCancelled.set(true);
+                        finished.await();
+                        assertContains(e.getMessage(), "cancelling statement due to user request");
                     }
-                }).start();
-                try {
-                    ResultSet resultSet = stmt.executeQuery();
-                    resultSet.next();
-                    Assert.fail("expected PSQLException with cancel message but got " + resultSet.getLong(1));
-                } catch (PSQLException e) {
-                    isCancelled.set(true);
-                    assertContains(e.getMessage(), "cancelling statement due to user request");
                 }
             }
         });

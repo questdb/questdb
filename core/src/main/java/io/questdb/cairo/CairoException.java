@@ -106,6 +106,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(NON_CRITICAL);
     }
 
+    public static CairoException queryCancelled(int fd) {
+        return nonCritical().put("cancelling statement due to user request [fd=").put(fd).put(']').setInterruption(true);
+    }
+
+    public static CairoException queryTimedOut(int fd) {
+        return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+    }
+
     public static CairoException tableDoesNotExist(CharSequence tableName) {
         return nonCritical().put("table does not exist [table=").put(tableName).put(']');
     }

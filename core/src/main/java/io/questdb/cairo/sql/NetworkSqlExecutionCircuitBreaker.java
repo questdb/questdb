@@ -66,6 +66,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void cancel() {
+        powerUpTime = Long.MIN_VALUE;
+    }
+
+    @Override
     public boolean checkIfTripped() {
         return checkIfTripped(powerUpTime, fd);
     }
@@ -104,6 +109,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     public int getSecret() {
         return secret;
+    }
+
+    public boolean isCancelled() {
+        return powerUpTime == Long.MIN_VALUE;
     }
 
     @Override
@@ -159,21 +168,16 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void trip() {
-        powerUpTime = Long.MIN_VALUE;
-    }
-
-    @Override
     public void unsetTimer() {
         powerUpTime = Long.MAX_VALUE;
     }
 
     private void testTimeout() {
         if (clock.getTicks() - timeout > powerUpTime) {
-            if (powerUpTime > Long.MIN_VALUE) {
-                throw CairoException.nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            if (isCancelled()) {
+                throw CairoException.queryCancelled(fd);
             } else {
-                throw CairoException.nonCritical().put("cancelling statement due to user request [fd=").put(fd).put(']').setInterruption(true);
+                throw CairoException.queryTimedOut(fd);
             }
         }
     }

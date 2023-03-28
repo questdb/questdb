@@ -107,6 +107,10 @@ public class SecurityTest extends AbstractGriffinTest {
             private long deadline;
 
             @Override
+            public void cancel() {
+            }
+
+            @Override
             public boolean checkIfTripped() {
                 return false;
             }
@@ -124,6 +128,11 @@ public class SecurityTest extends AbstractGriffinTest {
             @Override
             public int getFd() {
                 return -1;
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return false;
             }
 
             @Override
@@ -152,10 +161,6 @@ public class SecurityTest extends AbstractGriffinTest {
             @Override
             public void statefulThrowExceptionIfTrippedNoThrottle() {
                 statefulThrowExceptionIfTripped();
-            }
-
-            @Override
-            public void trip() {
             }
 
             @Override

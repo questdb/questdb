@@ -437,6 +437,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } catch (ImplicitCastException e) {
             reportNonCriticalError(-1, e.getFlyweightMessage());
         } catch (CairoException e) {
+            clearCursorAndFactory();
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
             } else {
@@ -2688,34 +2689,30 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean recompileStale = true;
             SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
 
-            try {
-                if (!circuitBreaker.isTimerSet()) {
-                    circuitBreaker.resetTimer();
-                }
+            if (!circuitBreaker.isTimerSet()) {
+                circuitBreaker.resetTimer();
+            }
 
-                for (int retries = 0; recompileStale; retries++) {
-                    currentFactory = typesAndSelect.getFactory();
-                    try {
-                        currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                        recompileStale = false;
-                        // cache random if it was replaced
-                        this.rnd = sqlExecutionContext.getRandom();
-                    } catch (TableReferenceOutOfDateException e) {
-                        if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
-                            throw e;
-                        }
-                        LOG.info().$(e.getFlyweightMessage()).$();
-                        freeFactory();
-                        compileQuery(compiler);
-                        buildSelectColumnTypes();
-                        applyLatestBindColumnFormats();
-                    } catch (Throwable e) {
-                        freeFactory();
+            for (int retries = 0; recompileStale; retries++) {
+                currentFactory = typesAndSelect.getFactory();
+                try {
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    recompileStale = false;
+                    // cache random if it was replaced
+                    this.rnd = sqlExecutionContext.getRandom();
+                } catch (TableReferenceOutOfDateException e) {
+                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                         throw e;
                     }
+                    LOG.info().$(e.getFlyweightMessage()).$();
+                    freeFactory();
+                    compileQuery(compiler);
+                    buildSelectColumnTypes();
+                    applyLatestBindColumnFormats();
+                } catch (Throwable e) {
+                    freeFactory();
+                    throw e;
                 }
-            } finally {
-                circuitBreaker.unsetTimer();
             }
         }
     }
