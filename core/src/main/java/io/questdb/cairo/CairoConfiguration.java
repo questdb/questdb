@@ -425,6 +425,8 @@ public interface CairoConfiguration {
 
     double getWalSquashUncommittedRowsMultiplier();
 
+    long getWalDataAppendPageSize();
+
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();

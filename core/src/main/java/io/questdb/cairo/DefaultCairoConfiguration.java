@@ -825,6 +825,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalDataAppendPageSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return false;
     }
