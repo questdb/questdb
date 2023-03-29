@@ -85,7 +85,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         int pathLen = path.length();
         Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
         Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
-        otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
+        otherVolume = temp.newFolder("path", "to", "wherever").getAbsolutePath();
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() ->
         createDummyConfiguration(
                 HTTP_PORT + 10,
                 HTTP_MIN_PORT + 10,
@@ -93,7 +100,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 ILP_PORT + 10,
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
                 PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume
-        );
+        ));
+
     }
 
     @AfterClass
