@@ -96,13 +96,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return len == 0 ? 0 : -1;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong length) {
+size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
+    lseek64(dstFd, dstOffset, SEEK_SET);
+
     size_t len = length > 0 ? length : SIZE_MAX;
     off_t offset = srcOffset;
 
     while (len > 0) {
-        ssize_t writtenLen = sendfile64((int) destFd, (int) srcFd, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
+        ssize_t writtenLen = sendfile64((int) dstFd, (int) srcFd, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
         if (writtenLen <= 0
             // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
             && errno != EINTR) {
@@ -115,13 +116,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
     return offset - srcOffset;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
-        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong destOffset, jlong length) {
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong length) {
+    return (jlong) copyData0((int) srcFd, (int) destFd, (off_t) srcOffset, 0, (int64_t) length);
+}
 
-    if (destOffset != 0) {
-        lseek64(destFd, destOffset, SEEK_SET);
-    }
-    return Java_io_questdb_std_Files_copyData(e, cls, srcFd, destFd, srcOffset, length);
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong dstOffset, jlong length) {
+    return (jlong) copyData0((int) srcFd, (int) destFd, (off_t) srcOffset, (off_t) dstOffset, (int64_t) length);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0

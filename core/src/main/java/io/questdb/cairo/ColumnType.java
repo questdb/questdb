@@ -467,7 +467,7 @@ public final class ColumnType {    //@formatter:off
         TYPE_SIZE_POW2[GEOSHORT] = 1;
         TYPE_SIZE_POW2[GEOINT] = 2;
         TYPE_SIZE_POW2[GEOLONG] = 3;
-        TYPE_SIZE_POW2[BINARY] = 2;
+        TYPE_SIZE_POW2[BINARY] = -1;
         TYPE_SIZE_POW2[PARAMETER] = -1;
         TYPE_SIZE_POW2[CURSOR] = -1;
         TYPE_SIZE_POW2[VAR_ARG] = -1;
