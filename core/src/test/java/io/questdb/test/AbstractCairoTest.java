@@ -47,6 +47,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.ConfigurationOverrides;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -62,7 +64,6 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCairoTest extends AbstractTest {
-
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -93,6 +94,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static int maxOpenPartitions = -1;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
+    protected static QuestDBTestNode node1;
+    protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
@@ -186,6 +189,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         // which causes memory leak detector to fail should logger be
         // created mid-test
         AbstractTest.setUpStatic();
+        nodes.clear();
+        node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides());
         configuration = node1.getConfiguration();
         securityContext = configuration.getCairoSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
@@ -205,6 +210,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @AfterClass
     public static void tearDownStatic() throws Exception {
         AbstractTest.tearDownStatic();
+        forEachNode(QuestDBTestNode::closeCairo);
+        nodes.clear();
         backupDir = null;
         backupDirTimestampFormat = null;
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
@@ -214,6 +221,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public void setUp() {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
+        forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
@@ -221,9 +229,15 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
     }
 
-    @Override
+    @After
+    public void tearDown() throws Exception {
+        tearDown(true);
+        super.tearDown();
+    }
+
     public void tearDown(boolean removeDir) {
-        super.tearDown(removeDir);
+        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         sink.clear();
         memoryUsage = -1;
@@ -373,6 +387,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return false;  // Could not obtain lock.
     }
 
+    protected static TableToken createTable(TableModel model) {
+        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
+    }
+
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
         return new ApplyWal2TableJob(node.getEngine(), 1, 1, null);
     }
@@ -407,6 +425,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void dumpMemoryUsage() {
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
+        }
+    }
+
+    protected static void forEachNode(AbstractCairoTest.QuestDBNodeTask task) {
+        for (int i = 0; i < nodes.size(); i++) {
+            task.run(nodes.get(i));
         }
     }
 
@@ -454,6 +478,18 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriter getWriter(TableToken tt) {
         return engine.getWriter(securityContext, tt, "testing");
+    }
+
+    protected static QuestDBTestNode newNode(int nodeId) {
+        String root = TestUtils.unchecked(() -> temp.newFolder("dbRoot" + nodeId).getAbsolutePath());
+        return newNode(root, true, nodeId, new Overrides());
+    }
+
+    protected static QuestDBTestNode newNode(String root, boolean ownRoot, int nodeId, ConfigurationOverrides overrides) {
+        final QuestDBTestNode node = new QuestDBTestNode(nodeId);
+        node.initCairo(root, ownRoot, overrides);
+        nodes.add(node);
+        return node;
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
@@ -525,10 +561,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
-    }
-
-    protected static TableToken createTable(TableModel model) {
-        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
     }
 
     protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {

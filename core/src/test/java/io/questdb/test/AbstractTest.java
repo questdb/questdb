@@ -26,9 +26,6 @@ package io.questdb.test;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.ObjList;
-import io.questdb.test.cairo.ConfigurationOverrides;
-import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -38,8 +35,6 @@ public class AbstractTest {
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    protected static QuestDBTestNode node1;
-    protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static CharSequence root;
     @Rule
     public TestName testName = new TestName();
@@ -51,47 +46,23 @@ public class AbstractTest {
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("begin").$();
-        node1 = newNode(temp, 1, "dbRoot", new StaticOverrides());
-        root = node1.getRoot();
+        root = temp.newFolder("dbroot").getAbsolutePath();
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        forEachNode(QuestDBTestNode::closeCairo);
-        nodes.clear();
+        TestUtils.removeTestPath(root);
     }
 
     @Before
     public void setUp() {
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        forEachNode(QuestDBTestNode::setUpCairo);
+        TestUtils.createTestPath(root);
     }
 
-    @After
-    public void tearDown() throws Exception {
-        tearDown(true);
-    }
 
-    public void tearDown(boolean removeDir) {
-        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        forEachNode(node -> node.tearDownCairo(removeDir));
-    }
-
-    protected static void forEachNode(AbstractCairoTest.QuestDBNodeTask task) {
-        for (int i = 0; i < nodes.size(); i++) {
-            task.run(nodes.get(i));
-        }
-    }
-
-    protected static QuestDBTestNode newNode(TemporaryFolder temp, int nodeId, String dbRoot, ConfigurationOverrides overrides) {
-        final QuestDBTestNode node = new QuestDBTestNode(nodeId);
-        node.initCairo(temp, dbRoot, overrides);
-        nodes.add(node);
-        return node;
-    }
-
-    protected static QuestDBTestNode newNode(TemporaryFolder temp, int nodeId) {
-        return newNode(temp, nodeId, "dbRoot" + nodeId, new Overrides());
+    public void tearDown() throws Exception{
+        TestUtils.removeTestPath(root);
     }
 
     protected static String[] getServerMainArgs() {

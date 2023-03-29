@@ -33,9 +33,9 @@ public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
-        final QuestDBTestNode node2 = newNode(temp, 2);
+        final QuestDBTestNode node2 = newNode(2);
         node2.initGriffin();
-        final QuestDBTestNode node3 = newNode(temp, 3);
+        final QuestDBTestNode node3 = newNode(3);
         node3.initGriffin();
     }
 }
