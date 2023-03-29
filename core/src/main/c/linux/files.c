@@ -96,7 +96,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return len == 0 ? 0 : -1;
 }
 
-size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, size_t length) {
+size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
     lseek64(dstFd, dstOffset, SEEK_SET);
 
     size_t len = length > 0 ? length : SIZE_MAX;
@@ -118,12 +118,12 @@ size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, size_t 
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong length) {
-    return (jlong) copyData0((int) srcFd, (int) destFd, (off_t) srcOffset, 0, (size_t) length);
+    return (jlong) copyData0((int) srcFd, (int) destFd, (off_t) srcOffset, 0, (int64_t) length);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
         (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong dstOffset, jlong length) {
-    return (jlong) copyData0((int) srcFd, (int) destFd, (off_t) srcOffset, (off_t) dstOffset, (size_t) length);
+    return (jlong) copyData0((int) srcFd, (int) destFd, (off_t) srcOffset, (off_t) dstOffset, (int64_t) length);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0
