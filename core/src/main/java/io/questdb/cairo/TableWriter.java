@@ -186,7 +186,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
     private long noOpRowCount;
-    private DirectLongList o3ColumnTopSink;
+    private PagedDirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private int lastErrno;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
@@ -5376,12 +5376,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
                         // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
                         // then set first value to partition timestamp
-                        long colTopSinkIndex = (long) (pCount - 1) * (metadata.getColumnCount() + 1);
-                        long columnTopSinkAddress = colTopSinkIndex * Long.BYTES;
-                        long columnTopPartitionSinkAddr = o3ColumnTopSink.getAddress() + columnTopSinkAddress;
-                        assert columnTopPartitionSinkAddr + (columnCount + 1L) * Long.BYTES <= o3ColumnTopSink.getAddress() + o3ColumnTopSink.size() * Long.BYTES;
+                        long columnTopPartitionSinkAddr = o3ColumnTopSink.allocateBlock(metadata.getColumnCount() + 1);
+                        Vect.memset(columnTopPartitionSinkAddr, (long) (metadata.getColumnCount() + 1) * Long.BYTES, -1);
+                        Unsafe.getUnsafe().putLong(columnTopPartitionSinkAddr, partitionTimestamp);
 
-                        o3ColumnTopSink.set(colTopSinkIndex, partitionTimestamp);
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -6296,14 +6294,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void resizeColumnTopSink(long o3TimestampMin, long o3TimestampMax) {
-        long maxPartitionsAffected = (o3TimestampMax - o3TimestampMin) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy) + 2;
-        long size = maxPartitionsAffected * (metadata.getColumnCount() + 1);
         if (o3ColumnTopSink == null) {
-            o3ColumnTopSink = new DirectLongList(size, MemoryTag.NATIVE_O3);
+            o3ColumnTopSink = new PagedDirectLongList(MemoryTag.NATIVE_O3);
         }
-        o3ColumnTopSink.setCapacity(size);
-        o3ColumnTopSink.setPos(size);
-        o3ColumnTopSink.zero(-1L);
+        o3ColumnTopSink.clear();
+        o3ColumnTopSink.setPageCapacity(Math.max(metadata.getColumnCount() + 1, 4096));
     }
 
     private void resizePartitionUpdateSink(long o3TimestampMin, long o3TimestampMax) {
@@ -6673,11 +6668,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int columnCount = metadata.getColumnCount();
         int increment = columnCount + 1;
 
-        for (int partitionOffset = 0, n = (int) o3ColumnTopSink.size(); partitionOffset < n; partitionOffset += increment) {
-            long partitionTimestamp = o3ColumnTopSink.get(partitionOffset);
+        long blockIndex = -1;
+
+        while ((blockIndex = o3ColumnTopSink.nextBlockIndex(blockIndex, increment)) > -1L) {
+            long blockAddress = o3ColumnTopSink.getIndexAddress(blockIndex);
+            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+
             if (partitionTimestamp > -1) {
+                blockAddress += Long.BYTES;
                 for (int column = 0; column < columnCount; column++) {
-                    long colTop = o3ColumnTopSink.get(partitionOffset + column + 1);
+
+                    long colTop = Unsafe.getUnsafe().getLong(blockAddress);
+                    blockAddress += Long.BYTES;
                     if (colTop > -1L) {
                         // Upsert even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.

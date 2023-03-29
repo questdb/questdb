@@ -1294,6 +1294,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         int dstFixFd = 0;
         long dstFixAddr = 0;
         long srcDataTopOffset;
+        long dstIndexAdjust;
         long dstFixSize = 0;
         int dstKFd = 0;
         int dstVFd = 0;
@@ -1346,6 +1347,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             srcDataTopOffset = srcDataTop << shl;
+            dstIndexAdjust = srcDataTopOffset >> 2;
 
             dFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
@@ -1365,6 +1367,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Split partition.
                 dstFixAppendOffset1 = 0;
                 prefixHi -= srcDataTop;
+                dstIndexAdjust = 0;
             } else {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
             }
@@ -1472,7 +1475,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 newPartitionSize,
                 oldPartitionSize,
                 tableWriter,
-                indexWriter
+                indexWriter,
+                dstIndexAdjust
         );
     }
 
@@ -2180,7 +2184,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 newPartitionSize,
                 oldPartitionSize,
                 tableWriter,
-                null
+                null,
+                srcDataTopOffset >> 2
         );
     }
 
@@ -2694,7 +2699,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long newPartitionSize,
             long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long dstIndexAdjust
     ) {
         final boolean partitionMutates = true;
         switch (prefixType) {
@@ -2742,7 +2748,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2798,7 +2804,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2831,7 +2837,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataVarAddr,
                         srcDataVarOffset,
                         srcDataVarSize,
-                        0, 0, srcDataTopOffset,
+                        0,
+                        0,
+                        srcDataTopOffset,
                         srcDataMax,
                         srcOooFixAddr,
                         srcOooVarAddr,
@@ -2857,7 +2865,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2913,7 +2921,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2969,7 +2977,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -3030,7 +3038,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -3086,7 +3094,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        srcDataTopOffset >> 2,
+                        dstIndexAdjust,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,

@@ -62,7 +62,7 @@ public class AbstractO3Test {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static int dataAppendPageSize = -1;
     protected static int o3MemMaxPages = -1;
-    protected static int partitionO3SplitThreshold = -1;
+    protected static long partitionO3SplitThreshold = -1;
     protected static CharSequence root;
     @Rule
     public Timeout timeout = Timeout.builder()

@@ -63,6 +63,69 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         });
     }
 
+    @Test
+    public void testDoubleSplitSamePartitionAtSameTransaction() throws Exception {
+        executeWithPool(workerCount,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+
+                    compiler.compile(
+                            "create table y as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table zz as (select * from x union all select * from y union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from y", executionContext);
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    String limit = " limit 2090, 2110";
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            executionContext,
+                            "zz order by ts" + limit,
+                            "x" + limit,
+                            LOG
+                    );
+                });
+    }
+
     @Before
     public void setUp4() {
         partitionO3SplitThreshold = 1000;
@@ -89,6 +152,112 @@ public class O3SplitPartitionTest extends AbstractO3Test {
             System.err.println(tstData);
             System.err.flush();
         }
+    }
+
+    @Test
+    public void testRebuildIndexLastPartitionWithColumnTop() throws Exception {
+        executeWithPool(workerCount, (engine, compiler, sqlExecutionContext) -> {
+            partitionO3SplitThreshold = 5;
+
+            compiler.compile(
+                    "CREATE TABLE monthly_col_top(" +
+                            "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
+                            ") timestamp(ts) partition by MONTH",
+                    sqlExecutionContext);
+
+            compiler.compile(
+                    "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
+                            "('2022-06-08T01:40:00.000000Z', '1', 'true', '2')," +
+                            "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
+                            "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
+                            "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
+                    sqlExecutionContext).execute(null).await();
+
+            compiler.compile("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
+                    .execute(null).await();
+
+            compiler.compile("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
+                            "('2022-06-08T02:50:00.000000Z', '5', '3')," +
+                            "('2022-06-08T02:50:00.000000Z', '6', '3')," +
+                            "('2022-06-08T02:50:00.000000Z', '7', '1')," +
+                            "('2022-06-08T02:50:00.000000Z', '8', '1')," +
+                            "('2022-06-08T02:50:00.000000Z', '9', '2')," +
+                            "('2022-06-08T02:50:00.000000Z', '10', '2')," +
+                            "('2022-06-08T03:50:00.000000Z', '11', '2')," +
+                            "('2022-06-08T03:50:00.000000Z', '12', '2')," +
+                            "('2022-06-08T04:50:00.000000Z', '13', '2')," +
+                            "('2022-06-08T04:50:00.000000Z', '14', '2')",
+                    sqlExecutionContext).execute(null).await();
+
+            // OOO in the middle
+            compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                            "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
+                            "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
+                    sqlExecutionContext).execute(null).await();
+
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
+                    "ts\tmetric\tloggerChannel\n" +
+                            "2022-06-08T01:40:00.000000Z\t1\t\n" +
+                            "2022-06-08T02:41:00.000000Z\t2\t\n" +
+                            "2022-06-08T02:42:00.000000Z\t3\t\n" +
+                            "2022-06-08T02:43:00.000000Z\t4\t\n" +
+                            "2022-06-08T02:50:00.000000Z\t5\t3\n" +
+                            "2022-06-08T02:50:00.000000Z\t6\t3\n" +
+                            "2022-06-08T02:50:00.000000Z\t7\t1\n" +
+                            "2022-06-08T02:50:00.000000Z\t8\t1\n" +
+                            "2022-06-08T02:50:00.000000Z\t9\t2\n" +
+                            "2022-06-08T02:50:00.000000Z\t10\t2\n" +
+                            "2022-06-08T03:30:00.000000Z\t15\t3\n" +
+                            "2022-06-08T03:30:00.000000Z\t16\t3\n" +
+                            "2022-06-08T03:50:00.000000Z\t11\t2\n" +
+                            "2022-06-08T03:50:00.000000Z\t12\t2\n" +
+                            "2022-06-08T04:50:00.000000Z\t13\t2\n" +
+                            "2022-06-08T04:50:00.000000Z\t14\t2\n");
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
+                    "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                            "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
+                            "2022-06-08T02:50:00.000000Z\t10\t\t\t2\n" +
+                            "2022-06-08T03:50:00.000000Z\t11\t\t\t2\n" +
+                            "2022-06-08T03:50:00.000000Z\t12\t\t\t2\n" +
+                            "2022-06-08T04:50:00.000000Z\t13\t\t\t2\n" +
+                            "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n");
+
+            // OOO appends to last partition
+            compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                            "('2022-06-08T05:30:00.000000Z', '17', '4', '3')," +
+                            "('2022-06-08T04:50:00.000000Z', '18', '4', '3')",
+                    sqlExecutionContext).execute(null).await();
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                    "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                            "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                            "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
+                            "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                            "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
+                            "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
+                            "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n");
+
+            // OOO merges and appends to last partition
+            compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                            "('2022-06-08T05:30:00.000000Z', '19', '4', '3')," +
+                            "('2022-06-08T02:50:00.000000Z', '20', '4', '3')," +
+                            "('2022-06-08T02:50:00.000000Z', '21', '4', '3')",
+                    sqlExecutionContext).execute(null).await();
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                    "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                            "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                            "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
+                            "2022-06-08T02:50:00.000000Z\t20\t\t4\t3\n" +
+                            "2022-06-08T02:50:00.000000Z\t21\t\t4\t3\n" +
+                            "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                            "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
+                            "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
+                            "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n" +
+                            "2022-06-08T05:30:00.000000Z\t19\t\t4\t3\n");
+        });
     }
 
     @Test
@@ -374,69 +543,6 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
                                     " timestamp_sequence('2020-02-05T17:01:07', 60*1000000L) ts," +
-                                    " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
-                                    " from long_sequence(1000))",
-                            executionContext
-                    );
-
-                    compiler.compile(
-                            "create table zz as (select * from x union all select * from y union all select * from z)",
-                            executionContext
-                    );
-
-                    compiler.compile("insert into x select * from y", executionContext);
-                    compiler.compile("insert into x select * from z", executionContext);
-
-                    String limit = "";
-                    TestUtils.assertSqlCursors(
-                            compiler,
-                            executionContext,
-                            "zz order by ts" + limit,
-                            "x" + limit,
-                            LOG
-                    );
-                });
-    }
-
-    @Test
-    public void testDoubleSplitSamePartitionAtSameTransaction() throws Exception {
-        executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
-                    compiler.compile(
-                            "create table x as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " -x j," +
-                                    " rnd_str(5,16,2) as str," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
-                                    " from long_sequence(60*24*2+300)" +
-                                    ") timestamp (ts) partition by DAY",
-                            executionContext
-                    );
-                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
-
-                    compiler.compile(
-                            "create table y as (" +
-                                    "select" +
-                                    " cast(x as int) * 1000000 i," +
-                                    " -x - 1000000L as j," +
-                                    " rnd_str(5,16,2) as str," +
-                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
-                                    " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
-                                    " from long_sequence(1000))",
-                            executionContext
-                    );
-
-                    compiler.compile(
-                            "create table z as (" +
-                                    "select" +
-                                    " cast(x as int) * 1000000 i," +
-                                    " -x - 1000000L as j," +
-                                    " rnd_str(5,16,2) as str," +
-                                    " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks" +
                                     " from long_sequence(1000))",
