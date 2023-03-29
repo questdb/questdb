@@ -284,7 +284,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         return -1;
     }
 
-    int result = copyData0(input, output, 0, -1);
+    int result = copyData0(input, output, 0, 0, -1);
     close(input);
     close(output);
 
