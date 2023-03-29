@@ -299,6 +299,15 @@ public class AsOfJoinTest extends AbstractGriffinTest {
 
     @Test
     public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws Exception {
+        testFullJoinDoesNotConvertSymbolKeyToString("lt join");
+    }
+
+    @Test
+    public void testFullAsOfJoinDoesNotConvertSymbolKeyToString() throws Exception {
+        testFullJoinDoesNotConvertSymbolKeyToString("asof join");
+    }
+
+    private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {
         assertMemoryLeak(() -> {
             compiler.setFullFatJoins(true);
             compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
@@ -312,16 +321,16 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "('ABC', '2021-01-01T00:00:00.000000Z', 'bar')"
             );
 
-            String query = "select sym_a, sym_b from tab_a a lt join tab_b b on sym_a = sym_b";
+            String query = "select sym_a, sym_b from tab_a a " + joinType + " tab_b b on sym_a = sym_b";
             try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     io.questdb.cairo.sql.Record record = cursor.getRecord();
                     RecordMetadata metadata = factory.getMetadata();
                     Assert.assertTrue(cursor.hasNext());
-                    CharSequence sym0 = record.getSym(0);
-                    CharSequence sym1 = record.getSym(1);
                     Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
                     Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
+                    CharSequence sym0 = record.getSym(0);
+                    CharSequence sym1 = record.getSym(1);
                     TestUtils.assertEquals("ABC", sym0);
                     TestUtils.assertEquals("ABC", sym1);
                     Assert.assertFalse(cursor.hasNext());
