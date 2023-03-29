@@ -209,11 +209,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractTest.tearDownStatic();
         forEachNode(QuestDBTestNode::closeCairo);
         nodes.clear();
         backupDir = null;
         backupDirTimestampFormat = null;
+        AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 

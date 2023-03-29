@@ -35,7 +35,7 @@ public class AbstractTest {
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    protected static CharSequence root;
+    protected static String root;
     @Rule
     public TestName testName = new TestName();
 
@@ -45,7 +45,7 @@ public class AbstractTest {
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
-        LOG.info().$("begin").$();
+        LOG.info().$("setup logger").$();
         root = temp.newFolder("dbroot").getAbsolutePath();
     }
 
@@ -61,6 +61,7 @@ public class AbstractTest {
     }
 
 
+    @After
     public void tearDown() throws Exception{
         TestUtils.removeTestPath(root);
     }

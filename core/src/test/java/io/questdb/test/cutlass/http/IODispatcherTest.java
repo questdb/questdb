@@ -29,7 +29,6 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
@@ -52,18 +51,19 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
-import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.io.InputStream;
@@ -77,7 +77,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class IODispatcherTest {
+public class IODispatcherTest extends AbstractTest {
     public static final String JSON_DDL_RESPONSE = "0c\r\n" +
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
@@ -113,8 +113,6 @@ public class IODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -889,7 +887,7 @@ public class IODispatcherTest {
 
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
@@ -966,7 +964,7 @@ public class IODispatcherTest {
 
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
@@ -1126,7 +1124,7 @@ public class IODispatcherTest {
             HttpQueryTestBuilder.HttpClientCode createTable
     ) throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -1464,7 +1462,7 @@ public class IODispatcherTest {
     public void testImportEpochTimestamp() throws Exception {
 
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -1690,7 +1688,7 @@ public class IODispatcherTest {
     @Test
     public void testImportGeoHashesForExistingTable() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -1774,7 +1772,7 @@ public class IODispatcherTest {
     @Test
     public void testImportGeoHashesForNewTable() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -2000,7 +1998,7 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
@@ -2548,7 +2546,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -3145,7 +3143,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQueryDataError() throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
@@ -3251,7 +3249,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -3728,7 +3726,7 @@ public class IODispatcherTest {
                 }
         };
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(threadCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -3987,8 +3985,8 @@ public class IODispatcherTest {
                         "\r\n"
         );
 
-        TestUtils.removeTestPath(temp.getRoot().getAbsolutePath());
-        TestUtils.createTestPath(temp.getRoot().getAbsolutePath());
+        TestUtils.removeTestPath(root);
+        TestUtils.createTestPath(root);
 
         // quote large numbers (LONG) to string, on param 'quoteLargeNum=true'
         testJsonQuery(
@@ -4016,8 +4014,8 @@ public class IODispatcherTest {
                         "\r\n"
         );
 
-        TestUtils.removeTestPath(temp.getRoot().getAbsolutePath());
-        TestUtils.createTestPath(temp.getRoot().getAbsolutePath());
+        TestUtils.removeTestPath(root);
+        TestUtils.createTestPath(root);
 
         // quote large numbers (LONG) for questdb web console
         testJsonQuery(
@@ -4464,7 +4462,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQuerySyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
@@ -4552,7 +4550,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQueryTimeout() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -4584,7 +4582,7 @@ public class IODispatcherTest {
         final int timeout = 200;
         final int iterations = 3;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -4755,7 +4753,7 @@ public class IODispatcherTest {
         Zip.init();
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -4831,7 +4829,7 @@ public class IODispatcherTest {
         Zip.init();
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -4908,7 +4906,7 @@ public class IODispatcherTest {
     public void testJsonQueryWithInterruption() throws Exception {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final int tableRowCount = 3_000_000;
 
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
@@ -5504,7 +5502,7 @@ public class IODispatcherTest {
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
                 .withTelemetry(false)
@@ -5537,7 +5535,7 @@ public class IODispatcherTest {
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -5589,7 +5587,7 @@ public class IODispatcherTest {
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -5620,7 +5618,7 @@ public class IODispatcherTest {
     @Test
     public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -5636,7 +5634,7 @@ public class IODispatcherTest {
     @Test
     public void testQueryWithDoubleQuotesParsedCorrectly() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -5666,7 +5664,7 @@ public class IODispatcherTest {
     @Test
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
@@ -5821,7 +5819,7 @@ public class IODispatcherTest {
     @Test
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
@@ -5966,7 +5964,7 @@ public class IODispatcherTest {
     @Test
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = root;
             final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
                     NetworkFacadeImpl.INSTANCE,
@@ -6654,7 +6652,7 @@ public class IODispatcherTest {
     @Test
     public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
                 .withTelemetry(false)
@@ -6716,7 +6714,7 @@ public class IODispatcherTest {
     @Test
     public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -6780,7 +6778,7 @@ public class IODispatcherTest {
     @Test
     public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -6824,7 +6822,7 @@ public class IODispatcherTest {
     public void testTextQueryCopyFrom() throws Exception {
         String copyInputRoot = TestUtils.getCsvRoot();
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withCopyInputRoot(copyInputRoot)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
                 .withWorkerCount(1)
@@ -6991,7 +6989,7 @@ public class IODispatcherTest {
     @Test
     public void testTextQueryInsertViaWrongEndpoint() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -7140,7 +7138,7 @@ public class IODispatcherTest {
     @Test
     public void testTextQueryShowColumnsOnDroppedTable() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .run((engine) -> {
@@ -7269,7 +7267,7 @@ public class IODispatcherTest {
     @Test
     public void testTextQueryTimeout() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -7302,7 +7300,7 @@ public class IODispatcherTest {
         final int timeout = 200;
         final int iterations = 3;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -7727,7 +7725,7 @@ public class IODispatcherTest {
     }
 
     private void assertColumn(CharSequence expected, int index) {
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
@@ -7752,7 +7750,7 @@ public class IODispatcherTest {
             String expectedData,
             boolean mangleTableDirNames
     ) {
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
@@ -7833,7 +7831,7 @@ public class IODispatcherTest {
             int expectedMaxUncommittedRows
     ) throws Exception {
         final AtomicInteger msyncCallCount = new AtomicInteger();
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -8008,7 +8006,7 @@ public class IODispatcherTest {
 
     private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -8056,7 +8054,7 @@ public class IODispatcherTest {
                         .withSendBufferSize(16 * 1024)
                         .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
                 )
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .run(engine -> {
                     try (
                             SqlCompiler compiler = new SqlCompiler(engine);
@@ -8113,7 +8111,7 @@ public class IODispatcherTest {
         HttpQueryTestBuilder builder = new HttpQueryTestBuilder()
                 .withWorkerCount(workerCount)
                 .withTelemetry(telemetry)
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withJitMode(SqlJitMode.JIT_MODE_ENABLED)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                         .withServerKeepAlive(!http1)

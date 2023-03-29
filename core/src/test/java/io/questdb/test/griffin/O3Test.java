@@ -32,11 +32,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -45,11 +42,11 @@ import io.questdb.std.str.Path;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
-import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -59,11 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3Test extends AbstractO3Test {
-    private static final Log LOG = LogFactory.getLog(O3Test.class);
-
     private final StringBuilder tstData = new StringBuilder();
-    @Rule
-    public TestName name = new TestName();
 
     @Before
     public void setUp4() {
@@ -75,7 +68,7 @@ public class O3Test extends AbstractO3Test {
         int count = Vect.getPerformanceCountersCount();
         if (count > 0) {
             tstData.setLength(0);
-            tstData.append(name.getMethodName()).append(",");
+            tstData.append(testName.getMethodName()).append(",");
             long total = 0;
             for (int i = 0; i < count; i++) {
                 long val = Vect.getPerformanceCounter(i);
@@ -916,7 +909,7 @@ public class O3Test extends AbstractO3Test {
                     int records = Integer.MAX_VALUE / len + 5;
 
                     // String
-                    String tableName = name.getMethodName();
+                    String tableName = testName.getMethodName();
                     compiler.compile("create table " + tableName + " as ( " +
                             "select " +
                             "'" + strColVal + "' as str, " +

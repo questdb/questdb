@@ -165,7 +165,6 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractCairoTest.tearDownStatic();
         reader.close();
         noTimestampReader.close();
         unindexedReader.close();
@@ -173,7 +172,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
         nonEmptyReader.close();
         compiler.close();
         sqlExecutionContext.close();
-        TestUtils.removeTestPath(root);
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override

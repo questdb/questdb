@@ -33,22 +33,19 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class O3MaxLagTest extends AbstractO3Test {
-    private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
     private RecordToRowCopier copier;
 
     @Before

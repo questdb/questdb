@@ -69,11 +69,10 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractCairoTest.tearDownStatic();
         reader.close();
         compiler.close();
         sqlExecutionContext.close();
-        TestUtils.removeTestPath(root);
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override
