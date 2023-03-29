@@ -158,9 +158,28 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int tableCount = Math.max(2, rnd.nextInt(3));
+        int tableCount = Math.max(2, rnd.nextInt(4));
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         fullRandomFuzz(rnd, tableCount);
+    }
+
+    @Test
+    public void testWalWriteManySmallTransactions() throws Exception {
+        configOverrideO3QuickSortEnabled(true);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
+        setFuzzCounts(
+                true,
+                1000,
+                800,
+                10,
+                10,
+                10,
+                50,
+                1
+        );
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        runFuzz(rnd, testName.getMethodName(), 1, false, false);
     }
 
     @Test
@@ -678,7 +697,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                             rnd.nextDouble(),
                             rnd.nextDouble(),
                             rnd.nextDouble(),
-                            0.1 * rnd.nextDouble());
+                            0.1 * rnd.nextDouble()
+                    );
                 }
                 if (randomiseCounts) {
                     setFuzzCounts(
