@@ -46,7 +46,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     private int iteration;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         columnVersionPurgeQueueCapacity = 2;
         AbstractGriffinTest.setUpStatic();
     }

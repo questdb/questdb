@@ -45,14 +45,13 @@ import org.junit.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecoverVarIndexTest extends AbstractCairoTest {
-    protected static CharSequence root;
     private static SqlCompiler compiler;
     private static SqlExecutionContext sqlExecutionContext;
     private final RecoverVarIndex rebuildVarColumn = new RecoverVarIndex();
     TableWriter tempWriter;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(configuration));

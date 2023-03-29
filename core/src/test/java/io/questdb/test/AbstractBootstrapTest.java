@@ -30,27 +30,21 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.std.Files;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-import org.junit.rules.TestName;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-public abstract class AbstractBootstrapTest {
-
-    @ClassRule
-    public static final TemporaryFolder temp = new TemporaryFolder();
+public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final int HTTP_MIN_PORT = 9011;
     protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
@@ -59,11 +53,7 @@ public abstract class AbstractBootstrapTest {
     protected static final int PG_PORT = 8822;
     protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     private static final File siteDir = new File(Objects.requireNonNull(ServerMain.class.getResource("/io/questdb/site/")).getFile());
-    protected static CharSequence root;
     private static boolean publicZipStubCreated = false;
-
-    @Rule
-    public TestName testName = new TestName();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -79,11 +69,7 @@ public abstract class AbstractBootstrapTest {
             }
             publicZipStubCreated = true;
         }
-        try {
-            root = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
+        AbstractTest.setUpStatic();
     }
 
     @AfterClass
@@ -94,9 +80,7 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
-        Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
-        temp.delete();
+        AbstractTest.tearDownStatic();
     }
 
     protected static void createDummyConfiguration(

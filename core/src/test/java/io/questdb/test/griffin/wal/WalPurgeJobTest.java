@@ -38,6 +38,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -837,17 +838,14 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     private static void addColumnAndRow(WalWriter writer, String columnName) {
-        TableWriter.Row row;
-        try {
+        TestUtils.unchecked(() -> {
             addColumn(writer, columnName);
-            row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+            TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
             row.putLong(0, 2);
             row.putInt(2, 2);
             row.append();
             writer.commit();
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     static void addColumn(WalWriter writer, String columnName) {

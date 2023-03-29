@@ -34,7 +34,7 @@ import org.junit.Test;
 @SuppressWarnings("SameParameterValue")
 public class WalTelemetryTest extends AbstractGriffinTest {
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         walTxnNotificationQueueCapacity = 8;
         AbstractGriffinTest.setUpStatic();
     }

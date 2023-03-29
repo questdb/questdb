@@ -264,7 +264,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         node1.initGriffin(circuitBreaker);
         compiler = node1.getSqlCompiler();
@@ -273,7 +273,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         AbstractCairoTest.tearDownStatic();
         forEachNode(QuestDBTestNode::closeGriffin);
         circuitBreaker = null;
@@ -289,7 +289,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     @Override
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception{
         super.tearDown();
         forEachNode(QuestDBTestNode::tearDownGriffin);
     }

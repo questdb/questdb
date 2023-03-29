@@ -70,7 +70,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
 
         // same as x but with different number of values in symbol maps
@@ -164,7 +164,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         AbstractCairoTest.tearDownStatic();
         reader.close();
         noTimestampReader.close();

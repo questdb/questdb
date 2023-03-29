@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
@@ -36,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -2826,12 +2826,10 @@ public class WalWriterTest extends AbstractGriffinTest {
             public long length(int fd) {
                 long len = super.length(fd);
                 if (fd == eventFileFd && evenFileLengthCallBack.get() != null) {
-                    try {
+                    TestUtils.unchecked(() -> {
                         evenFileLengthCallBack.get().run();
                         evenFileLengthCallBack.set(null);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
+                    });
                 }
                 return len;
             }
@@ -2840,12 +2838,10 @@ public class WalWriterTest extends AbstractGriffinTest {
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == eventFileFd) {
                     if (evenFileLengthCallBack.get() != null) {
-                        try {
+                        TestUtils.unchecked(() -> {
                             evenFileLengthCallBack.get().run();
                             evenFileLengthCallBack.set(null);
-                        } catch (Exception e) {
-                            throw new RuntimeException(e);
-                        }
+                        });
                     }
 
                     // Windows does not allow to map beyond file length

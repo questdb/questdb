@@ -802,7 +802,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "REFRIGERATOR", tableToken -> {
-                        try {
+                        TestUtils.unchecked(() -> {
                             executeOperation("ALTER TABLE " + tableName + " DROP COLUMN s", CompiledQuery.ALTER);
 
                             // this lad silently fails..... because the partition is read only
@@ -819,9 +819,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
                                             "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
                             );
-                        } catch (SqlException e) {
-                            throw new RuntimeException(e);
-                        }
+                        });
 
                         // check that the column files still exist within the partition folder (attached from soft link)
                         final int pathLen = path.length();
@@ -863,7 +861,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
-                        try {
+                        TestUtils.unchecked(() -> {
                             executeOperation("ALTER TABLE " + tableName + " DROP COLUMN s", CompiledQuery.ALTER);
 
                             // silently ignored as the partition is read only
@@ -879,9 +877,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
                                             "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
                             );
-                        } catch (SqlException e) {
-                            throw new RuntimeException(e);
-                        }
+                        });
                         return null;
                     }
             );

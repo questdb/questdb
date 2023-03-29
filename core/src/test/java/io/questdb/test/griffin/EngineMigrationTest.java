@@ -79,7 +79,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
         configOverrideMangleTableDirNames(false);
     }

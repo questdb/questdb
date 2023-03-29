@@ -56,7 +56,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 @SuppressWarnings("SameParameterValue")
 public class WalTableSqlTest extends AbstractGriffinTest {
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         walTxnNotificationQueueCapacity = 8;
         AbstractGriffinTest.setUpStatic();
     }
@@ -829,11 +829,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
-                    try {
-                        compile("drop table " + tableName);
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
-                    }
+                    TestUtils.unchecked(() -> compile("drop table " + tableName));
                 }
                 return super.openRO(name);
             }
@@ -1051,11 +1047,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "2022-02-25") && i++ == 0) {
-                    try {
-                        compile("drop table " + newTableName);
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
-                    }
+                    TestUtils.unchecked(() -> compile("drop table " + newTableName));
                 }
                 return fd;
             }
@@ -1282,12 +1274,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    private void runApplyOnce() {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
-            walApplyJob.run(0);
-        }
-    }
-
     @Test
     public void testVarSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
@@ -1405,6 +1391,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(SEQ_DIR);
         Assert.assertFalse(Chars.toString(sysPath), Files.exists(sysPath.$()));
+    }
+
+    private void runApplyOnce() {
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.run(0);
+        }
     }
 
     private void testCreateDropRestartRestart0() throws Exception {

@@ -109,7 +109,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -145,7 +145,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -185,7 +185,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -226,7 +226,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             // create table with some data
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -273,7 +273,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
             // check content of table after sym-linking it
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine = qdb.getCairoEngine();
@@ -300,7 +300,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
                     SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
             ) {
@@ -363,7 +363,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -392,7 +392,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new TestServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -420,7 +420,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();
@@ -459,7 +459,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
                 CairoEngine engine1 = qdb.getCairoEngine();

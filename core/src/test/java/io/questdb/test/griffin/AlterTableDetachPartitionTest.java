@@ -62,13 +62,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractAlterTableAttachPartitionTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         purgeJob = Misc.free(purgeJob);
         AbstractAlterTableAttachPartitionTest.tearDownStatic();
     }
@@ -955,6 +955,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             CyclicBarrier start = new CyclicBarrier(2);
             CountDownLatch end = new CountDownLatch(2);
             AtomicBoolean isLive = new AtomicBoolean(true);
+            AtomicInteger failureCounter = new AtomicInteger();
             Set<Long> detachedPartitionTimestamps = new ConcurrentSkipListSet<>();
             AtomicInteger detachedCount = new AtomicInteger();
             AtomicInteger attachedCount = new AtomicInteger();
@@ -962,23 +963,23 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             Thread detThread = new Thread(() -> {
                 try {
-                    start.await();
-                    while (isLive.get()) {
-                        try (TableWriter writer = getWriter(tableName)) {
-                            long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
-                            if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
-                                writer.detachPartition(partitionTimestamp);
-                                detachedCount.incrementAndGet();
-                                detachedPartitionTimestamps.add(partitionTimestamp);
+                    TestUtils.unchecked(() -> {
+                        start.await();
+                        while (isLive.get()) {
+                            try (TableWriter writer = getWriter(tableName)) {
+                                long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
+                                if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
+                                    writer.detachPartition(partitionTimestamp);
+                                    detachedCount.incrementAndGet();
+                                    detachedPartitionTimestamps.add(partitionTimestamp);
+                                }
+                            } catch (Throwable e) {
+                                exceptions.add(e);
+                                LOG.error().$(e).$();
                             }
-                        } catch (Throwable e) {
-                            exceptions.add(e);
-                            LOG.error().$(e).$();
+                            TimeUnit.MILLISECONDS.sleep(rnd.nextLong(15L));
                         }
-                        TimeUnit.MILLISECONDS.sleep(rnd.nextLong(15L));
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    }, failureCounter);
                 } finally {
                     Path.clearThreadLocals();
                     end.countDown();
@@ -988,40 +989,34 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             Thread attThread = new Thread(() -> {
                 try {
-                    start.await();
-                    while (isLive.get() || !detachedPartitionTimestamps.isEmpty()) {
-                        if (!detachedPartitionTimestamps.isEmpty()) {
-                            Iterator<Long> timestamps = detachedPartitionTimestamps.iterator();
-                            if (timestamps.hasNext()) {
-                                long partitionTimestamp = timestamps.next();
-                                try (TableWriter writer = getWriter(tableName)) {
-                                    renameDetachedToAttachable(tableName, partitionTimestamp);
-                                    writer.attachPartition(partitionTimestamp);
-                                    timestamps.remove();
-                                    attachedCount.incrementAndGet();
-                                } catch (Throwable e) {
-                                    exceptions.add(e);
-                                    TimeUnit.MILLISECONDS.sleep(rnd.nextLong(11L));
-                                    LOG.error().$(e).$();
+                    TestUtils.unchecked(() -> {
+                        start.await();
+                        while (isLive.get() || !detachedPartitionTimestamps.isEmpty()) {
+                            if (!detachedPartitionTimestamps.isEmpty()) {
+                                Iterator<Long> timestamps = detachedPartitionTimestamps.iterator();
+                                if (timestamps.hasNext()) {
+                                    long partitionTimestamp = timestamps.next();
+                                    try (TableWriter writer = getWriter(tableName)) {
+                                        renameDetachedToAttachable(tableName, partitionTimestamp);
+                                        writer.attachPartition(partitionTimestamp);
+                                        timestamps.remove();
+                                        attachedCount.incrementAndGet();
+                                    } catch (Throwable e) {
+                                        exceptions.add(e);
+                                        TimeUnit.MILLISECONDS.sleep(rnd.nextLong(11L));
+                                        LOG.error().$(e).$();
+                                    }
                                 }
                             }
+                            TimeUnit.MILLISECONDS.sleep(rnd.nextLong(10L));
                         }
-                        TimeUnit.MILLISECONDS.sleep(rnd.nextLong(10L));
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    }, failureCounter);
                 } finally {
                     Path.clearThreadLocals();
                     end.countDown();
                 }
             });
             attThread.start();
-
-            // give it 2 seconds
-            long deadline = System.currentTimeMillis() + 2000;
-            while (System.currentTimeMillis() < deadline) {
-                TimeUnit.MILLISECONDS.sleep(300L);
-            }
             isLive.set(false);
             end.await();
             for (int i = 0, limit = exceptions.size(); i < limit; i++) {

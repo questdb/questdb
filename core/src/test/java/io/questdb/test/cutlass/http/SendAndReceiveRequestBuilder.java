@@ -33,7 +33,6 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.concurrent.BrokenBarrierException;
 
@@ -181,7 +180,6 @@ public class SendAndReceiveRequestBuilder {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
-        String actual = new String(receivedBytes, Files.UTF_8);
         if (!printOnly) {
             if (expectedResponse instanceof ByteSequence) {
                 Assert.assertEquals(expectedResponse.length(), receivedBytes.length);
@@ -189,6 +187,7 @@ public class SendAndReceiveRequestBuilder {
                     Assert.assertEquals(receivedBytes[n], ((ByteSequence) expectedResponse).byteAt(n));
                 }
             } else {
+                String actual = new String(receivedBytes, Files.UTF_8);
                 String expected = expectedResponse.toString();
                 if (compareLength > 0) {
                     expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
@@ -200,11 +199,7 @@ public class SendAndReceiveRequestBuilder {
                 }
             }
         } else {
-            try {
-                java.nio.file.Files.write(Paths.get("actual.txt"), actual.getBytes(Files.UTF_8));
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            TestUtils.unchecked(() -> java.nio.file.Files.write(Paths.get("actual.txt"), receivedBytes));
         }
 
         if (disconnected && !expectReceiveDisconnect && !expectSendDisconnect) {

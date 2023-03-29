@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
@@ -39,10 +38,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -67,7 +64,13 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
         path = new Path().of(root).concat("db").$();
-        try {
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> {
             int pathLen = path.length();
             Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
             Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
@@ -81,9 +84,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     // Set vector aggregate queue to a small size to have better chances of work stealing.
                     PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY.getPropertyPath() + "=2"
             );
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     @AfterClass
@@ -97,7 +98,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
@@ -119,7 +120,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain(TestUtils.getServerMainArgs(root));
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {

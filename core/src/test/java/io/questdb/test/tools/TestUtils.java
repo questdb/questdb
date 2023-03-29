@@ -24,8 +24,8 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Bootstrap;
 import io.questdb.Metrics;
-import io.questdb.test.QuestDBTestNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -46,6 +46,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.*;
+import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.cairo.LogRecordSinkAdapter;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
@@ -915,6 +916,12 @@ public final class TestUtils {
         return ts;
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
+    public static void drainCursor(RecordCursor cursor) {
+        while (cursor.hasNext()) {
+        }
+    }
+
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
         try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
             processingJob.drain(0);
@@ -1025,6 +1032,14 @@ public final class TestUtils {
                 }
                 return 0;
             }
+        };
+    }
+
+    public static String[] getServerMainArgs(CharSequence root) {
+        return new String[]{
+                "-d",
+                Chars.toString(root),
+                Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
         };
     }
 
@@ -1369,6 +1384,39 @@ public final class TestUtils {
         return ptr;
     }
 
+    public static void unchecked(CheckedRunnable runnable) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void unchecked(CheckedRunnable runnable, AtomicInteger failureCounter) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            failureCounter.incrementAndGet();
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static <T> T unchecked(CheckedSupplier<T> runnable) {
+        try {
+            return runnable.get();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static int unchecked(CheckedIntFunction runnable) {
+        try {
+            return runnable.get();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     // used in tests
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
@@ -1466,12 +1514,6 @@ public final class TestUtils {
         }
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
-    public static void drainCursor(RecordCursor cursor) {
-        while (cursor.hasNext()) {
-        }
-    }
-
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -1539,6 +1581,19 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong1()) + " " +
                 Long.toHexString(expected.getLong2()) + " " +
                 Long.toHexString(expected.getLong3());
+    }
+
+    public interface CheckedIntFunction {
+        int get() throws Throwable;
+    }
+
+    @FunctionalInterface
+    public interface CheckedRunnable {
+        void run() throws Throwable;
+    }
+
+    public interface CheckedSupplier<T> {
+        T get() throws Throwable;
     }
 
     @FunctionalInterface

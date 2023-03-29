@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -39,7 +38,6 @@ import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFacto
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -49,6 +47,8 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.NetUtils;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -132,7 +132,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
@@ -143,11 +143,6 @@ public class PGJobContextTest extends BasePGTest {
         datesArr = dates.collect(Collectors.toList());
     }
 
-    @AfterClass
-    public static void tearDownStatic() {
-        BasePGTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
@@ -155,7 +150,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
     }
@@ -8685,13 +8680,11 @@ create table tab as (
 
     @SuppressWarnings("unchecked")
     private List<Tuple> getRows(ResultSet rs) {
-        try {
+        return TestUtils.unchecked(() -> {
             Field field = PgResultSet.class.getDeclaredField("rows");
             field.setAccessible(true);
             return (List<Tuple>) field.get(rs);
-        } catch (IllegalAccessException | NoSuchFieldException e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {

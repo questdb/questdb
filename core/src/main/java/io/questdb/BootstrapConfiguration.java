@@ -22,17 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.http;
+package io.questdb;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import io.questdb.cairo.security.FactoriesFactory;
+import io.questdb.std.FilesFacade;
 
-public final class HttpUtils {
+import java.util.Map;
 
-    private HttpUtils() {
-    }
+public interface BootstrapConfiguration {
+    String getBanner();
 
-    public static String urlEncodeQuery(String query) {
-        return URLEncoder.encode(query, StandardCharsets.UTF_8);
-    }
+    Map<String, String> getEnv();
+
+    FactoriesFactory getFactoriesFactory();
+
+    FilesFacade getFilesFacade();
+
+    ServerConfiguration getServerConfiguration();
+
+    boolean useSite();
 }

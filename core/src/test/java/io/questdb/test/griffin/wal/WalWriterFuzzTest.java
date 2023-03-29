@@ -30,21 +30,24 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
+import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -90,7 +93,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private double truncateProb;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         walTxnNotificationQueueCapacity = 16;
         AbstractGriffinTest.setUpStatic();
     }
@@ -375,11 +378,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         applyThreads.add(purgeJobThread);
 
         for (int i = 0; i < threads.size(); i++) {
-            try {
-                threads.get(i).join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+            int k = i;
+            TestUtils.unchecked(() -> threads.get(k).join());
         }
 
         done.incrementAndGet();
@@ -390,11 +390,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
 
         for (int i = 0; i < applyThreads.size(); i++) {
-            try {
-                applyThreads.get(i).join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+            int k = i;
+            TestUtils.unchecked(() -> applyThreads.get(k).join());
         }
     }
 

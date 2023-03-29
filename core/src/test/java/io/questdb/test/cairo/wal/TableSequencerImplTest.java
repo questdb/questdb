@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class TableSequencerImplTest extends AbstractCairoTest {
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         recreateDistressedSequencerAttempts = Integer.MAX_VALUE;
         AbstractCairoTest.setUpStatic();
     }

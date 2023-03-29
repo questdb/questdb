@@ -24,36 +24,35 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.DefaultFactoriesFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.AlterTableSetTypeTest.NON_WAL;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRestartTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> createDummyConfiguration(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true"));
     }
 
     @Test
@@ -72,15 +71,13 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 }
             };
 
-            final Bootstrap bootstrap = new Bootstrap(
-                    null,
-                    System.getenv(),
-                    filesFacade,
-                    DefaultFactoriesFactory.INSTANCE,
-                    "-d",
-                    root.toString(),
-                    Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
-            );
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
             try (final ServerMain questdb = new TestServerMain(bootstrap)) {
                 questdb.start();
                 createTable(tableName, "WAL");
@@ -121,7 +118,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();

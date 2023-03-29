@@ -83,7 +83,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     private static int tablePathLen;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
         compiler2 = new SqlCompiler(engine, null, snapshotAgent);
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
@@ -93,9 +93,9 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         AbstractGriffinTest.tearDownStatic();
-        compiler2.close();
+        compiler2 = Misc.free(compiler2);
         path = Misc.free(path);
     }
 

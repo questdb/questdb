@@ -88,11 +88,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> createDummyConfiguration());
     }
 
     @Test

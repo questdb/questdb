@@ -42,21 +42,17 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(
-                    PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",            // WAL enabled
-                    PropertyKey.TABLE_TYPE_CONVERSION_ENABLED.getPropertyPath() + "=false"  // table type conversion is disabled
-            );
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",            // WAL enabled
+                PropertyKey.TABLE_TYPE_CONVERSION_ENABLED.getPropertyPath() + "=false"  // table type conversion is disabled
+        ));
     }
 
     @Test
     public void testSetTypeDisabled() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -81,7 +77,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();

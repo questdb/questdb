@@ -40,6 +40,7 @@ import io.questdb.std.Misc;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.ConfigurationOverrides;
 import io.questdb.test.tools.TestUtils;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
 
@@ -105,11 +106,11 @@ public class QuestDBTestNode {
         return griffin.sqlExecutionContext;
     }
 
-    public void initCairo(String dbRootName, ConfigurationOverrides overrides) {
+    public void initCairo(TemporaryFolder temp, String dbRootName, ConfigurationOverrides overrides) {
         if (dbRootName == null || dbRootName.isEmpty()) {
             throw new IllegalArgumentException("must specify dbRoot");
         }
-        cairo = new Cairo(dbRootName, overrides);
+        cairo = new Cairo(temp, dbRootName, overrides);
     }
 
     public void initGriffin() {
@@ -148,9 +149,9 @@ public class QuestDBTestNode {
         private CairoEngine engine;
         private DatabaseSnapshotAgent snapshotAgent;
 
-        private Cairo(String dbRootName, ConfigurationOverrides overrides) {
+        private Cairo(TemporaryFolder temp, String dbRootName, ConfigurationOverrides overrides) {
             try {
-                root = AbstractCairoTest.temp.newFolder(dbRootName).getAbsolutePath();
+                root = temp.newFolder(dbRootName).getAbsolutePath();
             } catch (IOException e) {
                 throw new ExceptionInInitializerError();
             }

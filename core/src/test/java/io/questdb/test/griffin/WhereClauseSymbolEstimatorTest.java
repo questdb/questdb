@@ -48,7 +48,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
@@ -68,7 +68,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         AbstractCairoTest.tearDownStatic();
         reader.close();
         compiler.close();

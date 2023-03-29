@@ -25,17 +25,14 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.ServerMain;
-import io.questdb.cairo.security.DefaultFactoriesFactory;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -45,34 +42,20 @@ import java.util.Map;
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
-    // log is needed to greedily allocate logger infra and
-    // exclude it from leak detector
-    @SuppressWarnings("unused")
-    private static final Log LOG = LogFactory.getLog(ServerMainTest.class);
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     @Before
     public void setUp() {
         try (Path path = new Path().of(root).concat("db")) {
             int plen = path.length();
             Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
             Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
+            TestUtils.unchecked(() -> createDummyConfiguration());
         }
     }
 
     @Test
     public void testServerMainNoReStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
                 serverMain.start(); // <== no effect
                 serverMain.close();
@@ -96,7 +79,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainNoStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain ignore = new ServerMain(getServerMainArgs())) {
                 Os.pause();
             }
         });
@@ -104,7 +87,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainPgWire() throws Exception {
-        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
             try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                 Os.pause();
@@ -115,7 +98,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 Assert.assertNotNull(serverMain.getConfiguration());
                 Assert.assertNotNull(serverMain.getCairoEngine());
                 Assert.assertNotNull(serverMain.getWorkerPoolManager());
@@ -131,7 +114,15 @@ public class ServerMainTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
             env.put("QDB_HTTP_ENABLED", "false");
-            Bootstrap bootstrap = new Bootstrap(null, env, null, DefaultFactoriesFactory.INSTANCE, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            Bootstrap bootstrap = new Bootstrap(
+                    new DefaultBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            return env;
+                        }
+                    },
+                    getServerMainArgs()
+            );
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 Assert.assertFalse(serverMain.getConfiguration().getHttpServerConfiguration().isEnabled());
                 serverMain.start();

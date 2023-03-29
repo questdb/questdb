@@ -55,7 +55,7 @@ public class SecurityTest extends AbstractGriffinTest {
     private static SqlExecutionContext readOnlyExecutionContext;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
         AbstractGriffinTest.setUpStatic();
         CairoConfiguration readOnlyConfiguration = new DefaultTestCairoConfiguration(root) {
@@ -174,14 +174,14 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         AbstractGriffinTest.tearDownStatic();
         Misc.free(memoryRestrictedCompiler);
         Misc.free(memoryRestrictedEngine);
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
         memoryRestrictedEngine.getTableIdGenerator().close();
         memoryRestrictedEngine.clear();

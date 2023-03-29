@@ -47,8 +47,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cairo.ConfigurationOverrides;
-import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -56,8 +54,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-import org.junit.rules.TestName;
 import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
 import org.junit.runner.Description;
@@ -65,7 +61,7 @@ import org.junit.runner.Description;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
-public abstract class AbstractCairoTest {
+public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
@@ -75,8 +71,6 @@ public abstract class AbstractCairoTest {
     public static long dataAppendPageSize = -1;
     public static int recreateDistressedSequencerAttempts = 3;
     public static long spinLockTimeout = -1;
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
     public static int walTxnNotificationQueueCapacity = -1;
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
@@ -99,13 +93,10 @@ public abstract class AbstractCairoTest {
     protected static int maxOpenPartitions = -1;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
-    protected static QuestDBTestNode node1;
-    protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int queryCacheEventQueueCapacity = -1;
-    protected static CharSequence root;
     protected static CairoSecurityContext securityContext;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String snapshotInstanceId = null;
@@ -122,8 +113,6 @@ public abstract class AbstractCairoTest {
             LogFactory.getInstance().flushJobs();
         }
     };
-    @Rule
-    public TestName testName = new TestName();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -191,15 +180,12 @@ public abstract class AbstractCairoTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
-        LOG.info().$("begin").$();
-
-        node1 = newNode(1, "dbRoot", new StaticOverrides());
-        root = node1.getRoot();
+        AbstractTest.setUpStatic();
         configuration = node1.getConfiguration();
         securityContext = configuration.getCairoSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
@@ -217,9 +203,8 @@ public abstract class AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
-        forEachNode(QuestDBTestNode::closeCairo);
-        nodes.clear();
+    public static void tearDownStatic() throws Exception {
+        AbstractTest.tearDownStatic();
         backupDir = null;
         backupDirTimestampFormat = null;
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
@@ -227,9 +212,8 @@ public abstract class AbstractCairoTest {
 
     @Before
     public void setUp() {
+        super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
-        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
@@ -237,15 +221,9 @@ public abstract class AbstractCairoTest {
         memoryUsage = -1;
     }
 
-    @After
-    public void tearDown() {
-        tearDown(true);
-    }
-
+    @Override
     public void tearDown(boolean removeDir) {
-        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        forEachNode(node -> node.tearDownCairo(removeDir));
-
+        super.tearDown(removeDir);
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         sink.clear();
         memoryUsage = -1;
@@ -432,12 +410,6 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void forEachNode(QuestDBNodeTask task) {
-        for (int i = 0; i < nodes.size(); i++) {
-            task.run(nodes.get(i));
-        }
-    }
-
     protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
         return engine.getReader(
                 engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
@@ -482,17 +454,6 @@ public abstract class AbstractCairoTest {
 
     protected static TableWriter getWriter(TableToken tt) {
         return engine.getWriter(securityContext, tt, "testing");
-    }
-
-    protected static QuestDBTestNode newNode(int nodeId) {
-        return newNode(nodeId, "dbRoot" + nodeId, new Overrides());
-    }
-
-    protected static QuestDBTestNode newNode(int nodeId, String dbRoot, ConfigurationOverrides overrides) {
-        final QuestDBTestNode node = new QuestDBTestNode(nodeId);
-        node.initCairo(dbRoot, overrides);
-        nodes.add(node);
-        return node;
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
