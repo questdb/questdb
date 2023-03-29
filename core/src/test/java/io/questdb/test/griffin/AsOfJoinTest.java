@@ -414,6 +414,43 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinOnSymbolWithSyntheticMasterSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.setFullFatJoins(true);
+
+            // create a master table - without a symbol column
+            compile("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
+
+            // create a slave table - with a symbol column, with timestamps 1 microsecond before master timestamps
+            compile("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
+
+            // use a CTE to amend the master table with a synthetic symbol column
+            String query = "with s as (\n" +
+                    "  select cast (s as symbol) synthetic_sym, ts\n" +
+                    "  from (\n" +
+                    "      SELECT\n" +
+                    "        CASE\n" +
+                    "          WHEN ts % 3 = 0 THEN 'A'\n" +
+                    "          WHEN ts % 3 = 1 THEN 'B'\n" +
+                    "          ELSE 'C'\n" +
+                    "        END as s, *\n" +
+                    "      FROM taba\n" +
+                    "    )\n" +
+                    "  )\n" +
+                    "select * from s\n" +
+                    "lt join tabb on (s.synthetic_sym = tabb.sym);";
+            String expected = "synthetic_sym\tts\tts1\tsym\n" +
+                    "A\t2019-10-17T00:00:00.000000Z\t2019-10-16T23:59:59.999999Z\tA\n" +
+                    "B\t2020-02-09T17:46:40.000000Z\t\t\n" +
+                    "C\t2020-06-04T11:33:20.000000Z\t\t\n" +
+                    "A\t2020-09-28T05:20:00.000000Z\t2020-02-09T17:46:39.999999Z\tA\n" +
+                    "B\t2021-01-21T23:06:40.000000Z\t2020-06-04T11:33:19.999999Z\tB\n";
+            assertQuery(expected, query, "ts", false, true);
+        });
+    }
+
+
+    @Test
     public void testLtJoinOnCompositeSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             compiler.setFullFatJoins(true);
