@@ -1037,7 +1037,7 @@ public class WalWriter implements TableWriterAPI {
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name),
-                    configuration.getDataAppendPageSize(),
+                    configuration.getWalDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -1049,7 +1049,7 @@ public class WalWriter implements TableWriterAPI {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
                 mem2.of(ff,
                         iFile(path.trimTo(pathTrimToLen), name),
-                        configuration.getDataAppendPageSize(),
+                        configuration.getWalDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
