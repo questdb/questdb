@@ -287,13 +287,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
-    private final double walSquashUncommittedRowsMultiplier;
     private final boolean walEnabledDefault;
     private final long walPurgeInterval;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
+    private final double walSquashUncommittedRowsMultiplier;
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
+    private final long walWriterDataAppendPageSize;
     private final long workStealTimeoutNanos;
     private final long writerAsyncCommandBusyWaitTimeout;
     private final long writerAsyncCommandMaxWaitTimeout;
@@ -474,6 +475,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
+        this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 20.0);
         this.walApplyTableTimeQuota = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
@@ -2272,8 +2274,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getWalSquashUncommittedRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
+        public long getWalDataAppendPageSize() {
+            return walWriterDataAppendPageSize;
         }
 
         @Override
@@ -2294,6 +2296,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverRowCount() {
             return walSegmentRolloverRowCount;
+        }
+
+        @Override
+        public double getWalSquashUncommittedRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
