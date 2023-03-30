@@ -64,6 +64,37 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
+        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+
+        // forecasts for 2020-05-05
+        compile("insert into forecasts values " +
+                "  ('2020-05-05', '2020-05-02', 40), " +
+                "  ('2020-05-05', '2020-05-03', 41), " +
+                "  ('2020-05-05', '2020-05-04', 42)"
+        );
+
+        // forecasts for 2020-05-06
+        compile("insert into forecasts values " +
+                "  ('2020-05-06', '2020-05-01', 140), " +
+                "  ('2020-05-06', '2020-05-03', 141), " +
+                "  ('2020-05-06', '2020-05-05', 142)"
+        );
+
+        // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
+        String query = "select when, version, temperature from forecasts latest on version partition by version";
+        String expected = "when\tversion\ttemperature\n" +
+                "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t41.0\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
+
+        assertQuery(expected, query, "version", true, true);
+    }
+
+
+    @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
         assertQuery("devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
                 "SELECT * FROM history_P4v\n" +
