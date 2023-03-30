@@ -72,7 +72,8 @@ stages:
                   "buildid": "$(Build.BuildId)",
                   "instancetype": "c6a.xlarge",
                   "ami": "ami-0cec1668c46870d65",
-                  "user": "ubuntu"
+                  "user": "ubuntu",
+                  "shutdownflag": "noshutdown"
                 }
               outputVariable: "functionResult2"
           - bash: |
