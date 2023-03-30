@@ -32,17 +32,17 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -5118,7 +5118,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "    select" +
                 "        rnd_byte(2,50) byte, " +
                 "        rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 2) date, " +
-                "        rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 2) timestamp, " +
                 "        rnd_float(2) float, " +
                 "        rnd_double(2) double, " +
                 "        rnd_geohash(5) gbyte, " +
@@ -5129,7 +5128,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, TIMESTAMP, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY";
         assertFailure(
                 "comprehensive latest on ts partition by byte",
                 createTableDDL,
@@ -5137,15 +5136,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "byte (BYTE): " + expectedTail);
         for (String[] nameType : new String[][]{
                 {"date", "DATE"},
-                {"timestamp", "TIMESTAMP"},
                 {"float", "FLOAT"},
                 {"double", "DOUBLE"},
                 {"gbyte", "GEOHASH(1c)"},
                 {"gshort", "GEOHASH(3c)"},
                 {"gint", "GEOHASH(6c)"},
                 {"glong", "GEOHASH(12c)"},
-                {"binary", "BINARY"},
-                {"ts", "TIMESTAMP"}}) {
+                {"binary", "BINARY"}}) {
             assertFailure(
                     "comprehensive latest on ts partition by " + nameType[0],
                     null,
