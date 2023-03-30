@@ -71,7 +71,7 @@ stages:
                   "pool": "amd64-zfs",
                   "buildid": "$(Build.BuildId)",
                   "instancetype": "c6a.xlarge",
-                  "ami": "ami-0cec1668c46870d65",
+                  "ami": "ami-016fdbfafb9a26116",
                   "user": "ubuntu",
                   "shutdownflag": "noshutdown"
                 }
