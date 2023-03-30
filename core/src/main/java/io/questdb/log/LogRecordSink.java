@@ -25,12 +25,14 @@
 package io.questdb.log;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 public class LogRecordSink extends AbstractCharSink implements Sinkable {
+    private static final int EOL_LENGTH = Misc.EOL.length();
     protected final long address;
     protected final long lim;
     protected long _wptr;
@@ -59,7 +61,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr);
+        int rem = (int) (lim - _wptr - EOL_LENGTH);
         int len = cs.length();
         int n = Math.min(rem, len);
         Chars.asciiStrCpy(cs, n, _wptr);
@@ -69,7 +71,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
-        int rem = (int) (lim - _wptr);
+        int rem = (int) (lim - _wptr - EOL_LENGTH);
         int len = hi - lo;
         int n = Math.min(rem, len);
         Chars.asciiStrCpy(cs, lo, n, _wptr);
@@ -79,9 +81,19 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(char c) {
-        if (_wptr < lim) {
+        if (_wptr < lim - EOL_LENGTH) {
             Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
         }
+        return this;
+    }
+
+    @Override
+    public CharSink putEOL() {
+        int rem = (int) (lim - _wptr);
+        int len = Misc.EOL.length();
+        int n = Math.min(rem, len);
+        Chars.asciiStrCpy(Misc.EOL, n, _wptr);
+        _wptr += n;
         return this;
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
@@ -133,6 +134,10 @@ public interface CharSink extends CharSinkBase {
             put(chars[i + start]);
         }
         return this;
+    }
+
+    default CharSink putEOL() {
+        return put(Misc.EOL);
     }
 
     default CharSink putISODate(long value) {
