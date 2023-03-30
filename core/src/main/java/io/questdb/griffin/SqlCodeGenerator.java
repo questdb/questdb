@@ -4420,15 +4420,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = myMeta.getColumnType(index);
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BOOLEAN:
+                    case ColumnType.BYTE:
                     case ColumnType.CHAR:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
                     case ColumnType.LONG:
+                    case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DOUBLE:
                     case ColumnType.LONG256:
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
                     case ColumnType.UUID:
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
                     case ColumnType.LONG128:
                         // we are reusing collections which leads to confusing naming for this method
                         // keyTypes are types of columns we collect 'latest by' for
@@ -4443,7 +4451,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, TIMESTAMP, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY");
                 }
             }
         }
