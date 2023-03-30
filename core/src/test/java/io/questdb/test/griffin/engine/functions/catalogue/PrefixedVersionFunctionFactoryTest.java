@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Test;
 
 public class PrefixedVersionFunctionFactoryTest extends AbstractGriffinTest {
@@ -32,7 +33,7 @@ public class PrefixedVersionFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPrefixedCurrentSchemaFunc() throws Exception {
         assertQuery("version\n" +
-                        "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit\n",
+                        Constants.PG_CATALOG_VERSION_CONSTANT.getStr(null) + '\n',
                 "select pg_catalog.version();",
                 true);
     }
