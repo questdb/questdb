@@ -7,7 +7,7 @@ jobs:
       demands:
         - Agent.Name -equals arm64-$(Build.BuildId)
     dependsOn:
-      - StartArmAgent
+      - StartAgents
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
@@ -29,7 +29,7 @@ jobs:
       demands:
         - Agent.Name -equals amd64-zfs-$(Build.BuildId)
     dependsOn:
-      - StartArmAgent
+      - StartAgents
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:

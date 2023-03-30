@@ -10,7 +10,7 @@ steps:
       sudo dpkg-reconfigure --frontend noninteractive locales
       echo $LANG
       export LANG=en_US.UTF-8
-    displayName: "Increase file count on Linux"
+    displayName: "Increase file count and configure locale on Linux"
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
     inputs:

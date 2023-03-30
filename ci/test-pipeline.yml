@@ -29,8 +29,8 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - job: StartArmAgent
-        displayName: "Start ARM Agent"
+      - job: StartAgents
+        displayName: "Start Agents"
         pool:
           vmImage: "ubuntu-latest"
         steps:
