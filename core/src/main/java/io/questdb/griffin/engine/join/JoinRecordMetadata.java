@@ -113,22 +113,8 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
-        if (fromMetadata instanceof AbstractRecordMetadata) {
-            for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-                add(alias, ((AbstractRecordMetadata) fromMetadata).getColumnMetadata(i));
-            }
-        } else {
-            for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-                add(
-                        alias,
-                        fromMetadata.getColumnName(i),
-                        fromMetadata.getColumnType(i),
-                        fromMetadata.isColumnIndexed(i),
-                        fromMetadata.getIndexValueBlockCapacity(i),
-                        fromMetadata.isSymbolTableStatic(i),
-                        GenericRecordMetadata.copyOf(fromMetadata.getMetadata(i))
-                );
-            }
+        for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
+            add(alias, fromMetadata.getColumnMetadata(i));
         }
     }
 

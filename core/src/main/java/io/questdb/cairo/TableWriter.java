@@ -217,12 +217,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
-    private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
-    private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
-    private final O3ColumnUpdateMethod o3MergeLagVarColumnRef = this::o3MergeVarColumnLag;
+    private final O3ColumnUpdateMethod o3SortFixColumnRef = this::o3SortFixColumn;
+    private final O3ColumnUpdateMethod o3SortVarColumnRef = this::o3SortVarColumn;
+    private final O3ColumnUpdateMethod o3MergeVarColumnLagRef = this::o3MergeVarColumnLag;
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
-    private final O3ColumnUpdateMethod o3MergeLagFixColumnRef = this::o3MergeFixColumnLag;
+    private final O3ColumnUpdateMethod o3MergeFixColumnLagRef = this::o3MergeFixColumnLag;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
     private long todoTxn;
@@ -1427,6 +1427,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
 
         try {
+            final long maxLagRows = getMaxWalSquashRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
             mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
             txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
@@ -1446,7 +1447,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
-                if (copyToLagOnly && totalUncommitted <= getMaxWalSquashRows()) {
+                if (copyToLagOnly && totalUncommitted <= maxLagRows) {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
 
                     // Don't commit anything, move everything to memory instead.
@@ -1507,7 +1508,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copiedToMemory = false;
                 }
 
-                if (commitToTimestamp < txWriter.getLagMaxTimestamp()) {
+                if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
                     final long lagThresholdRow = 1 +
                             Vect.boundedBinarySearchIndexT(
                                     timestampAddr,
@@ -1516,11 +1517,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     o3Hi - 1,
                                     BinarySearch.SCAN_DOWN
                             );
-                    walLagRowCount = Math.min(o3Hi - o3Lo - lagThresholdRow, getMaxWalSquashRows());
-                    assert walLagRowCount >= 0 && walLagRowCount < o3Hi - o3Lo;
+
+                    final boolean lagTrimmedToMax = o3Hi - lagThresholdRow > maxLagRows;
+                    walLagRowCount = lagTrimmedToMax ? maxLagRows : o3Hi - lagThresholdRow;
+                    assert walLagRowCount > 0 && walLagRowCount < o3Hi - o3Lo;
+
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
                     commitMinTimestamp = txWriter.getLagMinTimestamp();
+
+                    // Assert that LAG row count is calculated correctly.
+                    // If lag is not trimmed, timestamp at o3Hi must be the last point <= commitToTimestamp
+                    assert lagTrimmedToMax ||
+                            (commitMaxTimestamp <= commitToTimestamp
+                                    && commitToTimestamp < getTimestampIndexValue(timestampAddr, o3Hi))
+                            : "commit lag calculation error";
+
+                    // If lag is trimmed, timestamp at o3Hi must > commitToTimestamp
+                    assert !lagTrimmedToMax || commitMaxTimestamp > commitToTimestamp : "commit lag calculation error 2";
+
                     txWriter.setLagMinTimestamp(getTimestampIndexValue(timestampAddr, o3Hi));
 
                     LOG.debug().$("committing WAL with LAG [table=").$(tableToken)
@@ -1558,9 +1573,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 finishO3Commit(partitionTsHi);
                 if (walLagRowCount > 0) {
-                    o3ShiftLagRowsUp(timestampIndex, walLagRowCount, o3Hi, 0L, false, this.o3MoveWalFromFilesToLastPartitionRef);
+                    o3ShiftLagRowsUp(timestampIndex, walLagRowCount, o3Hi, 0L, false, o3MoveWalFromFilesToLastPartitionRef);
                 }
-
             } finally {
                 finishO3Append(walLagRowCount);
                 o3Columns = o3MemColumns;
@@ -3311,7 +3325,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long getMaxWalSquashRows() {
-        return (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows();
+        return Math.max(0L, (long) configuration.getWalSquashUncommittedRowsMultiplier() * metadata.getMaxUncommittedRows());
     }
 
     private long getO3RowCount0() {
@@ -4030,8 +4044,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void o3MergeIntoLag(long mergedTimestamps, long countInLag, long mappedRowLo, long mappedRoHi, int timestampIndex) {
-        final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
-        final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
+        final Sequence pubSeq = messageBus.getO3CallbackPubSeq();
+        final RingQueue<O3CallbackTask> queue = messageBus.getO3CallbackQueue();
 
         o3DoneLatch.reset();
         int queuedCount = 0;
@@ -4049,7 +4063,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             countInLag,
                             mappedRowLo,
                             mappedRoHi,
-                            ColumnType.isVariableLength(type) ? o3MergeLagVarColumnRef : o3MergeLagFixColumnRef
+                            ColumnType.isVariableLength(type) ? o3MergeVarColumnLagRef : o3MergeFixColumnLagRef
                     );
                     queuedCount++;
                     pubSeq.done(cursor);
@@ -4436,9 +4450,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long size;
         long sourceOffset;
         long destOffset;
-        final int shl = isDesignatedTimestamp ? 4 : ColumnType.pow2SizeOf(columnType);
-        if (null == o3SrcIndexMem) {
+        if (o3SrcIndexMem == null) {
             // Fixed size column
+            final int shl = isDesignatedTimestamp ? 4 : ColumnType.pow2SizeOf(columnType);
             sourceOffset = columnDataRowOffset << shl;
             size = copyToLagRowCount << shl;
             destOffset = isDesignatedTimestamp ? (txWriter.getTransientRowCount() << 3) + (existingLagRows << 4) : destRowOffset << shl;
@@ -4470,6 +4484,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copyToLagRowCount, // No need to do +1 here, hi is inclusive
                     Math.abs(destAddr)
             );
+
             mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
         }
 
@@ -4485,7 +4500,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
                         .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
             }
-
         } else {
             MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
             ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
@@ -4724,7 +4738,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 rowCount,
                                 IGNORE,
                                 IGNORE,
-                                ColumnType.isVariableLength(type) ? oooSortVarColumnRef : oooSortFixColumnRef
+                                ColumnType.isVariableLength(type) ? o3SortVarColumnRef : o3SortFixColumnRef
                         );
                     } finally {
                         queuedCount++;

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.std.str.CharSink;
@@ -225,4 +226,6 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
             sink.val(getColumnName(i));
         }
     }
+
+    TableColumnMetadata getColumnMetadata(int columnIndex);
 }
