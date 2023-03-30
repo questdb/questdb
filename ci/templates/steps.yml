@@ -4,10 +4,6 @@ steps:
     lfs: false
     submodules: false
   - bash: |
-      echo $LANG
-    displayName: "checkLANG"
-    condition: eq(variables['os'], 'Linux')
-  - bash: |
       sudo sysctl -w fs.file-max=500000
       sudo update-locale LANG=en_US.UTF-8
       sudo locale-gen --purge "en_US.UTF-8"
@@ -15,14 +11,6 @@ steps:
       echo $LANG
       export LANG=en_US.UTF-8
     displayName: "Increase file count on Linux"
-    condition: eq(variables['os'], 'Linux')
-  - checkout: self
-    fetchDepth: 1
-    lfs: false
-    submodules: false
-  - bash: |
-      echo $LANG
-    displayName: "checkLANG2"
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
     inputs:
