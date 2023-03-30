@@ -3,7 +3,9 @@ steps:
     fetchDepth: 1
     lfs: false
     submodules: false
-  - bash: sudo sysctl -w fs.file-max=500000
+  - bash: |
+      sudo sysctl -w fs.file-max=500000
+      export LANG=en_US.UTF-8
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
