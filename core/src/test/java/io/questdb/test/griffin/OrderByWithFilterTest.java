@@ -258,6 +258,147 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByNonPrefixedColumnNotOnSelectList1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( \n" +
+                    "            ts TIMESTAMP,\n" +
+                    "            address SYMBOL,\n" +
+                    "            workspace SYMBOL,\n" +
+                    "            method_id SYMBOL\n" +
+                    "    ) timestamp(ts)");
+
+            compile("insert into tab " +
+                    "select dateadd('m', x::int, 0), " +
+                    " 'A' || (10-x), " +
+                    " case when x < 6 then 'a' else 'b' end, " +
+                    " case when x < 3 then 'c' else 'd' end " +
+                    "from long_sequence(10)");
+
+            String query = "select timestamp_floor('m', ts) as month, address || workspace as uid\n" +
+                    "    from tab\n" +
+                    "    where workspace = 'a' and method_id = 'd'\n" +
+                    "    order by address";
+
+            assertPlan(query, "SelectedRecord\n" +
+                    "    Sort light\n" +
+                    "      keys: [address]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]\n" +
+                    "            SelectedRecord\n" +
+                    "                Async JIT Filter\n" +
+                    "                  filter: (workspace='a' and method_id='d')\n" +
+                    "                  workers: 1\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: tab\n");
+
+            assertQuery("month\tuid\n" +
+                    "1970-01-01T00:05:00.000000Z\tA5a\n" +
+                    "1970-01-01T00:04:00.000000Z\tA6a\n" +
+                    "1970-01-01T00:03:00.000000Z\tA7a\n", query, null, true, false);
+        });
+    }
+
+    @Test
+    public void testOrderByNonPrefixedColumnNotOnSelectList2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab (\n" +
+                    "            ts TIMESTAMP,\n" +
+                    "            address SYMBOL,\n" +
+                    "            workspace SYMBOL,\n" +
+                    "            method_id SYMBOL\n" +
+                    "    ) timestamp(ts)");
+
+            compile("insert into tab " +
+                    "select dateadd('m', x::int, 0), " +
+                    " 'A' || x, " +
+                    " case when x < 6 then 'a' else 'b' end, " +
+                    " case when x < 3 then 'c' else 'd' end " +
+                    "from long_sequence(10)");
+
+            String query = "select timestamp_floor('m', ts) as month, address || workspace as uid\n" +
+                    "    from tab\n" +
+                    "    where workspace = 'a' and method_id = 'd'\n" +
+                    "    order by ts, month, method_id";
+
+            assertPlan(query, "SelectedRecord\n" +
+                    "    Sort light\n" +
+                    "      keys: [ts, month, method_id]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]\n" +
+                    "            Async JIT Filter\n" +
+                    "              filter: (workspace='a' and method_id='d')\n" +
+                    "              workers: 1\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: tab\n");
+
+            assertQuery("month\tuid\n" +
+                    "1970-01-01T00:03:00.000000Z\tA3a\n" +
+                    "1970-01-01T00:04:00.000000Z\tA4a\n" +
+                    "1970-01-01T00:05:00.000000Z\tA5a\n", query, null, true, false);
+        });
+    }
+
+    @Test//test with join
+    public void testOrderByNonPrefixedColumnNotOnSelectList4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab (\n" +
+                    "            ts TIMESTAMP,\n" +
+                    "            address SYMBOL,\n" +
+                    "            workspace SYMBOL,\n" +
+                    "            method_id SYMBOL\n" +
+                    "    ) timestamp(ts)");
+
+            compile("insert into tab " +
+                    "select dateadd('m', x::int, 1), " +
+                    " 'A' || x, " +
+                    " case when x < 6 then 'a' else 'b' end, " +
+                    " case when x < 3 then 'c' else 'd' end " +
+                    "from long_sequence(10)");
+
+            String query = "select timestamp_floor('m', t2.ts) as month,t1.ts, t1.address || t2.workspace as uid\n" +
+                    "    from tab t1 " +
+                    "    join tab t2 on t1.workspace = t2.workspace and t1.method_id = t2.method_id " +
+                    "    where t1.workspace = 'a' and t1.method_id = 'd'\n" +
+                    "    order by t2.ts desc";
+
+            assertPlan(query, "SelectedRecord\n" +
+                    "    Sort\n" +
+                    "      keys: [ts desc]\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace\n" +
+                    "                    Async JIT Filter\n" +
+                    "                      filter: (workspace='a' and method_id='d')\n" +
+                    "                      workers: 1\n" +
+                    "                        DataFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: tab\n" +
+                    "                    Hash\n" +
+                    "                        Async JIT Filter\n" +
+                    "                          filter: (method_id='d' and workspace='a')\n" +
+                    "                          workers: 1\n" +
+                    "                            DataFrame\n" +
+                    "                                Row forward scan\n" +
+                    "                                Frame forward scan on: tab\n");
+
+            assertQuery("month\tts1\tuid\n" +
+                    "1970-01-01T00:05:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
+                    "1970-01-01T00:05:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
+                    "1970-01-01T00:05:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
+                    "1970-01-01T00:04:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
+                    "1970-01-01T00:04:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
+                    "1970-01-01T00:04:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n" +
+                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a\n" +
+                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a\n" +
+                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a\n", query, null, true, false);
+        });
+    }
+
+    @Test
     public void testOrderByPrefixedColumnNotOnSelectList1() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE trips (\n" +
