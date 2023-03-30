@@ -1,5 +1,7 @@
 trigger: none
 
+pr: none
+
 schedules:
   - cron: "*/10 * * * *"
     displayName: Run every 15 minutes
