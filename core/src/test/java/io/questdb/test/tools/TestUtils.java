@@ -808,7 +808,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
             assert partitionAddMethod != null;
@@ -1068,7 +1068,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
 
         StringBuilder insertFromSelect = new StringBuilder();
         insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
@@ -1554,10 +1554,10 @@ public final class TestUtils {
         return metadata;
     }
 
-    private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {
+    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;

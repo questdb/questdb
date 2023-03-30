@@ -24,6 +24,11 @@
 
 package io.questdb.test;
 
+import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
+import io.questdb.cairo.security.FactoriesFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.test.tools.TestUtils;
@@ -38,6 +43,18 @@ public class AbstractTest {
     protected static String root;
     @Rule
     public TestName testName = new TestName();
+
+    public static ServerMain newServer(boolean enableHttp, boolean enableLineTcp, boolean enablePgWire, int workerCountShared, FactoriesFactory factoriesFactory) {
+        return new ServerMain(new Bootstrap(new DefaultBootstrapConfiguration() {
+
+            // although `root` is supplied to the server main, it is ultimately ignored in favour of that provided by the configuration
+            // We only supply it for server main to pass argument validation
+            @Override
+            public ServerConfiguration getServerConfiguration() {
+                return new TestServerConfiguration(root, enableHttp, enableLineTcp, enablePgWire, workerCountShared, 0, 0, 0, factoriesFactory.getSecurityContextFactory());
+            }
+        }, TestUtils.getServerMainArgs(root)));
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -60,9 +77,8 @@ public class AbstractTest {
         TestUtils.createTestPath(root);
     }
 
-
     @After
-    public void tearDown() throws Exception{
+    public void tearDown() throws Exception {
         TestUtils.removeTestPath(root);
     }
 

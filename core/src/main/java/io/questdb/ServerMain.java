@@ -207,7 +207,7 @@ public class ServerMain implements Closeable {
         }
 
         System.gc(); // GC 1
-        log.advisoryW().$("bootstrap complete").$();
+        log.advisoryW().$("server is ready to be started").$();
     }
 
     protected void setupWalApplyJob(

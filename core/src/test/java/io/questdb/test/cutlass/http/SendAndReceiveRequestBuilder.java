@@ -92,10 +92,7 @@ public class SendAndReceiveRequestBuilder {
         return connectAndSendRequest(request + requestHeaders());
     }
 
-    public void execute(
-            String request,
-            CharSequence expectedResponse
-    ) throws InterruptedException {
+    public void execute(String request, CharSequence expectedResponse) {
         final int fd = nf.socketTcp(true);
         try {
             long sockAddrInfo = nf.sockaddr("127.0.0.1", 9001);
