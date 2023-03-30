@@ -31,10 +31,16 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 
 public class AsOfJoinTest extends AbstractGriffinTest {
+
+    @Before
+    public void resetJoinType() {
+        compiler.setFullFatJoins(false);
+    }
 
     @Test
     public void testAsOfJoinAliasDuplication() throws Exception {
