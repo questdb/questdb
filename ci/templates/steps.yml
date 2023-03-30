@@ -5,12 +5,8 @@ steps:
     submodules: false
   - bash: |
       sudo sysctl -w fs.file-max=500000
-      sudo update-locale LANG=en_US.UTF-8
-      sudo locale-gen --purge "en_US.UTF-8"
-      sudo dpkg-reconfigure --frontend noninteractive locales
-      echo $LANG
-      export LANG=en_US.UTF-8
-    displayName: "Increase file count and configure locale on Linux"
+      echo "LANG=$LANG"
+    displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
     inputs:
