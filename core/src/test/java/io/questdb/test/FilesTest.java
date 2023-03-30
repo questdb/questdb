@@ -721,6 +721,7 @@ public class FilesTest {
     @Test
     public void testSoftLinkDoesNotFailWhenSrcDoesNotExist() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+        System.out.println("LANG=" + System.getenv("LANG"));
 
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("soft");
