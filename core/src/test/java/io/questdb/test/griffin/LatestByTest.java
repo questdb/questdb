@@ -29,13 +29,39 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
 
 public class LatestByTest extends AbstractGriffinTest {
+
+    @Test
+    public void testLatestByPartitionByTimestamp() throws Exception {
+        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+
+        // forecasts for 2020-05-05
+        compile("insert into forecasts values " +
+                "  ('2020-05-05', '2020-05-02', 40), " +
+                "  ('2020-05-05', '2020-05-03', 41), " +
+                "  ('2020-05-05', '2020-05-04', 42)"
+        );
+
+        // forecasts for 2020-05-06
+        compile("insert into forecasts values " +
+                "  ('2020-05-06', '2020-05-01', 140), " +
+                "  ('2020-05-06', '2020-05-03', 141), " +
+                "  ('2020-05-06', '2020-05-05', 142)"
+        );
+
+        String query = "select when, version, temperature from forecasts latest on version partition by when";
+        String expected = "when\tversion\ttemperature\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
+
+        assertQuery(expected, query, "version", true, true);
+    }
 
     @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {

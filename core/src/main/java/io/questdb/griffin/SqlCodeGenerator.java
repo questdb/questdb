@@ -65,7 +65,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -4424,6 +4424,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.SHORT:
                     case ColumnType.INT:
                     case ColumnType.LONG:
+                    case ColumnType.TIMESTAMP:
                     case ColumnType.LONG256:
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
@@ -4442,7 +4443,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, TIMESTAMP, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY");
                 }
             }
         }
