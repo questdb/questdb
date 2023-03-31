@@ -124,14 +124,13 @@ public class IndexBuilder extends RebuildColumnBase {
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,
-            CharSequence partitionName,
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int partitionBy,
             int indexValueBlockCapacity
     ) {
-        path.trimTo(rootLen).concat(partitionName);
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         final int plen = path.length();
 
         if (ff.exists(path.$())) {

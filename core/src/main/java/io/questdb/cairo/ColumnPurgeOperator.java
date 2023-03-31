@@ -339,9 +339,8 @@ public class ColumnPurgeOperator implements Closeable {
                 path,
                 purgeLogWriter.getPartitionBy(),
                 partitionTimestamp,
-                false
+                partitionNameTxn
         );
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
         TableUtils.dFile(
                 path,
                 updateCompleteColumnName,
@@ -395,8 +394,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private void setUpPartitionPath(int partitionBy, long partitionTimestamp, long partitionTxnName) {
         path.trimTo(pathTableLen);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-        TableUtils.txnPartitionConditionally(path, partitionTxnName);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionTxnName);
     }
 
     private enum ScoreboardUseMode {

@@ -2257,18 +2257,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void renameDetachedToAttachable(String tableName, long... partitions) {
         TableToken tableToken = engine.getTableToken(tableName);
         for (long partition : partitions) {
-            PartitionBy.setSinkForPartition(
+            TableUtils.setSinkForPartition(
                     path.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
-                    false
+                    -1
             );
             path.put(DETACHED_DIR_MARKER).$();
-            PartitionBy.setSinkForPartition(
+            TableUtils.setSinkForPartition(
                     other.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
-                    false
+                    -1
             );
             other.put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path, other) > -1);

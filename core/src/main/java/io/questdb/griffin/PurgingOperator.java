@@ -91,8 +91,7 @@ public abstract class PurgingOperator {
                         boolean columnPurged = !anyReadersBeforeCommittedTxn;
                         if (!anyReadersBeforeCommittedTxn) {
                             path.trimTo(rootLen);
-                            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-                            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+                            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
                             int pathPartitionLen = path.length();
                             TableUtils.dFile(path, columnName, columnVersion);
                             if (!ff.remove(path.$())) {

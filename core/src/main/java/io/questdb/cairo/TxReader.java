@@ -208,6 +208,10 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getNextPartitionTimestamp(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+
         int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, BinarySearch.SCAN_UP);
         if (index < 0) {
             index = -index - 1;

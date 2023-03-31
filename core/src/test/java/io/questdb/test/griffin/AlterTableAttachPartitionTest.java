@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -633,8 +634,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     txn = writer.getTxn();
                     writer.attachPartition(timestamp);
                 }
-                path.of(configuration.getRoot()).concat(dstTableToken).concat("2022-08-01");
-                TableUtils.txnPartitionConditionally(path, txn);
+                path.of(configuration.getRoot()).concat(dstTableToken);
+                TableUtils.setPathForPartition(path, PartitionBy.DAY, IntervalUtils.parseFloorPartialTimestamp("2022-08-01"), txn);
                 int pathLen = path.length();
 
                 // Extra columns not deleted

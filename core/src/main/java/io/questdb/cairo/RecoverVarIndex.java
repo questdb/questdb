@@ -38,9 +38,14 @@ public class RecoverVarIndex extends RebuildColumnBase {
 
     @Override
     protected void doReindex(
-            ColumnVersionReader columnVersionReader, int columnWriterIndex, CharSequence columnName,
-            CharSequence partitionName,
-            long partitionNameTxn, long partitionSize, long partitionTimestamp, int indexValueBlockCapacity
+            ColumnVersionReader columnVersionReader,
+            int columnWriterIndex,
+            CharSequence columnName,
+            long partitionNameTxn,
+            long partitionSize,
+            long partitionTimestamp,
+            int partitionBy,
+            int indexValueBlockCapacity
     ) {
         long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
         long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
@@ -50,8 +55,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
             return;
         }
 
-        path.trimTo(rootLen).concat(partitionName);
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         path.concat(columnName);
         int colNameLen = path.length();
         path.put(".d");

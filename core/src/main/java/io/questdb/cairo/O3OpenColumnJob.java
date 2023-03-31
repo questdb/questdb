@@ -330,17 +330,20 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long columnNameTxn
     ) {
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
-        final Path pathToPartition = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(pathToPartition, tableWriter.getPartitionBy(), oooTimestampLo, false);
-        final int pplen = pathToPartition.length();
-        TableUtils.txnPartitionConditionally(pathToPartition, srcDataTxn);
-        final int plen = pathToPartition.length();
+        final Path pathToOldPartition = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForPartition(pathToOldPartition, tableWriter.getPartitionBy(), oldPartitionTimestamp, srcDataTxn);
+        int plen = pathToOldPartition.length();
+
+        final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
+        TableUtils.setPathForPartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        int pplen = pathToNewPartition.length();
+
         // append jobs do not set value of part counter, we do it here for those
         switch (openColumnMode) {
             case OPEN_MID_PARTITION_FOR_APPEND:
                 appendMidPartition(
-                        pathToPartition,
-                        plen,
+                        pathToNewPartition,
+                        pplen,
                         columnName,
                         columnCounter,
                         columnType,
@@ -370,8 +373,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 break;
             case OPEN_MID_PARTITION_FOR_MERGE:
                 mergeMidPartition(
-                        pathToPartition,
+                        pathToOldPartition,
                         plen,
+                        pathToNewPartition,
                         pplen,
                         columnName,
                         columnCounter,
@@ -419,7 +423,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
                 mergeLastPartition(
-                        pathToPartition,
+                        pathToNewPartition,
                         pplen,
                         columnName,
                         columnCounter,
@@ -469,7 +473,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // It's fine to overwrite this value if needed inside the job branches.
                 Unsafe.getUnsafe().putLong(colTopSinkAddr, 0L);
                 appendNewPartition(
-                        pathToPartition,
+                        pathToNewPartition,
                         plen,
                         columnName,
                         columnCounter,
@@ -499,8 +503,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void appendFixColumn(
-            Path pathToPartition,
-            int plen,
+            Path pathToNewPartition,
+            int pNewLen,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -556,10 +560,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFileOffset = dstFixOffset;
 
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
-                BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                BitmapIndexUtils.valueFileName(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                BitmapIndexUtils.keyFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstKFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstVFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
         } catch (Throwable e) {
             LOG.error().$("append fix error [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -638,8 +642,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void appendMidPartition(
-            Path pathToPartition,
-            int plen,
+            Path pathToNewPartition,
+            int pNewLen,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -699,11 +703,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.STRING:
                 try {
                     // index files are opened as normal
-                    iFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                    dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     // open data file now
-                    dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                    dstVarFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
                     LOG.error().$("append mid partition error 2 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
@@ -778,8 +782,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 } // else fall through
             default:
                 try {
-                    dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                    dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
                     LOG.error().$("append mid partition error 3 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
@@ -799,8 +803,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     throw e;
                 }
                 appendFixColumn(
-                        pathToPartition,
-                        plen,
+                        pathToNewPartition,
+                        pNewLen,
                         columnName,
                         columnCounter,
                         columnType,
@@ -832,8 +836,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void appendNewPartition(
-            Path pathToPartition,
-            int plen,
+            Path pathToNewPartition,
+            int pNewLen,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -867,25 +871,25 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             if (ColumnType.isVariableLength(columnType)) {
-                iFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1 + 1) * Long.BYTES;
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
-                dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstVarFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
                 dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
             } else {
-                dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
                 if (indexBlockCapacity > -1) {
-                    BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    BitmapIndexUtils.valueFileName(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    BitmapIndexUtils.keyFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                    dstKFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                    dstVFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
         } catch (Throwable e) {
@@ -1241,8 +1245,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void mergeFixColumn(
-            Path pathToPartition,
-            int pplen,
+            Path pathToNewPartition,
+            int pNewLen,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -1289,7 +1293,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long srcDataFixSize = 0;
         long srcDataFixOffset;
         long srcDataFixAddr = 0;
-        final int pDirNameLen;
         long dstFixAppendOffset2;
         int dstFixFd = 0;
         long dstFixAddr = 0;
@@ -1304,9 +1307,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
-            txnPartition(pathToPartition.trimTo(pplen), txn);
-            pDirNameLen = pathToPartition.length();
-
             if (srcDataTop > 0) {
                 // Size of data actually in the file.
                 final long srcDataActualBytes = Math.max(0, srcDataMax - srcDataTop) << shl;
@@ -1349,8 +1349,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             srcDataTopOffset = srcDataTop << shl;
             dstIndexAdjust = srcDataTopOffset >> 2;
 
-            dFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
-            dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+            dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             if (directIoFlag) {
@@ -1384,10 +1384,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             if (indexBlockCapacity > -1) {
-                BitmapIndexUtils.keyFileName(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
-                dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                BitmapIndexUtils.valueFileName(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
-                dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                BitmapIndexUtils.keyFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstKFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
+                dstVFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
 
             if (prefixType != O3_BLOCK_NONE) {
@@ -1481,7 +1481,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void mergeLastPartition(
-            Path pathToPartition,
+            Path pathToNewPartition,
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
@@ -1530,7 +1530,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.STRING:
                 // index files are opened as normal
                 mergeVarColumn(
-                        pathToPartition,
+                        pathToNewPartition,
                         pplen,
                         columnName,
                         columnCounter,
@@ -1576,7 +1576,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 break;
             default:
                 mergeFixColumn(
-                        pathToPartition,
+                        pathToNewPartition,
                         pplen,
                         columnName,
                         columnCounter,
@@ -1624,8 +1624,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void mergeMidPartition(
-            Path pathToPartition,
+            Path pathToOldPartition,
             int plen,
+            Path pathToNewPartition,
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
@@ -1699,10 +1700,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 try {
-                    iFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    srcDataFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                    srcDataVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    iFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn);
+                    srcDataFixFd = openRW(ff, pathToOldPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn);
+                    srcDataVarFd = openRW(ff, pathToOldPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
                     LOG.error().$("merge mid partition error 2 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
@@ -1723,7 +1724,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 }
 
                 mergeVarColumn(
-                        pathToPartition,
+                        pathToNewPartition,
                         pplen,
                         columnName,
                         columnCounter,
@@ -1773,8 +1774,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // ensure timestamp srcDataFixFd is always negative, we will close it externally
                         srcDataFixFd = -srcTimestampFd;
                     } else {
-                        dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
-                        srcDataFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                        dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn);
+                        srcDataFixFd = openRW(ff, pathToOldPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     }
                 } catch (Throwable e) {
                     LOG.error().$("merge mid partition error 3 [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -1793,7 +1794,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     throw e;
                 }
                 mergeFixColumn(
-                        pathToPartition,
+                        pathToNewPartition,
                         pplen,
                         columnName,
                         columnCounter,
@@ -1841,7 +1842,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void mergeVarColumn(
-            Path pathToPartition,
+            Path pathToNewPartition,
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
@@ -1889,7 +1890,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstVarAddr = 0;
         long srcDataFixOffset;
         long srcDataFixAddr = 0;
-        final int pDirNameLen;
         long dstVarSize = 0;
         long srcDataTopOffset;
         long dstFixSize = 0;
@@ -1910,8 +1910,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long initialScrDataTop = srcDataTop;
 
         try {
-            txnPartition(pathToPartition.trimTo(pplen), txn);
-            pDirNameLen = pathToPartition.length();
+            pathToNewPartition.trimTo(pplen);
 
             if (srcDataTop > 0) {
                 // Size of data actually in the index (fixed) file.
@@ -2011,8 +2010,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // upgrade srcDataTop to offset
             srcDataTopOffset = srcDataTop * Long.BYTES;
 
-            iFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
-            dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn);
+            dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
             if (prefixType == O3_BLOCK_NONE) {
                 // split partition
@@ -2025,8 +2024,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
-            dFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
-            dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn);
+            dstVarFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
 

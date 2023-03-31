@@ -136,8 +136,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
-            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, nameTxn - 1);
+            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn - 1);
             path.$();
 
             if (rangeUnlocked) {
@@ -222,8 +221,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 path.trimTo(tableRootLen);
-                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-                TableUtils.txnPartitionConditionally(path, previousNameVersion - 1);
+                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, previousNameVersion - 1);
                 path.$();
 
                 if (rangeUnlocked) {

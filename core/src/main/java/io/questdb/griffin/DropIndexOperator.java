@@ -124,8 +124,7 @@ public class DropIndexOperator extends PurgingOperator {
             long columnNameTxn
     ) {
         TableUtils.setPathForPartition(
-                path,
-                rootLen,
+                path.trimTo(rootLen),
                 partitionBy,
                 partitionTimestamp,
                 partitionNameTxn

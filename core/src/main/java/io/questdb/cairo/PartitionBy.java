@@ -24,11 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.ptt.IsoDatePartitionFormat;
+import io.questdb.cairo.ptt.IsoWeekPartitionFormat;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -85,6 +86,11 @@ public final class PartitionBy {
     private static final PartitionFloorMethod FLOOR_WW = Timestamps::floorWW;
     private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
+    private static final DateFormat PARTITION_WEEk_FORMAT = new IsoWeekPartitionFormat();
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
 
     private PartitionBy() {
     }
@@ -130,15 +136,15 @@ public final class PartitionBy {
     public static DateFormat getPartitionDirFormatMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return DAY_FORMAT;
+                return PARTITION_DAY_FORMAT;
             case MONTH:
-                return MONTH_FORMAT;
+                return PARTITION_MONTH_FORMAT;
             case YEAR:
-                return YEAR_FORMAT;
+                return PARTITION_YEAR_FORMAT;
             case HOUR:
-                return HOUR_FORMAT;
+                return PARTITION_HOUR_FORMAT;
             case WEEK:
-                return WEEK_FORMAT;
+                return PARTITION_WEEk_FORMAT;
             case NONE:
                 return DEFAULT_FORMAT;
             default:
@@ -163,23 +169,6 @@ public final class PartitionBy {
         }
     }
 
-    public static long getPartitionTimeIntervalFloor(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return Timestamps.DAY_MICROS;
-            case WEEK:
-                return Timestamps.DAY_MICROS * 7;
-            case MONTH:
-                return Timestamps.DAY_MICROS * 28;
-            case YEAR:
-                return Timestamps.DAY_MICROS * 365;
-            case HOUR:
-                return Timestamps.HOUR_MICROS;
-            default:
-                throw new UnsupportedOperationException();
-        }
-    }
-
     public static boolean isPartitioned(int partitionBy) {
         return partitionBy != NONE;
     }
@@ -191,23 +180,23 @@ public final class PartitionBy {
             DateFormat fmtMethod;
             switch (partitionBy) {
                 case DAY:
-                    fmtMethod = DAY_FORMAT;
+                    fmtMethod = PARTITION_DAY_FORMAT;
                     fmtStr = DAY_PATTERN;
                     break;
                 case MONTH:
-                    fmtMethod = MONTH_FORMAT;
+                    fmtMethod = PARTITION_MONTH_FORMAT;
                     fmtStr = MONTH_PATTERN;
                     break;
                 case YEAR:
-                    fmtMethod = YEAR_FORMAT;
+                    fmtMethod = PARTITION_YEAR_FORMAT;
                     fmtStr = YEAR_PATTERN;
                     break;
                 case HOUR:
-                    fmtMethod = HOUR_FORMAT;
+                    fmtMethod = PARTITION_HOUR_FORMAT;
                     fmtStr = HOUR_PATTERN;
                     break;
                 case WEEK:
-                    fmtMethod = WEEK_FORMAT;
+                    fmtMethod = PARTITION_WEEk_FORMAT;
                     fmtStr = WEEK_PATTERN;
                     break;
                 case NONE:
@@ -221,7 +210,7 @@ public final class PartitionBy {
             if (partitionName.length() < limit) {
                 throw expectedPartitionDirNameFormatCairoException(partitionName, partitionName.length(), partitionBy);
             }
-            return fmtMethod.parse(partitionName, 0, limit, null);
+            return fmtMethod.parse(partitionName, null);
         } catch (NumericException e) {
             if (partitionBy == PartitionBy.WEEK) {
                 // maybe the user used a timestamp, or a date, string.
@@ -238,84 +227,12 @@ public final class PartitionBy {
         }
     }
 
-    public static long setSinkForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
-        int y, m, d;
-        boolean leap;
-        switch (partitionBy) {
-            case DAY:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                TimestampFormatUtils.appendYear000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-                path.put('-');
-                TimestampFormatUtils.append0(path, d);
-
-                if (calculatePartitionMax) {
-                    return Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                }
-                return 0;
-            case MONTH:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                TimestampFormatUtils.appendYear000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-
-                if (calculatePartitionMax) {
-                    return Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                }
-                return 0;
-            case YEAR:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                TimestampFormatUtils.appendYear000(path, y);
-                if (calculatePartitionMax) {
-                    return Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                }
-                return 0;
-            case HOUR:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                int h = Timestamps.getHourOfDay(timestamp);
-                TimestampFormatUtils.appendYear000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-                path.put('-');
-                TimestampFormatUtils.append0(path, d);
-                path.put('T');
-                TimestampFormatUtils.append0(path, h);
-
-                if (calculatePartitionMax) {
-                    return Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + (d - 1) * Timestamps.DAY_MICROS + (h + 1) * Timestamps.HOUR_MICROS - 1;
-                }
-                return 0;
-            case WEEK:
-                y = Timestamps.getIsoYear(timestamp);
-                int w = Timestamps.getWeek(timestamp);
-                TimestampFormatUtils.appendYear000(path, y);
-                path.put("-W");
-                TimestampFormatUtils.append0(path, w);
-
-                if (calculatePartitionMax) {
-                    return Timestamps.ceilWW(timestamp) - 1;
-                }
-                return 0;
-            default:
-                path.put(DEFAULT_PARTITION_NAME);
-                return Long.MAX_VALUE;
+    public static void setSinkForPartition(CharSink path, int partitionBy, long timestamp) {
+        if (partitionBy != PartitionBy.NONE) {
+            getPartitionDirFormatMethod(partitionBy).format(timestamp, null, null, path);
+            return;
         }
+        path.put(DEFAULT_PARTITION_NAME);
     }
 
     public static String toString(int partitionBy) {

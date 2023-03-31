@@ -306,8 +306,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                         for (int v = 0; v < partitionNameVersion + 5; v++) {
                             path.trimTo(len);
-                            TableUtils.setPathForPartition(path, partitionBy, partitionTs, false);
-                            TableUtils.txnPartitionConditionally(path, v);
+                            TableUtils.setPathForPartition(path, partitionBy, partitionTs, v);
                             path.concat("x.d").$();
                             Assert.assertEquals(Chars.toString(path), v == partitionNameVersion, Files.exists(path));
                         }

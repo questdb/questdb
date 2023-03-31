@@ -597,8 +597,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
             path.trimTo(rootLen);
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
             int pathTrimToLen = path.length();
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);

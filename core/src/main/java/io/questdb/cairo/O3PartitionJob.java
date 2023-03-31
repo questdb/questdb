@@ -80,10 +80,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         final Path path = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(path, partitionBy, o3TimestampLo, false);
-        final int pplen = path.length();
-        TableUtils.txnPartitionConditionally(path, srcDataTxn);
-        final int plen = path.length();
+
         int srcTimestampFd = 0;
         long dataTimestampLo;
         long dataTimestampHi;
@@ -101,6 +98,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (!last) {
                 try {
                     LOG.debug().$("would create [path=").utf8(path.slash$()).I$();
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, txn);
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -189,11 +187,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                     // and "high" being newest
 
-                    dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE);
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, srcDataTxn);
+                    dFile(path, metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE);
 
                     // also track the fd that we need to eventually close
-                    srcTimestampFd = openRW(ff, path, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    srcTimestampAddr = mapRW(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
+                    srcTimestampFd = openRO(ff, path, LOG);
+                    srcTimestampAddr = mapRO(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
                 dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
@@ -471,25 +470,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", table=").$(pathToTable)
                         .I$();
 
-                if (prefixType == O3_BLOCK_NONE) {
-                    // We do not need to create a copy of partition when we simply need to append
-                    // existing the one.
-                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
-                } else {
-                    txnPartition(path.trimTo(pplen), txn);
-                    createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
-                    if (last) {
-                        openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
-                    } else {
-                        openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
-                    }
-                }
-
                 final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
 
                 newPartitionSize = partitionSize;
                 oldPartitionSize = partitionSize;
                 oldPartitionTimestamp = partitionTimestamp;
+                boolean partitionSplit = false;
 
                 if (prefixType == O3_BLOCK_DATA && prefixHi >= tableWriter.getPartitionO3SplitThreshold()) {
                     // large prefix copy, better to split the partition
@@ -501,10 +487,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .$(", newPartitionTimestamp=").$ts(o3TimestampLo)
                             .$(", nameTxn=").$(txn)
                             .I$();
+                    partitionSplit = true;
                     partitionTimestamp = o3TimestampLo;
                     prefixType = O3_BLOCK_NONE;
                     newPartitionSize -= prefixHi + 1;
                     oldPartitionSize = prefixHi + 1;
+                }
+
+                if (!partitionSplit && prefixType == O3_BLOCK_NONE) {
+                    // We do not need to create a copy of partition when we simply need to append
+                    // existing the one.
+                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
+                } else {
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, txn);
+                    createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
+                    if (last) {
+                        openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
+                    } else {
+                        openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
+                    }
                 }
             } catch (Throwable e) {
                 LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getTableName())

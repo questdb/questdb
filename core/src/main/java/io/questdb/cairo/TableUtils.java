@@ -1124,54 +1124,69 @@ public final class TableUtils {
         }
     }
 
-    /**
-     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
-     * and the partition version.
-     *
-     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param tableRootLen     Trim to this length to go back to the root path of the table
-     * @param partitionBy      Partitioning scheme
-     * @param timestamp        A timestamp in the partition
-     * @param partitionNameTxn Partition txn suffix
-     */
-    public static void setPathForPartition(
-            Path tablePath,
-            int tableRootLen,
-            int partitionBy,
-            long timestamp,
-            long partitionNameTxn
-    ) {
-        tablePath.trimTo(tableRootLen);
-        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);
-        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);
+    public static void setPathForPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
-    /**
-     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
-     *
-     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy           Partitioning scheme
-     * @param timestamp             A timestamp in the partition
-     * @param calculatePartitionMax flag when caller is going to use the return value of this method
-     * @return The last timestamp in the partition
-     */
-    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
-        return PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
+    public static void setSinkForPartition(CharSink path, int partitionBy, long timestamp, long nameTxn) {
+        PartitionBy.setSinkForPartition(path, partitionBy, timestamp);
+        if (nameTxn > -1L) {
+            path.put('.').put(nameTxn);
+        }
     }
+
+//    /**
+//     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+//     * and the partition version.
+//     *
+//     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
+//     * @param tableRootLen     Trim to this length to go back to the root path of the table
+//     * @param partitionBy      Partitioning scheme
+//     * @param timestamp        A timestamp in the partition
+//     * @param partitionNameTxn Partition txn suffix
+//     */
+//    public static void setPathForPartition(
+//            Path tablePath,
+//            int tableRootLen,
+//            int partitionBy,
+//            long timestamp,
+//            long partitionNameTxn
+//    ) {
+//        tablePath.trimTo(tableRootLen);
+//        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);
+//        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);
+//    }
+//
+//    /**
+//     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
+//     *
+//     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
+//     * @param partitionBy           Partitioning scheme
+//     * @param timestamp             A timestamp in the partition
+//     * @param calculatePartitionMax flag when caller is going to use the return value of this method
+//     * @return The last timestamp in the partition
+//     */
+//    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+//        return PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
+//    }
+//
+//    public static void setExactPathForPartition(Path path, int partitionBy, long timestamp) {
+//        PartitionBy.setExactSinkForPartition(path.slash(), partitionBy, timestamp);
+//    }
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
-    public static void txnPartition(CharSink path, long txn) {
-        path.put('.').put(txn);
-    }
-
-    public static void txnPartitionConditionally(CharSink path, long txn) {
-        if (txn > -1) {
-            txnPartition(path, txn);
-        }
-    }
+//    public static void txnPartition(CharSink path, long txn) {
+//        path.put('.').put(txn);
+//    }
+//
+//    public static void txnPartitionConditionally(CharSink path, long txn) {
+//        if (txn > -1) {
+//            txnPartition(path, txn);
+//        }
+//    }
 
     public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
         if (indexValueBlockSize < MIN_INDEX_VALUE_BLOCK_SIZE) {
@@ -1426,7 +1441,7 @@ public final class TableUtils {
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
+        if (ff.mkdir(path.$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
     }

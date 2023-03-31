@@ -1375,6 +1375,12 @@ public final class TestUtils {
         return ptr;
     }
 
+    public static void txnPartitionConditionally(Path path, int txn) {
+        if (txn > -1) {
+            path.put('.').put(txn);
+        }
+    }
+
     // used in tests
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
