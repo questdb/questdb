@@ -25,7 +25,6 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -46,7 +45,12 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.*;
-import org.hamcrest.MatcherAssert;
+import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.cairo.LogRecordSinkAdapter;
+import io.questdb.test.cairo.RecordCursorPrinter;
+import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -60,8 +64,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 public final class TestUtils {
 
@@ -419,6 +421,15 @@ public final class TestUtils {
         }
     }
 
+    public static <T> void assertEquals(ObjList<T> expected, ObjList<T> actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static void assertEquals(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -637,10 +648,10 @@ public final class TestUtils {
         }
     }
 
-    public static void assertSqlCursors(QuestDBNode node, ObjList<QuestDBNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
-                final QuestDBNode dbNode = nodes.get(i);
+                final QuestDBTestNode dbNode = nodes.get(i);
                 try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
@@ -715,7 +726,7 @@ public final class TestUtils {
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {
-        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
+        try (InputStream stream = Files.class.getResourceAsStream("/io/questdb/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
             final File target = new File(targetDir, "conf/mime.types");
             Assert.assertTrue(target.getParentFile().mkdirs());
@@ -727,6 +738,25 @@ public final class TestUtils {
                 }
             }
         }
+    }
+
+    public static TableToken create(TableModel model, CairoEngine engine) {
+        int tableId = (int) engine.getTableIdGenerator().getNextId();
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        if (tableToken == null) {
+            throw new RuntimeException("table already exists: " + model.getTableName());
+        }
+        TableUtils.createTable(
+                model.getConfiguration(),
+                model.getMem(),
+                model.getPath(),
+                model,
+                ColumnType.VERSION,
+                tableId,
+                tableToken.getDirName()
+        );
+        engine.registerTableToken(tableToken);
+        return tableToken;
     }
 
     public static void createPopulateTable(
@@ -855,6 +885,20 @@ public final class TestUtils {
         return sql.toString();
     }
 
+    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1);
+    }
+
+    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
+        SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+        ctx.with(bindVariableService);
+        return ctx;
+    }
+
+    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount);
+    }
+
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
@@ -869,6 +913,12 @@ public final class TestUtils {
         Timestamp ts = new Timestamp(epochMicros / 1000);
         ts.setNanos((int) ((epochMicros % 1_000_000) * 1000));
         return ts;
+    }
+
+    @SuppressWarnings("StatementWithEmptyBody")
+    public static void drainCursor(RecordCursor cursor) {
+        while (cursor.hasNext()) {
+        }
     }
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
@@ -953,6 +1003,10 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
+    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
+        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
+    }
+
     @NotNull
     public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
         return new NetworkFacadeImpl() {
@@ -978,6 +1032,14 @@ public final class TestUtils {
                 return 0;
             }
         };
+    }
+
+    public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
+        return getWriter(engine, engine.getTableToken(tableName));
+    }
+
+    public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
+        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
@@ -1059,6 +1121,28 @@ public final class TestUtils {
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
         return insertFromSelect.toString();
+    }
+
+    public static int maxDayOfMonth(int month) {
+        switch (month) {
+            case 1:
+            case 3:
+            case 5:
+            case 7:
+            case 8:
+            case 10:
+            case 12:
+                return 31;
+            case 2:
+                return 28;
+            case 4:
+            case 6:
+            case 9:
+            case 11:
+                return 30;
+            default:
+                throw new IllegalArgumentException("[1..12]");
+        }
     }
 
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
@@ -1219,6 +1303,15 @@ public final class TestUtils {
         }
     }
 
+    public static StringSink putWithLeadingZeroIfNeeded(StringSink seq, int len, int value) {
+        seq.clear(len);
+        if (value < 10) {
+            seq.put('0');
+        }
+        seq.put(value);
+        return seq;
+    }
+
     public static String readStringFromFile(File file) {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -1240,7 +1333,7 @@ public final class TestUtils {
     public static void removeTestPath(CharSequence root) {
         final Path path = Path.getThreadLocal(root);
         final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
-        MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
+        Assert.assertTrue("Test dir cleanup error, rc=" + rc, rc <= 0);
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {

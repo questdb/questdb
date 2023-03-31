@@ -25,12 +25,13 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class TextImportExecutionContext {
+public class TextImportExecutionContext implements Mutable {
     public static final long INACTIVE = -1;
     private final AtomicLong activeImportId = new AtomicLong(INACTIVE);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
@@ -56,7 +57,8 @@ public class TextImportExecutionContext {
         return circuitBreaker;
     }
 
-    public void resetActiveImportId() {
+    @Override
+    public void clear() {
         activeImportId.set(INACTIVE);
     }
 }

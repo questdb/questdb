@@ -30,7 +30,7 @@ import io.questdb.std.*;
 
 import static io.questdb.griffin.OperatorExpression.DOT_PRECEDENCE;
 
-class ExpressionParser {
+public class ExpressionParser {
 
     private static final int BRANCH_BETWEEN_END = 14;
     private static final int BRANCH_BETWEEN_START = 13;

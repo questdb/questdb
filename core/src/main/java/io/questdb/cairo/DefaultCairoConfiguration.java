@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -43,6 +45,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final CharSequence root;
+    private final CairoSecurityContextFactory securityContextFactory = new AllowAllSecurityContextFactory();
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
@@ -116,6 +119,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
+    }
+
+    @Override
+    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+        return securityContextFactory;
     }
 
     @Override
@@ -271,6 +279,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getIdleCheckInterval() {
         return 100;
+    }
+
+    @Override
+    public int getInactiveReaderMaxOpenPartitions() {
+        return 128;
     }
 
     @Override
@@ -809,6 +822,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public double getWalSquashUncommittedRowsMultiplier() {
         return 20;
+    }
+
+    @Override
+    public long getWalDataAppendPageSize() {
+        return 1024 * 1024;
     }
 
     @Override

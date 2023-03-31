@@ -88,7 +88,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     @Override
-    protected boolean runSerially() {
+    public boolean runSerially() {
         long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
         if (unpublishedWalTxnCount == lastProcessedCount) {
             return false;
