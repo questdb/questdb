@@ -27,7 +27,6 @@ package io.questdb.log;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
@@ -214,7 +213,7 @@ public final class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8Decode(lo, hi, this);
+        sink().putUtf8(lo, hi);
         return this;
     }
 
