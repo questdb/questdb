@@ -32,7 +32,7 @@ stages:
               imageName: "ubuntu-latest"
               poolName: "Azure Pipelines"
               os: Linux
-              jdk: "1.8"
+              jdk: "1.11"
               testset: "all"
               includeTests: "**Fuzz**"
               javadoc_step: ""

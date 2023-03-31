@@ -132,8 +132,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
     return rd_off - fromOffset;
 }
 
-
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong fromOffset, jlong length) {
     return Java_io_questdb_std_Files_copyDataToOffset(e, cls, srcFd, destFd, fromOffset, 0, length);
@@ -326,7 +324,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_EXISTING
     );
-
 
     if (handle != INVALID_HANDLE_VALUE) {
         millis += MILLIS_SINCE_1970; // millis between 1601-01-01 and 1970-01-01
