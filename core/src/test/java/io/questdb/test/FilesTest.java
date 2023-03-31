@@ -243,7 +243,7 @@ public class FilesTest {
                 Assert.assertFalse(new File(linkPath.toString()).exists());
                 Assert.assertTrue(r.exists());
                 Assert.assertEquals(0L, Files.getDirSize(targetPath));
-                Assert.assertEquals(0, Files.rmdir(targetPath));
+                Assert.assertEquals(0, Files.rmdir(targetPath.slash().$()));
                 Assert.assertFalse(r.exists());
             }
         });
