@@ -846,13 +846,24 @@ public class FilesTest {
                     Files.remove(path2);
                     fd2 = Files.openRW(path2.$());
 
-                    // Check copy call works
+                    // Check copy with offset call works
                     long destOffset = 1057;
                     copiedLen = Files.copyDataToOffset(fd1, fd2, offset, destOffset, fileSize - offset);
                     Assert.assertEquals(fileSize - offset, copiedLen);
 
                     long1 = Files.readNonNegativeLong(fd2, destOffset + fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);
+
+                    // Check subsequent copy call with zero offset works
+                    long anotherTestValue = 0x0987654321FEDCBAL;
+                    Unsafe.getUnsafe().putLong(mem, anotherTestValue);
+                    Files.write(fd1, mem, 8, 0);
+
+                    copiedLen = Files.copyDataToOffset(fd1, fd2, 0, 0, 8);
+                    Assert.assertEquals(8, copiedLen);
+
+                    long1 = Files.readNonNegativeLong(fd2, 0);
+                    Assert.assertEquals(anotherTestValue, long1);
                 } finally {
                     // Release mem, fd
                     Files.close(fd1);
