@@ -72,7 +72,8 @@ stages:
                   "buildid": "$(Build.BuildId)",
                   "instancetype": "c6a.xlarge",
                   "ami": "ami-0a9fa9f6f1dba41c0",
-                  "user": "ubuntu"
+                  "user": "ubuntu",
+                  "devicename": "/dev/sda1"
                 }
               outputVariable: "functionResultAmd64Ext4"
           - task: LambdaInvokeFunction@1
