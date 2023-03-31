@@ -42,6 +42,8 @@ public class CircuitBreakerRegistry implements Closeable {
 
     private final Rnd random;
 
+    private volatile boolean closed = false;
+
     public CircuitBreakerRegistry(PGWireConfiguration configuration, CairoConfiguration cairoConfig) {
         lock = new SimpleSpinLock();
         int limit = configuration.getDispatcherConfiguration().getLimit();
@@ -63,19 +65,22 @@ public class CircuitBreakerRegistry implements Closeable {
     }
 
     public int acquire() {
+        if (closed) {
+            return -1;
+        }
+
         int idx;
-        int secret;
+        int secret = random.nextInt();
         lock.lock();
         try {
             int size = freeIdx.size();
             idx = freeIdx.getQuick(size - 1);
             freeIdx.setPos(size - 1);
-            secret = random.nextInt();
         } finally {
             lock.unlock();
         }
 
-        circuitBreakers.get(idx).setSecret(secret);
+        circuitBreakers.getQuick(idx).setSecret(secret);
         return idx;
     }
 
@@ -84,7 +89,7 @@ public class CircuitBreakerRegistry implements Closeable {
             throw CairoException.nonCritical().put("wrong circuit breaker idx [idx=").put(circuitBreakerIdx).put("]");
         }
 
-        NetworkSqlExecutionCircuitBreaker cb = circuitBreakers.get(circuitBreakerIdx);
+        NetworkSqlExecutionCircuitBreaker cb = circuitBreakers.getQuick(circuitBreakerIdx);
         if (cb == null) {
             throw CairoException.nonCritical().put("empty circuit breaker slot [idx=").put(circuitBreakerIdx).put("]");
         }
@@ -98,13 +103,18 @@ public class CircuitBreakerRegistry implements Closeable {
 
     @Override
     public void close() {
-        lock.lock();
-        try {
-            for (int i = 0, n = circuitBreakers.size(); i < n; i++) {
-                Misc.free(circuitBreakers.getQuick(i));
-            }
+        if (closed) {
+            return;
+        }
 
-            circuitBreakers.clear();
+        lock.lock();
+        closed = true;
+        try {
+            for (int i = 0, n = freeIdx.size(); i < n; i++) {
+                int idx = freeIdx.getQuick(i);
+                Misc.free(circuitBreakers.getQuick(idx));
+                circuitBreakers.setQuick(idx, null);
+            }
             freeIdx.clear();
         } finally {
             lock.unlock();
@@ -112,14 +122,19 @@ public class CircuitBreakerRegistry implements Closeable {
     }
 
     public NetworkSqlExecutionCircuitBreaker getCircuitBreaker(int idx) {
-        return circuitBreakers.get(idx);
+        return circuitBreakers.getQuick(idx);
     }
 
     public void release(int contextId) {
-        circuitBreakers.get(contextId).clear();
+        circuitBreakers.getQuick(contextId).clear();
         lock.lock();
         try {
-            freeIdx.add(contextId);
+            if (!closed) {
+                freeIdx.add(contextId);
+            } else {
+                Misc.free(circuitBreakers.getQuick(contextId));
+                circuitBreakers.setQuick(contextId, null);
+            }
         } finally {
             lock.unlock();
         }

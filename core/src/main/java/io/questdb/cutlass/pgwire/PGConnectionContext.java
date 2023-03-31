@@ -351,6 +351,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.free(path);
         Misc.free(utf8Sink);
         freeBuffers();
+        // release circuit breaker to registry (for reuse) instead of closing it
         registry.release(circuitBreakerId);
     }
 
@@ -2283,7 +2284,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=" .length(), valueHi));
                                 if (this.statementTimeout > 0) {
                                     circuitBreaker.setTimeout(statementTimeout);
                                 }

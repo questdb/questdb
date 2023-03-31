@@ -62,6 +62,7 @@ import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
 import org.postgresql.core.Tuple;
+import org.postgresql.jdbc.PgConnection;
 import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
@@ -1775,7 +1776,120 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testCancelRunningCreateQuery() throws Exception {
+    public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            mayDrainWalQueue();
+
+            final int THREADS = 5;
+            final int BLOCKED_THREAD = 3;
+
+            ObjList<Connection> conns = new ObjList<>();
+            final long[] results = new long[THREADS];
+            final CountDownLatch startLatch = new CountDownLatch(THREADS);
+            final CountDownLatch endLatch = new CountDownLatch(THREADS);
+
+            try (
+                    final PGWireServer server = createPGServer(4);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                for (int i = 0; i < THREADS; i++) {
+                    conns.add(getConnection(server.getPort(), false, true));
+                }
+
+                for (int i = 0; i < THREADS; i++) {
+                    final int j = i;
+                    new Thread(() -> {
+                        final String query = (j == BLOCKED_THREAD) ? "select count(*) from tab t1 cross join tab t2 where t1.x > 0" : "select count(*) from tab where x > 0";
+                        try (PreparedStatement stmt = conns.getQuick(j).prepareStatement(query)) {
+                            startLatch.countDown();
+                            startLatch.await();
+                            try (ResultSet rs = stmt.executeQuery()) {
+                                rs.next();
+                                results[j] = rs.getLong(1);
+                            }
+                        } catch (SQLException e) {
+                            LOG.error().$(e).$();
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        } finally {
+                            endLatch.countDown();
+                        }
+                    }).start();
+                }
+
+                while (endLatch.getCount() > 0) {
+                    Os.sleep(10);
+                    ((PgConnection) conns.getQuick(BLOCKED_THREAD)).cancelQuery();
+                }
+
+                for (int i = 0; i < THREADS; i++) {
+                    Assert.assertEquals(i != BLOCKED_THREAD ? 1000000 : 0, results[i]);
+                }
+
+            } finally {
+                for (int i = 0, n = conns.size(); i < n; i++) {
+                    conns.getQuick(i).close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            mayDrainWalQueue();
+
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                int backendPid;
+
+                //first connection
+                try (final PgConnection connection = (PgConnection) getConnection(server.getPort(), false, true)) {
+                    backendPid = executeAndCancelQuery(connection);
+                }
+
+                ObjList<PgConnection> otherConns = new ObjList<>();
+                PgConnection sameConn;
+
+                while (true) {
+                    final PgConnection conn = (PgConnection) getConnection(server.getPort(), false, true);
+                    if (backendPid == conn.getQueryExecutor().getBackendPID()) {
+                        sameConn = conn;
+                        break;
+                    } else {
+                        otherConns.add(conn);
+                    }
+                }
+
+                for (int i = 0, n = otherConns.size(); i < n; i++) {
+                    otherConns.getQuick(i).close();
+                }
+
+                //first run query and complete  
+                try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
+                    ResultSet result = stmt.executeQuery();
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n1000000\n", sink, result);
+
+                    //then run query and cancel
+                    executeAndCancelQuery(sameConn);
+                } finally {
+                    sameConn.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRunningQuery() throws Exception {
         String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
                 "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
@@ -1808,6 +1922,7 @@ if __name__ == "__main__":
                         }
                     }, "cancellation thread").start();
                     try {
+                        Os.sleep(1);
                         stmt.execute();
                         Assert.fail("expected PSQLException with cancel message");
                     } catch (PSQLException e) {
@@ -6394,6 +6509,32 @@ nodejs code:
     }
 
     @Test
+    public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            mayDrainWalQueue();
+
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                //first connection
+                try (final PgConnection connection = (PgConnection) getConnection(server.getPort(), false, true)) {
+                    executeAndCancelQuery(connection);
+
+                    try (final PreparedStatement stmt = connection.prepareStatement("select count(*) from tab where x > 0")) {
+                        ResultSet result = stmt.executeQuery();
+                        sink.clear();
+                        assertResultSet("count[BIGINT]\n1000000\n", sink, result);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRunSimpleQueryMultipleTimes() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
@@ -7972,10 +8113,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8013,6 +8150,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8047,10 +8188,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -8090,6 +8227,10 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0,null\n" +
                         "9,3.0,2020-06-01 00:00:12.0,null\n");
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateBatch() throws Exception {
@@ -8458,6 +8599,39 @@ create table tab as (
         });
     }
 
+    private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
+        int backendPid;
+        AtomicBoolean isCancelled = new AtomicBoolean(false);
+        CountDownLatch finished = new CountDownLatch(1);
+        backendPid = connection.getQueryExecutor().getBackendPID();
+        String query = "select count(*) from tab t1 cross join tab t2 where t1.x > 0";
+
+        try (final PreparedStatement stmt = connection.prepareStatement(query)) {
+            new Thread(() -> {
+                try {
+                    while (!isCancelled.get()) {
+                        Os.sleep(1);
+                        ((PGConnection) connection).cancelQuery();
+                    }
+                } catch (SQLException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    finished.countDown();
+                }
+            }, "cancellation thread").start();
+            try {
+                Os.sleep(1);
+                stmt.execute();
+                Assert.fail("expected PSQLException with cancel message");
+            } catch (PSQLException e) {
+                isCancelled.set(true);
+                finished.await();
+                assertContains(e.getMessage(), "cancelling statement due to user request");
+            }
+        }
+        return backendPid;
+    }
+
     private static int getCountStar(String query, Connection conn) throws Exception {
         int count = -1;
         try (PreparedStatement stmt = conn.prepareStatement(query)) {
@@ -8591,7 +8765,7 @@ create table tab as (
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {
                     if (isBindParam[p]) {
-                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
+                        ps.setString(bindIdx++, "null" .equals(bindValues[p]) ? null : bindValues[p]);
                     }
                 }
                 try (ResultSet result = ps.executeQuery()) {
