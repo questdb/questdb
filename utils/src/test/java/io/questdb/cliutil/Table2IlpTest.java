@@ -30,6 +30,7 @@ import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -116,6 +117,8 @@ public class Table2IlpTest {
             }
         };
 
+        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+
         workerPool = new WorkerPool(conf);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         pgServer = new PGWireServer(
@@ -127,8 +130,10 @@ public class Table2IlpTest {
                 new PGWireServer.PGConnectionContextFactory(
                         engine,
                         conf,
+                        registry,
                         () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                )
+                ),
+                registry
         );
 
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
