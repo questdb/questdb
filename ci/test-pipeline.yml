@@ -70,10 +70,9 @@ stages:
                 {
                   "pool": "amd64-zfs",
                   "buildid": "$(Build.BuildId)",
-                  "instancetype": "c6a.xlarge",
+                  "instancetype": "c6a.2xlarge",
                   "ami": "ami-00d48a0abb10b1a09",
-                  "user": "ubuntu",
-                  "shutdownflag": "noshutdown"
+                  "user": "ubuntu"
                 }
               outputVariable: "functionResult2"
           - bash: |
