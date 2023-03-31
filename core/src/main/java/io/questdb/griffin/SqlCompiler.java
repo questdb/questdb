@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
@@ -2467,49 +2468,58 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
+            // show tables
+            // show columns from tab
+            // show partitions from tab
+            // show transaction isolation level
+            // show transaction_isolation
+            // show max_identifier_length
+            // show standard_conforming_strings
+            // show search_path
+            // show datestyle
+            // show time zone
+            RecordCursorFactory factory = null;
             if (isTablesKeyword(tok)) {
-                return compiledQuery.of(new TableListRecordCursorFactory());
-            }
-            if (isColumnsKeyword(tok)) {
-                return sqlShowColumns(executionContext);
-            }
-
-            if (isTransactionKeyword(tok)) {
-                return sqlShowTransaction();
-            }
-
-            if (isTransactionIsolation(tok)) {
-                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
-            }
-
-            if (isMaxIdentifierLength(tok)) {
-                return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
-            }
-
-            if (isStandardConformingStrings(tok)) {
-                return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
-            }
-
-            if (isSearchPath(tok)) {
-                return compiledQuery.of(new ShowSearchPathCursorFactory());
-            }
-
-            if (isDateStyleKeyword(tok)) {
-                return compiledQuery.of(new ShowDateStyleCursorFactory());
-            }
-
-            if (SqlKeywords.isTimeKeyword(tok)) {
+                factory = new TableListRecordCursorFactory();
+            } else if (isColumnsKeyword(tok)) {
+                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext));
+            } else if (isPartitionsKeyword(tok)) {
+                factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
+            } else if (isTransactionKeyword(tok)) {
+                factory = sqlShowTransaction();
+            } else if (isTransactionIsolation(tok)) {
+                factory = new ShowTransactionIsolationLevelCursorFactory();
+            } else if (isMaxIdentifierLength(tok)) {
+                factory = new ShowMaxIdentifierLengthCursorFactory();
+            } else if (isStandardConformingStrings(tok)) {
+                factory = new ShowStandardConformingStringsCursorFactory();
+            } else if (isSearchPath(tok)) {
+                factory = new ShowSearchPathCursorFactory();
+            } else if (isDateStyleKeyword(tok)) {
+                factory = new ShowDateStyleCursorFactory();
+            } else if (SqlKeywords.isTimeKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                    return compiledQuery.of(new ShowTimeZoneFactory());
+                    factory = new ShowTimeZoneFactory();
                 }
             }
+            if (factory != null) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || Chars.equals(tok, ';')) {
+                    return compiledQuery.of(factory);
+                }
+                Misc.free(factory);
+                throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [tok=").put(tok).put(']');
+            }
         }
-
-        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables', 'columns' or 'time zone'");
+        throw SqlException.position(lexer.lastTokenPosition()).put("expected ")
+                .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
+                .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
+                .put("'max_identifier_length', 'standard_conforming_strings', ")
+                .put("'search_path', 'datestyle', or 'time zone'");
     }
 
-    private CompiledQuery sqlShowColumns(SqlExecutionContext executionContext) throws SqlException {
+    private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (null == tok || !isFromKeyword(tok)) {
@@ -2520,16 +2530,15 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-        return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableToken));
+        return tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
     }
 
-    private CompiledQuery sqlShowTransaction() throws SqlException {
+    private RecordCursorFactory sqlShowTransaction() throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && isIsolationKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && isLevelKeyword(tok)) {
-                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
+                return new ShowTransactionIsolationLevelCursorFactory();
             }
             throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'level'");
         }
@@ -2733,6 +2742,44 @@ public class SqlCompiler implements Closeable {
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
+    }
+
+    UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+        TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+
+        // Update QueryModel structure is
+        // QueryModel with SET column expressions
+        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                updateTableToken,
+                selectQueryModel,
+                updateQueryModel,
+                executionContext
+        );
+
+        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
+            return new UpdateOperation(
+                    updateTableToken,
+                    selectQueryModel.getTableId(),
+                    selectQueryModel.getTableVersion(),
+                    lexer.getPosition(),
+                    recordCursorFactory
+            );
+        } else {
+            recordCursorFactory.close();
+
+            if (selectQueryModel.containsJoin()) {
+                throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
+            }
+
+            return new UpdateOperation(
+                    updateTableToken,
+                    metadata.getTableId(),
+                    metadata.getStructureVersion(),
+                    lexer.getPosition()
+            );
+        }
     }
 
     @FunctionalInterface

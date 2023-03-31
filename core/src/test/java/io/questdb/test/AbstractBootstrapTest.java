@@ -25,12 +25,24 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.PropServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -45,6 +57,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public abstract class AbstractBootstrapTest extends AbstractTest {
+    protected static final String CHARSET = "UTF8";
     protected static final int HTTP_MIN_PORT = 9011;
     protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
@@ -53,8 +66,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final int PG_PORT = 8822;
     protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     private static final File siteDir = new File(Objects.requireNonNull(ServerMain.class.getResource("/io/questdb/site/")).getFile());
+    protected static Path auxPath;
+    protected static Path dbPath;
+    protected static int dbPathLen;
+    protected static String rootDir;
     private static boolean publicZipStubCreated = false;
-
     @BeforeClass
     public static void setUpStatic() throws Exception {
         // fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests
@@ -69,7 +85,17 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             }
             publicZipStubCreated = true;
         }
-        AbstractTest.setUpStatic();
+        try {
+            rootDir = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
+            dbPath = new Path().of(rootDir).concat(PropServerConfiguration.DB_DIRECTORY).$();
+            dbPathLen = dbPath.length();
+            auxPath = new Path();
+            Files.remove(dbPath.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(dbPath.trimTo(dbPathLen).concat("telemetry_config.lock").$());
+            dbPath.trimTo(dbPathLen).$();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
     }
 
     @AfterClass
@@ -80,7 +106,9 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
                 publicZip.delete();
             }
         }
-        AbstractTest.tearDownStatic();
+        Misc.free(dbPath);
+        Misc.free(auxPath);
+        temp.delete();
     }
 
     protected static void createDummyConfiguration(
@@ -89,10 +117,10 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             int pgPort,
             int ilpPort,
             String... extra) throws Exception {
-        final String confPath = root.toString() + Files.SEPARATOR + "conf";
+        final String confPath = rootDir + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
 
             // enable services
             writer.println("http.enabled=true");
@@ -136,14 +164,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
         // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
             writer.println("");
         }
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
@@ -161,6 +189,15 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
+    }
+
+    static SqlExecutionContext executionContext(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllCairoSecurityContext.INSTANCE,
+                null,
+                null,
+                -1,
+                null);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {
@@ -186,6 +223,48 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             Assert.fail();
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
+        }
+    }
+
+    static void dropTable(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            TableToken tableToken,
+            boolean isWal,
+            @Nullable String otherVolume
+    ) throws Exception {
+        SOCountDownLatch tableDropped = new SOCountDownLatch(1);
+        if (isWal) {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                if (token != null && token.equals(tableToken) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_LOCK_CLOSE) {
+                    tableDropped.countDown();
+                }
+            });
+        } else {
+            tableDropped.countDown();
+        }
+        try (OperationFuture op = compiler.compile("DROP TABLE " + tableToken.getTableName(), context).execute(null)) {
+            op.await();
+        }
+        if (isWal) {
+            drainWalQueue(engine);
+        }
+        tableDropped.await();
+        if (otherVolume != null) {
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            auxPath.of(otherVolume).concat(tableToken.getDirName()).$();
+            if (Files.exists(auxPath)) {
+                Assert.assertEquals(0, Files.rmdir(auxPath));
+                auxPath.of(dbPath).trimTo(dbPathLen).concat(tableToken.getDirName()).$();
+                boolean exists = Files.exists(auxPath);
+                boolean isSoftLink = Files.isSoftLink(auxPath);
+                Assert.assertTrue(!exists || isSoftLink);
+                if (isSoftLink) {
+                    Assert.assertEquals(0, Files.unlink(auxPath));
+                }
+            }
         }
     }
 

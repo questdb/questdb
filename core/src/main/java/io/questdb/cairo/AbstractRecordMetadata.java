@@ -25,31 +25,16 @@
 package io.questdb.cairo;
 
 
-import io.questdb.cairo.sql.ColumnMetadataCollection;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMetadataCollection, Mutable {
+public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable {
     protected final ObjList<TableColumnMetadata> columnMetadata = new ObjList<>();
     protected final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     protected int columnCount;
     protected int timestampIndex = -1;
-
-    public static TableColumnMetadata copyOf(RecordMetadata metadata, int columnIndex) {
-        if (metadata instanceof AbstractRecordMetadata) {
-            return ((AbstractRecordMetadata) metadata).getColumnMetadata(columnIndex);
-        }
-        return new TableColumnMetadata(
-                metadata.getColumnName(columnIndex),
-                metadata.getColumnType(columnIndex),
-                metadata.isColumnIndexed(columnIndex),
-                metadata.getIndexValueBlockCapacity(columnIndex),
-                metadata.isSymbolTableStatic(columnIndex),
-                metadata.getMetadata(columnIndex)
-        );
-    }
 
     @Override
     public void clear() {

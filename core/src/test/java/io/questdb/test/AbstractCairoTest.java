@@ -614,7 +614,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
     }
 
-    protected enum WalMode {
+    public enum WalMode {
         WITH_WAL, NO_WAL
     }
 
