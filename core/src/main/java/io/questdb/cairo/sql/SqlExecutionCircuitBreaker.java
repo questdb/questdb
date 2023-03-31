@@ -30,6 +30,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
+        public void cancel() {
+        }
+
+        @Override
         public boolean checkIfTripped() {
             return false;
         }
@@ -47,6 +51,10 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         @Override
         public int getFd() {
             return -1;
+        }
+
+        public boolean isCancelled() {
+            return false;
         }
 
         @Override
@@ -79,12 +87,19 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     // (used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
 
+    /**
+     * Trigger this circuit breaker to fail on next check.
+     */
+    void cancel();
+
     boolean checkIfTripped(long millis, int fd);
 
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
 
     int getFd();
+
+    boolean isCancelled();
 
     /**
      * Checks if timer is due.

@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -62,13 +63,14 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             WorkerPool workerPool,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
-            PGWireServer.PGConnectionContextFactory contextFactory
+            PGWireServer.PGConnectionContextFactory contextFactory,
+            CircuitBreakerRegistry registry
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory, registry);
     }
 
     public static PGWireServer createPGWireServer(
@@ -82,6 +84,8 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             return null;
         }
 
+        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+
         return new PGWireServer(
                 configuration,
                 cairoEngine,
@@ -91,8 +95,10 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
+                        registry,
                         () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                )
+                ),
+                registry
         );
     }
 
@@ -288,6 +294,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                     }
                 };
             }
+
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
         };
     }
 
@@ -302,6 +313,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                         return 0;  // Bind to ANY port.
                     }
                 };
+            }
+
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
             }
         };
     }
