@@ -24,8 +24,11 @@
 
 package io.questdb.test.log;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecordSink;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -104,9 +107,7 @@ public class LogRecordSinkTest {
             final int utf8ByteLen = msgBytes.length;
             Assert.assertEquals(utf8ByteLen, expEncLens[msgIdx]);
 
-            TestUtils.assertMemoryLeak(() -> {
-                scenarioConsumer.accept(msg, utf8ByteLen, sinkMaxLen, expectedLen);
-            });
+            TestUtils.assertMemoryLeak(() -> scenarioConsumer.accept(msg, utf8ByteLen, sinkMaxLen, expectedLen));
         }
     }
 
@@ -144,7 +145,7 @@ public class LogRecordSinkTest {
     }
 
     @Test
-    public void testLoggerApi() throws Exception {
+    public void testLoggerApi() {
         final String str = "abcde ðãµ¶ Āڜ 嚜꓂ \uD83D\uDCA9 \uD83E\uDD9E!";
         try (Utf8 msg = new Utf8(str)) {
             LOG.info().$utf8(msg.lo(), msg.hi()).$();
@@ -156,7 +157,7 @@ public class LogRecordSinkTest {
      * Test malformed UTF-8 sequences are handled correctly.
      */
     @Test
-    public void testMalformedUtf8Seq() throws Exception {
+    public void testMalformedUtf8Seq() {
         // UTF-8 encoding for an illegal 5-byte sequence.
         final byte lead5 = (byte) 0xF8; // 1111 1000
         final byte inter = (byte) 0xBF; // 1011 1111
