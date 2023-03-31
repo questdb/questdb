@@ -143,6 +143,41 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMig702HandlesMissingTxn() throws SqlException {
+        node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
+
+        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        compile("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        TableToken tokenAbc = engine.getTableToken("abc");
+        TableToken tokenDef = engine.getTableToken("def");
+
+        engine.releaseInactive();
+
+        CairoConfiguration config = engine.getConfiguration();
+        FilesFacade ff = config.getFilesFacade();
+
+        // Make abc _txn too short
+        Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME).$();
+        int fd = TableUtils.openRW(ff, abcTxnPath, LOG, config.getWriterFileOpenOpts());
+        Assert.assertTrue(ff.truncate(fd, 50));
+        ff.close(fd);
+
+        // Mess, run migration and check
+        TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+        checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+
+        // Remove _txn file for table abc
+        abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME).$();
+        Assert.assertTrue(ff.remove(abcTxnPath));
+
+        // Mess, run migration and check
+        TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
+        EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+        checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+    }
+
+    @Test
     public void testMig702NonRepeatable() throws SqlException {
         node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(-1);
         // Run migration
@@ -199,16 +234,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
         // Check txn file not upgraded
-        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
-            Path p = Path.getThreadLocal(config.getRoot());
-            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            txReader.unsafeLoadAll();
-
-            Assert.assertEquals(100, txReader.getLagRowCount());
-            Assert.assertEquals(1, txReader.getLagTxnCount());
-            Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), txReader.getLagMinTimestamp());
-            Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"), txReader.getLagMaxTimestamp());
-        }
+        checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
 
         TestUtils.messTxnUnallocated(
                 config.getFilesFacade(),
@@ -221,15 +247,20 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
         // Check txn file is upgraded
-        try (TxReader txReader = new TxReader(config.getFilesFacade())) {
+        checkTxnFile(config.getFilesFacade(), config, token, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
+    }
+
+    private static void checkTxnFile(FilesFacade ff, CairoConfiguration config, TableToken tokenDef, int rowCount, int lagTxnCount, long maxValue, long minValue) {
+        // Check txn file is upgraded
+        try (TxReader txReader = new TxReader(ff)) {
             Path p = Path.getThreadLocal(config.getRoot());
-            txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
             txReader.unsafeLoadAll();
 
-            Assert.assertEquals(0, txReader.getLagRowCount());
-            Assert.assertEquals(0, txReader.getLagTxnCount());
-            Assert.assertEquals(Long.MAX_VALUE, txReader.getLagMinTimestamp());
-            Assert.assertEquals(Long.MIN_VALUE, txReader.getLagMaxTimestamp());
+            Assert.assertEquals(rowCount, txReader.getLagRowCount());
+            Assert.assertEquals(lagTxnCount, txReader.getLagTxnCount());
+            Assert.assertEquals(maxValue, txReader.getLagMinTimestamp());
+            Assert.assertEquals(minValue, txReader.getLagMaxTimestamp());
         }
     }
 
