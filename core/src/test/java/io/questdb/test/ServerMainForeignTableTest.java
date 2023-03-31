@@ -32,7 +32,10 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
@@ -48,8 +51,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.sql.*;
-import java.util.Deque;
-import java.util.LinkedList;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,18 +84,19 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
         mainVolume = dbPath.toString();
-        try {
-            otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
-            createDummyConfiguration(
-                    HTTP_PORT + pgPortDelta,
-                    HTTP_MIN_PORT + pgPortDelta,
-                    pgPort,
-                    ILP_PORT + pgPortDelta,
-                    PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                    PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
+    }
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                HTTP_PORT + pgPortDelta,
+                HTTP_MIN_PORT + pgPortDelta,
+                pgPort,
+                ILP_PORT + pgPortDelta,
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
+                PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume));
     }
 
     @AfterClass
@@ -147,7 +149,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1)
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getCairoEngine())
             ) {
                 qdb.start();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
@@ -166,9 +168,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     dropTable(engine, compiler, context, tableToken, false, null);
 
                     // create normal table in other volume, then drop it
-                    tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
+                    tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, true, false);
                     try {
-                        createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
+                        createPopulateTable(cairoConfig, engine, compiler, context, tableName, true, false, false);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
@@ -203,7 +205,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                     }
-                    assertTableExists(tableToken, true, false);
+                    assertTableExists(tableToken, false, false);
                     dropTable(engine, compiler, context, tableToken, true);
 
                     tableToken = createTable(cairoConfig, engine, compiler, context, tableName);
@@ -624,30 +626,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         java.nio.file.Files.createSymbolicLink(Paths.get(tablePath), Paths.get(foreignPath));
     }
 
-    private static void deleteFolder(String folderName, boolean mustExist) {
+    private static void deleteFolder(String folderName) {
         File directory = Paths.get(folderName).toFile();
         if (directory.exists() && directory.isDirectory()) {
-            Deque<File> directories = new LinkedList<>();
-            directories.offer(directory);
-            while (!directories.isEmpty()) {
-                File root = directories.pop();
-                File[] content = root.listFiles();
-                if (content == null || content.length == 0) {
-                    root.delete();
-                } else {
-                    for (File f : content) {
-                        File target = f.getAbsoluteFile();
-                        if (target.isFile()) {
-                            target.delete();
-                        } else if (target.isDirectory()) {
-                            directories.offer(target);
-                        }
-                    }
-                    directories.offer(root);
-                }
+            try (Path path = new Path().of(folderName).$()) {
+                Files.rmdir(path);
             }
             Assert.assertFalse(directory.exists());
-        } else if (mustExist) {
+        } else {
             Assert.fail("does not exist: " + folderName);
         }
     }
@@ -773,7 +759,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         if (isInVolume) {
             // drop simply unlinks, the folder remains, it is a feature
             // delete the table's folder in the other volume
-            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true);
+            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName());
         }
     }
 
