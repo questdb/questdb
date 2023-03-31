@@ -47,8 +47,8 @@ stages:
               project=$(System.TeamProject) --use-git-aliases true
             displayName: "Set default Azure DevOps organization and project"
           - task: LambdaInvokeFunction@1
-            displayName: "Start Agent 1"
-            name: "Start_Agent1"
+            displayName: "Start Agent arm64(xfs)"
+            name: "Start_Agent_arm64_xfs"
             inputs:
               awsCredentials: "ondemand-dev"
               regionName: "eu-west-1"
@@ -58,10 +58,26 @@ stages:
                   "pool": "arm64",
                   "buildid": "$(Build.BuildId)"
                 }
-              outputVariable: "functionResult"
+              outputVariable: "functionResultArm64"
           - task: LambdaInvokeFunction@1
-            displayName: "Start Agent 2"
-            name: "Start_Agent2"
+            displayName: "Start Agent amd64(ext4)"
+            name: "Start_Agent_arm64_ext4"
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              functionName: "ondemand-pipeline"
+              payload: |
+                {
+                  "pool": "amd64-ext4",
+                  "buildid": "$(Build.BuildId)",
+                  "instancetype": "c6a.xlarge",
+                  "ami": "ami-0a9fa9f6f1dba41c0",
+                  "user": "ubuntu"
+                }
+              outputVariable: "functionResultAmd64Ext4"
+          - task: LambdaInvokeFunction@1
+            displayName: "Start Agent amd64(zfs)"
+            name: "Start_Agent_arm64_zfs"
             inputs:
               awsCredentials: "ondemand-dev"
               regionName: "eu-west-1"
@@ -70,16 +86,17 @@ stages:
                 {
                   "pool": "amd64-zfs",
                   "buildid": "$(Build.BuildId)",
-                  "instancetype": "c6a.2xlarge",
+                  "instancetype": "c6a.xlarge",
                   "ami": "ami-00d48a0abb10b1a09",
                   "user": "ubuntu"
                 }
-              outputVariable: "functionResult2"
+              outputVariable: "functionResultAmd64Zfs"
           - bash: |
-              echo "Instance: $(functionResult)"
-              echo "Instance: $(functionResult2)"
-            name: "Display_Instance"
-            displayName: "Display Instance"
+              echo "Instance: $(functionResultArm64)"
+              echo "Instance: $(functionResultAmd64Ext4)"
+              echo "Instance: $(functionResultAmd64Zfs)"
+            name: "Display_Instances"
+            displayName: "Display Instances"
           - bash: |
               echo "Check for agent on pool arm64"
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
@@ -89,8 +106,19 @@ stages:
                 sleep 3
               done
               echo "Agent found ..."
-            name: "Check_agent"
-            displayName: "Check agent"
+            name: "Check_agent_arm64_xfs"
+            displayName: "Check agent arm64(xfs)"
+          - bash: |
+              echo "Check for agent on pool amd64-ext4"
+              POOLID=$(az pipelines pool list | jq '.[]| select(.name == "amd64-ext4") | .id' -r)
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "amd64-ext4-$(Build.BuildId)") | .enabled' -r)" != "true" ]
+              do
+                echo "Still waiting for agent amd64-ext4-$(Build.BuildId) ... "
+                sleep 3
+              done
+              echo "Agent found ..."
+            name: "Check_agent_amd64_ext4"
+            displayName: "Check agent amd64 ext4"
           - bash: |
               echo "Check for agent on pool amd64-zfs"
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "amd64-zfs") | .id' -r)
@@ -100,8 +128,8 @@ stages:
                 sleep 3
               done
               echo "Agent found ..."
-            name: "Check_agent2"
-            displayName: "Check agent2"
+            name: "Check_agent_amd64_zfs"
+            displayName: "Check agent amd64 zfs"
       - template: templates/self-hosted-jobs.yml
 
   - stage: HostedRunTestsBranches

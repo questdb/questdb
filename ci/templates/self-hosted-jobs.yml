@@ -43,3 +43,25 @@ jobs:
       javadoc_profile: ""
     steps:
       - template: steps.yml
+  - job: linux_adm64_ext4
+    displayName: "on linux-amd64-ext4"
+    pool:
+      name: "amd64-ext4"
+      vmImage:
+      demands:
+        - Agent.Name -equals amd64-ext4-$(Build.BuildId)
+    dependsOn:
+      - StartAgents
+    timeoutInMinutes: 60
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    variables:
+      testset: all
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      os: Linux
+      jdk: "1.11"
+      javadoc_step: ""
+      javadoc_profile: ""
+    steps:
+      - template: steps.yml
