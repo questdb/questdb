@@ -1922,7 +1922,6 @@ if __name__ == "__main__":
                         }
                     }, "cancellation thread").start();
                     try {
-                        Os.sleep(1);
                         stmt.execute();
                         Assert.fail("expected PSQLException with cancel message");
                     } catch (PSQLException e) {
