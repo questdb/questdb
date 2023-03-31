@@ -173,12 +173,38 @@ public final class Files {
 
     public static native int fsync(int fd);
 
-    public static long getDiskSize(LPSZ path) {
+    public static long getDirSize(Path path) {
+        long pathUtf8Ptr = path.address();
+        long pFind = findFirst(pathUtf8Ptr);
+        if (pFind > 0L) {
+            int len = path.length();
+            try {
+                long totalSize = 0L;
+                do {
+                    long nameUtf8Ptr = findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    if (findType(pFind) == Files.DT_FILE) {
+                        totalSize += length(path);
+                    } else if (notDots(nameUtf8Ptr)) {
+                        totalSize += getDirSize(path);
+                    }
+                }
+                while (findNext(pFind) > 0);
+                return totalSize;
+            } finally {
+                findClose(pFind);
+                path.trimTo(len);
+            }
+        }
+        return 0L;
+    }
+
+    public static long getDiskFreeSpace(LPSZ path) {
         if (path != null) {
             return getDiskSize(path.address());
         }
         // current directory
-        return getDiskSize(0);
+        return 0L;
     }
 
     /**
@@ -210,10 +236,11 @@ public final class Files {
         return OPEN_FILE_COUNT.get();
     }
 
-    public @NotNull static String getResourcePath(@Nullable URL url) {
+    public @NotNull
+    static String getResourcePath(@Nullable URL url) {
         assert url != null;
         String file = url.getFile();
-        assert  file != null;
+        assert file != null;
         assert file.length() > 0;
         return file;
     }
@@ -392,41 +419,42 @@ public final class Files {
     }
 
     public static int rmdir(Path path) {
-        long p = findFirst(path.address());
-        int len = path.length();
-        int errno = -1;
-        if (p > 0) {
+        long pathUtf8Ptr = path.address();
+        long pFind = findFirst(pathUtf8Ptr);
+        if (pFind > 0L) {
+            int len = path.length();
+            int errno;
+            int type;
+            long nameUtf8Ptr;
             try {
                 do {
-                    long lpszName = findName(p);
-                    path.trimTo(len).concat(lpszName).$();
-                    if (findType(p) == DT_DIR) {
-                        if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
-                            continue;
+                    nameUtf8Ptr = findName(pFind);
+                    Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
+                    path.$();
+                    type = findType(pFind);
+                    if (type == Files.DT_FILE) {
+                        if (!remove(pathUtf8Ptr)) {
+                            return Os.errno();
                         }
-
-                        if ((errno = rmdir(path)) == 0) {
-                            continue;
+                    } else if (notDots(nameUtf8Ptr)) {
+                        errno = type == Files.DT_LNK ? unlink(pathUtf8Ptr) : rmdir(path);
+                        if (errno != 0) {
+                            return errno;
                         }
-
-                    } else {
-                        if ((remove(path.address()))) {
-                            continue;
-                        }
-                        errno = Os.errno();
                     }
-                    return errno;
-                } while (findNext(p) > 0);
+                }
+                while (findNext(pFind) > 0);
             } finally {
-                findClose(p);
+                findClose(pFind);
+                path.trimTo(len).$();
             }
-            if (rmdir(path.trimTo(len).$().address())) {
+            if (isSoftLink(pathUtf8Ptr)) {
+                return unlink(pathUtf8Ptr);
+            } else if (rmdir(pathUtf8Ptr)) {
                 return 0;
             }
-            return Os.errno();
         }
-
-        return errno;
+        return Os.errno();
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
@@ -495,6 +523,29 @@ public final class Files {
 
     public static int unlink(LPSZ softLink) {
         return unlink(softLink.address());
+    }
+
+    public static void walk(Path path, FindVisitor func) {
+        int len = path.length();
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (notDots(name)) {
+                        int type = findType(p);
+                        path.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            func.onFind(name, type);
+                        } else {
+                            walk(path.concat(name).$(), func);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+            }
+        }
     }
 
     public native static long write(int fd, long address, long len, long offset);

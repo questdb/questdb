@@ -98,7 +98,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     @Test
     public void testServerMainPgWireConcurrentlyWithLineTcpSender() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain serverMain = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 serverMain.start();
 
                 final CairoEngine engine = serverMain.getCairoEngine();

@@ -28,15 +28,11 @@ import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
 import org.junit.AfterClass;
@@ -60,22 +56,18 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
 
     private static final int PG_WIRE_POOL_SIZE = 4;
     private static final int SHARED_POOL_SIZE = 1;
-    private static final int pgPort = PG_PORT + 10;
-    private static Path path;
+    private static final int pgPortDelta = 17;
+    private static final int pgPort = PG_PORT + pgPortDelta;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        path = new Path().of(root).concat("db").$();
         try {
-            int pathLen = path.length();
-            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
-            Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
             createDummyConfiguration(
-                    HTTP_PORT + 10,
-                    HTTP_MIN_PORT + 10,
+                    HTTP_PORT + pgPortDelta,
+                    HTTP_MIN_PORT + pgPortDelta,
                     pgPort,
-                    ILP_PORT + 10,
+                    ILP_PORT + pgPortDelta,
                     PropertyKey.PG_WORKER_COUNT.getPropertyPath() + "=" + PG_WIRE_POOL_SIZE,
                     PropertyKey.SHARED_WORKER_COUNT.getPropertyPath() + "=" + SHARED_POOL_SIZE,
                     // Set vector aggregate queue to a small size to have better chances of work stealing.
@@ -88,7 +80,6 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        Misc.free(path);
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -97,7 +88,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
@@ -119,7 +110,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
@@ -148,15 +139,6 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
             }
             Assert.assertEquals(expectedRows, actualRows);
         }
-    }
-
-    private static SqlExecutionContext executionContext(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
-                null,
-                null,
-                -1,
-                null);
     }
 
     private TableToken createPopulateTable(
