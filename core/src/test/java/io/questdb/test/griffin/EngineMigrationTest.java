@@ -66,7 +66,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry ze;
                 while ((ze = zip.getNextEntry()) != null) {
-                    final File dest = new File((String) root, ze.getName());
+                    final File dest = new File(root, ze.getName());
                     if (!ze.isDirectory()) {
                         copyInputStream(buffer, dest, zip);
                     }
@@ -148,8 +148,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         compile("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken tokenAbc = engine.getTableToken("abc");
-        TableToken tokenDef = engine.getTableToken("def");
+        TableToken tokenAbc = engine.verifyTableName("abc");
+        TableToken tokenDef = engine.verifyTableName("def");
 
         engine.releaseInactive();
 

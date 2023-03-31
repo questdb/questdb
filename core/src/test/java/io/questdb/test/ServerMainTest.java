@@ -27,7 +27,6 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.ServerMain;
-import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,8 +42,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
-        Files.remove(dbPath.concat("sys.column_versions_purge_log.lock").$());
-        Files.remove(dbPath.trimTo(dbPathLen).concat("telemetry_config.lock").$());
+        super.setUp();
+        TestUtils.unchecked(() ->createDummyConfiguration());
         dbPath.parent().$();
     }
 

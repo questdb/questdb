@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
@@ -127,53 +126,57 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext defaultContext = executionContext(qdb.getCairoEngine())
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                CairoEngine engine2 = qdb.getCairoEngine();
+                try (SqlExecutionContext defaultContext = TestUtils.createSqlExecutionCtx(engine2)
+                ) {
+                    qdb.start();
+                    CairoEngine engine = qdb.getCairoEngine();
+                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
+                    TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
 
-                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
-                assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
+                    String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
+                    assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
-                int numThreads = 5;
-                SOCountDownLatch completed = new SOCountDownLatch(numThreads);
-                AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
-                List<SqlCompiler> compilers = new ArrayList<>(numThreads);
-                List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
-                for (int i = 0; i < numThreads; i++) {
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine());
-                    compilers.add(compiler);
-                    contexts.add(context);
-                    new Thread(() -> {
-                        try {
-                            assertShowPartitions(finallyExpected, tableToken, compiler, context);
-                        } catch (Throwable err) {
-                            errors.get().add(err);
-                        } finally {
-                            completed.countDown();
-                        }
-                    }).start();
-                }
-                if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
-                    TestListener.dumpThreadStacks();
-                }
-                dropTable(engine, defaultCompiler, defaultContext, tableToken, isWal, null);
-                for (int i = 0; i < numThreads; i++) {
-                    compilers.get(i).close();
-                    contexts.get(i).close();
-                }
-                compilers.clear();
-                contexts.clear();
+                    int numThreads = 5;
+                    SOCountDownLatch completed = new SOCountDownLatch(numThreads);
+                    AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
+                    List<SqlCompiler> compilers = new ArrayList<>(numThreads);
+                    List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
+                    for (int i = 0; i < numThreads; i++) {
+                        SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                        CairoEngine engine1 = qdb.getCairoEngine();
+                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1);
+                        compilers.add(compiler);
+                        contexts.add(context);
+                        new Thread(() -> {
+                            try {
+                                assertShowPartitions(finallyExpected, tableToken, compiler, context);
+                            } catch (Throwable err) {
+                                errors.get().add(err);
+                            } finally {
+                                completed.countDown();
+                            }
+                        }).start();
+                    }
+                    if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
+                        TestListener.dumpThreadStacks();
+                    }
+                    dropTable(engine, defaultCompiler, defaultContext, tableToken, isWal, null);
+                    for (int i = 0; i < numThreads; i++) {
+                        compilers.get(i).close();
+                        contexts.get(i).close();
+                    }
+                    compilers.clear();
+                    contexts.clear();
 
-                // fail on first error found
-                for (Throwable t : errors.get()) {
-                    Assert.fail(t.getMessage());
+                    // fail on first error found
+                    for (Throwable t : errors.get()) {
+                        Assert.fail(t.getMessage());
+                    }
                 }
             }
         });
@@ -184,54 +187,60 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context0 = executionContext(qdb.getCairoEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context1 = executionContext(qdb.getCairoEngine())
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine())
             ) {
-                qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                CairoEngine engine2 = qdb.getCairoEngine();
+                try (SqlExecutionContext context0 = TestUtils.createSqlExecutionCtx(engine2);
+                     SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
+                ) {
+                    CairoEngine engine1 = qdb.getCairoEngine();
+                    try (SqlExecutionContext context1 = TestUtils.createSqlExecutionCtx(engine1)
+                    ) {
+                        qdb.start();
+                        CairoEngine engine = qdb.getCairoEngine();
+                        CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler0, context0, tableName);
-                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
-                assertShowPartitions(finallyExpected, tableToken, compiler0, context0);
+                        TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler0, context0, tableName);
+                        String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
+                        assertShowPartitions(finallyExpected, tableToken, compiler0, context0);
 
-                CyclicBarrier start = new CyclicBarrier(2);
-                SOCountDownLatch completed = new SOCountDownLatch(1);
-                AtomicReference<Throwable> error = new AtomicReference<>();
+                        CyclicBarrier start = new CyclicBarrier(2);
+                        SOCountDownLatch completed = new SOCountDownLatch(1);
+                        AtomicReference<Throwable> error = new AtomicReference<>();
 
-                // show partitions concurrently
-                new Thread(() -> {
-                    try {
+                        // show partitions concurrently
+                        new Thread(() -> {
+                            try {
+                                start.await();
+                                assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
+                            } catch (Throwable err) {
+                                // delete won
+                                error.set(err);
+                            } finally {
+                                completed.countDown();
+                            }
+                        }).start();
+
                         start.await();
-                        assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
-                    } catch (Throwable err) {
-                        // delete won
-                        error.set(err);
-                    } finally {
-                        completed.countDown();
+                        try {
+                            dropTable(engine, compiler0, context0, tableToken, false, null);
+                        } catch (CairoException ce) {
+                            Assert.assertFalse(isWal);
+                            TestUtils.assertContains(ce.getFlyweightMessage(), "[reason='busyReader']");
+                        }
+
+                        Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(5L)));
+                        if (error.get() != null) {
+                            String msg = error.get().getMessage();
+                            Assert.assertTrue(msg.contains("table busy") || msg.contains("table does not exist"));
+                        }
+                        try {
+                            dropTable(engine, compiler0, context0, tableToken, isWal, null);
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+                        }
                     }
-                }).start();
-
-                start.await();
-                try {
-                    dropTable(engine, compiler0, context0, tableToken, false, null);
-                } catch (CairoException ce) {
-                    Assert.assertFalse(isWal);
-                    TestUtils.assertContains(ce.getFlyweightMessage(), "[reason='busyReader']");
-                }
-
-                Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(5L)));
-                if (error.get() != null) {
-                    String msg = error.get().getMessage();
-                    Assert.assertTrue(msg.contains("table busy") || msg.contains("table does not exist"));
-                }
-                try {
-                    dropTable(engine, compiler0, context0, tableToken, isWal, null);
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
                 }
             }
         });
@@ -309,7 +318,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             returned.await();
             engine.releaseAllWriters();
         }
-        return engine.getTableToken(tableName);
+        return engine.verifyTableName(tableName);
     }
 
     static {

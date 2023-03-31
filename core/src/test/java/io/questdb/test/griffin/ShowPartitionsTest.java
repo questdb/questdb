@@ -149,8 +149,8 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                     drainWalQueue();
                 }
                 engine.releaseAllWriters();
-                srcPath.of(configuration.getRoot()).concat(engine.getTableToken(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER).$();
-                dstPath.of(configuration.getRoot()).concat(engine.getTableToken(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER).$();
+                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER).$();
+                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER).$();
                 Assert.assertEquals(0, Files.softLink(srcPath, dstPath));
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
@@ -205,8 +205,8 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                     drainWalQueue();
                 }
                 engine.releaseAllWriters();
-                srcPath.of(configuration.getRoot()).concat(engine.getTableToken(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER).$();
-                dstPath.of(configuration.getRoot()).concat(engine.getTableToken(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER).$();
+                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER).$();
+                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER).$();
                 Assert.assertEquals(0, Files.softLink(srcPath, dstPath));
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
@@ -494,7 +494,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     private static void deleteFile(String tableName, String... pathParts) {
         engine.releaseAllWriters();
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         try (Path path = new Path().of(configuration.getRoot()).concat(tableToken)) {
             for (String part : pathParts) {
                 path.concat(part);
@@ -512,7 +512,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             CairoEngine engine
     ) {
         ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         try (Path path = new Path().of(root).concat(tableToken).$()) {
             int len = path.length();
             long pFind = Files.findFirst(path);
@@ -610,7 +610,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             drainWalQueue();
             returned.await();
         }
-        return engine.getTableToken(tableName);
+        return engine.verifyTableName(tableName);
     }
 
     private String replaceSizeToMatchOS(String expected, String tableName) {
