@@ -46,7 +46,7 @@ We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
-- Trades: live crytocurrency market data with 30M+ rows per month
+- Trades: live crypto market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
@@ -119,8 +119,7 @@ Here are high-cardinality
 results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB RAM:
 
 <div align="center">
-  <a href="https://github.com/questdb/questdb/releases/tag/7.0.1">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.0-benchmark.png" width="600"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
   </a>
 </div>
 
