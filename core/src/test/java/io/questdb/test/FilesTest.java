@@ -242,7 +242,7 @@ public class FilesTest {
                 Assert.assertEquals(0, Files.rmdir(linkPath));
                 Assert.assertFalse(new File(linkPath.toString()).exists());
                 Assert.assertTrue(r.exists());
-                Assert.assertEquals(0L, Files.getDirectoryContentSize(targetPath));
+                Assert.assertEquals(0L, Files.getDirSize(targetPath));
                 Assert.assertEquals(0, Files.rmdir(targetPath));
                 Assert.assertFalse(r.exists());
             }
@@ -272,18 +272,18 @@ public class FilesTest {
                 "the disk. Each partition then appears to the operating system as a distinct 'logical'" + System.lineSeparator() +
                 "disk that uses part of the actual disk." + System.lineSeparator();
         assertMemoryLeak(() -> {
-            File noDir = temporaryFolder.newFolder("yes", "no");
+            File noDir = temporaryFolder.newFolder("данные", "no");
             try (Path path = new Path().of(noDir.getParentFile().getAbsolutePath()).$()) {
                 int rootLen = path.length();
                 createTempFile(path, "prose.txt", content);
-                long baseSize = Files.getDirectoryContentSize(path.parent().$());
+                long baseSize = Files.getDirSize(path.parent().$());
                 createTempFile(path, "dinner.txt", content);
                 createTempFile(path.parent(), "apple.txt", content);
                 createTempFile(path.parent().concat("no"), "lunch.txt", content);
-                createTempFile(path.parent(), "paella.txt", content);
-                Assert.assertEquals(5 * baseSize, Files.getDirectoryContentSize(path.trimTo(rootLen).$()));
-                Assert.assertEquals(2 * baseSize, Files.getDirectoryContentSize(path.concat("no").$()));
-                Assert.assertEquals(0L, Files.getDirectoryContentSize(path.concat("paella.txt").$()));
+                createTempFile(path.parent(), "ребенок.txt", content);
+                Assert.assertEquals(5 * baseSize, Files.getDirSize(path.trimTo(rootLen).$()));
+                Assert.assertEquals(2 * baseSize, Files.getDirSize(path.concat("no").$()));
+                Assert.assertEquals(0L, Files.getDirSize(path.concat("ребенок.txt").$()));
             }
         });
     }
@@ -291,7 +291,7 @@ public class FilesTest {
     @Test
     public void testDirectoryContentSizeNonExistingDirectory() {
         try (Path path = new Path().of("banana").$()) {
-            Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
+            Assert.assertEquals(0L, Files.getDirSize(path));
         }
     }
 
@@ -301,7 +301,7 @@ public class FilesTest {
         File dir = temporaryFolder.newFolder("banana");
         try (Path path = new Path().of(dir.getAbsolutePath()).$()) {
             createTempFile(path, "small.txt", content);
-            Assert.assertEquals(0L, Files.getDirectoryContentSize(path));
+            Assert.assertEquals(0L, Files.getDirSize(path));
         }
     }
 
@@ -332,7 +332,7 @@ public class FilesTest {
                 int dbPathLen = dbPath.length();
                 int backupPathLen = backupPath.length();
                 createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
-                long baseSize = Files.getDirectoryContentSize(auxPath.parent().$());
+                long baseSize = Files.getDirSize(auxPath.parent().$());
 
                 // create files at table level
                 createTempFile(dbPath.concat("table"), "_meta", content);
@@ -381,17 +381,17 @@ public class FilesTest {
                 // backup/table/partition.attachable/column0.d
                 // backup/table/partition.attachable/column1.d
 
-                Assert.assertEquals(9 * baseSize, Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()));
-                Assert.assertEquals(9 * baseSize, Files.getDirectoryContentSize(dbPath.concat("table").$()));
-                Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(dbPath.concat("partition").$()));
-                Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(dbPath.parent().concat("partitionB").$()));
-                Assert.assertEquals(0L, Files.getDirectoryContentSize(dbPath.concat("timestamp.d").$()));
+                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.trimTo(dbPathLen).$()));
+                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.concat("table").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.concat("partition").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.parent().concat("partitionB").$()));
+                Assert.assertEquals(0L, Files.getDirSize(dbPath.concat("timestamp.d").$()));
                 Assert.assertEquals(baseSize, Files.length(dbPath));
-                Assert.assertEquals(6 * baseSize, Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$()));
-                Assert.assertEquals(6 * baseSize, Files.getDirectoryContentSize(backupPath.concat("table").$()));
-                Assert.assertEquals(3 * baseSize, Files.getDirectoryContentSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
+                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.trimTo(backupPathLen).$()));
+                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.concat("table").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
                 Assert.assertEquals(15 * baseSize,
-                        Files.getDirectoryContentSize(dbPath.trimTo(dbPathLen).$()) + Files.getDirectoryContentSize(backupPath.trimTo(backupPathLen).$())
+                        Files.getDirSize(dbPath.trimTo(dbPathLen).$()) + Files.getDirSize(backupPath.trimTo(backupPathLen).$())
                 );
             }
         });
@@ -1153,7 +1153,7 @@ public class FilesTest {
         ) {
             int fd = -1;
             long mem = -1;
-            long diskSize = ff.getDiskSize(p2);
+            long diskSize = ff.getDiskFreeSpace(p2);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
             try {

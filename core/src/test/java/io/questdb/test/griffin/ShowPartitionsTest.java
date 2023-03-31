@@ -27,11 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
-import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -51,6 +49,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.ATTACHABLE_DIR_MARKER;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -83,7 +82,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             String tableName,
             CairoEngine engine
     ) {
-        ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
+        ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine);
         String[] lines = expected.split("\n");
         sink.clear();
         sink.put(lines[0]).put('\n');
@@ -92,7 +91,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
             String line = lines[i];
             String nameColumn = line.split("\t")[2];
             Long s = sizes.get(nameColumn);
-            long size = s != null ? s.longValue() : 0L;
+            long size = s != null ? s : 0L;
             SizePrettyFunctionFactory.toSizePretty(auxSink, size);
             line = line.replaceAll("SIZE", String.valueOf(size));
             line = line.replaceAll("HUMAN", auxSink.toString());
@@ -165,7 +164,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsAttachablePartitionOfWrongTableId() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // symlink required, and not well supported in Windows
+        Assume.assumeFalse(Os.isWindows()); // symlink required, and not well-supported in Windows
         String tabName = testTableName(testName.getMethodName());
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
@@ -434,23 +433,8 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     @Test
     public void testShowPartitionsTableDoesNotExist() throws Exception {
-        String tableName = testTableName(testName.getMethodName());
-        assertMemoryLeak(() -> {
-            createTable(tableName, sqlExecutionContext);
-            try {
-                assertShowPartitions(
-                        "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
-                                "NaN\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
-                                "NaN\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
-                                "NaN\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
-                                "NaN\tMONTH\t2023-04.detached\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n" +
-                                "NaN\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\n",
-                        "banana");
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=banana]");
-            }
-        });
+        assertFailure("show partitions from banana", null, 21, "table does not exist [table=banana]");
+        assertFailure("SELECT * FROM table_partitions('banana')", null, 31, "table does not exist [table=banana]");
     }
 
     @Test
@@ -473,25 +457,39 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachableMissingTimestampColumn() throws Exception {
         String tableName = testTableName(testName.getMethodName());
-        assertMemoryLeak(() -> {
-            createTable(tableName, sqlExecutionContext);
-            deleteFile(tableName, "2023-04", "timestamp.d");
-            try {
-                assertShowPartitions(
-                        "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
-                                "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
-                                "1\tMONTH\t2023-02\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
-                                "2\tMONTH\t2023-03\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
-                                "3\tMONTH\t2023-04\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
-                                "4\tMONTH\t2023-05\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
-                                "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
-                        tableName
-                );
-                Assert.fail();
-            } catch (CairoException err) {
-                TestUtils.assertContains(err.getFlyweightMessage(), "no file found for designated timestamp column");
-            }
-        });
+        createTable(tableName, sqlExecutionContext);
+        deleteFile(tableName, "2023-04", "timestamp.d");
+
+        engine.releaseInactive();
+
+        final String finallyExpected = replaceSizeToMatchOS(
+                "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
+                        "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
+                        "1\tMONTH\t2023-02\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
+                        "2\tMONTH\t2023-03\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
+                        "NaN\tMONTH\t2023-04\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
+                        "4\tMONTH\t2023-05\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
+                        "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
+                tableName
+        );
+
+        assertQuery(
+                finallyExpected,
+                "SELECT * FROM table_partitions('" + tableName + "')",
+                null,
+                null,
+                false,
+                true
+        );
+
+        assertQuery(
+                finallyExpected,
+                "show partitions from " + tableName,
+                null,
+                null,
+                false,
+                true
+        );
     }
 
     private static void deleteFile(String tableName, String... pathParts) {
@@ -511,8 +509,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
     private static ObjObjHashMap<String, Long> findPartitionSizes(
             CharSequence root,
             String tableName,
-            CairoEngine engine,
-            StringSink sink
+            CairoEngine engine
     ) {
         ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
         TableToken tableToken = engine.getTableToken(tableName);
@@ -523,7 +520,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                 do {
                     long namePtr = Files.findName(pFind);
                     if (Files.notDots(namePtr)) {
-                        sink.clear();
+                       sink.clear();
                         Chars.utf8DecodeZ(namePtr, sink);
                         path.trimTo(len).concat(sink).$();
                         int n = sink.length();
@@ -538,7 +535,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                             }
                         }
                         sink.clear(limit);
-                        sizes.put(sink.toString(), Files.getDirectoryContentSize(path));
+                        sizes.put(sink.toString(), Files.getDirSize(path));
                     }
                 } while (Files.findNext(pFind) > 0);
             } finally {
@@ -550,34 +547,37 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
 
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
         SOCountDownLatch done = new SOCountDownLatch(1);
-        TableToken tableToken = engine.getTableToken(tableName);
         String finallyExpected = replaceSizeToMatchOS(expected, tableName);
+        AtomicInteger failureCounter = new AtomicInteger();
         new Thread(() -> {
             try {
-                try (
-                        ShowPartitionsRecordCursorFactory factory = new ShowPartitionsRecordCursorFactory(tableToken);
-                        RecordCursor cursor0 = factory.getCursor(sqlExecutionContext);
-                        RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)
-                ) {
-                    for (int j = 0; j < 5; j++) {
-                        assertCursor(finallyExpected, false, true, false, cursor0, factory.getMetadata(), false);
-                        cursor0.toTop();
-                        assertCursor(finallyExpected, false, true, false, cursor1, factory.getMetadata(), false);
-                        cursor1.toTop();
-                    }
+                try {
+                    assertQuery(
+                            finallyExpected,
+                            "show partitions from " + tableName,
+                            null,
+                            false,
+                            true,
+                            true
+                    );
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    failureCounter.incrementAndGet();
                 }
             } finally {
                 done.countDown();
             }
         }).start();
         done.await();
+        Assert.assertEquals(0, failureCounter.get());
         assertQuery(
                 finallyExpected,
                 "SELECT * FROM table_partitions('" + tableName + "')",
                 null,
                 false,
                 true,
-                true);
+                true
+        );
     }
 
     private TableToken createTable(String tableName, SqlExecutionContext context) throws SqlException {

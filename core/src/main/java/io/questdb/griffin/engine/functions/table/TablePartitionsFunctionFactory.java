@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -45,10 +48,13 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) {
-        final CharSequence tableName = args.getQuick(0).getStr(null);
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(
-                context.getTableToken(tableName)
-        ));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
+        final TableToken tt;
+        try {
+            tt= context.getTableToken(args.getQuick(0).getStr(null));
+        } catch (CairoException e) {
+            throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
+        }
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt));
     }
 }

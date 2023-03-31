@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class SizePrettyFunctionFactory implements FunctionFactory {
 
@@ -91,8 +92,12 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            long s = size.getLong(rec);
-            if (s != Long.MIN_VALUE) {
+            return getStr0(size.getLong(rec), sinkA);
+        }
+
+        @Nullable
+        private StringSink getStr0(long s, StringSink sinkA) {
+            if (s != Numbers.LONG_NaN) {
                 toSizePretty(sinkA, s);
                 return sinkA;
             }
@@ -101,12 +106,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            long s = size.getLong(rec);
-            if (s != Long.MIN_VALUE) {
-                toSizePretty(sinkB, s);
-                return sinkB;
-            }
-            return null;
+            return getStr0(size.getLong(rec), sinkB);
         }
     }
 }

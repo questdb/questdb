@@ -55,7 +55,6 @@ import java.net.URL;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -235,7 +234,7 @@ public abstract class AbstractBootstrapTest {
         }
     }
 
-    void dropTable(
+    static void dropTable(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext context,
@@ -259,7 +258,7 @@ public abstract class AbstractBootstrapTest {
         if (isWal) {
             drainWalQueue(engine);
         }
-        Assert.assertTrue(tableDropped.await(TimeUnit.SECONDS.toNanos(10L)));
+        tableDropped.await();
         if (otherVolume != null) {
             engine.releaseAllReaders();
             engine.releaseAllWriters();

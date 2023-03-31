@@ -68,9 +68,9 @@ public interface FilesFacade {
 
     int fsync(int fd);
 
-    long getDirectoryContentSize(Path path);
+    long getDirSize(Path path);
 
-    long getDiskSize(LPSZ path);
+    long getDiskFreeSpace(LPSZ path);
 
     long getLastModified(LPSZ path);
 

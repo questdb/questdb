@@ -173,7 +173,7 @@ public final class Files {
 
     public static native int fsync(int fd);
 
-    public static long getDirectoryContentSize(Path path) {
+    public static long getDirSize(Path path) {
         long pathUtf8Ptr = path.address();
         long pFind = findFirst(pathUtf8Ptr);
         if (pFind > 0L) {
@@ -182,25 +182,24 @@ public final class Files {
                 long totalSize = 0L;
                 do {
                     long nameUtf8Ptr = findName(pFind);
-                    Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
-                    path.$();
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
                     if (findType(pFind) == Files.DT_FILE) {
-                        totalSize += length0(pathUtf8Ptr);
+                        totalSize += length(path);
                     } else if (notDots(nameUtf8Ptr)) {
-                        totalSize += getDirectoryContentSize(path);
+                        totalSize += getDirSize(path);
                     }
                 }
                 while (findNext(pFind) > 0);
                 return totalSize;
             } finally {
                 findClose(pFind);
-                path.trimTo(len).$();
+                path.trimTo(len);
             }
         }
         return 0L;
     }
 
-    public static long getDiskSize(LPSZ path) {
+    public static long getDiskFreeSpace(LPSZ path) {
         if (path != null) {
             return getDiskSize(path.address());
         }
