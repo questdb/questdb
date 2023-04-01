@@ -43,9 +43,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -101,24 +100,16 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         });
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(
-                    HTTP_PORT + pgPortDelta,
-                    HTTP_MIN_PORT + pgPortDelta,
-                    pgPort,
-                    ILP_PORT + pgPortDelta,
-                    PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        AbstractBootstrapTest.tearDownStatic();
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                HTTP_PORT + pgPortDelta,
+                HTTP_MIN_PORT + pgPortDelta,
+                pgPort,
+                ILP_PORT + pgPortDelta,
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true"));
     }
 
     @Test

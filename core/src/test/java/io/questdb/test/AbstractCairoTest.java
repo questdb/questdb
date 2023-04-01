@@ -241,6 +241,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         sink.clear();
         memoryUsage = -1;
+        if (inputWorkRoot != null) {
+            try (Path path = new Path().of(inputWorkRoot).$()) {
+                if (ff.exists(path)) {
+                    ff.rmdir(path);
+                }
+            }
+        }
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
