@@ -243,8 +243,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot).$()) {
-                if (ff.exists(path)) {
-                    ff.rmdir(path);
+                if (Files.exists(path)) {
+                    Files.rmdir(path);
                 }
             }
         }
