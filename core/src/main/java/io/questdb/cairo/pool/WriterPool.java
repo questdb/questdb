@@ -442,11 +442,14 @@ public class WriterPool extends AbstractPool {
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
 
-                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
-                        .$("`, owner=").$(owner)
-                        .$(", thread=").$(thread)
-                        .$(", reason=").$(reason)
-                        .I$();
+                if (!tableToken.isWal()) {
+                    // Don't log busy for WAL table it's BAU.
+                    LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
+                            .$("`, owner=").$(owner)
+                            .$(", thread=").$(thread)
+                            .$(", reason=").$(reason)
+                            .I$();
+                }
                 throw EntryUnavailableException.instance(reason);
             }
         }
