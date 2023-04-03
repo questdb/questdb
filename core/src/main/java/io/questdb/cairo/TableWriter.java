@@ -1568,9 +1568,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     lastPartitionTimestamp = Long.MIN_VALUE;
                     closeActivePartition(false);
                     partitionTimestampHi = Long.MIN_VALUE;
-                    txWriter.removeAttachedPartitions(
-                            txWriter.getPartitionTimestamp(0)
-                    );
+                    long partitionTimestamp = txWriter.getPartitionTimestamp(0);
+                    long partitionNameTxn = txWriter.getPartitionNameTxnByIndex(0);
+                    txWriter.removeAttachedPartitions(partitionTimestamp);
+                    safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
                 }
 
                 // Real data writing into table happens here.
