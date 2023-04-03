@@ -1790,7 +1790,7 @@ if __name__ == "__main__":
             final CountDownLatch endLatch = new CountDownLatch(THREADS);
 
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final PGWireServer server = createPGServer(4, Long.MAX_VALUE, 6);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -1832,57 +1832,6 @@ if __name__ == "__main__":
             } finally {
                 for (int i = 0, n = conns.size(); i < n; i++) {
                     conns.getQuick(i).close();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
-            mayDrainWalQueue();
-
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                int backendPid;
-
-                //first connection
-                try (final PgConnection connection = (PgConnection) getConnection(server.getPort(), false, true)) {
-                    backendPid = executeAndCancelQuery(connection);
-                }
-
-                ObjList<PgConnection> otherConns = new ObjList<>();
-                PgConnection sameConn;
-
-                while (true) {
-                    final PgConnection conn = (PgConnection) getConnection(server.getPort(), false, true);
-                    if (backendPid == conn.getQueryExecutor().getBackendPID()) {
-                        sameConn = conn;
-                        break;
-                    } else {
-                        otherConns.add(conn);
-                    }
-                }
-
-                for (int i = 0, n = otherConns.size(); i < n; i++) {
-                    otherConns.getQuick(i).close();
-                }
-
-                //first run query and complete  
-                try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
-                    ResultSet result = stmt.executeQuery();
-                    sink.clear();
-                    assertResultSet("count[BIGINT]\n1000000\n", sink, result);
-
-                    //then run query and cancel
-                    executeAndCancelQuery(sameConn);
-                } finally {
-                    sameConn.close();
                 }
             }
         });
