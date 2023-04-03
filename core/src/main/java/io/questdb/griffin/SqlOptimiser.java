@@ -109,6 +109,8 @@ class SqlOptimiser {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    private CharSequence tempColumnAlias;
+    private QueryModel tempQueryModel;
 
     SqlOptimiser(
             CairoConfiguration configuration,
@@ -1843,6 +1845,24 @@ class SqlOptimiser {
         return column;
     }
 
+    private CharSequence getTranslatedColumnAlias(QueryModel model, QueryModel stopModel, CharSequence token) {
+        if (model == stopModel) {
+            return token;
+        }
+
+        CharSequence nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
+        if (nestedAlias != null) {
+            CharSequence alias = model.getColumnNameToAliasMap().get(nestedAlias);
+            if (alias == null) {
+                tempQueryModel = model;
+                tempColumnAlias = nestedAlias;
+            }
+            return alias;
+        } else {
+            return null;
+        }
+    }
+    
     private boolean hasAggregates(ExpressionNode node) {
 
         this.sqlNodeStack.clear();
@@ -1873,6 +1893,18 @@ class SqlOptimiser {
                 node = this.sqlNodeStack.poll();
             }
         }
+        return false;
+    }
+
+    private boolean hasAnalyticColumn(QueryModel limitModel) {
+        ObjList<QueryColumn> columns = limitModel.getColumns();
+
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i) instanceof AnalyticColumn) {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -3424,6 +3456,40 @@ class SqlOptimiser {
                         if (index < 0) {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
+
+                            tempQueryModel = null;
+                            tempColumnAlias = null;
+
+                            // if necessary, propagate column to limit model that'll receive order by 
+                            if (limitModel != baseParent &&
+                                    !hasAnalyticColumn(limitModel) && // analytic model doesn't support aliases
+                                    getTranslatedColumnAlias(limitModel, baseParent, orderBy.token) == null) {
+                                //add column ref to the most-nested model that doesn't have it  
+                                alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOf(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
+                                tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
+
+                                //and then push to upper models 
+                                QueryModel m = limitModel;
+                                while (m != tempQueryModel) {
+                                    m.addBottomUpColumn(nextColumn(alias));
+                                    m = m.getNestedModel();
+                                }
+
+                                tempQueryModel = null;
+                                tempColumnAlias = null;
+                                orderBy.token = alias;
+
+                                //if necessary, add external model to maintain output  
+                                if (limitModel == model && wrapper == null) {
+                                    wrapper = queryModelPool.next();
+                                    wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                    for (int j = 0; j < modelColumnCount; j++) {
+                                        wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
+                                    }
+                                    result = wrapper;
+                                    wrapper.setNestedModel(model);
+                                }
+                            }
                         } else {
                             if (dot > -1 && !base.getModelAliasIndexes().contains(column, 0, dot)) {
                                 throw SqlException.invalidColumn(orderBy.position, column);
@@ -4491,6 +4557,8 @@ class SqlOptimiser {
         groupByAliases.clear();
         groupByNodes.clear();
         groupByUsed.clear();
+        tempColumnAlias = null;
+        tempQueryModel = null;
     }
 
     QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
