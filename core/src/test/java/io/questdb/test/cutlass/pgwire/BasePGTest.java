@@ -295,7 +295,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 8812;  // Bind to ANY port.
+                        return 0;  // Bind to ANY port.
                     }
                 };
             }
