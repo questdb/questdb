@@ -241,6 +241,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         sink.clear();
         memoryUsage = -1;
+        if (inputWorkRoot != null) {
+            try (Path path = new Path().of(inputWorkRoot).$()) {
+                if (Files.exists(path)) {
+                    Files.rmdir(path);
+                }
+            }
+        }
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
@@ -614,7 +621,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
     }
 
-    protected enum WalMode {
+    public enum WalMode {
         WITH_WAL, NO_WAL
     }
 

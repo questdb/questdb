@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.*;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.AlterTableSetTypeTest.WAL;
@@ -39,9 +39,10 @@ import static org.junit.Assert.assertFalse;
 
 public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRestartTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration(
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",            // WAL enabled
                 PropertyKey.TABLE_TYPE_CONVERSION_ENABLED.getPropertyPath() + "=false"  // table type conversion is disabled

@@ -24,8 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
@@ -43,6 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -94,7 +93,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     @Test
     public void testServerMainPgWireConcurrentlyWithLineTcpSender() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
 
                 final CairoEngine engine = serverMain.getCairoEngine();

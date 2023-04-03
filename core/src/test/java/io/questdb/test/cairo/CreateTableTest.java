@@ -25,14 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -280,7 +280,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 compiler.compile("create table if not exists tab" + j + " (x int)", executionContext);
@@ -320,7 +320,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 compiler.compile("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
@@ -469,7 +469,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 compiler.compile("create table tab" + (threadId * tableCount + j) + " (x int)", executionContext);
@@ -509,7 +509,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
@@ -574,7 +574,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
@@ -599,7 +599,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {

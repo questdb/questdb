@@ -47,7 +47,6 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -55,10 +54,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     private static final Rnd rnd = new Rnd();
 
     @Before
-    public void before() throws IOException {
+    public void setUp() {
+        super.setUp();
         rnd.reset();
         inputRoot = TestUtils.getCsvRoot();
-        inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
+        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
     }
 
     @Test

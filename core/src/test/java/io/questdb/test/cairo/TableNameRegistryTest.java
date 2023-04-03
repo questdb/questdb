@@ -34,9 +34,6 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -55,7 +52,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class TableNameRegistryTest extends AbstractCairoTest {
-    protected static final Log LOG = LogFactory.getLog(TableNameRegistryTest.class);
 
     @Test
     public void testConcurrentCreateDropRemove() throws Exception {
@@ -72,7 +68,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
@@ -102,7 +98,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         Rnd rnd = TestUtils.generateRandom(LOG);
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
@@ -326,7 +322,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 for (int j = 0; j < tableCount; j++) {
                     compiler.compile(
@@ -343,7 +339,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {

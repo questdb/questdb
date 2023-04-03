@@ -30,7 +30,6 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -72,10 +71,6 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 TABLE_START_CONTENT,  // <-- read only, remains intact
                 false, false, true, true
         );
-    }
-
-    static {
-        LogFactory.configureSync();
     }
 
     @Test
