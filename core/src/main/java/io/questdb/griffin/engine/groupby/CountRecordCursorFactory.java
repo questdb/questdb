@@ -52,7 +52,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext));
+        cursor.of(base.getCursor(executionContext), executionContext.getCircuitBreaker());
         return cursor;
     }
 
@@ -80,6 +80,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
         private RecordCursor baseCursor;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;
         private boolean hasNext = true;
 
@@ -97,6 +98,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         public boolean hasNext() {
             if (baseCursor != null) {
                 while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     count++;
                 }
                 baseCursor = Misc.free(baseCursor);
@@ -118,8 +120,10 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
             hasNext = true;
         }
 
-        private void of(RecordCursor baseCursor) {
+        private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
+            this.circuitBreaker = circuitBreaker;
+
             final long size = baseCursor.size();
             if (size < 0) {
                 count = 0;
