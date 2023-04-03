@@ -1435,9 +1435,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long maxLagRows = getMaxWalSquashRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
             mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
-            txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
-            txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-            long partitionTsHi = partitionTimestampHi;
+            final long newMinLagTs = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
+            long initialPartitionTimestampHi = partitionTimestampHi;
             long commitMaxTimestamp, commitMinTimestamp;
 
             long walLagRowCount = txWriter.getLagRowCount();
@@ -1446,10 +1445,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long o3Lo = rowLo;
                 long commitRowCount = rowHi - rowLo;
                 final boolean copiedToMemory;
-                final boolean needsOrdering = !ordered || walLagRowCount > 0;
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
-                boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
+                boolean copyToLagOnly = commitToTimestamp < newMinLagTs
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < metadata.getMaxUncommittedRows());
 
                 if (copyToLagOnly && totalUncommitted <= maxLagRows) {
@@ -1465,9 +1463,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walLagRowCount += commitRowCount;
                     txWriter.setLagRowCount((int) walLagRowCount);
                     txWriter.setLagOrdered(txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
-                    return Long.MIN_VALUE;
+                    txWriter.setLagMinTimestamp(newMinLagTs);
+                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
+
+                    return applyFromWalLagToLastPartition(commitToTimestamp);
                 }
 
+                if (applyFromWalLagToLastPartition(commitToTimestamp) != Long.MIN_VALUE) {
+                    walLagRowCount = txWriter.getLagRowCount();
+                    totalUncommitted = walLagRowCount + commitRowCount;
+                }
+
+                boolean needsOrdering = !ordered || walLagRowCount > 0;
                 long timestampAddr;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
                 if (needsOrdering) {
@@ -1484,7 +1491,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
                     final long tsLagOffset = txWriter.getTransientRowCount() << 3;
-                    final long tsLagSize = walLagRowCount << 4;
+                    final long tsLagSize = walLagRowCount << 3;
                     final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                     final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
 
@@ -1552,14 +1559,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // Commit everything.
                     walLagRowCount = 0;
-                    commitMinTimestamp = txWriter.getLagMinTimestamp();
-                    commitMaxTimestamp = txWriter.getLagMaxTimestamp();
+                    commitMinTimestamp = newMinLagTs;
+                    commitMaxTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
                     txWriter.setLagMinTimestamp(Long.MAX_VALUE);
                     txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
                 }
 
                 o3RowCount = o3Hi - o3Lo + walLagRowCount;
-
 
                 // Now that everything from WAL lag is in memory or in WAL columns,
                 // we can remove artificial 0 length partition created to store lag when table did not have any partitions
@@ -1591,7 +1597,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setLagOrdered(true);
                 txWriter.setLagRowCount((int) walLagRowCount);
 
-                finishO3Commit(partitionTsHi);
+                finishO3Commit(initialPartitionTimestampHi);
                 if (walLagRowCount > 0) {
                     LOG.info().$("moving rows to LAG [table=").$(tableToken)
                             .$(", lagRowCount=").$(walLagRowCount)
@@ -2366,6 +2372,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.close();
         }
         return index;
+    }
+
+    private long applyFromWalLagToLastPartition(long commitToTimestamp) {
+        long lagMinTimestamp = txWriter.getLagMinTimestamp();
+        if (txWriter.getLagRowCount() > 0
+                && txWriter.isLagOrdered()
+                && txWriter.getMaxTimestamp() <= lagMinTimestamp
+                && partitionFloorMethod.floor(lagMinTimestamp) == lastPartitionTimestamp) {
+            // There is some data in LAG, it's ordered, and it's already written to the last partition.
+            // We can simply increase the last partition transient row count to make it committed.
+
+            long lagMaxTimestamp = txWriter.getLagMaxTimestamp();
+            commitToTimestamp = Math.min(commitToTimestamp, partitionTimestampHi);
+            if (lagMaxTimestamp <= commitToTimestamp) {
+
+                // Easy case, all lag data can be marked as committed in the last partition
+                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE);
+                return lagMaxTimestamp;
+            } else if (lagMinTimestamp <= commitToTimestamp) {
+                // Find the max row which can be marked as committed in the last timestamp
+                long lagRows = txWriter.getLagRowCount();
+                long timestampMapOffset = txWriter.getTransientRowCount() * Long.BYTES;
+                long timestampMapSize = lagRows * Long.BYTES;
+                long timestampMaAddr = mapAppendColumnBuffer(
+                        getPrimaryColumn(metadata.getTimestampIndex()),
+                        timestampMapOffset,
+                        timestampMapSize,
+                        false
+                );
+                try {
+                    final long timestampAddr = Math.abs(timestampMaAddr);
+                    final int binarySearchInsertionPoint = (int) Vect.binarySearch64Bit(
+                            timestampAddr,
+                            commitToTimestamp,
+                            0,
+                            lagRows - 1,
+                            BinarySearch.SCAN_DOWN
+                    );
+                    int applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint;
+
+                    long newMinLagTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (long) applyCount * Long.BYTES);
+                    long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (long) (applyCount - 1) * Long.BYTES);
+                    assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
+
+                    applyLagToLastPartition(newMaxTimestamp, applyCount, newMinLagTimestamp);
+                    return newMaxTimestamp;
+                } finally {
+                    mapAppendColumnBufferRelease(timestampMaAddr, timestampMapOffset, timestampMapSize);
+                }
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
+    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        txWriter.transientRowCount += lagRowCount;
+        txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
+        txWriter.setLagMinTimestamp(lagMinTimestamp);
+        if (txWriter.getLagRowCount() == lagRowCount) {
+            txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
+        }
+        txWriter.setLagRowCount(txWriter.getLagRowCount() - lagRowCount);
+        txWriter.setMaxTimestamp(maxTimestamp);
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(
@@ -4478,10 +4547,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long destOffset;
         if (o3SrcIndexMem == null) {
             // Fixed size column
-            final int shl = isDesignatedTimestamp ? 4 : ColumnType.pow2SizeOf(columnType);
-            sourceOffset = columnDataRowOffset << shl;
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            sourceOffset = isDesignatedTimestamp ? columnDataRowOffset << 4 : columnDataRowOffset << shl;
             size = copyToLagRowCount << shl;
-            destOffset = isDesignatedTimestamp ? (txWriter.getTransientRowCount() << 3) + (existingLagRows << 4) : destRowOffset << shl;
+            destOffset = destRowOffset << shl;
         } else {
             // Var size column
             long committedIndexOffset = columnDataRowOffset << 3;
@@ -4515,20 +4584,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         o3DstDataMem.jumpTo(destOffset + size);
-        if (o3SrcDataMem instanceof MemoryCARW) {
-            if (symbolsFlags > 0 && ColumnType.isSymbol(columnType)) {
-                // Symbol is re-mapped to memory with 0 source offset.
-                sourceOffset = 0;
-            }
-            MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
-            long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
-            if (bytesWritten != size) {
-                throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                        .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+
+        if (!isDesignatedTimestamp) {
+            if (o3SrcDataMem instanceof MemoryCARW) {
+                if (symbolsFlags > 0 && ColumnType.isSymbol(columnType)) {
+                    // Symbol is re-mapped to memory with 0 source offset.
+                    sourceOffset = 0;
+                }
+                MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
+                long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
+                if (bytesWritten != size) {
+                    throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                            .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                }
+
+            } else {
+                MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
+                ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
             }
         } else {
-            MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
-            ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+            // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
+            // There is no point store in LAG 2 LONGs per record it is enough to have 1 LONG with timestamp.
+            // When the sort will merge the LAG with the main data it will convert back to timestamp index data structure.
+            long srcLo = o3SrcDataMem.addressOf(sourceOffset);
+
+            long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+            Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+            mapAppendColumnBufferRelease(destAddr, destOffset, size);
         }
     }
 
