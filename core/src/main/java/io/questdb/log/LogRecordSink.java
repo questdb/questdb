@@ -32,7 +32,7 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 public class LogRecordSink extends AbstractCharSink implements Sinkable {
-    private static final int EOL_LENGTH = Misc.EOL.length();
+    public static final int EOL_LENGTH = Misc.EOL.length();
     public final static int UTF8_BYTE_CLASS_BAD = -1;
     public final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
     protected final long address;
@@ -141,8 +141,18 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     }
 
     @Override
+    public CharSink putEOL() {
+        int rem = (int) (lim - _wptr);
+        int len = Misc.EOL.length();
+        int n = Math.min(rem, len);
+        Chars.asciiStrCpy(Misc.EOL, n, _wptr);
+        _wptr += n;
+        return this;
+    }
+
+    @Override
     public CharSink putUtf8(long lo, long hi) {
-        final long rem = (lim - _wptr);
+        final long rem = (lim - _wptr - EOL_LENGTH);
         final long len = hi - lo;
         if (rem >= len) {
             // Common case where the buffer fits the available space.
@@ -166,16 +176,6 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
             // Copying the final few bytes one at a time ensures we don't write any partial codepoints.
             put((char) Unsafe.getUnsafe().getByte(lo + i));
         }
-        return this;
-    }
-
-    @Override
-    public CharSink putEOL() {
-        int rem = (int) (lim - _wptr);
-        int len = Misc.EOL.length();
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(Misc.EOL, n, _wptr);
-        _wptr += n;
         return this;
     }
 
