@@ -59,12 +59,12 @@ public class CircuitBreakerRegistry implements Closeable {
         }
 
         for (int i = 0; i < limit; i++) {
-            circuitBreakers.add(new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5));
+            circuitBreakers.add(null);
             freeIdx.add(i);
         }
     }
 
-    public int acquire() {
+    public int add(NetworkSqlExecutionCircuitBreaker cb) {
         if (closed) {
             return -1;
         }
@@ -74,13 +74,20 @@ public class CircuitBreakerRegistry implements Closeable {
         lock.lock();
         try {
             int size = freeIdx.size();
-            idx = freeIdx.getQuick(size - 1);
-            freeIdx.setPos(size - 1);
+            if (size > 0) {
+                idx = freeIdx.getQuick(size - 1);
+                freeIdx.setPos(size - 1);
+                circuitBreakers.setQuick(idx, cb);
+            } else {
+                idx = circuitBreakers.size();
+                circuitBreakers.add(cb);
+                freeIdx.add(idx);
+            }
         } finally {
             lock.unlock();
         }
 
-        circuitBreakers.getQuick(idx).setSecret(secret);
+        cb.setSecret(secret);
         return idx;
     }
 
@@ -110,10 +117,12 @@ public class CircuitBreakerRegistry implements Closeable {
         lock.lock();
         closed = true;
         try {
-            for (int i = 0, n = freeIdx.size(); i < n; i++) {
-                int idx = freeIdx.getQuick(i);
-                Misc.free(circuitBreakers.getQuick(idx));
-                circuitBreakers.setQuick(idx, null);
+            for (int i = 0, n = circuitBreakers.size(); i < n; i++) {
+                NetworkSqlExecutionCircuitBreaker cb = circuitBreakers.getQuick(i);
+                if (cb != null) {
+                    cb.cancel();
+                    circuitBreakers.setQuick(i, null);
+                }
             }
             freeIdx.clear();
         } finally {
@@ -121,19 +130,12 @@ public class CircuitBreakerRegistry implements Closeable {
         }
     }
 
-    public NetworkSqlExecutionCircuitBreaker getCircuitBreaker(int idx) {
-        return circuitBreakers.getQuick(idx);
-    }
-
-    public void release(int contextId) {
-        circuitBreakers.getQuick(contextId).clear();
+    public void remove(int contextId) {
         lock.lock();
         try {
             if (!closed) {
-                freeIdx.add(contextId);
-            } else {
-                Misc.free(circuitBreakers.getQuick(contextId));
                 circuitBreakers.setQuick(contextId, null);
+                freeIdx.add(contextId);
             }
         } finally {
             lock.unlock();
