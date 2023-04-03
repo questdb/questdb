@@ -117,6 +117,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final int circuitBreakerId;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
@@ -129,6 +130,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
+    private final CircuitBreakerRegistry registry;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     @Nullable
     private final PGAuthenticator roUserAuthenticator;
@@ -196,9 +198,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private CharSequence username;
+
     private NamedStatementWrapper wrapper;
 
-    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
+    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, CircuitBreakerRegistry registry) {
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
@@ -225,7 +228,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
+        this.circuitBreakerId = registry.acquire();
+        this.circuitBreaker = registry.getCircuitBreaker(circuitBreakerId);
+        this.registry = registry;
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
@@ -345,8 +350,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
-        Misc.free(circuitBreaker);
         freeBuffers();
+        // release circuit breaker to registry (for reuse) instead of closing it
+        registry.release(circuitBreakerId);
     }
 
     @Override
@@ -432,6 +438,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } catch (ImplicitCastException e) {
             reportNonCriticalError(-1, e.getFlyweightMessage());
         } catch (CairoException e) {
+            clearCursorAndFactory();
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
             } else {
@@ -1694,6 +1701,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         throw BadProtocolException.INSTANCE;
     }
 
+    //send BackendKeyData message with query cancellation info 
+    private void prepareBackendKeyData(ResponseAsciiSink responseAsciiSink) {
+        responseAsciiSink.put('K');
+        responseAsciiSink.putNetworkInt(Integer.BYTES * 3); // length of this message
+        responseAsciiSink.putNetworkInt(circuitBreakerId);//process id 
+        responseAsciiSink.putNetworkInt(circuitBreaker.getSecret());//secret key 
+    }
+
     private void prepareBindComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_BIND_COMPLETE);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
@@ -1802,6 +1817,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareParams(responseAsciiSink, "server_version", serverVersion);
         prepareParams(responseAsciiSink, "integer_datetimes", "on");
         prepareParams(responseAsciiSink, "client_encoding", "UTF8");
+        prepareBackendKeyData(responseAsciiSink);
         prepareReadyForQuery();
     }
 
@@ -2268,7 +2284,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=" .length(), valueHi));
                                 if (this.statementTimeout > 0) {
                                     circuitBreaker.setTimeout(statementTimeout);
                                 }
@@ -2294,10 +2310,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sendAndReset();
                 break;
             case INIT_CANCEL_REQUEST:
-                //todo - 1. do not disconnect
-                //       2. should cancel running query only if PID and secret provided are the same as the ones provided upon logon
-                //       3. send back error message (e) for the cancelled running query
-                LOG.info().$("cancel request").$();
+                // From https://www.postgresql.org/docs/current/protocol-flow.html :  
+                // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message 
+                // that would ordinarily be sent across a new connection. The server will process this request and then close the connection. 
+                // For security reasons, no direct reply is made to the cancel request message.
+                int pid = getIntUnsafe(address + 2 * Integer.BYTES);//thread id really 
+                int secret = getIntUnsafe(address + 3 * Integer.BYTES);
+                LOG.info().$("cancel request [pid=").$(pid).I$();
+                try {
+                    registry.cancel(pid, secret);
+                } catch (CairoException e) {//error message should not be sent to client
+                    LOG.error().$(e.getMessage()).$();
+                }
+
                 throw PeerDisconnectedException.INSTANCE;
             default:
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
@@ -2665,34 +2690,30 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean recompileStale = true;
             SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
 
-            try {
-                if (!circuitBreaker.isTimerSet()) {
-                    circuitBreaker.resetTimer();
-                }
+            if (!circuitBreaker.isTimerSet()) {
+                circuitBreaker.resetTimer();
+            }
 
-                for (int retries = 0; recompileStale; retries++) {
-                    currentFactory = typesAndSelect.getFactory();
-                    try {
-                        currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                        recompileStale = false;
-                        // cache random if it was replaced
-                        this.rnd = sqlExecutionContext.getRandom();
-                    } catch (TableReferenceOutOfDateException e) {
-                        if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
-                            throw e;
-                        }
-                        LOG.info().$(e.getFlyweightMessage()).$();
-                        freeFactory();
-                        compileQuery(compiler);
-                        buildSelectColumnTypes();
-                        applyLatestBindColumnFormats();
-                    } catch (Throwable e) {
-                        freeFactory();
+            for (int retries = 0; recompileStale; retries++) {
+                currentFactory = typesAndSelect.getFactory();
+                try {
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    recompileStale = false;
+                    // cache random if it was replaced
+                    this.rnd = sqlExecutionContext.getRandom();
+                } catch (TableReferenceOutOfDateException e) {
+                    if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                         throw e;
                     }
+                    LOG.info().$(e.getFlyweightMessage()).$();
+                    freeFactory();
+                    compileQuery(compiler);
+                    buildSelectColumnTypes();
+                    applyLatestBindColumnFormats();
+                } catch (Throwable e) {
+                    freeFactory();
+                    throw e;
                 }
-            } finally {
-                circuitBreaker.unsetTimer();
             }
         }
     }

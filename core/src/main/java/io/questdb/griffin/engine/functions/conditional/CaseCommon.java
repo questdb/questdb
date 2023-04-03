@@ -81,7 +81,7 @@ public class CaseCommon {
         }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
         if (keyIndex < 0) {
-            FunctionFactory fact = castFactories.valueAt(keyIndex);
+            FunctionFactory factory = castFactories.valueAt(keyIndex);
             ObjList<Function> args = tlArgs.get();
             args.clear();
             args.add(arg);
@@ -89,7 +89,7 @@ public class CaseCommon {
             IntList argPositions = tlArgPositions.get();
             argPositions.clear();
             argPositions.add(argPosition);
-            return fact.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
+            return factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
         }
 
         return arg;

@@ -27,6 +27,8 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.std.Rnd;
+
 
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     private final DefaultIODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -44,5 +46,10 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
         return ioDispatcherConfiguration;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return new Rnd();
     }
 }
