@@ -29,7 +29,6 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
-import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -52,7 +51,6 @@ import java.io.IOException;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.*;
@@ -92,6 +90,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     pgPort,
                     ILP_PORT + pgPortDelta,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
+                    // Manually control WAL apply runs calling drainWalQueue()
+                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getPropertyPath() + "=false",
                     PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -637,11 +637,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         try (OperationFuture op = compiler.compile(sink.toString(), context).execute(null)) {
             op.await();
         }
-        if (isWal) {
-            drainWalQueue(engine);
-        }
 
-        String insertStmt;
         try (
                 TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                         .col("investmentMill", ColumnType.LONG)
@@ -652,23 +648,15 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             if (isWal) {
                 tableModel.wal();
             }
-            insertStmt = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-        }
-        SOCountDownLatch tableWriterReturned = new SOCountDownLatch(1);
-        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-            if (tableToken != null && tableToken.getTableName().equals(tableName)) {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    tableWriterReturned.countDown();
-                }
+            String insertStmt = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+            try (OperationFuture op = compiler.compile(insertStmt, context).execute(null)) {
+                op.await();
             }
-        });
-        try (OperationFuture op = compiler.compile(insertStmt, context).execute(null)) {
-            op.await();
         }
+
         if (isWal) {
             drainWalQueue(engine);
         }
-        Assert.assertTrue(tableWriterReturned.await(TimeUnit.SECONDS.toNanos(10L)));
         return engine.getTableToken(tableName);
     }
 
