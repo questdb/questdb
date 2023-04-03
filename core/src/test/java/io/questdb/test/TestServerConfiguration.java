@@ -58,13 +58,18 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final boolean enableHttp;
     private final boolean enableLineTcp;
     private final boolean enablePgWire;
+    private final CairoSecurityContextFactory securityContextFactory;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
+        @Override
+        public CairoSecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
+        }
+
         @Override
         public boolean isEnabled() {
             return enablePgWire;
         }
     };
-    private final CairoSecurityContextFactory securityContextFactory;
     private final int workerCountHttp;
     private final HttpServerConfiguration confHttp = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
         @Override
@@ -87,18 +92,18 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return enableHttp;
         }
     };
-    private final int workerCountLineTcpWriter;
-    private final WorkerPoolConfiguration confLineTcpWriterPool = new WorkerPoolConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return workerCountLineTcpWriter;
-        }
-    };
     private final int workerCountLineTcpIO;
     private final WorkerPoolConfiguration confLineTcpIOPool = new WorkerPoolConfiguration() {
         @Override
         public int getWorkerCount() {
             return workerCountLineTcpIO;
+        }
+    };
+    private final int workerCountLineTcpWriter;
+    private final WorkerPoolConfiguration confLineTcpWriterPool = new WorkerPoolConfiguration() {
+        @Override
+        public int getWorkerCount() {
+            return workerCountLineTcpWriter;
         }
     };
     private final LineTcpReceiverConfiguration confLineTcp = new DefaultLineTcpReceiverConfiguration() {
