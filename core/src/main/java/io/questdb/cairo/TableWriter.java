@@ -6887,6 +6887,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // open old partition
                 if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
+                        txWriter.setMaxTimestamp(rollbackToMaxTimestamp);
                         openPartition(rollbackToMaxTimestamp);
                         setAppendPosition(rollbackToTransientRowCount, false);
                     } catch (Throwable e) {
@@ -6894,6 +6895,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         throw e;
                     }
                 } else {
+                    // we have no partitions, clear partitions in TableWriter
+                    txWriter.removeAllPartitions();
                     rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
 
@@ -6933,7 +6936,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         rowValueIsNotNull.fill(0, columnCount, --masterRef);
-        txWriter.transientRowCount--;
+
+        // Some executions path in this method already call txWriter.removeAllPartitions()
+        // which resets transientRowCount.
+        if (txWriter.transientRowCount > 0) {
+            txWriter.transientRowCount--;
+        }
     }
 
     @FunctionalInterface
