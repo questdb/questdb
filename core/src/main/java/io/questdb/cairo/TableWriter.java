@@ -1470,16 +1470,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     return applyFromWalLagToLastPartition(commitToTimestamp);
                 }
 
-                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp
+                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
+                // This application will not include the current transaction data, only what's already in WAL lag.
                 if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp)) != Long.MIN_VALUE) {
                     walLagRowCount = txWriter.getLagRowCount();
                     totalUncommitted = walLagRowCount + commitRowCount;
                 }
 
+                // Re-valuate WAL lag min/max with impact of the current transaction.
                 txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
                 txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-
                 boolean needsOrdering = !ordered || walLagRowCount > 0;
+
                 long timestampAddr;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
                 if (needsOrdering) {
