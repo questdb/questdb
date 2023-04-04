@@ -30,9 +30,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
 public class JoinRecord implements Record {
-    private final int split;
+    protected final int split;
+    protected Record master;
     protected Record slave;
-    private Record master;
 
     public JoinRecord(int split) {
         this.split = split;

@@ -278,6 +278,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
@@ -474,6 +475,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
+        walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 20.0);
@@ -2391,6 +2393,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isTableTypeConversionEnabled() {
             return tableTypeConversionEnabled;
+        }
+
+        @Override
+        public boolean isWalApplyEnabled() {
+            return walApplyEnabled;
         }
 
         public boolean isWalSupported() {

@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
@@ -160,6 +161,11 @@ public interface CharSink extends CharSinkBase {
         } else {
             put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
         }
+        return this;
+    }
+
+    default CharSink putUtf8(long lo, long hi) {
+        Chars.utf8Decode(lo, hi, this);
         return this;
     }
 
