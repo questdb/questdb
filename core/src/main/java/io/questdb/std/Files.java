@@ -402,6 +402,25 @@ public final class Files {
 
     public native static long read(int fd, long address, long len, long offset);
 
+    public static boolean readLink(Path softLink, Path pathTo) {
+        final int len = pathTo.length();
+        final int bufSize = 256;
+        pathTo.zeroPad(bufSize);
+        int res = readLink0(softLink.address(), pathTo.address() + len, bufSize);
+        if (res > 0) {
+            pathTo.trimTo(len + res).$();
+            // check if symlink is absolute or relative
+            if (pathTo.charAt(0) != '/') {
+                int prefixLen = Chars.lastIndexOf(softLink, '/');
+                if (prefixLen > 0) {
+                    pathTo.prefix(softLink, prefixLen + 1).$();
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
     public native static byte readNonNegativeByte(int fd, long offset);
 
     public native static int readNonNegativeInt(int fd, long offset);
@@ -429,8 +448,7 @@ public final class Files {
             try {
                 do {
                     nameUtf8Ptr = findName(pFind);
-                    Chars.utf8DecodeZ(nameUtf8Ptr, path.trimTo(len).slash$());
-                    path.$();
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
                         if (!remove(pathUtf8Ptr)) {
@@ -499,7 +517,7 @@ public final class Files {
         if (type == DT_DIR) {
             if (nameSink != null) {
                 nameSink.clear();
-                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+                Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
             }
             path.trimTo(rootLen).concat(pUtf8NameZ).$();
             return DT_DIR;
@@ -508,7 +526,7 @@ public final class Files {
         if (type == DT_LNK) {
             if (nameSink != null) {
                 nameSink.clear();
-                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+                Chars.utf8ToUtf16Z(pUtf8NameZ, nameSink);
             }
             path.trimTo(rootLen).concat(pUtf8NameZ).$();
             if (isDir(path.address())) {
@@ -592,6 +610,8 @@ public final class Files {
     private native static int openRW(long lpszName);
 
     private native static int openRWOpts(long lpszName, long opts);
+
+    private static native int readLink0(long lpszPath, long buffer, int len);
 
     private native static boolean remove(long lpsz);
 

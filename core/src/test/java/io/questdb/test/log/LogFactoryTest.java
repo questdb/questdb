@@ -951,7 +951,7 @@ public class LogFactoryTest {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
+                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }
@@ -1035,7 +1035,7 @@ public class LogFactoryTest {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
+                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }

@@ -150,7 +150,7 @@ public class TableConverter {
             try {
                 do {
                     sink.clear();
-                    boolean validUtf8 = Chars.utf8DecodeZ(ff.findName(pFind), sink);
+                    boolean validUtf8 = Chars.utf8ToUtf16Z(ff.findName(pFind), sink);
                     assert validUtf8 : "invalid utf8 in wal file name";
                     if (Chars.startsWith(sink, WalUtils.WAL_NAME_BASE)) {
                         path.trimTo(rootLen).concat(dirName).concat(sink).$();

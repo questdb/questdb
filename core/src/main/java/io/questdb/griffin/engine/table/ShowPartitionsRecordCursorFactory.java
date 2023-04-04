@@ -318,7 +318,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     detachedPartitions.clear();
                     do {
                         partitionName.clear();
-                        Chars.utf8DecodeZ(ff.findName(pFind), partitionName);
+                        Chars.utf8ToUtf16Z(ff.findName(pFind), partitionName);
                         int type = ff.findType(pFind);
                         if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
                             attachablePartitions.add(Chars.toString(partitionName));

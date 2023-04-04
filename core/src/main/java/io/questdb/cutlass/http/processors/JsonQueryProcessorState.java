@@ -166,7 +166,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long stop
     ) throws Utf8Exception {
         this.query.clear();
-        TextUtil.utf8Decode(query.getLo(), query.getHi(), this.query);
+        TextUtil.utf8ToUtf16(query.getLo(), query.getHi(), this.query);
         this.skip = skip;
         this.stop = stop;
         count = 0L;
@@ -824,7 +824,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnNames != null) {
             columnsQueryParameter.clear();
             try {
-                TextUtil.utf8Decode(columnNames.getLo(), columnNames.getHi(), columnsQueryParameter);
+                TextUtil.utf8ToUtf16(columnNames.getLo(), columnNames.getHi(), columnsQueryParameter);
             } catch (Utf8Exception e) {
                 info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();

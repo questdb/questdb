@@ -173,7 +173,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        Chars.utf8Decode(address, _wptr, sink);
+        Chars.utf8toUtf16(address, _wptr, sink);
     }
 
     private static int utf8byteClass(byte b) {

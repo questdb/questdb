@@ -521,7 +521,7 @@ public class ShowPartitionsTest extends AbstractGriffinTest {
                     long namePtr = Files.findName(pFind);
                     if (Files.notDots(namePtr)) {
                        sink.clear();
-                        Chars.utf8DecodeZ(namePtr, sink);
+                        Chars.utf8ToUtf16Z(namePtr, sink);
                         path.trimTo(len).concat(sink).$();
                         int n = sink.length();
                         int limit = n;
