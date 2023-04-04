@@ -1564,7 +1564,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Commit everything.
                     walLagRowCount = 0;
                     commitMinTimestamp = txWriter.getLagMinTimestamp();
-                    commitMaxTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                    commitMaxTimestamp = txWriter.getLagMaxTimestamp();
                     txWriter.setLagMinTimestamp(Long.MAX_VALUE);
                     txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
                 }
@@ -4624,7 +4624,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
                 // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
-                // The sort will convert teh format back to timestamp index data structure.
+                // The sort will convert the format back to timestamp index data structure.
                 long srcLo = o3SrcDataMem.addressOf(sourceOffset);
 
                 long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
