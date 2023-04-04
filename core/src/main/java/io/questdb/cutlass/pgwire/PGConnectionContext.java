@@ -228,8 +228,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
-        this.circuitBreakerId = registry.acquire();
-        this.circuitBreaker = registry.getCircuitBreaker(circuitBreakerId);
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
+        this.circuitBreakerId = registry.add(circuitBreaker);
         this.registry = registry;
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
@@ -350,9 +350,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
+        registry.remove(circuitBreakerId);
+        Misc.free(circuitBreaker);
         freeBuffers();
-        // release circuit breaker to registry (for reuse) instead of closing it
-        registry.release(circuitBreakerId);
     }
 
     @Override
