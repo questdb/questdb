@@ -30,6 +30,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
+import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
+
 public class VectTest {
 
     private Rnd rnd = new Rnd();
@@ -37,6 +40,78 @@ public class VectTest {
     @Before
     public void setUp() {
         rnd.reset();
+    }
+
+    @Test
+    public void testBinarySearchIndexT() {
+        int count = 1000;
+        final int size = count * 2 * Long.BYTES;
+        final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            // 0,0,0,2,2,2,4,4,4 ...
+            for (int i = 0; i < count; i++) {
+                long value = (i / 3) * 2;
+                Unsafe.getUnsafe().putLong(addr + i * 2 * Long.BYTES, value);
+            }
+
+            // Existing
+            Assert.assertEquals(2, Vect.binarySearchIndexT(addr, 0, 0, count - 1, SCAN_DOWN));
+            Assert.assertEquals(0, Vect.binarySearchIndexT(addr, 0, 0, count - 1, SCAN_UP));
+
+            // Non-existing
+            Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, SCAN_DOWN) - 1);
+            Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, SCAN_UP) - 1);
+
+            // Generalize
+            for (int i = 0; i < count / 3; i++) {
+                int existingValue = i * 2;
+                Assert.assertEquals(i * 3 + 2, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_DOWN));
+                Assert.assertEquals(i * 3, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_UP));
+
+                int nonExisting = i * 2 + 1;
+                Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_DOWN) - 1);
+                Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_UP) - 1);
+            }
+        } finally {
+            Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testBoundedBinarySearchIndexT() {
+        int count = 1000;
+        final int size = count * 2 * Long.BYTES;
+        final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            // 0,0,0,2,2,2,4,4,4 ...
+            for (int i = 0; i < count; i++) {
+                long value = (i / 3) * 2;
+                Unsafe.getUnsafe().putLong(addr + i * 2 * Long.BYTES, value);
+            }
+
+            // Existing
+            Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, SCAN_DOWN));
+            Assert.assertEquals(0, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, SCAN_UP));
+
+            // Non-existing
+            Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, SCAN_DOWN));
+            Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, SCAN_UP));
+
+            // Generalize
+            for (int i = 0; i < count / 3; i++) {
+                int existingValue = i * 2;
+                Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_DOWN));
+                Assert.assertEquals(i * 3, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_UP));
+
+                int nonExisting = i * 2 + 1;
+                Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_DOWN));
+                Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_UP));
+            }
+        } finally {
+            Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
