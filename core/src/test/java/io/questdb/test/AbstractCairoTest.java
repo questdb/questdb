@@ -196,7 +196,7 @@ public abstract class AbstractCairoTest {
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
-        LOG.info().$("begin").$();
+        LOG.info().$("begin ").$(Thread.currentThread().getId()).$();
 
         node1 = newNode(1, "dbRoot", new StaticOverrides());
         root = node1.getRoot();
@@ -223,12 +223,13 @@ public abstract class AbstractCairoTest {
         backupDir = null;
         backupDirTimestampFormat = null;
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
+        LOG.info().$("end ").$(Thread.currentThread().getId()).$();
     }
 
     @Before
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
-        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$(' ').$(Thread.currentThread().getId()).$();
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
         refreshTablesInBaseEngine();
@@ -243,7 +244,7 @@ public abstract class AbstractCairoTest {
     }
 
     public void tearDown(boolean removeDir) {
-        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$(' ').$(Thread.currentThread().getId()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
 
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
@@ -393,6 +394,10 @@ public abstract class AbstractCairoTest {
             return true;  // Could lock/unlock.
         }
         return false;  // Could not obtain lock.
+    }
+
+    protected static TableToken createTable(TableModel model) {
+        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
@@ -563,10 +568,6 @@ public abstract class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
-    }
-
-    protected static TableToken createTable(TableModel model) {
-        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
     }
 
     protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
