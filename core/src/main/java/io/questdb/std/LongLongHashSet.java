@@ -108,11 +108,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
         if (slot < 0) {
             return false;
         }
-
         addAt(slot, key1, key2);
-        if (size == capacity) {
-            rehash();
-        }
         return true;
     }
 
@@ -125,7 +121,9 @@ public final class LongLongHashSet implements Mutable, Sinkable {
      */
     public void addAt(int slot, long key1, long key2) {
         set(slot, key1, key2);
-        size++;
+        if (++size == capacity) {
+            rehash();
+        }
     }
 
     /**
@@ -237,7 +235,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
         values[slot * 2 + 1] = key2;
     }
 
-    interface SinkStrategy {
+    public interface SinkStrategy {
         void put(long key1, long key2, CharSink sink);
     }
 }
