@@ -285,7 +285,7 @@ typedef struct {
     struct dirent *entry;
 } FIND;
 
-inline void setFind(FIND *find, struct dirent *entry) {
+void setFind(FIND *find, struct dirent *entry) {
     find->entry = entry;
     find->type = entry->d_type;
 }
