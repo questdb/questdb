@@ -1526,7 +1526,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (commitToTimestamp < txWriter.getLagMaxTimestamp() && maxLagRows > 0) {
-                    final long lagThresholdRow = 1 + Vect.binarySearchIndexT(
+                    final long lagThresholdRow = 1 + Vect.boundedBinarySearchIndexT(
                             timestampAddr,
                             commitToTimestamp,
                             o3Lo,
