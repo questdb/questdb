@@ -1317,7 +1317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     if (timestamp > partitionTimestampHi && PartitionBy.isPartitioned(partitionBy)) {
-                        switchPartition(timestamp);
+                        switchPartition(txWriter.getPartitionFloor(timestamp));
                     }
                 }
                 if (lastOpenPartitionIsReadOnly) {
@@ -3253,7 +3253,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             updateO3ColumnTops();
         }
         if (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit) {
-            openPartition(txWriter.getMaxTimestamp());
+            openPartition(txWriter.getLastPartitionTimestamp());
         }
 
         // Data is written out successfully, however, we can still fail to set append position, for
@@ -4960,7 +4960,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
             int plen = path.length();
-            if (ff.mkdir(path.slash$(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("Cannot create directory: ").put(path);
             }
 
@@ -5217,8 +5217,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     pCount++;
 
-                    LOG.info().
-                            $("o3 partition task [table=").utf8(tableToken.getTableName())
+                    LOG.info().$("o3 partition task [table=").utf8(tableToken.getTableName())
                             .$(", partitionIsReadOnly=").$(partitionIsReadOnly)
                             .$(", srcOooBatchRowSize=").$(srcOooBatchRowSize)
                             .$(", srcOooLo=").$(srcOooLo)
@@ -5289,7 +5288,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         columnCounter.set(TableUtils.compressColumnCount(metadata));
                         Path pathToPartition = Path.getThreadLocal(path);
-                        TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, srcNameTxn);
+                        TableUtils.setPathForPartition(pathToPartition, partitionBy, txWriter.getPartitionTimestamp(o3TimestampMin), srcNameTxn);
                         final int plen = pathToPartition.length();
                         int columnsPublished = 0;
                         for (int i = 0; i < columnCount; i++) {

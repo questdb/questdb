@@ -98,7 +98,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (!last) {
                 try {
                     LOG.debug().$("would create [path=").utf8(path.slash$()).I$();
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, txn);
+                    TableUtils.setPathForPartition(path.trimTo(pathToTable.length()), partitionBy, partitionTimestamp, txn - 1);
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -191,7 +191,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dFile(path, metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE);
 
                     // also track the fd that we need to eventually close
-                    srcTimestampFd = openRO(ff, path, LOG);
+                    // Open src timestamp column as RW in case append happens
+                    srcTimestampFd = openRW(ff, path, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     srcTimestampAddr = mapRO(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }

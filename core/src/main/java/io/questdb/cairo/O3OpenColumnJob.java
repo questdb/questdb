@@ -335,7 +335,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         int plen = pathToOldPartition.length();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
-        TableUtils.setPathForPartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND;
+        TableUtils.setPathForPartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcDataTxn : txn);
         int pplen = pathToNewPartition.length();
 
         // append jobs do not set value of part counter, we do it here for those

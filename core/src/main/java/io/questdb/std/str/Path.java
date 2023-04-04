@@ -81,6 +81,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return PATH.get().of(root);
     }
 
+    public static Path getThreadLocal2(Path root) {
+        return PATH2.get().of(root);
+    }
+
     public static Path getThreadLocal2(CharSequence root) {
         return PATH2.get().of(root);
     }
