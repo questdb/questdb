@@ -1669,21 +1669,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             // Bookmark masterRef to track how many rows is in uncommitted state
-            this.committedMasterRef = masterRef;
+            committedMasterRef = masterRef;
             processPartitionRemoveCandidates();
 
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
+            shrinkO3Mem();
             return rowsAdded;
-        } else {
-            // Nothing was committed to the table, only copied to LAG.
-            // Keep in memory last committed seq txn, but do not write it to _txn file.
-            txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
         }
+
+        // Nothing was committed to the table, only copied to LAG.
+        // Keep in memory last committed seq txn, but do not write it to _txn file.
+        txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
+        shrinkO3Mem();
         return 0L;
     }
 
@@ -6488,6 +6490,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return partitionTimestampHi;
     }
 
+    private void shrinkO3Mem() {
+        for (int i = 0, n = o3MemColumns.size(); i < n; i++) {
+            MemoryCARW o3mem = o3MemColumns.getQuick(i);
+            if (o3mem != null) {
+                // truncate will shrink the memory to a single page
+                o3mem.truncate();
+            }
+        }
+        for (int i = 0, n = o3MemColumns2.size(); i < n; i++) {
+            MemoryCARW o3mem2 = o3MemColumns2.getQuick(i);
+            if (o3mem2 != null) {
+                o3mem2.truncate();
+            }
+        }
+    }
+
     private void swapMetaFile(CharSequence columnName) {
         // close _meta so we can rename it
         metaMem.close();
@@ -6929,6 +6947,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // open old partition
                 if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
+                        txWriter.setMaxTimestamp(rollbackToMaxTimestamp);
                         openPartition(rollbackToMaxTimestamp);
                         setAppendPosition(rollbackToTransientRowCount, false);
                     } catch (Throwable e) {
@@ -6936,6 +6955,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         throw e;
                     }
                 } else {
+                    // we have no partitions, clear partitions in TableWriter
+                    txWriter.removeAllPartitions();
                     rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
 
@@ -6975,7 +6996,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         rowValueIsNotNull.fill(0, columnCount, --masterRef);
-        txWriter.transientRowCount--;
+
+        // Some executions path in this method already call txWriter.removeAllPartitions()
+        // which resets transientRowCount.
+        if (txWriter.transientRowCount > 0) {
+            txWriter.transientRowCount--;
+        }
     }
 
     @FunctionalInterface
