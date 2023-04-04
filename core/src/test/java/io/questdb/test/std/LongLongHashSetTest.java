@@ -40,7 +40,7 @@ public class LongLongHashSetTest {
     private final static Rnd rnd = new Rnd();
 
     @Test
-    public void testInsertDupsKeys() {
+    public void testInsertDuplicateKeys() {
         LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
         Set<TwoLongs> jdkSet = new HashSet<>();
         for (int i = 0; i < 10_000; i++) {
@@ -60,6 +60,24 @@ public class LongLongHashSetTest {
             long key1 = rnd.nextLong();
             long key2 = rnd.nextLong();
             assertEquals(jdkSet.add(new TwoLongs(key1, key2)), longSet.add(key1, key2));
+            maybeAssertContainsSameKeysAndSize(longSet, jdkSet);
+        }
+        assertContainsSameKeysAndSize(longSet, jdkSet);
+    }
+
+    @Test
+    public void testInsertRandomKeysViaAddAt() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
+        Set<TwoLongs> jdkSet = new HashSet<>();
+        for (int i = 0; i < 10_000; i++) {
+            long key1 = rnd.nextLong();
+            long key2 = rnd.nextLong();
+            final int index = longSet.keySlot(key1, key2);
+            if (index < 0) {
+                continue;
+            }
+            longSet.addAt(index, key1, key2);
+            jdkSet.add(new TwoLongs(key1, key2));
             maybeAssertContainsSameKeysAndSize(longSet, jdkSet);
         }
         assertContainsSameKeysAndSize(longSet, jdkSet);
