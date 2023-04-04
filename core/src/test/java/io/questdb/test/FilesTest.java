@@ -923,6 +923,7 @@ public class FilesTest {
 
     @Test
     public void testSoftLinkRead() throws IOException {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         File dir = temporaryFolder.newFolder();
         try (
                 Path path = new Path();
