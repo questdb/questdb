@@ -111,7 +111,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01);
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1);
-        runFuzz(TestUtils.generateRandom(LOG));
+        runFuzz(rnd);
     }
 
     @Test
@@ -123,9 +123,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
-        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd);
     }
@@ -140,9 +140,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
-        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd);
     }
@@ -202,26 +202,37 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd1 = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01);
-        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd1);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
     }
 
     @Test
     public void testWalWriteRollbackHeavyToFix() throws Exception {
-        Rnd rnd1 = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01);
-        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd1);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
     }
 
     @Test
     public void testWalWriteRollbackTruncateHeavy() throws Exception {
-        Rnd rnd1 = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15);
-        setFuzzCounts(rnd1.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd1);
+        setFuzzCounts(rnd.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalWriteTinyO3Memory() throws Exception {
+        final int o3MemorySize = 256;
+        configOverrideO3ColumnMemorySize(o3MemorySize);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01);
+        setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
+        runFuzz(rnd, testName.getMethodName(), 1, false, false);
+        Assert.assertEquals(o3MemorySize, node1.getConfigurationOverrides().getO3ColumnMemorySize());
     }
 
     @Test
@@ -246,9 +257,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWriteO3DataOnlyBig() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
-        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd);
     }
@@ -619,7 +630,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
         assertMemoryLeak(() -> {
-
             String tableNameBase = testName.getMethodName();
             String tableNameWal = tableNameBase + "_wal";
             String tableNameWal2 = tableNameBase + "_wal_parallel";
