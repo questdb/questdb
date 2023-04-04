@@ -4707,6 +4707,13 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectFromTablePartitions() throws Exception {
+        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)",
+                "select * from table_partitions('tab')",
+                "show_partitions of: tab\n");
+    }
+
+    @Test
     public void testSelectFromTableWriterMetrics() throws Exception {
         assertPlan("select * from table_writer_metrics()",
                 "table_writer_metrics\n");

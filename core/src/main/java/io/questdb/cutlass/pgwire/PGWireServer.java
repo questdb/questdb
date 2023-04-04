@@ -52,6 +52,7 @@ public class PGWireServer implements Closeable {
 
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
+    private final CircuitBreakerRegistry registry;
     private final WorkerPool workerPool;
 
     public PGWireServer(
@@ -60,7 +61,8 @@ public class PGWireServer implements Closeable {
             WorkerPool workerPool,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
-            PGConnectionContextFactory contextFactory
+            PGConnectionContextFactory contextFactory,
+            CircuitBreakerRegistry registry
     ) {
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
@@ -68,6 +70,7 @@ public class PGWireServer implements Closeable {
         );
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
+        this.registry = registry;
 
         workerPool.assign(dispatcher);
 
@@ -140,6 +143,7 @@ public class PGWireServer implements Closeable {
     @Override
     public void close() {
         Misc.free(dispatcher);
+        Misc.free(registry);
     }
 
     public int getPort() {
@@ -152,15 +156,18 @@ public class PGWireServer implements Closeable {
     }
 
     public static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
+
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,
+                CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
             super(() -> new PGConnectionContext(
                     engine,
                     configuration,
-                    executionContextObjectFactory.newInstance()
+                    executionContextObjectFactory.newInstance(),
+                    registry
             ), configuration.getConnectionPoolInitialCapacity());
         }
     }

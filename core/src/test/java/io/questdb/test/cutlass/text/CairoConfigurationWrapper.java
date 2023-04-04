@@ -936,6 +936,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalApplyEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isWalSupported() {
         return conf.isWalSupported();
     }

@@ -320,6 +320,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
 
                             mergeDataHi = srcDataMax - 1;
+                            assert mergeDataLo <= mergeDataHi;
 
                             mergeType = O3_BLOCK_MERGE;
                             suffixType = O3_BLOCK_O3;
@@ -338,6 +339,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeType = O3_BLOCK_MERGE;
                             mergeO3Hi = srcOooHi;
                             mergeDataHi = srcDataMax - 1;
+                            assert mergeDataLo <= mergeDataHi;
                         }
                     }
                 } else {

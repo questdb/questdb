@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -63,21 +60,25 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             int columnSplit,
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
-            JoinContext joinContext
-    ) {
+            JoinContext joinContext,
+            ColumnFilter masterTableKeyColumns) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         Map joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
+        int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
         this.cursor = new AsOfJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 NullRecordFactory.getInstance(slaveColumnTypes),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                slaveValueSink
+                slaveValueSink,
+                masterTableKeyColumns,
+                slaveWrappedOverMaster,
+                columnIndex
         );
         this.columnIndex = columnIndex;
         this.joinContext = joinContext;
@@ -125,10 +126,10 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         slaveFactory.close();
     }
 
-    private class AsOfJoinRecordCursor extends AbstractJoinCursor {
+    private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
-        private final OuterJoinRecord record;
+        private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
         private boolean danglingSlaveRecord = false;
@@ -145,10 +146,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
-                RecordValueSink valueSink
+                RecordValueSink valueSink,
+                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex
         ) {
-            super(columnSplit);
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
+            super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
+            this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;

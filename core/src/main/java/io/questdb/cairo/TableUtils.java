@@ -704,14 +704,14 @@ public final class TableUtils {
         final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
-                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
 
         if (ff.lock(fd) != 0) {
             if (verbose) {
-                LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+                LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
             }
             ff.close(fd);
             return -1;
@@ -833,7 +833,11 @@ public final class TableUtils {
             // Since the failed resize can occur before append offset can be
             // explicitly set, we must assume that file size should be
             // equal to previous memory size
-            throw CairoException.critical(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", offset=").put(offset).put(", fd=").put(fd).put(']');
+            throw CairoException.critical(errno).put("could not remap file [previousSize=").put(prevSize)
+                    .put(", newSize=").put(newSize)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(']');
         }
         return page;
     }
@@ -867,7 +871,7 @@ public final class TableUtils {
     public static int openRO(FilesFacade ff, LPSZ path, Log log) {
         final int fd = ff.openRO(path);
         if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
@@ -876,7 +880,7 @@ public final class TableUtils {
     public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
         final int fd = ff.openRW(path, opts);
         if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
@@ -982,7 +986,18 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+    public static void resetTxn(
+            MemoryMW txMem,
+            long baseOffset,
+            int symbolMapCount,
+            long txn,
+            long seqTxn,
+            long dataVersion,
+            long partitionTableVersion,
+            long structureVersion,
+            long columnVersion,
+            long truncateVersion
+    ) {
         // txn to let readers know table is being reset
         txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
@@ -1440,6 +1455,20 @@ public final class TableUtils {
         return metaMem.getInt(offset);
     }
 
+    // Utility method for debugging. This method is not used in production.
+    @SuppressWarnings("unused")
+    static boolean assertTimestampInOrder(long srcTimestampAddr, long srcDataMax) {
+        long prev = Long.MIN_VALUE;
+        for (long i = 0; i < srcDataMax; i++) {
+            long newTs = Unsafe.getUnsafe().getLong(srcTimestampAddr + i * Long.BYTES);
+            if (newTs < prev) {
+                return false;
+            }
+            prev = newTs;
+        }
+        return true;
+    }
+
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdir(path.$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
@@ -1483,13 +1512,13 @@ public final class TableUtils {
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
                                 .$(", errno=").$(e.getErrno())
-                                .$(']').$();
+                                .I$();
                     }
                 } else {
                     LOG.error()
                             .$("could not remove swap [file=").$(path)
                             .$(", errno=").$(ff.errno())
-                            .$(']').$();
+                            .I$();
                 }
             } while (++index < retryCount);
             throw CairoException.critical(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);

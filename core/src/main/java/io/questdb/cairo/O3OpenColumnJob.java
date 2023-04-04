@@ -1308,9 +1308,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
+            // When partition is split, it's column top remains same.
+            // On writing to the split partition second time the column top can be bigger than the partition.
+            // Trim column top to partition top.
+            srcDataTop = Math.min(srcDataTop, srcDataMax);
+
             if (srcDataTop > 0) {
                 // Size of data actually in the file.
-                final long srcDataActualBytes = Math.max(0, srcDataMax - srcDataTop) << shl;
+                final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
                 // Size of data in the file if it didn't have column top.
                 final long srcDataMaxBytes = srcDataMax << shl;
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
@@ -1912,6 +1917,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             pathToNewPartition.trimTo(pplen);
+            // When partition is split, it's column top remains same.
+            // On writing to the split partition second time the column top can be bigger than the partition.
+            // Trim column top to partition top.
+            srcDataTop = Math.min(srcDataTop, srcDataMax);
 
             if (srcDataTop > 0) {
                 // Size of data actually in the index (fixed) file.

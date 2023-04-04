@@ -949,6 +949,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalApplyEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isWalSupported() {
         return true;
     }

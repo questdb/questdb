@@ -247,7 +247,7 @@ public class EmbeddedApiTest {
                             final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                             final SqlCompiler compiler = new SqlCompiler(engine)
                     ) {
-                        compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                        compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts) partition by HOUR", ctx);
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                             for (int j = 0; j < 100; j++) {
                                 TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
