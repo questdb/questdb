@@ -2410,20 +2410,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
                 try {
                     final long timestampAddr = Math.abs(timestampMaAddr);
-                    final int binarySearchInsertionPoint = (int) Vect.binarySearch64Bit(
+                    final long binarySearchInsertionPoint = Vect.binarySearch64Bit(
                             timestampAddr,
                             commitToTimestamp,
                             0,
                             lagRows - 1,
                             BinarySearch.SCAN_DOWN
                     );
-                    int applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint;
+                    long applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint + 1;
 
-                    long newMinLagTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (long) applyCount * Long.BYTES);
-                    long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (long) (applyCount - 1) * Long.BYTES);
+                    long newMinLagTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + applyCount * Long.BYTES);
+                    long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
                     assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
 
-                    applyLagToLastPartition(newMaxTimestamp, applyCount, newMinLagTimestamp);
+                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp);
 
                     LOG.debug().$("partial apply lag to last partition [table=").$(tableToken)
                             .$(" ,lagSize=").$(lagRows)
@@ -2444,6 +2444,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
+        txWriter.setMinTimestamp(Math.min(txWriter.getMinTimestamp(), txWriter.getLagMinTimestamp()));
         txWriter.setLagMinTimestamp(lagMinTimestamp);
         if (txWriter.getLagRowCount() == lagRowCount) {
             txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
