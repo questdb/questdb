@@ -190,7 +190,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long noOpRowCount;
     private DirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
-    private final O3ColumnUpdateMethod o3MoveWalFromFilesToLastPartitionRef = this::o3MoveWalFromFilesToLastPartition;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
     private long o3EffectiveLag = 0L;
     private boolean o3InError = false;
@@ -217,6 +216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
+    private final O3ColumnUpdateMethod o3MoveWalFromFilesToLastPartitionRef = this::o3MoveWalFromFilesToLastPartition;
     private final O3ColumnUpdateMethod o3SortFixColumnRef = this::o3SortFixColumn;
     private final O3ColumnUpdateMethod o3SortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod o3MergeVarColumnLagRef = this::o3MergeVarColumnLag;
@@ -1466,13 +1466,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.setLagMinTimestamp(newMinLagTs);
                     txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
 
+                    // Try to fast apply records from LAG to last partition which are before commitToTimestamp
                     return applyFromWalLagToLastPartition(commitToTimestamp);
                 }
 
-                if (applyFromWalLagToLastPartition(commitToTimestamp) != Long.MIN_VALUE) {
+                // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp)) != Long.MIN_VALUE) {
                     walLagRowCount = txWriter.getLagRowCount();
                     totalUncommitted = walLagRowCount + commitRowCount;
                 }
+
+                txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
+                txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
 
                 boolean needsOrdering = !ordered || walLagRowCount > 0;
                 long timestampAddr;
@@ -1559,7 +1564,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // Commit everything.
                     walLagRowCount = 0;
-                    commitMinTimestamp = newMinLagTs;
+                    commitMinTimestamp = txWriter.getLagMinTimestamp();
                     commitMaxTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
                     txWriter.setLagMinTimestamp(Long.MAX_VALUE);
                     txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
@@ -2386,8 +2391,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long lagMaxTimestamp = txWriter.getLagMaxTimestamp();
             commitToTimestamp = Math.min(commitToTimestamp, partitionTimestampHi);
             if (lagMaxTimestamp <= commitToTimestamp) {
-
                 // Easy case, all lag data can be marked as committed in the last partition
+                LOG.debug().$("fast apply full lag to last partition [table=").$(tableToken).I$();
                 applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE);
                 return lagMaxTimestamp;
             } else if (lagMinTimestamp <= commitToTimestamp) {
@@ -2417,6 +2422,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
 
                     applyLagToLastPartition(newMaxTimestamp, applyCount, newMinLagTimestamp);
+
+                    LOG.debug().$("partial apply lag to last partition [table=").$(tableToken)
+                            .$(" ,lagSize=").$(lagRows)
+                            .$(" ,rowApplied=").$(applyCount)
+                            .$(", commitToTimestamp=").$(commitToTimestamp)
+                            .$(", newMaxTimestamp=").$(newMaxTimestamp)
+                            .$(", newMinLagTimestamp=").$(newMinLagTimestamp)
+                            .I$();
                     return newMaxTimestamp;
                 } finally {
                     mapAppendColumnBufferRelease(timestampMaAddr, timestampMapOffset, timestampMapSize);
@@ -4533,84 +4546,100 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long existingLagRows,
             long symbolsFlags
     ) {
-        boolean isDesignatedTimestamp = columnIndex < 0;
-        columnIndex = columnIndex < 0 ? -columnIndex - 1 : columnIndex;
-
-        MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-        MemoryCR o3SrcIndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
-        MemoryMA o3DstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
-        MemoryMA o3DstIndexMem = columns.get(getSecondaryColumnIndex(columnIndex));
-        long destRowOffset = txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex) + existingLagRows;
-
-        long size;
-        long sourceOffset;
-        long destOffset;
-        if (o3SrcIndexMem == null) {
-            // Fixed size column
-            final int shl = ColumnType.pow2SizeOf(columnType);
-            sourceOffset = isDesignatedTimestamp ? columnDataRowOffset << 4 : columnDataRowOffset << shl;
-            size = copyToLagRowCount << shl;
-            destOffset = destRowOffset << shl;
-        } else {
-            // Var size column
-            long committedIndexOffset = columnDataRowOffset << 3;
-            sourceOffset = o3SrcIndexMem.getLong(committedIndexOffset);
-            size = o3SrcIndexMem.getLong((columnDataRowOffset + copyToLagRowCount) << 3) - sourceOffset;
-
-            long destIndexOffset = destRowOffset << 3;
-            long destIndexSize = (copyToLagRowCount + 1) << 3;
-
-            if (destIndexOffset > 0) {
-                o3DstIndexMem.jumpTo(destIndexOffset);
-                destOffset = Unsafe.getUnsafe().getLong(o3DstIndexMem.addressOf(destIndexOffset));
-            } else {
-                destOffset = 0;
-            }
-
-            // move count + 1 rows, to make sure index column remains n+1
-            // the data is copied back to start of the buffer, no need to set size first
-            long destAddr = mapAppendColumnBuffer(o3DstIndexMem, destIndexOffset, destIndexSize, true);
-            assert destAddr != 0;
-
-            O3Utils.shiftCopyFixedSizeColumnData(
-                    sourceOffset - destOffset,
-                    o3SrcIndexMem.addressOf(committedIndexOffset),
-                    0,
-                    copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                    Math.abs(destAddr)
-            );
-
-            mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
+        if (o3ErrorCount.get() > 0) {
+            return;
         }
+        try {
+            boolean isDesignatedTimestamp = columnIndex < 0;
+            columnIndex = columnIndex < 0 ? -columnIndex - 1 : columnIndex;
 
-        o3DstDataMem.jumpTo(destOffset + size);
+            MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            MemoryCR o3SrcIndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            MemoryMA o3DstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
+            MemoryMA o3DstIndexMem = columns.get(getSecondaryColumnIndex(columnIndex));
+            long destRowOffset = txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex) + existingLagRows;
 
-        if (!isDesignatedTimestamp) {
-            if (o3SrcDataMem instanceof MemoryCARW) {
-                if (symbolsFlags > 0 && ColumnType.isSymbol(columnType)) {
-                    // Symbol is re-mapped to memory with 0 source offset.
-                    sourceOffset = 0;
-                }
-                MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
-                long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
-                if (bytesWritten != size) {
-                    throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                            .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
-                }
-
+            long size;
+            long sourceOffset;
+            long destOffset;
+            if (o3SrcIndexMem == null) {
+                // Fixed size column
+                final int shl = ColumnType.pow2SizeOf(columnType);
+                sourceOffset = isDesignatedTimestamp ? columnDataRowOffset << 4 : columnDataRowOffset << shl;
+                size = copyToLagRowCount << shl;
+                destOffset = destRowOffset << shl;
             } else {
-                MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
-                ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
-            }
-        } else {
-            // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
-            // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
-            // The sort will convert teh format back to timestamp index data structure.
-            long srcLo = o3SrcDataMem.addressOf(sourceOffset);
+                // Var size column
+                long committedIndexOffset = columnDataRowOffset << 3;
+                sourceOffset = o3SrcIndexMem.getLong(committedIndexOffset);
+                size = o3SrcIndexMem.getLong((columnDataRowOffset + copyToLagRowCount) << 3) - sourceOffset;
 
-            long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
-            Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
-            mapAppendColumnBufferRelease(destAddr, destOffset, size);
+                long destIndexOffset = destRowOffset << 3;
+                long destIndexSize = (copyToLagRowCount + 1) << 3;
+
+                if (destIndexOffset > 0) {
+                    o3DstIndexMem.jumpTo(destIndexOffset);
+                    destOffset = Unsafe.getUnsafe().getLong(o3DstIndexMem.addressOf(destIndexOffset));
+                } else {
+                    destOffset = 0;
+                }
+
+                // move count + 1 rows, to make sure index column remains n+1
+                // the data is copied back to start of the buffer, no need to set size first
+                long destAddr = mapAppendColumnBuffer(o3DstIndexMem, destIndexOffset, destIndexSize, true);
+                assert destAddr != 0;
+
+                O3Utils.shiftCopyFixedSizeColumnData(
+                        sourceOffset - destOffset,
+                        o3SrcIndexMem.addressOf(committedIndexOffset),
+                        0,
+                        copyToLagRowCount, // No need to do +1 here, hi is inclusive
+                        Math.abs(destAddr)
+                );
+
+                mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
+            }
+
+            o3DstDataMem.jumpTo(destOffset + size);
+
+            if (!isDesignatedTimestamp) {
+                if (o3SrcDataMem instanceof MemoryCARW) {
+                    if (symbolsFlags > 0 && ColumnType.isSymbol(columnType)) {
+                        // Symbol is re-mapped to memory with 0 source offset.
+                        sourceOffset = 0;
+                    }
+                    MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
+                    long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(sourceOffset), size, destOffset);
+                    if (bytesWritten != size) {
+                        throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                .put(o3DstDataMem.getFd()).put(", size=").put(size).put(", bytesWritten=").put(bytesWritten).put(']');
+                    }
+
+                } else {
+                    MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
+                    ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), sourceOffset, destOffset, size);
+                }
+            } else {
+                // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
+                // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
+                // The sort will convert teh format back to timestamp index data structure.
+                long srcLo = o3SrcDataMem.addressOf(sourceOffset);
+
+                long destAddr = mapAppendColumnBuffer(o3DstDataMem, destOffset, size, true);
+                Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+                mapAppendColumnBufferRelease(destAddr, destOffset, size);
+            }
+        } catch (Throwable th) {
+            handleWorkStealingException(
+                    "move wal to lag failed",
+                    columnIndex,
+                    columnType,
+                    copyToLagRowCount,
+                    columnDataRowOffset,
+                    existingLagRows,
+                    symbolsFlags,
+                    th
+            );
         }
     }
 
