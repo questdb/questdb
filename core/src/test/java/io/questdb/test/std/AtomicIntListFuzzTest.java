@@ -37,9 +37,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class AtomicIntListTest {
+public class AtomicIntListFuzzTest {
 
-    private static final Log LOG = LogFactory.getLog(AtomicIntListTest.class);
+    private static final Log LOG = LogFactory.getLog(AtomicIntListFuzzTest.class);
 
     @Test
     public void testBasic() {
