@@ -3748,6 +3748,9 @@ class SqlOptimiser {
     private QueryModel rewriteSelectClause0(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         assert model.getNestedModel() != null;
 
+        groupByAliases.clear();
+        groupByNodes.clear();
+
         final QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
         final QueryModel distinctModel = queryModelPool.next();
@@ -3783,7 +3786,7 @@ class SqlOptimiser {
 
         if (baseModel.getGroupBy().size() > 0) {
             groupByModel.moveGroupByFrom(baseModel);
-            useGroupByModel = true;//group by should be implemented even if there are no aggregate functions 
+            useGroupByModel = true; // group by should be implemented even if there are no aggregate functions
         }
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
@@ -3849,9 +3852,6 @@ class SqlOptimiser {
         boolean explicitGroupBy = groupBy.size() > 0;
 
         if (explicitGroupBy) {
-            groupByAliases.clear();
-            groupByNodes.clear();
-
             // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 ExpressionNode node = groupBy.getQuick(i);
