@@ -68,7 +68,6 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
@@ -5989,11 +5988,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removePartitionDirectories0(long pUtf8NameZ, int type) {
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
         if (checkedType != Files.DT_UNKNOWN &&
-                !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
-                !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
-                !Chars.startsWith(fileNameSink, SEQ_DIR)) {
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ)) {
             ff.unlinkOrRemove(path, checkedType, LOG);
             path.trimTo(rootLen).$();
         }
@@ -6004,10 +6003,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not remove wal and sequencer directories either
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
         if (checkedType != Files.DT_UNKNOWN &&
-                !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
-                !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
-                !Chars.startsWith(fileNameSink, SEQ_DIR) &&
-                !Chars.startsWith(fileNameSink, SEQ_DIR_DEPRECATED) &&
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
+                !CairoKeywords.isSeq(pUtf8NameZ)  &&
                 !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {

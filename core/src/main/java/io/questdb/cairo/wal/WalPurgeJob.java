@@ -224,7 +224,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
                     Path pathToDelete = Path.getThreadLocal(configuration.getRoot()).concat(tableToken).$();
+                    Path symLinkTarget = null;
+                    if (ff.isSoftLink(path)) {
+                        symLinkTarget = Path.getThreadLocal2("");
+                        if (!ff.readLink(pathToDelete, symLinkTarget)) {
+                            symLinkTarget = null;
+                        }
+                    }
                     ff.rmdir(pathToDelete);
+                    if (symLinkTarget != null) {
+                        ff.rmdir(symLinkTarget);
+                    }
                     TableUtils.lockName(pathToDelete);
                     ff.remove(pathToDelete);
                     engine.removeTableToken(tableToken);

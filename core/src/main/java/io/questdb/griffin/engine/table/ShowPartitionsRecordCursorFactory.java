@@ -179,7 +179,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private ShowPartitionsRecordCursor initialize() {
-            if (tableReader != null) {
+            if (tableReader != null) {//
                 // this call is idempotent
                 return this;
             }
@@ -318,11 +318,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     detachedPartitions.clear();
                     do {
                         partitionName.clear();
-                        Chars.utf8ToUtf16Z(ff.findName(pFind), partitionName);
+                        long name = ff.findName(pFind);
+                        Chars.utf8ToUtf16Z(name, partitionName);
                         int type = ff.findType(pFind);
                         if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
                             attachablePartitions.add(Chars.toString(partitionName));
-                        } else if (type == Files.DT_DIR && Chars.endsWith(partitionName, TableUtils.DETACHED_DIR_MARKER)) {
+                        } else if (type == Files.DT_DIR && CairoKeywords.isDetachedDirMarker(name)) {
                             detachedPartitions.add(Chars.toString(partitionName));
                         }
                     } while (ff.findNext(pFind) > 0);

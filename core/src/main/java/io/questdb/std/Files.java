@@ -402,18 +402,24 @@ public final class Files {
 
     public native static long read(int fd, long address, long len, long offset);
 
-    public static boolean readLink(Path softLink, Path pathTo) {
-        final int len = pathTo.length();
-        final int bufSize = 256;
-        pathTo.zeroPad(bufSize);
-        int res = readLink0(softLink.address(), pathTo.address() + len, bufSize);
-        if (res > 0) {
-            pathTo.trimTo(len + res).$();
+    public static boolean readLink(Path softLink, Path readTo) {
+        final int len = readTo.length();
+        final int bufSize = 1024;
+        readTo.zeroPad(bufSize);
+        // readlink copies link target into the give buffer, without zero-terminating it
+        // the buffer therefor is filled with zeroes. It is also possible that buffer is
+        // not large enough to copy the entire target. We detect this by checking the return
+        // value. If the value is the same as the buffer size we make an assumption that
+        // the link target is perhaps longer than the buffer.
+
+        int res = readLink0(softLink.address(), readTo.address() + len, bufSize);
+        if (res > 0 && res < bufSize) {
+            readTo.trimTo(len + res).$();
             // check if symlink is absolute or relative
-            if (pathTo.charAt(0) != '/') {
+            if (readTo.charAt(0) != '/') {
                 int prefixLen = Chars.lastIndexOf(softLink, '/');
                 if (prefixLen > 0) {
-                    pathTo.prefix(softLink, prefixLen + 1).$();
+                    readTo.prefix(softLink, prefixLen + 1).$();
                 }
             }
             return true;

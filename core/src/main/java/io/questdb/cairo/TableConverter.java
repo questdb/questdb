@@ -91,7 +91,7 @@ public class TableConverter {
                                     }
                                 } else {
                                     tableSequencerAPI.deregisterTable(token);
-                                    removeWalPersistence(path, rootLen, ff, sink, dirName);
+                                    removeWalPersistence(path, rootLen, ff, dirName);
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
@@ -135,7 +135,7 @@ public class TableConverter {
         }
     }
 
-    private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, StringSink sink, String dirName) {
+    private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, String dirName) {
         path.trimTo(rootLen).concat(dirName).concat(WalUtils.SEQ_DIR).$();
         if (ff.rmdir(path) != 0) {
             LOG.error()
@@ -145,16 +145,16 @@ public class TableConverter {
         }
 
         path.trimTo(rootLen).concat(dirName).$();
+        int plen = path.length();
         final long pFind = ff.findFirst(path);
         if (pFind > 0) {
             try {
                 do {
-                    sink.clear();
-                    boolean validUtf8 = Chars.utf8ToUtf16Z(ff.findName(pFind), sink);
-                    assert validUtf8 : "invalid utf8 in wal file name";
-                    if (Chars.startsWith(sink, WalUtils.WAL_NAME_BASE)) {
-                        path.trimTo(rootLen).concat(dirName).concat(sink).$();
-                        if (Chars.endsWith(sink, ".lock")) {
+                    long name = ff.findName(pFind);
+                    int type = ff.findType(pFind);
+                    if (CairoKeywords.isWal(name)) {
+                        path.trimTo(plen).concat(name).$();
+                        if (type == Files.DT_FILE && CairoKeywords.isLock(name)) {
                             if (!ff.remove(path)) {
                                 LOG.error()
                                         .$("Could not remove wal lock file [errno=").$(ff.errno())
