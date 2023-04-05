@@ -2159,14 +2159,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rowAction = ROW_ACTION_OPEN_PARTITION;
         } else {
             // truncate columns, we cannot remove them
-            for (int i = 0; i < columnCount; i++) {
-                getPrimaryColumn(i).truncate();
-                MemoryMA mem = getSecondaryColumn(i);
-                if (mem != null && mem.isOpen()) {
-                    mem.truncate();
-                    mem.putLong(0);
-                }
-            }
+            truncateColumns();
         }
 
         txWriter.resetTimestamp();
@@ -6689,6 +6682,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         throw new CairoError(cause);
     }
 
+    private void truncateColumns() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) >= 0) {
+                getPrimaryColumn(i).truncate();
+                MemoryMA mem = getSecondaryColumn(i);
+                if (mem != null && mem.isOpen()) {
+                    mem.truncate();
+                    mem.putLong(0);
+                }
+            }
+        }
+    }
+
     private void updateIndexes() {
         if (indexCount == 0 || avoidIndexOnCommit) {
             avoidIndexOnCommit = false;
@@ -7079,14 +7085,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 txWriter.cancelRow();
                 // we only have one partition, jump to start on every column
-                for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).jumpTo(0L);
-                    MemoryMA mem = getSecondaryColumn(i);
-                    if (mem != null) {
-                        mem.jumpTo(0L);
-                        mem.putLong(0L);
-                    }
-                }
+                truncateColumns();
             }
         } else {
             txWriter.cancelRow();
