@@ -28,6 +28,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecordSink;
+
+import static io.questdb.log.LogRecordSink.EOL_LENGTH;
+
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -183,16 +186,16 @@ public class LogRecordSinkTest {
             final byte[] msgBytes = buffers[bufIndex];
             final String expectedMsg = expectedMsgs[bufIndex];
             final int len = msgBytes.length;
-            final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            final long msgPtr = Unsafe.malloc(len + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, len + EOL_LENGTH);
                 for (int i = 0; i < len; i++) {
                     logRecord.put((char) msgBytes[i]);
                 }
                 logRecord.toSink(sink);
                 Assert.assertEquals(expectedMsg, sink.toString());
             } finally {
-                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(msgPtr, len + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
@@ -254,9 +257,9 @@ public class LogRecordSinkTest {
     @Test
     public void testUtf8LineTrimming() throws Exception {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
-            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
                 logRecord.encodeUtf8(msg);
                 Assert.assertEquals(expectedLen, logRecord.length());
                 if (sinkMaxLen > 0) {
@@ -268,7 +271,7 @@ public class LogRecordSinkTest {
                     Assert.assertEquals("x", sink.toString());
                 }
             } finally {
-                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -276,13 +279,13 @@ public class LogRecordSinkTest {
     @Test
     public void testUtf8LineTrimmingFromString() throws Exception {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
-            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
                 logRecord.encodeUtf8(msg);
                 Assert.assertEquals(expectedLen, logRecord.length());
             } finally {
-                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -291,13 +294,13 @@ public class LogRecordSinkTest {
     public void testUtf8LineTrimmingFromUtf8Buf() throws Exception {
         runTestUtf8LineTrimmingImpl((msg, utf8ByteLen, sinkMaxLen, expectedLen) -> {
             final Utf8 utf8 = new Utf8(msg);
-            final long msgPtr = Unsafe.malloc(utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+            final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
-                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen);
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, sinkMaxLen + EOL_LENGTH);
                 logRecord.putUtf8(utf8.lo(), utf8.hi());
                 Assert.assertEquals(expectedLen, logRecord.length());
             } finally {
-                Unsafe.free(msgPtr, utf8ByteLen, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
                 Misc.free(utf8);
             }
         });

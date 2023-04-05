@@ -26,10 +26,7 @@ package io.questdb.test.log;
 
 import io.questdb.log.HttpLogRecordSink;
 import io.questdb.log.LogRecordSink;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -72,18 +69,18 @@ public class HttpLogRecordSinkTest {
             for (int i = 0; i < limit; i++) {
                 alertBuilder.put('Q');
             }
+            alertBuilder.putEOL();
             alertBuilder.$();
+
             Assert.assertEquals(bufferSize, alertBuilder.length());
-            Assert.assertTrue(alertBuilder
-                    .toString()
-                    .startsWith("Content-Length:     1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
-            Assert.assertTrue(alertBuilder
-                    .toString()
+            String alertBuilderStr = alertBuilder.toString();
+            Assert.assertTrue(alertBuilderStr, alertBuilderStr.startsWith("Content-Length:     1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
+            Assert.assertTrue(alertBuilderStr, alertBuilderStr
                     .endsWith("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
                             "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
                             "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
                             "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
-                            "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"));
+                            "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ\r\n"));
         });
     }
 
@@ -161,7 +158,7 @@ public class HttpLogRecordSinkTest {
         withHttpLogRecordSink(alertBuilder -> {
             final String msg = "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!";
             final byte[] msgBytes = msg.getBytes(Files.UTF_8);
-            final int len = msgBytes.length;
+            final int len = msgBytes.length + Misc.EOL.length();
             final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
@@ -205,7 +202,7 @@ public class HttpLogRecordSinkTest {
         withHttpLogRecordSink(alertBuilder -> {
             final String msg = "test: ";
             final byte[] msgBytes = msg.getBytes(Files.UTF_8);
-            final int len = msgBytes.length;
+            final int len = msgBytes.length + Misc.EOL.length();
             final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
