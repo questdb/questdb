@@ -458,6 +458,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
             freeBuffers();
+            this.circuitBreaker.setSecret(-1);
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
@@ -468,6 +469,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 this.sendBufferPtr = sendBuffer;
                 this.sendBufferLimit = sendBuffer + sendBufferSize;
             }
+            this.circuitBreaker.setSecret(registry.getNewSecret());
         }
         return r;
     }
