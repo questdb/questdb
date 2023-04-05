@@ -158,6 +158,11 @@ public class TypeManagerTest {
     }
 
     @Test
+    public void testIllegalMethodParameterGeoInt() {
+        testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
+    }
+
+    @Test
     public void testNonDefaultFileName() throws JsonException, IOException {
         File configFile = temp.newFile("conf/my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");

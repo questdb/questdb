@@ -1440,6 +1440,20 @@ public final class TableUtils {
         return metaMem.getInt(offset);
     }
 
+    // Utility method for debugging. This method is not used in production.
+    @SuppressWarnings("unused")
+    static boolean assertTimestampInOrder(long srcTimestampAddr, long srcDataMax) {
+        long prev = Long.MIN_VALUE;
+        for (long i = 0; i < srcDataMax; i++) {
+            long newTs = Unsafe.getUnsafe().getLong(srcTimestampAddr + i * Long.BYTES);
+            if (newTs < prev) {
+                return false;
+            }
+            prev = newTs;
+        }
+        return true;
+    }
+
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');

@@ -811,11 +811,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getWalSquashUncommittedRowsMultiplier() {
-        return conf.getWalSquashUncommittedRowsMultiplier();
-    }
-
-    @Override
     public long getWalDataAppendPageSize() {
         return conf.getWalDataAppendPageSize();
     }
@@ -838,6 +833,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return conf.getWalSegmentRolloverRowCount();
+    }
+
+    @Override
+    public double getWalSquashUncommittedRowsMultiplier() {
+        return conf.getWalSquashUncommittedRowsMultiplier();
     }
 
     @Override
@@ -928,6 +928,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isTableTypeConversionEnabled() {
         return conf.isTableTypeConversionEnabled();
+    }
+
+    @Override
+    public boolean isWalApplyEnabled() {
+        return true;
     }
 
     @Override
