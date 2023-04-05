@@ -130,6 +130,8 @@ public class TypeManager implements Mutable {
                 return nextSymbolAdapter(false);
             case ColumnType.LONG256:
                 return Long256Adapter.INSTANCE;
+            case ColumnType.UUID:
+                return UuidAdapter.INSTANCE;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
@@ -138,8 +140,6 @@ public class TypeManager implements Mutable {
                 if (adapter != null) {
                     return adapter;
                 }
-            case ColumnType.UUID:
-                return UuidAdapter.INSTANCE;
             default:
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }

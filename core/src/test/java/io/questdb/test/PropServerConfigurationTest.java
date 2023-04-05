@@ -375,6 +375,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertFalse(configuration.getCairoConfiguration().getWalEnabledDefault());
+        Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyEnabled());
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
@@ -1138,6 +1139,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(128, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
             Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
             Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
+            Assert.assertFalse(configuration.getCairoConfiguration().isWalApplyEnabled());
             Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
             Assert.assertTrue(configuration.getWalApplyPoolConfiguration().haltOnError());
             Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());

@@ -30,6 +30,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
+import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
+
 public class VectTest {
 
     private Rnd rnd = new Rnd();
@@ -37,6 +40,78 @@ public class VectTest {
     @Before
     public void setUp() {
         rnd.reset();
+    }
+
+    @Test
+    public void testBinarySearchIndexT() {
+        int count = 1000;
+        final int size = count * 2 * Long.BYTES;
+        final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            // 0,0,0,2,2,2,4,4,4 ...
+            for (int i = 0; i < count; i++) {
+                long value = (i / 3) * 2;
+                Unsafe.getUnsafe().putLong(addr + i * 2 * Long.BYTES, value);
+            }
+
+            // Existing
+            Assert.assertEquals(2, Vect.binarySearchIndexT(addr, 0, 0, count - 1, SCAN_DOWN));
+            Assert.assertEquals(0, Vect.binarySearchIndexT(addr, 0, 0, count - 1, SCAN_UP));
+
+            // Non-existing
+            Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, SCAN_DOWN) - 1);
+            Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, SCAN_UP) - 1);
+
+            // Generalize
+            for (int i = 0; i < count / 3; i++) {
+                int existingValue = i * 2;
+                Assert.assertEquals(i * 3 + 2, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_DOWN));
+                Assert.assertEquals(i * 3, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_UP));
+
+                int nonExisting = i * 2 + 1;
+                Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_DOWN) - 1);
+                Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_UP) - 1);
+            }
+        } finally {
+            Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testBoundedBinarySearchIndexT() {
+        int count = 1000;
+        final int size = count * 2 * Long.BYTES;
+        final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            // 0,0,0,2,2,2,4,4,4 ...
+            for (int i = 0; i < count; i++) {
+                long value = (i / 3) * 2;
+                Unsafe.getUnsafe().putLong(addr + i * 2 * Long.BYTES, value);
+            }
+
+            // Existing
+            Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, SCAN_DOWN));
+            Assert.assertEquals(0, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, SCAN_UP));
+
+            // Non-existing
+            Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, SCAN_DOWN));
+            Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, SCAN_UP));
+
+            // Generalize
+            for (int i = 0; i < count / 3; i++) {
+                int existingValue = i * 2;
+                Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_DOWN));
+                Assert.assertEquals(i * 3, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_UP));
+
+                int nonExisting = i * 2 + 1;
+                Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_DOWN));
+                Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_UP));
+            }
+        } finally {
+            Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -477,7 +552,7 @@ public class VectTest {
     public void testSortOne() {
         final long indexAddr = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
-            seedMem(1, indexAddr);
+            seedMem2Longs(1, indexAddr);
             long expected = Unsafe.getUnsafe().getLong(indexAddr);
             Vect.sortLongIndexAscInPlace(indexAddr, 1);
             Assert.assertEquals(expected, Unsafe.getUnsafe().getLong(indexAddr));
@@ -505,7 +580,7 @@ public class VectTest {
                 idx = (idx << 1) >> 1;
                 Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrB + idx * 2L * Long.BYTES));
             } else {
-                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * 2L * Long.BYTES));
+                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * Long.BYTES));
             }
 
             v = ts;
@@ -514,12 +589,19 @@ public class VectTest {
 
     private long seedAndSort(int count) {
         final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        seedMem(count, indexAddr);
+        seedMem2Longs(count, indexAddr);
         Vect.sortLongIndexAscInPlace(indexAddr, count);
         return indexAddr;
     }
 
-    private void seedMem(int count, long p) {
+    private void seedMem1Long(int count, long p) {
+        for (int i = 0; i < count; i++) {
+            final long z = rnd.nextPositiveLong();
+            Unsafe.getUnsafe().putLong(p + (long) i * Long.BYTES, z);
+        }
+    }
+
+    private void seedMem2Longs(int count, long p) {
         for (int i = 0; i < count; i++) {
             final long z = rnd.nextPositiveLong();
             Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
@@ -531,7 +613,7 @@ public class VectTest {
         final int size = count * 2 * Long.BYTES;
         final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            seedMem(count, indexAddr);
+            seedMem2Longs(count, indexAddr);
             Vect.sortLongIndexAscInPlace(indexAddr, count);
             assertIndexAsc(count, indexAddr);
         } finally {
@@ -549,8 +631,8 @@ public class VectTest {
         final long cpyAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
-            seedMem(aCount, aAddr);
-            seedMem(bCount, bAddr);
+            seedMem1Long(aCount, aAddr);
+            seedMem2Longs(bCount, bAddr);
 
             final long aAddrCopy = Unsafe.malloc(sizeA, MemoryTag.NATIVE_DEFAULT);
             final long bAddrCopy = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
