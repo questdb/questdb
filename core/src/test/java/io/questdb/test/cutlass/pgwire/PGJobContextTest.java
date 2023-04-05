@@ -1838,6 +1838,52 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            mayDrainWalQueue();
+
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                int backendPid;
+
+                //first connection
+                try (final PgConnection connection = (PgConnection) getConnection(server.getPort(), false, true)) {
+                    backendPid = executeAndCancelQuery(connection);
+                }
+
+                PgConnection sameConn;
+
+                while (true) {
+                    final PgConnection conn = (PgConnection) getConnection(server.getPort(), false, true);
+                    if (backendPid == conn.getQueryExecutor().getBackendPID()) {
+                        sameConn = conn;
+                        break;
+                    } else {
+                        conn.close();
+                    }
+                }
+
+                //first run query and complete  
+                try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
+                    ResultSet result = stmt.executeQuery();
+                    sink.clear();
+                    assertResultSet("count[BIGINT]\n1000000\n", sink, result);
+
+                    //then run query and cancel
+                    executeAndCancelQuery(sameConn);
+                } finally {
+                    sameConn.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCancelRunningQuery() throws Exception {
         String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
                 "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
@@ -8061,6 +8107,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8098,10 +8148,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8136,6 +8182,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -8175,10 +8225,6 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0,null\n" +
                         "9,3.0,2020-06-01 00:00:12.0,null\n");
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateBatch() throws Exception {
