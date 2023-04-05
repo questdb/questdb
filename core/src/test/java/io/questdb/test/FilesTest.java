@@ -770,7 +770,7 @@ public class FilesTest {
                     // Check written data
                     // Windows return 1 but Linux and others return 0 on success
                     // All return negative in case of error.
-                    Assert.assertTrue(result >= 0);
+                    Assert.assertTrue("error: " + Os.errno(), result >= 0);
 
                     fd2 = Files.openRO(path2.$());
                     long long1 = Files.readNonNegativeLong(fd2, 0L);
