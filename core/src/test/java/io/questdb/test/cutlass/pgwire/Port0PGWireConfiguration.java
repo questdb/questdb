@@ -31,17 +31,34 @@ import io.questdb.std.Rnd;
 
 
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
-    private final DefaultIODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindPort() {
-            return 0;  // Bind to ANY port.
-        }
 
-        @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-    };
+    private final DefaultIODispatcherConfiguration ioDispatcherConfiguration;
+
+    public Port0PGWireConfiguration() {
+        this(-1);
+    }
+
+    public Port0PGWireConfiguration(final int connectionLimit) {
+        ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+            @Override
+            public int getBindPort() {
+                return 0;  // Bind to ANY port.
+            }
+
+            @Override
+            public String getDispatcherLogName() {
+                return "pg-server";
+            }
+
+            @Override
+            public int getLimit() {
+                if (connectionLimit > -1) {
+                    return connectionLimit;
+                }
+                return super.getLimit();
+            }
+        };
+    }
 
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {

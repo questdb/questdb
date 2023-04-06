@@ -161,6 +161,10 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     }
 
     protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
+        return createPGServer(workerCount, maxQueryTime, -1);
+    }
+
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
@@ -183,7 +187,8 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             }
         };
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit) {
+
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;

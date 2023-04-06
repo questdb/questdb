@@ -84,11 +84,11 @@ inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const  uint64
 
 
 template<uint16_t sh>
-inline void radix_shuffle_ab(uint64_t *counts, const index_t *srcA, const uint64_t sizeA, const index_t *srcB, const uint64_t sizeB, index_t *dest) {
+inline void radix_shuffle_ab(uint64_t *counts, const uint64_t *srcA, const uint64_t sizeA, const index_t *srcB, const uint64_t sizeB, index_t *dest) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < sizeA; x++) {
         const auto digit = (srcA[x] >> sh) & 0xffu;
-        dest[counts[digit]].ts = srcA[x].ts;
+        dest[counts[digit]].ts = srcA[x];
         dest[counts[digit]].i = x;
         counts[digit]++;
         MM_PREFETCH_T2(srcA + x + 64);
@@ -247,7 +247,7 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     radix_shuffle<56u>(counts.c1, cpy, array, size);
 }
 
-void radix_sort_ab_long_index_asc(const index_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB, index_t *out, index_t *cpy) {
+void radix_sort_ab_long_index_asc(const uint64_t *arrayA, const uint64_t sizeA, const index_t *arrayB, const uint64_t sizeB, index_t *out, index_t *cpy) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
@@ -643,7 +643,7 @@ Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jl
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB, jlong countB, jlong pDataOut, jlong pDataCpy) {
-    radix_sort_ab_long_index_asc(reinterpret_cast<index_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
+    radix_sort_ab_long_index_asc(reinterpret_cast<uint64_t *>(pDataA), countA, reinterpret_cast<index_t *>(pDataB),
                                  countB, reinterpret_cast<index_t *>(pDataOut), reinterpret_cast<index_t *>(pDataCpy));
 }
 
