@@ -140,6 +140,8 @@ public interface FilesFacade {
 
     int rmdir(Path name);
 
+    boolean readLink(Path softLink, Path readTo);
+
     int softLink(LPSZ src, LPSZ softLink);
 
     int sync();

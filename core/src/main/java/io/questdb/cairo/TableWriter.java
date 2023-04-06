@@ -68,7 +68,6 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
@@ -2159,14 +2158,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rowAction = ROW_ACTION_OPEN_PARTITION;
         } else {
             // truncate columns, we cannot remove them
-            for (int i = 0; i < columnCount; i++) {
-                getPrimaryColumn(i).truncate();
-                MemoryMA mem = getSecondaryColumn(i);
-                if (mem != null && mem.isOpen()) {
-                    mem.truncate();
-                    mem.putLong(0);
-                }
-            }
+            truncateColumns();
         }
 
         txWriter.resetTimestamp();
@@ -6102,11 +6094,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removePartitionDirectories0(long pUtf8NameZ, int type) {
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
         if (checkedType != Files.DT_UNKNOWN &&
-                !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
-                !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
-                !Chars.startsWith(fileNameSink, SEQ_DIR)) {
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ)) {
             ff.unlinkOrRemove(path, checkedType, LOG);
             path.trimTo(rootLen).$();
         }
@@ -6117,10 +6109,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not remove wal and sequencer directories either
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
         if (checkedType != Files.DT_UNKNOWN &&
-                !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
-                !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
-                !Chars.startsWith(fileNameSink, SEQ_DIR) &&
-                !Chars.startsWith(fileNameSink, SEQ_DIR_DEPRECATED) &&
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
+                !CairoKeywords.isSeq(pUtf8NameZ)  &&
                 !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {
@@ -6689,6 +6681,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         throw new CairoError(cause);
     }
 
+    private void truncateColumns() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) >= 0) {
+                getPrimaryColumn(i).truncate();
+                MemoryMA mem = getSecondaryColumn(i);
+                if (mem != null && mem.isOpen()) {
+                    mem.truncate();
+                    mem.putLong(0);
+                }
+            }
+        }
+    }
+
     private void updateIndexes() {
         if (indexCount == 0 || avoidIndexOnCommit) {
             avoidIndexOnCommit = false;
@@ -7079,14 +7084,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 txWriter.cancelRow();
                 // we only have one partition, jump to start on every column
-                for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).jumpTo(0L);
-                    MemoryMA mem = getSecondaryColumn(i);
-                    if (mem != null) {
-                        mem.jumpTo(0L);
-                        mem.putLong(0L);
-                    }
-                }
+                truncateColumns();
             }
         } else {
             txWriter.cancelRow();

@@ -43,7 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class WalTxnDetailsTest extends AbstractCairoTest {
+public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testCalculateCommitTimestampWhenO3IsUnavoidable() {

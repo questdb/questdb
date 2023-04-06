@@ -70,7 +70,6 @@ public class CircuitBreakerRegistry implements Closeable {
         }
 
         int idx;
-        int secret = random.nextInt();
         lock.lock();
         try {
             int size = freeIdx.size();
@@ -81,13 +80,11 @@ public class CircuitBreakerRegistry implements Closeable {
             } else {
                 idx = circuitBreakers.size();
                 circuitBreakers.add(cb);
-                freeIdx.add(idx);
             }
         } finally {
             lock.unlock();
         }
 
-        cb.setSecret(secret);
         return idx;
     }
 
@@ -128,6 +125,10 @@ public class CircuitBreakerRegistry implements Closeable {
         } finally {
             lock.unlock();
         }
+    }
+
+    public int getNewSecret() {
+        return random.nextInt();
     }
 
     public void remove(int contextId) {
