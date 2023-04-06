@@ -21,9 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-package io.questdb.test;
+package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -964,6 +965,40 @@ public class GroupByTest extends AbstractGriffinTest {
             assertQuery("l\ts\tcolumn\n" +
                     "1\ta\t0\n", query, null, true, true);
         });
+    }
+
+    @Test
+    public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
+        assertQuery("url\tu_count\tcnt\tavg_m_sum\n" +
+                        "RXPEHNRXGZ\t4\t4\t414.25\n" +
+                        "DXYSBEOUOJ\t1\t1\t225.0\n" +
+                        "SXUXIBBTGP\t2\t2\t379.5\n" +
+                        "GWFFYUDEYY\t5\t5\t727.2\n" +
+                        "LOFJGETJRS\t2\t2\t524.5\n" +
+                        "ZSRYRFBVTM\t2\t2\t337.0\n" +
+                        "VTJWCPSWHY\t1\t1\t660.0\n" +
+                        "HGOOZZVDZJ\t1\t1\t540.0\n" +
+                        "SHRUEDRQQU\t2\t2\t468.0\n",
+                "WITH x_sample AS (\n" +
+                        "  SELECT id, uuid, url, sum(metric) m_sum\n" +
+                        "  FROM x\n" +
+                        "  WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'\n" +
+                        "  GROUP BY id, uuid, url\n" +
+                        ")\n" +
+                        "SELECT url, count_distinct(uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
+                        "FROM x_sample\n" +
+                        "GROUP BY url",
+                "create table x as (\n" +
+                        "select timestamp_sequence(100000000, 100000000) ts,\n" +
+                        "  rnd_int(0, 10, 0) id,\n" +
+                        "  rnd_uuid4() uuid,\n" +
+                        "  rnd_str(10, 10, 10, 0) url,\n" +
+                        "  rnd_long(0, 1000, 0) metric\n" +
+                        "from long_sequence(20)) timestamp(ts)",
+                null,
+                true,
+                true
+        );
     }
 
     @Test

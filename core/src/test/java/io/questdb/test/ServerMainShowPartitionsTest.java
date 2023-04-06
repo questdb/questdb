@@ -206,7 +206,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             RecordMetadata meta = factory.getMetadata();
             StringSink sink = Misc.getThreadLocalBuilder();
             RecordCursorPrinter printer = new RecordCursorPrinter();
-            LongList rows = new LongList();///
+            LongList rows = new LongList();
             for (int j = 0; j < 5; j++) {
                 assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, printer, rows, false);
                 cursor0.toTop();

@@ -89,8 +89,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     pgPort,
                     ILP_PORT + pgPortDelta,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                    // Manually control WAL apply runs calling drainWalQueue()
-//                    PropertyKey.CAIRO_WAL_APPLY_ENABLED.getPropertyPath() + "=false",
                     PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
         } catch (Exception e) {
             throw new RuntimeException(e);

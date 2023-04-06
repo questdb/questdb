@@ -216,6 +216,26 @@ public class DirectLongListTest {
     }
 
     @Test
+    public void testSearchWithDups() {
+        DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST);
+        final int N = 100;
+        // 0,0,0,2,2,2,4,4,4,6,6,6...
+        for (int i = 0; i < N; ++i) {
+            list.add(2 * (i / 3));
+        }
+        // existing
+        Assert.assertEquals(2, list.binarySearch(0, BinarySearch.SCAN_DOWN));
+        Assert.assertEquals(0, list.binarySearch(0, BinarySearch.SCAN_UP));
+
+        // non-existing
+        Assert.assertEquals(3, -list.binarySearch(1, BinarySearch.SCAN_DOWN) - 1);
+        Assert.assertEquals(3, -list.binarySearch(1, BinarySearch.SCAN_UP) - 1);
+
+
+        list.close();
+    }
+
+    @Test
     public void testToString() {
         try (DirectLongList list = new DirectLongList(1001, MemoryTag.NATIVE_LONG_LIST)) {
             final int N = 1000;
