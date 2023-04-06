@@ -100,7 +100,7 @@ public final class Logger implements LogRecord, Log {
 
     @Override
     public void $() {
-        $(Misc.EOL);
+        sink().putEOL();
         Holder h = tl.get();
         h.seq.done(h.cursor);
     }
