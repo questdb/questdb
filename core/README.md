@@ -90,10 +90,7 @@ There may be a lot of variation on how these images are built. This is what
 worked:
 
 - Use Windows OS. Docker Desktop might also work on Mac, but not on Linux.
-- Download Docker Desktop _Edge_. At the time of writing (Nov 2019), only the
-  Edge version is able to build ARM64 images and help create multi-platform
-  manifests.
-- Ensure that "experimental" features are enabled.
+- Download Docker Desktop.
 
 To verify that your Docker Desktop is good to go, try the following command:
 
@@ -202,7 +199,7 @@ impossible to take that image out!
 
 ## Running QuestDB via Docker
 
-Pull the latest image
+Pull the latest image:
 
 ```bash
 docker pull questdb/questdb
@@ -211,7 +208,7 @@ docker pull questdb/questdb
 To run QuestDB interactively:
 
 ```bash
-docker run --rm -it -p 9000:9000 -p 8812:8812 questdb/questdb
+docker run --rm -it -p 9009:9009 -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
 You can stop this container using `Ctrl+C`. The container and all the data is
@@ -219,7 +216,7 @@ removed when stopped. A practical process for running QuestDB is to create a
 container with a name:
 
 ```bash
-docker create --name questdb -p 9000:9000 -p 8812:8812 questdb/questdb
+docker create --name questdb -p 9009:9009 -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
 The container named `questdb` can be started, stopped and the logs can be viewed
@@ -231,14 +228,12 @@ docker stop questdb
 docker logs questdb
 ```
 
-QuestDB supports the following volumes:
-
-`/root/.questdb/db` for Linux containers `c:\questdb\db` for Windows containers
+QuestDB uses `/var/lib/questdb` as the root directory.
 
 You can mount host directories using `-v` option, e.g.
 
 ```bash
--v /local/dir:/root/.questdb/db
+-v /local/dir:/var/lib/questdb
 ```
 
 For more details, see the
