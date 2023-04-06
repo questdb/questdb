@@ -75,6 +75,19 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncFilterWithNegativeLimitNoOrderByThenCount() throws Exception {
+        assertQuery("count\n" +
+                        "5\n",
+                "select count(*) from ( " +
+                        "select sensor_time, temperature_out " +
+                        "from weather_data " +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) " +
+                        "limit -5 )",
+                DDL,
+                null, false, true);
+    }
+
+    @Test
     public void testAsyncFilterWithNegativeLimitOrderByAsc() throws Exception {
         assertQuery("sensor_time\ttemperature_out\n" +
                         "2022-07-31T23:56:00.000000Z\t4\n" +

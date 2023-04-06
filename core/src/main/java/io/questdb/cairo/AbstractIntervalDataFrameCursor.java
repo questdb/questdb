@@ -191,7 +191,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? rowCount - 1 : partitionLimit, rowCount, SCAN_UP);
+                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, SCAN_UP);
                     if (lo < 0) {
                         lo = -lo - 1;
                     }
@@ -245,20 +245,23 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         // normalise interval index
         this.initialIntervalsLo = intervalsLo / 2;
 
-        int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
         if (reader.getMaxTimestamp() == intervals.getQuick(intervals.size() - 1)) {
-            this.initialIntervalsHi = intervals.size() - 1;
-        }
-        if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
+            this.initialIntervalsHi = intervals.size() / 2;
+        } else if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
             this.initialIntervalsHi = 1;
-        }
-        if (intervalsHi < 0) {
-            intervalsHi = -intervalsHi - 1;
-            // when interval index is "even" we scored just between two interval
-            // in which case we chose previous interval
-            if (intervalsHi % 2 == 0) {
-                this.initialIntervalsHi = intervalsHi / 2;
-            } else {
+        } else {
+            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
+            if (intervalsHi < 0) {//negative value means inexact match 
+                intervalsHi = -intervalsHi - 1;
+
+                // when interval index is "even" we scored just between two interval
+                // in which case we chose previous interval
+                if (intervalsHi % 2 == 0) {
+                    this.initialIntervalsHi = intervalsHi / 2;
+                } else {
+                    this.initialIntervalsHi = intervalsHi / 2 + 1;
+                }
+            } else {//positive value means exact match
                 this.initialIntervalsHi = intervalsHi / 2 + 1;
             }
         }
