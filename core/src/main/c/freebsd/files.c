@@ -234,6 +234,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         strcpy((char *) lpszName, sb.f_fstypename);
         switch (sb.f_type) {
             case 0x1C: // apfs
+            case 0x1a:
                 return -1 * ((jlong) sb.f_type);
             default:
                 return sb.f_type;
