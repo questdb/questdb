@@ -63,6 +63,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean readLink(Path softLink, Path readTo) {
+        return Files.readLink(softLink, readTo);
+    }
+
+    @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
     }

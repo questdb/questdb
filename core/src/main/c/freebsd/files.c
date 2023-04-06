@@ -81,7 +81,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
 
 size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
     char buf[4096 * 4]; // 16K
-    size_t read_sz;
+    off_t read_sz;
     off_t rd_off = srcOffset;
     off_t wrt_off = dstOffset;
     off_t len;

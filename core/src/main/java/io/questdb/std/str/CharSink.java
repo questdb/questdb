@@ -170,7 +170,7 @@ public interface CharSink extends CharSinkBase {
     }
 
     default CharSink putUtf8(long lo, long hi) {
-        Chars.utf8Decode(lo, hi, this);
+        Chars.utf8toUtf16(lo, hi, this);
         return this;
     }
 
