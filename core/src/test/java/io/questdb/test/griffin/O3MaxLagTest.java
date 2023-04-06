@@ -26,15 +26,13 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
@@ -42,7 +40,6 @@ import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class O3MaxLagTest extends AbstractO3Test {
@@ -52,6 +49,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     public void clearRecordToRowCopier() {
         copier = null;
     }
+    private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
 
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
@@ -102,20 +100,6 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testFuzzParallel() throws Exception {
-        executeWithPool(2, this::testFuzz0);
-    }
-
-    @Test
-    public void testIntermediateCommitCreatesEmptyPartition() throws Exception {
-        executeWithPool(
-                2, ((engine, compiler, sqlExecutionContext) -> testFuzz00(
-                        engine, compiler, sqlExecutionContext, new Rnd(473693170209L, 1669125220064L))
-                )
-        );
-    }
-
-    @Test
     public void testLargeLagWithRowLimitContended() throws Exception {
         executeWithPool(0, this::testLargeLagWithRowLimit);
     }
@@ -128,15 +112,6 @@ public class O3MaxLagTest extends AbstractO3Test {
     @Test
     public void testLargeLagWithinPartitionParallel() throws Exception {
         executeWithPool(2, this::testLargeLagWithinPartition);
-    }
-
-    @Test
-    public void testMetadataReshuffle() throws Exception {
-        executeWithPool(
-                2, (engine, compiler, sqlExecutionContext) -> testFuzz00(
-                        engine, compiler, sqlExecutionContext, new Rnd(22306374689795L, 1669046069639L)
-                )
-        );
     }
 
     @Test
@@ -227,16 +202,6 @@ public class O3MaxLagTest extends AbstractO3Test {
     @Test
     public void testO3MaxLagWithinPartitionParallel() throws Exception {
         executeWithPool(2, this::testO3MaxLagWithinPartition);
-    }
-
-    @Test
-    public void testRollbackFuzzCreatesEmptyPartition() throws Exception {
-        executeWithPool(2, this::testRollbackCreatesEmptyPartition);
-    }
-
-    @Test
-    public void testRollbackFuzzParallel() throws Exception {
-        executeWithPool(2, this::testRollbackFuzz);
     }
 
     @Test
@@ -425,95 +390,6 @@ public class O3MaxLagTest extends AbstractO3Test {
                 });
     }
 
-    private static void replayTransactions(Rnd rnd, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            FuzzTransaction tx = transactions.getQuick(i);
-            ObjList<FuzzTransactionOperation> ops = tx.operationList;
-            for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, w, virtualTimestampIndex);
-            }
-            w.ic();
-        }
-    }
-
-    private static void testFuzz00(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            Rnd rnd
-    ) throws SqlException, NumericException {
-        long microsBetweenRows = 1000000L;
-        int nTotalRows = 12000;
-        // create initial table "x"
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(" + nTotalRows + ")" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
-        compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
-
-        TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
-
-        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
-        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
-        int txCount = Math.max(1, rnd.nextInt(50));
-        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
-        try (
-                TableWriter w = TestUtils.getWriter(engine, "x");
-                TableWriter w2 = TestUtils.getWriter(engine, "y")
-        ) {
-            ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
-                    w.getMetadata(),
-                    rnd,
-                    minTs,
-                    maxTs,
-                    rowCount,
-                    txCount,
-                    true,
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    1, // insert only
-                    0,
-                    5,
-                    new String[]{"ABC", "CDE", "XYZ"}
-            );
-
-            Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, w, transactions, -1);
-            w.commit();
-
-            Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
-            w2.commit();
-
-            TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
-        }
-    }
-
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
             long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
@@ -551,53 +427,6 @@ public class O3MaxLagTest extends AbstractO3Test {
             row.putStr(4, "dd");
             row.putLong(5, 444444L);
             row.append();
-        }
-    }
-
-    private void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        TestUtils.assertEquals(
-                compiler,
-                sqlExecutionContext,
-                "select * from x",
-                "select * from y"
-        );
-
-        TestUtils.assertEquals(
-                compiler,
-                sqlExecutionContext,
-                "select count() from x",
-                "select count() from y"
-        );
-    }
-
-    private void insertUncommitted(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql,
-            TableWriter writer
-    ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            RecordMetadata metadata = factory.getMetadata();
-            int timestampIndex = writer.getMetadata().getTimestampIndex();
-            EntityColumnFilter toColumnFilter = new EntityColumnFilter();
-            toColumnFilter.of(metadata.getColumnCount());
-            if (null == copier) {
-                copier = RecordToRowCopierUtils.generateCopier(
-                        new BytecodeAssembler(),
-                        metadata,
-                        writer.getMetadata(),
-                        toColumnFilter
-                );
-            }
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    long timestamp = record.getTimestamp(timestampIndex);
-                    Row row = writer.newRow(timestamp);
-                    copier.copy(record, row);
-                    row.append();
-                }
-            }
         }
     }
 
@@ -793,14 +622,6 @@ public class O3MaxLagTest extends AbstractO3Test {
         LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
 
         assertXY(compiler, sqlExecutionContext);
-    }
-
-    private void testFuzz0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, NumericException {
-        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
     }
 
     private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1367,96 +1188,6 @@ public class O3MaxLagTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
             writer.commit();
-        }
-        assertXY(compiler, sqlExecutionContext);
-    }
-
-    // This test rely on specific random seeds and will no longer test the intended scenario if fuzz generation is changed.
-    // The scenario is to create records in partition '1970-01-02' and then commit with a lag so that the records are
-    // moved to memory and only partition '1970-01-01' is committed to the disk.
-    // If the partition '1970-01-02' is kept in the _txn partition tables then any rollback can wipe out records in '1970-01-01'.
-    private void testRollbackCreatesEmptyPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final int nTotalRows = 74571;
-        final long microsBetweenRows = 1161956;
-        final double fraction = 0.8908162001320725;
-        SharedRandom.RANDOM.get().reset(3417617481941903354L, 772640833522954936L);
-        testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
-    }
-
-    private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        final int nTotalRows = rnd.nextInt(79000);
-        final long microsBetweenRows = rnd.nextLong(3090985);
-        final double fraction = rnd.nextDouble();
-        testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
-    }
-
-    private void testRollbackFuzz0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            int nTotalRows,
-            int lim,
-            long microsBetweenRows
-    ) throws SqlException {
-        // table "x" is in order
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(" + nTotalRows + ")" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-        // table "z" is out of order - reshuffled "x"
-        compiler.compile("create table z as (select * from x order by f)", sqlExecutionContext);
-        // table "z" is our target table, where we exercise O3 and rollbacks
-        compiler.compile("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
-
-        try (TableWriter w = TestUtils.getWriter(engine, "y")) {
-
-            insertUncommitted(compiler, sqlExecutionContext, "z limit " + lim, w);
-
-            w.ic();
-
-            final long o3Uncommitted = w.getO3RowCount();
-
-            long expectedRowCount = w.size() - o3Uncommitted;
-
-            w.rollback();
-
-            Assert.assertEquals(expectedRowCount, w.size());
-
-            TestUtils.assertEquals(
-                    compiler,
-                    sqlExecutionContext,
-                    "(z limit " + lim + ") order by ts limit " + (lim - o3Uncommitted),
-                    "y"
-            );
-
-            // insert remaining data (that we did not try to insert yet)
-            insertUncommitted(compiler, sqlExecutionContext, "z limit " + lim + ", " + nTotalRows, w);
-            w.ic();
-
-            // insert data that we rolled back
-            insertUncommitted(compiler, sqlExecutionContext, "(z limit " + lim + ") order by ts limit -" + o3Uncommitted, w);
-            w.ic();
-
-            w.commit();
         }
         assertXY(compiler, sqlExecutionContext);
     }

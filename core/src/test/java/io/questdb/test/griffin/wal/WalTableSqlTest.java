@@ -959,6 +959,69 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoLagUsedWhenDataIsInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "str string," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            // In order
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T00', 'a2a2')");
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T03', 'a2a2')");
+            compile("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
+
+
+            node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
+            runApplyOnce();
+
+            TableToken token = engine.getTableToken(tableName);
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(0, txReader.getLagTxnCount());
+                Assert.assertEquals(0, txReader.getLagRowCount());
+                Assert.assertEquals("2022-02-24T00:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+
+                runApplyOnce();
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(0, txReader.getLagTxnCount());
+                Assert.assertEquals(0, txReader.getLagRowCount());
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+
+                runApplyOnce();
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(0, txReader.getLagTxnCount());
+                Assert.assertEquals(0, txReader.getLagRowCount());
+                Assert.assertEquals("2022-02-24T02:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+
+                runApplyOnce();
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(1, txReader.getLagTxnCount());
+                Assert.assertEquals(1, txReader.getLagRowCount());
+                Assert.assertEquals("2022-02-24T02:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+
+                runApplyOnce();
+                txReader.unsafeLoadAll();
+
+                Assert.assertEquals(0, txReader.getLagTxnCount());
+                Assert.assertEquals(0, txReader.getLagRowCount());
+                Assert.assertEquals("2022-02-24T03:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+            }
+        });
+    }
+
+    @Test
     public void testQueryNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

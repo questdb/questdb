@@ -193,7 +193,7 @@ public class CharsTest {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
             CharSink b = new StringSink();
-            Chars.utf8Decode(p, p + bytes.length, b);
+            Chars.utf8toUtf16(p, p + bytes.length, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
             Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
@@ -291,7 +291,7 @@ public class CharsTest {
             }
             Unsafe.getUnsafe().putByte(p + bytes.length, (byte) 0);
             CharSink b = new StringSink();
-            Chars.utf8DecodeZ(p, b);
+            Chars.utf8ToUtf16Z(p, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
             Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);

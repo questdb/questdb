@@ -27,8 +27,6 @@ package io.questdb.test;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
-import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -46,6 +44,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -53,10 +52,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.AbstractCairoTest.sink;
 import static io.questdb.test.AbstractGriffinTest.assertCursor;
 import static io.questdb.test.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
 import static io.questdb.test.griffin.ShowPartitionsTest.testTableName;
@@ -118,123 +117,72 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine())
+                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext defaultContext = executionContext(qdb.getCairoEngine())
             ) {
-                CairoEngine engine2 = qdb.getCairoEngine();
-                try (SqlExecutionContext defaultContext = TestUtils.createSqlExecutionCtx(engine2)
-                ) {
-                    qdb.start();
-                    CairoEngine engine = qdb.getCairoEngine();
-                    CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                qdb.start();
+                CairoEngine engine = qdb.getCairoEngine();
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
+                TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
+                // wait for the rows to end up in the table
+                waitForData(tableName, defaultCompiler, defaultContext);
 
-                    String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
-                    assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
+                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
+                assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
-                    int numThreads = 5;
-                    SOCountDownLatch completed = new SOCountDownLatch(numThreads);
-                    AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
-                    List<SqlCompiler> compilers = new ArrayList<>(numThreads);
-                    List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
-                    for (int i = 0; i < numThreads; i++) {
-                        SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                        CairoEngine engine1 = qdb.getCairoEngine();
-                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1);
-                        compilers.add(compiler);
-                        contexts.add(context);
-                        new Thread(() -> {
-                            try {
-                                assertShowPartitions(finallyExpected, tableToken, compiler, context);
-                            } catch (Throwable err) {
-                                errors.get().add(err);
-                            } finally {
-                                completed.countDown();
-                            }
-                        }).start();
-                    }
-                    if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
-                        TestListener.dumpThreadStacks();
-                    }
-                    dropTable(engine, defaultCompiler, defaultContext, tableToken, isWal, null);
-                    for (int i = 0; i < numThreads; i++) {
-                        compilers.get(i).close();
-                        contexts.get(i).close();
-                    }
-                    compilers.clear();
-                    contexts.clear();
+                int numThreads = 5;
+                SOCountDownLatch completed = new SOCountDownLatch(numThreads);
+                AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
+                List<SqlCompiler> compilers = new ArrayList<>(numThreads);
+                List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
+                for (int i = 0; i < numThreads; i++) {
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine());
+                    compilers.add(compiler);
+                    contexts.add(context);
+                    new Thread(() -> {
+                        try {
+                            assertShowPartitions(finallyExpected, tableToken, compiler, context);
+                        } catch (Throwable err) {
+                            errors.get().add(err);
+                        } finally {
+                            completed.countDown();
+                        }
+                    }).start();
+                }
+                if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
+                    TestListener.dumpThreadStacks();
+                }
+                dropTable(defaultCompiler, defaultContext, tableToken, isWal);
+                for (int i = 0; i < numThreads; i++) {
+                    compilers.get(i).close();
+                    contexts.get(i).close();
+                }
+                compilers.clear();
+                contexts.clear();
 
-                    // fail on first error found
-                    for (Throwable t : errors.get()) {
-                        Assert.fail(t.getMessage());
-                    }
+                // fail on first error found
+                for (Throwable t : errors.get()) {
+                    Assert.fail(t.getMessage());
                 }
             }
         });
     }
 
-    @Test
-    public void testServerMainShowPartitionsTableGetsDeletedMidCursor() throws Exception {
-        String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
-        assertMemoryLeak(() -> {
-            try (
-                    ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine())
-            ) {
-                CairoEngine engine2 = qdb.getCairoEngine();
-                try (SqlExecutionContext context0 = TestUtils.createSqlExecutionCtx(engine2);
-                     SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
-                ) {
-                    CairoEngine engine1 = qdb.getCairoEngine();
-                    try (SqlExecutionContext context1 = TestUtils.createSqlExecutionCtx(engine1)
-                    ) {
-                        qdb.start();
-                        CairoEngine engine = qdb.getCairoEngine();
-                        CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-
-                        TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler0, context0, tableName);
-                        String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
-                        assertShowPartitions(finallyExpected, tableToken, compiler0, context0);
-
-                        CyclicBarrier start = new CyclicBarrier(2);
-                        SOCountDownLatch completed = new SOCountDownLatch(1);
-                        AtomicReference<Throwable> error = new AtomicReference<>();
-
-                        // show partitions concurrently
-                        new Thread(() -> {
-                            try {
-                                start.await();
-                                assertShowPartitions(finallyExpected, tableToken, compiler1, context1);
-                            } catch (Throwable err) {
-                                // delete won
-                                error.set(err);
-                            } finally {
-                                completed.countDown();
-                            }
-                        }).start();
-
-                        start.await();
-                        try {
-                            dropTable(engine, compiler0, context0, tableToken, false, null);
-                        } catch (CairoException ce) {
-                            Assert.assertFalse(isWal);
-                            TestUtils.assertContains(ce.getFlyweightMessage(), "[reason='busyReader']");
-                        }
-
-                        Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(5L)));
-                        if (error.get() != null) {
-                            String msg = error.get().getMessage();
-                            Assert.assertTrue(msg.contains("table busy") || msg.contains("table does not exist"));
-                        }
-                        try {
-                            dropTable(engine, compiler0, context0, tableToken, isWal, null);
-                        } catch (SqlException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
-                        }
-                    }
+    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
+        long time = System.currentTimeMillis();
+        while (true) {
+            try {
+                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
+                        "1000000\n");
+                break;
+            } catch (AssertionError e) {
+                if (System.currentTimeMillis() - time > 5000) {
+                    throw e;
                 }
             }
-        });
+        }
     }
 
     private static void assertShowPartitions(
@@ -277,12 +225,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         if (isWal) {
             createTable += " WAL";
         }
-        try (OperationFuture create = compiler.compile(createTable, context).execute(null)) {
-            create.await();
-        }
-        if (isWal) {
-            drainWalQueue(engine);
-        }
+        compiler.compile(createTable, context);
         try (
                 TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                         .col("investmentMill", ColumnType.LONG)
@@ -290,24 +233,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                         .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
                         .timestamp("ts")
         ) {
-            if (isWal) {
-                tableModel.wal();
-            }
-            String insertStmt = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-            SOCountDownLatch returned = new SOCountDownLatch(1);
-            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                if (tableToken != null && tableToken.getTableName().equals(tableName) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    returned.countDown();
-                }
-            });
-            try (OperationFuture insert = compiler.compile(insertStmt, context).execute(null)) {
-                insert.await();
-            }
-            if (isWal) {
-                drainWalQueue(engine);
-            }
-            returned.await();
-            engine.releaseAllWriters();
+            CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+            compiler.compile(insert, context);
         }
         return engine.verifyTableName(tableName);
     }

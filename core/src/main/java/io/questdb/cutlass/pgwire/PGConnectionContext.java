@@ -466,6 +466,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
             freeBuffers();
+            this.circuitBreaker.setSecret(-1);
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
@@ -476,6 +477,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 this.sendBufferPtr = sendBuffer;
                 this.sendBufferLimit = sendBuffer + sendBufferSize;
             }
+            this.circuitBreaker.setSecret(registry.getNewSecret());
         }
         return r;
     }
@@ -493,7 +495,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
-        if (Chars.utf8Decode(address, address + valueLen, e)) {
+        if (Chars.utf8toUtf16(address, address + valueLen, e)) {
             bindVariableService.setChar(index, characterStore.toImmutable().charAt(0));
         } else {
             LOG.error().$("invalid char UTF8 bytes [index=").$(index).$(']').$();
@@ -534,7 +536,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
-        if (Chars.utf8Decode(address, address + valueLen, e)) {
+        if (Chars.utf8toUtf16(address, address + valueLen, e)) {
             bindVariableService.setStr(index, characterStore.toImmutable());
         } else {
             LOG.error().$("invalid str UTF8 bytes [index=").$(index).$(']').$();
@@ -1557,7 +1559,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
         CharacterStoreEntry e = characterStore.newEntry();
-        if (Chars.utf8Decode(lo, hi, e)) {
+        if (Chars.utf8toUtf16(lo, hi, e)) {
             return characterStore.toImmutable();
         } else {
             LOG.error().$(errorMessage).$();
@@ -1697,7 +1699,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
-        if (Chars.utf8Decode(lo, hi, e)) {
+        if (Chars.utf8toUtf16(lo, hi, e)) {
             queryText = characterStore.toImmutable();
 
             LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
@@ -2412,7 +2414,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
         CharacterStoreEntry e = characterStore.newEntry();
 
-        if (Chars.utf8Decode(lo, limit - 1, e)) {
+        if (Chars.utf8toUtf16(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
             try {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);

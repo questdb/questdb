@@ -73,9 +73,9 @@ public class TextUtilTest {
         }
 
         if (doubleQuoteParse) {
-            TextUtil.utf8DecodeEscConsecutiveQuotes(ptr, ptr + bytes.length, query);
+            TextUtil.utf8ToUtf16EscConsecutiveQuotes(ptr, ptr + bytes.length, query);
         } else {
-            TextUtil.utf8Decode(ptr, ptr + bytes.length, query);
+            TextUtil.utf8ToUtf16(ptr, ptr + bytes.length, query);
         }
         Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
     }

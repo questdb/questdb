@@ -510,7 +510,7 @@ public class FilesTest {
                     try {
                         do {
                             nameSink.clear();
-                            Chars.utf8DecodeZ(Files.findName(pFind), nameSink);
+                            Chars.utf8ToUtf16Z(Files.findName(pFind), nameSink);
                             names.add(nameSink.toString());
                         } while (Files.findNext(pFind) > 0);
                     } finally {
@@ -770,7 +770,7 @@ public class FilesTest {
                     // Check written data
                     // Windows return 1 but Linux and others return 0 on success
                     // All return negative in case of error.
-                    Assert.assertTrue(result >= 0);
+                    Assert.assertTrue("error: " + Os.errno(), result >= 0);
 
                     fd2 = Files.openRO(path2.$());
                     long long1 = Files.readNonNegativeLong(fd2, 0L);
@@ -919,6 +919,59 @@ public class FilesTest {
     public void testSoftLinkNonAsciiName() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("いくつかの列.d");
+    }
+
+    @Test
+    public void testSoftLinkRead() throws IOException {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        File dir = temporaryFolder.newFolder();
+        try (
+                Path path = new Path();
+                Path path2 = new Path();
+                Path path3 = new Path()
+        ) {
+            path.of(dir.getAbsolutePath());
+            int plen = path.length();
+
+            path.concat("text.txt").$();
+
+            Files.touch(path);
+
+            Assert.assertTrue(Files.exists(path));
+
+            path2.of("text.txt").$();//
+            path.trimTo(plen).concat("rel_link").$();
+            // relative link rel_link -> text.txt
+            Assert.assertEquals(0, Files.softLink(path2, path));
+            Assert.assertTrue(Files.isSoftLink(path));
+            Assert.assertTrue(Files.readLink(path, path3));
+            TestUtils.assertEquals(dir.getAbsolutePath() + Files.SEPARATOR + "text.txt", path3.toString());
+            // reset link sink
+            path3.of("");
+
+            // absolute link
+            path2.prefix(path, plen + 1).$();
+            path.trimTo(plen).concat("abs_link").$();
+            Assert.assertEquals(0, Files.softLink(path2, path));
+            Assert.assertTrue(Files.isSoftLink(path));
+            Assert.assertTrue(Files.readLink(path, path3));
+            TestUtils.assertEquals(dir.getAbsolutePath() + Files.SEPARATOR + "text.txt", path3.toString());
+
+            // test reading non-symbolic link, path2 is a file
+            path3.of("");
+            Assert.assertFalse(Files.readLink(path2, path3));
+            Assert.assertEquals(0, path3.length());
+
+            // test non-existing file
+            path2.trimTo(plen).concat("hello.txt").$();
+            Assert.assertFalse(Files.readLink(path2, path3));
+            Assert.assertEquals(0, path3.length());
+
+            // test directory
+            path2.trimTo(plen).$();
+            Assert.assertFalse(Files.readLink(path2, path3));
+            Assert.assertEquals(0, path3.length());
+        }
     }
 
     @Test
@@ -1108,7 +1161,7 @@ public class FilesTest {
                 ));
             }
             StringSink sink = Misc.getThreadLocalBuilder();
-            Chars.utf8Decode(buffPtr, buffPtr + size, sink);
+            Chars.utf8toUtf16(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
             Files.close(fd);

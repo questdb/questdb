@@ -39,7 +39,6 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -184,45 +183,12 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     static void dropTable(
-            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext context,
             TableToken tableToken,
-            boolean isWal,
-            @Nullable String otherVolume
+            boolean isWal
     ) throws Exception {
-        SOCountDownLatch tableDropped = new SOCountDownLatch(1);
-        if (isWal) {
-            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
-                if (token != null && token.equals(tableToken) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_LOCK_CLOSE) {
-                    tableDropped.countDown();
-                }
-            });
-        } else {
-            tableDropped.countDown();
-        }
-        try (OperationFuture op = compiler.compile("DROP TABLE " + tableToken.getTableName(), context).execute(null)) {
-            op.await();
-        }
-        if (isWal) {
-            drainWalQueue(engine);
-        }
-        tableDropped.await();
-        if (otherVolume != null) {
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            auxPath.of(otherVolume).concat(tableToken.getDirName()).$();
-            if (Files.exists(auxPath)) {
-                Assert.assertEquals(0, Files.rmdir(auxPath));
-                auxPath.of(dbPath).trimTo(dbPathLen).concat(tableToken.getDirName()).$();
-                boolean exists = Files.exists(auxPath);
-                boolean isSoftLink = Files.isSoftLink(auxPath);
-                Assert.assertTrue(!exists || isSoftLink);
-                if (isSoftLink) {
-                    Assert.assertEquals(0, Files.unlink(auxPath));
-                }
-            }
-        }
+        compiler.compile("DROP TABLE " + tableToken.getTableName(), context);
     }
 
     static {

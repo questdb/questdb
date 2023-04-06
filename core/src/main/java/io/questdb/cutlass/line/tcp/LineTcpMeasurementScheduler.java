@@ -678,7 +678,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
-        Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
+        Chars.utf8toUtf16(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
 
         tableUpdateDetailsLock.writeLock().lock();
         try {

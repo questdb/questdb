@@ -67,7 +67,7 @@ public class SOCountDownLatch implements CountDownLatchSPI {
                     return true;
                 }
             } else {
-                return false;
+                return getCount() == 0;
             }
         }
     }

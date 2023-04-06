@@ -1786,7 +1786,7 @@ if __name__ == "__main__":
             final CountDownLatch endLatch = new CountDownLatch(THREADS);
 
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final PGWireServer server = createPGServer(4, Long.MAX_VALUE, 6);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -1852,7 +1852,6 @@ if __name__ == "__main__":
                     backendPid = executeAndCancelQuery(connection);
                 }
 
-                ObjList<PgConnection> otherConns = new ObjList<>();
                 PgConnection sameConn;
 
                 while (true) {
@@ -1861,12 +1860,8 @@ if __name__ == "__main__":
                         sameConn = conn;
                         break;
                     } else {
-                        otherConns.add(conn);
+                        conn.close();
                     }
-                }
-
-                for (int i = 0, n = otherConns.size(); i < n; i++) {
-                    otherConns.getQuick(i).close();
                 }
 
                 //first run query and complete
@@ -8108,6 +8103,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8145,10 +8144,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -8183,6 +8178,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -8222,10 +8221,6 @@ create table tab as (
                         "9,2.6,2020-06-01 00:00:06.0,null\n" +
                         "9,3.0,2020-06-01 00:00:12.0,null\n");
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateBatch() throws Exception {

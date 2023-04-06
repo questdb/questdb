@@ -1061,7 +1061,7 @@ public final class TestUtils {
         }
     }
 
-    public static String insertFromSelectPopulateTableStmt(
+    public static CharSequence insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,
             String startDate,
@@ -1129,7 +1129,7 @@ public final class TestUtils {
         }
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
-        return insertFromSelect.toString();
+        return insertFromSelect;
     }
 
     public static int maxDayOfMonth(int month) {

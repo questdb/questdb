@@ -148,6 +148,11 @@ public class TypeManagerTest extends AbstractTest {
     }
 
     @Test
+    public void testIllegalMethodParameterGeoInt() {
+        testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
+    }
+
+    @Test
     public void testNonDefaultFileName() throws JsonException, IOException {
         File configFile = new File(root, "my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");

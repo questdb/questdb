@@ -171,7 +171,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     long pUtf8NameZ = ff.findName(p);
                     int type = ff.findType(p);
                     if (ff.isDirOrSoftLinkDirNoDots(tempPath, rootLen, pUtf8NameZ, type)) {
-                        if (!Chars.endsWith(tempPath, SEQ_DIR) && !Chars.equals(tempPath, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
+                        if (!CairoKeywords.isTxnSeq(pUtf8NameZ) && !CairoKeywords.isWal(pUtf8NameZ)) {
                             if (ff.unlinkOrRemove(tempPath, LOG) != 0) {
                                 allClean = false;
                             }
@@ -181,7 +181,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         tempPath.trimTo(rootLen);
                         tempPath.concat(pUtf8NameZ);
 
-                        if (Chars.endsWith(tempPath, TableUtils.TXN_FILE_NAME) || Chars.endsWith(tempPath, TableUtils.META_FILE_NAME) || matchesWalLock(tempPath)) {
+                        if (CairoKeywords.isTxn(pUtf8NameZ) || CairoKeywords.isMeta(pUtf8NameZ) || matchesWalLock(tempPath)) {
                             continue;
                         }
 

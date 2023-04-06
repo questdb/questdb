@@ -212,11 +212,11 @@ public class NetTest {
         int serverFd = Net.accept(acceptFd);
         long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
-        Chars.utf8DecodeZ(serverBuf, sink);
+        Chars.utf8ToUtf16Z(serverBuf, sink);
         TestUtils.assertEquals(msg, sink);
         Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
         sink.clear();
-        Chars.utf8DecodeZ(serverBuf, sink);
+        Chars.utf8ToUtf16Z(serverBuf, sink);
         TestUtils.assertEquals(msg, sink);
         Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         Net.close(serverFd);

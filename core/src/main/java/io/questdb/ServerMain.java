@@ -91,6 +91,7 @@ public class ServerMain implements Closeable {
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
+        final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         workerPoolManager = new WorkerPoolManager(config, metrics.health()) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
@@ -119,7 +120,7 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(walPurgeJob);
                             sharedPool.freeOnExit(walPurgeJob);
 
-                            if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                            if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
                                 setupWalApplyJob(sharedPool, engine, getSharedWorkerCount(), ffCache);
                             }
                         }
@@ -152,7 +153,7 @@ public class ServerMain implements Closeable {
             }
         };
 
-        if (!isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
+        if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
             WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
                     config.getWalApplyPoolConfiguration(),
                     metrics.health(),
@@ -208,20 +209,6 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("server is ready to be started").$();
-    }
-
-    protected void setupWalApplyJob(
-            WorkerPool workerPool,
-            CairoEngine engine,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache ffCache
-    ) {
-        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
-            workerPool.assign(i, applyWal2TableJob);
-            workerPool.freeOnExit(applyWal2TableJob);
-        }
     }
 
     public static void main(String[] args) {
@@ -308,5 +295,19 @@ public class ServerMain implements Closeable {
             freeOnExitList.add(closeable);
         }
         return closeable;
+    }
+
+    protected void setupWalApplyJob(
+            WorkerPool workerPool,
+            CairoEngine engine,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache ffCache
+    ) {
+        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
+            workerPool.assign(i, applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
+        }
     }
 }

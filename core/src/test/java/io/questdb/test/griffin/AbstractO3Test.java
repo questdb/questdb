@@ -28,11 +28,14 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -64,7 +67,13 @@ public class AbstractO3Test extends AbstractTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+    private RecordToRowCopier copier;
 
+
+    @Before
+    public void clearRecordToRowCopier() {
+        copier = null;
+    }
 
     @Before
     public void setUp() {
@@ -269,6 +278,22 @@ public class AbstractO3Test extends AbstractTest {
         assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
+    protected static void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "select * from x",
+                "select * from y"
+        );
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                "select count() from y"
+        );
+    }
+
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
         AbstractO3Test.assertMemoryLeak(code);
     }
@@ -393,5 +418,36 @@ public class AbstractO3Test extends AbstractTest {
             String sql
     ) throws SqlException {
         TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+    }
+
+    protected void insertUncommitted(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String sql,
+            TableWriter writer
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            RecordMetadata metadata = factory.getMetadata();
+            int timestampIndex = writer.getMetadata().getTimestampIndex();
+            EntityColumnFilter toColumnFilter = new EntityColumnFilter();
+            toColumnFilter.of(metadata.getColumnCount());
+            if (null == copier) {
+                copier = RecordToRowCopierUtils.generateCopier(
+                        new BytecodeAssembler(),
+                        metadata,
+                        writer.getMetadata(),
+                        toColumnFilter
+                );
+            }
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    long timestamp = record.getTimestamp(timestampIndex);
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    copier.copy(record, row);
+                    row.append();
+                }
+            }
+        }
     }
 }

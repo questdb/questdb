@@ -2796,7 +2796,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_long256(5) l256," +
-                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " timestamp_sequence('2020-02-24T01',1000L) ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2834,7 +2834,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "count\n" +
                         "50020\n",
                 "max\n" +
-                        "2020-02-24T00:00:04.999900Z\n"
+                        "2020-02-24T01:00:00.019000Z\n"
         );
     }
 
@@ -2850,7 +2850,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_str(5,16,2) str," +
-                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " timestamp_sequence('2020-02-24T01',1000L) ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2888,7 +2888,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "count\n" +
                         "50020\n",
                 "max\n" +
-                        "2020-02-24T00:00:04.999900Z\n"
+                        "2020-02-24T01:00:00.019000Z\n"
         );
     }
 

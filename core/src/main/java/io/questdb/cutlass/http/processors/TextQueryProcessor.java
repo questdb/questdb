@@ -463,7 +463,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
         state.query.clear();
         try {
-            TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
+            TextUtil.utf8ToUtf16(query.getLo(), query.getHi(), state.query);
         } catch (Utf8Exception e) {
             info(state).$("Bad UTF8 encoding").$();
             sendException(socket, 0, "Bad UTF8 encoding in query text", state);

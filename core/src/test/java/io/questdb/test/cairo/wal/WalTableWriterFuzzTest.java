@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
-public class WalTableWriterTest extends AbstractMultiNodeTest {
+public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
     @Before
     public void setUp() {
