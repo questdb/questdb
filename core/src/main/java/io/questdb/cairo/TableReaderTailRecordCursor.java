@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.TestOnly;
 
 public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
 
@@ -34,7 +35,7 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
 
     public void bookmark() {
         lastRowId = recordA.getRowId();
-        this.txn = reader.getTxn();
+        txn = reader.getTxn();
     }
 
     @Override
@@ -56,7 +57,6 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
             } else {
                 seekToLastSeenRow();
             }
-            this.txn = reader.getTxn();
             return true;
         }
 
@@ -74,11 +74,12 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
         return false;
     }
 
+    @TestOnly
     public void toBottom() {
         lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);
         startFrom(lastRowId);
-        this.txn = reader.getTxn();
-        this.dataVersion = reader.getDataVersion();
+        txn = reader.getTxn();
+        dataVersion = reader.getDataVersion();
     }
 
     private void seekToLastSeenRow() {
@@ -87,7 +88,7 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
         } else {
             // this is first time this cursor opens
             toTop();
-            this.dataVersion = reader.getDataVersion();
+            dataVersion = reader.getDataVersion();
         }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -141,6 +141,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(type, null);
     }
 
+    public CompiledQuery ofAlter(AlterOperation statement) {
+        of(ALTER);
+        alterOp = statement;
+        return this;
+    }
+
     public CompiledQuery ofLock() {
         type = LOCK;
         return this;
@@ -148,6 +154,11 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQuery ofTableResume() {
         type = TABLE_RESUME;
+        return this;
+    }
+
+    public CompiledQuery ofTableSetType() {
+        type = TABLE_SET_TYPE;
         return this;
     }
 
@@ -180,12 +191,6 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
         return of(SELECT, recordCursorFactory);
-    }
-
-    CompiledQuery ofAlter(AlterOperation statement) {
-        of(ALTER);
-        alterOp = statement;
-        return this;
     }
 
     CompiledQuery ofBackupTable() {

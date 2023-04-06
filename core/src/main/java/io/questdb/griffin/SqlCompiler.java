@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
@@ -56,6 +57,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
+import java.util.function.Consumer;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -343,6 +345,38 @@ public class SqlCompiler implements Closeable {
         return functionParser.getFunctionFactoryCache();
     }
 
+    // used in tests
+    public void setEnableJitNullChecks(boolean value) {
+        codeGenerator.setEnableJitNullChecks(value);
+    }
+
+    public void setFullFatJoins(boolean value) {
+        codeGenerator.setFullFatJoins(value);
+    }
+
+    @TestOnly
+    public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        lexer.of(query);
+        return compileExecutionModel(executionContext);
+    }
+
+    // this exposed for testing only
+    @TestOnly
+    public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+        clear();
+        lexer.of(expression);
+        return parser.expr(lexer, model);
+    }
+
+    // test only
+    @TestOnly
+    public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
+        clear();
+        lexer.of(expression);
+        parser.expr(lexer, listener);
+    }
+
     private static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
@@ -457,7 +491,7 @@ public class SqlCompiler implements Closeable {
                 } else if (SqlKeywords.isAlterKeyword(tok)) {
                     tok = expectToken(lexer, "'column'");
                     if (SqlKeywords.isColumnKeyword(tok)) {
-                        final int columnNameNamePosition = lexer.getPosition();
+                        final int columnNamePosition = lexer.getPosition();
                         tok = expectToken(lexer, "column name");
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
                         tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
@@ -482,7 +516,7 @@ public class SqlCompiler implements Closeable {
                                 }
                             }
 
-                            return alterTableColumnAddIndex(tableNamePosition, tableToken, columnNameNamePosition, columnName, tableMetadata, indexValueCapacity);
+                            return alterTableColumnAddIndex(tableNamePosition, tableToken, columnNamePosition, columnName, tableMetadata, indexValueCapacity);
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index
                             expectKeyword(lexer, "index");
@@ -490,7 +524,7 @@ public class SqlCompiler implements Closeable {
                             if (tok != null && !isSemicolon(tok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
                             }
-                            return alterTableColumnDropIndex(tableNamePosition, tableToken, columnNameNamePosition, columnName, tableMetadata);
+                            return alterTableColumnDropIndex(tableNamePosition, tableToken, columnNamePosition, columnName, tableMetadata);
                         } else if (SqlKeywords.isCacheKeyword(tok)) {
                             return alterTableColumnCacheFlag(tableNamePosition, tableToken, columnName, tableMetadata, true);
                         } else if (SqlKeywords.isNoCacheKeyword(tok)) {
@@ -502,20 +536,34 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isSetKeyword(tok)) {
-                    tok = expectToken(lexer, "'param'");
+                    tok = expectToken(lexer, "'param' or 'type'");
                     if (SqlKeywords.isParamKeyword(tok)) {
-                        final int paramNameNamePosition = lexer.getPosition();
+                        final int paramNamePosition = lexer.getPosition();
                         tok = expectToken(lexer, "param name");
                         final CharSequence paramName = GenericLexer.immutableOf(tok);
                         tok = expectToken(lexer, "'='");
                         if (tok.length() == 1 && tok.charAt(0) == '=') {
                             CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableToken, tableNamePosition, tableMetadata.getTableId());
+                            return alterTableSetParam(paramName, value, paramNamePosition, tableToken, tableNamePosition, tableMetadata.getTableId());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                         }
+                    } else if (SqlKeywords.isTypeKeyword(tok)) {
+                        tok = expectToken(lexer, "'bypass' or 'wal'");
+                        if (SqlKeywords.isBypassKeyword(tok)) {
+                            tok = expectToken(lexer, "'wal'");
+                            if (SqlKeywords.isWalKeyword(tok)) {
+                                return alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 0);
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                            }
+                        } else if (SqlKeywords.isWalKeyword(tok)) {
+                            return alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 1);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
+                        }
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
+                        throw SqlException.$(lexer.lastTokenPosition(), "'param' or 'type' expected");
                     }
                 } else if (SqlKeywords.isResumeKeyword(tok)) {
                     tok = expectToken(lexer, "'wal'");
@@ -971,24 +1019,21 @@ public class SqlCompiler implements Closeable {
                 }
                 break;
             }
-            if (Chars.equals(tok, ',')) {
+            if (Chars.equals(tok, ',') || Chars.equals(tok, ';')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
-            final CharSequence partitionName = GenericLexer.unquote(tok);
-            final int partitionNamePosition = lexer.lastTokenPosition();
+            final CharSequence partitionName = GenericLexer.unquote(tok); // potentially a full timestamp, or part of it
+            final int lastPosition = lexer.lastTokenPosition();
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             if (reader != null) {
-                final long timestamp;
                 try {
-                    timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
                 } catch (CairoException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
-                            .put("[errno=").put(e.getErrno()).put(']');
+                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
                 }
-
-                alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -1002,7 +1047,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {
@@ -1060,7 +1105,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn, executionContext.getCairoSecurityContext());
+            engine.getTableSequencerAPI().resumeTable(executionContext.getCairoSecurityContext(), tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetryOrigin.WAL_APPLY, WAL_APPLY_RESUME);
             return compiledQuery.ofTableResume();
         } catch (CairoException ex) {
@@ -1073,26 +1118,47 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableToken tableToken, int tableNamePosition, int tableId) throws SqlException {
+    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNamePosition, TableToken tableToken, int tableNamePosition, int tableId) throws SqlException {
         if (isMaxUncommittedRowsKeyword(paramName)) {
             int maxUncommittedRows;
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
             } catch (NumericException e) {
-                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
+                throw SqlException.$(paramNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
             }
             if (maxUncommittedRows < 0) {
-                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
+                throw SqlException.$(paramNamePosition, "maxUncommittedRows must be non negative");
             }
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableNamePosition, tableToken, tableId, maxUncommittedRows).build());
         } else if (isO3MaxLagKeyword(paramName)) {
-            long o3MaxLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            long o3MaxLag = SqlUtil.expectMicros(value, paramNamePosition);
             if (o3MaxLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "o3MaxLag must be non negative");
+                throw SqlException.$(paramNamePosition, "o3MaxLag must be non negative");
             }
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableToken, tableId, o3MaxLag).build());
         } else {
-            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
+            throw SqlException.$(paramNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
+    }
+
+    private CompiledQuery alterTableSetType(SqlExecutionContext executionContext,
+                                            int pos,
+                                            TableToken token,
+                                            byte walFlag) throws SqlException {
+        try {
+            try (TableReader reader = executionContext.getReader(token)) {
+                if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                    throw SqlException.$(pos, "Cannot convert non-partitioned table");
+                }
+            }
+
+            path.of(configuration.getRoot()).concat(token.getDirName());
+            TableUtils.createConvertFile(ff, path, walFlag);
+            return compiledQuery.ofTableSetType();
+        } catch (CairoException e) {
+            throw SqlException.position(pos)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
@@ -1572,13 +1638,42 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(name.position, "table already exists");
         }
 
+        // create table (...) ... in volume volumeAlias;
+        CharSequence volumeAlias = createTableModel.getVolumeAlias();
+        if (volumeAlias != null) {
+            CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+            if (volumePath != null) {
+                if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                    throw CairoException.critical(0).put("not a valid path for volume [alias=").put(volumeAlias).put(", path=").put(path).put(']');
+                }
+            } else {
+                throw SqlException.position(0).put("volume alias is not allowed [alias=").put(volumeAlias).put(']');
+            }
+        }
+
         if (createTableModel.getQueryModel() == null) {
             executionContext.getCairoSecurityContext().checkWritePermission();
             try {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
-                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel.isIgnoreIfExists(), createTableModel, false);
+                if (volumeAlias == null) {
+                    engine.createTable(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            createTableModel.isIgnoreIfExists(),
+                            createTableModel,
+                            false);
+                } else {
+                    engine.createTableInVolume(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            createTableModel.isIgnoreIfExists(),
+                            createTableModel,
+                            false);
+                }
             } catch (EntryUnavailableException e) {
                 throw SqlException.$(name.position, "table already exists");
             } catch (CairoException e) {
@@ -1589,7 +1684,28 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            createTableFromCursor(createTableModel, executionContext, name.position);
+            boolean keepLock = !createTableModel.isWalEnabled();
+            createTableFromCursorExecutor(createTableModel, executionContext, name.position, metadata -> {
+                if (volumeAlias == null) {
+                    engine.createTable(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            false,
+                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
+                            keepLock
+                    );
+                } else {
+                    engine.createTableInVolume(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            false,
+                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
+                            keepLock
+                    );
+                }
+            });
         }
 
         if (createTableModel.getQueryModel() == null) {
@@ -1599,8 +1715,12 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext, int position) throws
-            SqlException {
+    private void createTableFromCursorExecutor(
+            CreateTableModel model,
+            SqlExecutionContext executionContext,
+            int position,
+            Consumer<RecordMetadata> createTableMethod
+    ) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -1608,16 +1728,8 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            boolean keepLock = !model.isWalEnabled();
 
-            engine.createTable(
-                    executionContext.getCairoSecurityContext(),
-                    mem,
-                    path,
-                    false,
-                    tableStructureAdapter.of(model, metadata, typeCast),
-                    keepLock
-            );
+            createTableMethod.accept(metadata);
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
@@ -2166,7 +2278,7 @@ public class SqlCompiler implements Closeable {
                 int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
                 if (virtualColumnType != tableColumnType) {
-                    if (!ColumnType.isSymbol(tableColumnType) || virtualColumnType != ColumnType.STRING) {
+                    if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
                         throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
@@ -2318,49 +2430,58 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
+            // show tables
+            // show columns from tab
+            // show partitions from tab
+            // show transaction isolation level
+            // show transaction_isolation
+            // show max_identifier_length
+            // show standard_conforming_strings
+            // show search_path
+            // show datestyle
+            // show time zone
+            RecordCursorFactory factory = null;
             if (isTablesKeyword(tok)) {
-                return compiledQuery.of(new TableListRecordCursorFactory());
-            }
-            if (isColumnsKeyword(tok)) {
-                return sqlShowColumns(executionContext);
-            }
-
-            if (isTransactionKeyword(tok)) {
-                return sqlShowTransaction();
-            }
-
-            if (isTransactionIsolation(tok)) {
-                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
-            }
-
-            if (isMaxIdentifierLength(tok)) {
-                return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
-            }
-
-            if (isStandardConformingStrings(tok)) {
-                return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
-            }
-
-            if (isSearchPath(tok)) {
-                return compiledQuery.of(new ShowSearchPathCursorFactory());
-            }
-
-            if (isDateStyleKeyword(tok)) {
-                return compiledQuery.of(new ShowDateStyleCursorFactory());
-            }
-
-            if (SqlKeywords.isTimeKeyword(tok)) {
+                factory = new TableListRecordCursorFactory();
+            } else if (isColumnsKeyword(tok)) {
+                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext));
+            } else if (isPartitionsKeyword(tok)) {
+                factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
+            } else if (isTransactionKeyword(tok)) {
+                factory = sqlShowTransaction();
+            } else if (isTransactionIsolation(tok)) {
+                factory = new ShowTransactionIsolationLevelCursorFactory();
+            } else if (isMaxIdentifierLength(tok)) {
+                factory = new ShowMaxIdentifierLengthCursorFactory();
+            } else if (isStandardConformingStrings(tok)) {
+                factory = new ShowStandardConformingStringsCursorFactory();
+            } else if (isSearchPath(tok)) {
+                factory = new ShowSearchPathCursorFactory();
+            } else if (isDateStyleKeyword(tok)) {
+                factory = new ShowDateStyleCursorFactory();
+            } else if (SqlKeywords.isTimeKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                    return compiledQuery.of(new ShowTimeZoneFactory());
+                    factory = new ShowTimeZoneFactory();
                 }
             }
+            if (factory != null) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || Chars.equals(tok, ';')) {
+                    return compiledQuery.of(factory);
+                }
+                Misc.free(factory);
+                throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [tok=").put(tok).put(']');
+            }
         }
-
-        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables', 'columns' or 'time zone'");
+        throw SqlException.position(lexer.lastTokenPosition()).put("expected ")
+                .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
+                .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
+                .put("'max_identifier_length', 'standard_conforming_strings', ")
+                .put("'search_path', 'datestyle', or 'time zone'");
     }
 
-    private CompiledQuery sqlShowColumns(SqlExecutionContext executionContext) throws SqlException {
+    private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (null == tok || !isFromKeyword(tok)) {
@@ -2371,16 +2492,15 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-        return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableToken));
+        return tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
     }
 
-    private CompiledQuery sqlShowTransaction() throws SqlException {
+    private RecordCursorFactory sqlShowTransaction() throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && isIsolationKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && isLevelKeyword(tok)) {
-                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
+                return new ShowTransactionIsolationLevelCursorFactory();
             }
             throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'level'");
         }
@@ -2623,38 +2743,6 @@ public class SqlCompiler implements Closeable {
                     lexer.getPosition()
             );
         }
-    }
-
-    // used in tests
-    void setEnableJitNullChecks(boolean value) {
-        codeGenerator.setEnableJitNullChecks(value);
-    }
-
-    void setFullFatJoins(boolean value) {
-        codeGenerator.setFullFatJoins(value);
-    }
-
-    @TestOnly
-    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        lexer.of(query);
-        return compileExecutionModel(executionContext);
-    }
-
-    // this exposed for testing only
-    @TestOnly
-    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
-        clear();
-        lexer.of(expression);
-        return parser.expr(lexer, model);
-    }
-
-    // test only
-    @TestOnly
-    void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
-        clear();
-        lexer.of(expression);
-        parser.expr(lexer, listener);
     }
 
     @FunctionalInterface

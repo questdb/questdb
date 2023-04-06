@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -40,7 +39,6 @@ public final class SerialCsvFileImporter implements Closeable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final CharSequence inputRoot;
-    private final CairoSecurityContext securityContext;
     private int atomicity;
     private ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
@@ -59,7 +57,6 @@ public final class SerialCsvFileImporter implements Closeable {
         this.inputFilePath = new Path();
         this.ff = configuration.getFilesFacade();
         this.textLoader = new TextLoader(cairoEngine);
-        this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.cairoEngine = cairoEngine;
     }
 
@@ -91,7 +88,7 @@ public final class SerialCsvFileImporter implements Closeable {
         inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
 
-    public void process() throws TextImportException {
+    public void process(CairoSecurityContext securityContext) throws TextImportException {
         LOG.info()
                 .$("started [importId=").$hexPadded(importId)
                 .$(", file=`").$(inputFilePath).$('`').I$();

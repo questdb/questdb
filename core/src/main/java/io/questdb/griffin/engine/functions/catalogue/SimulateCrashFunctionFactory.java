@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -37,6 +39,8 @@ import io.questdb.std.Unsafe;
 
 public class SimulateCrashFunctionFactory implements FunctionFactory {
 
+    private static final CairoErrorFunction CairoErrorInstance = new CairoErrorFunction();
+    private static final CairoExceptionFunction CairoExceptionInstance = new CairoExceptionFunction();
     private static final SimulateCrashFunction CrashInstance = new SimulateCrashFunction();
     private static final DoNothingInstance Dummy = new DoNothingInstance();
     private static final OutOfMemoryFunction OutOfMemoryInstance = new OutOfMemoryFunction();
@@ -61,9 +65,49 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
                     return CrashInstance;
                 case 'M':
                     return OutOfMemoryInstance;
+                case 'C':
+                    return CairoErrorInstance;
+                case 'D':
+                    return CairoExceptionInstance;
             }
         }
         return Dummy;
+    }
+
+    private static class CairoErrorFunction extends BooleanFunction {
+
+        @Override
+        public boolean getBool(Record rec) {
+            throw new CairoError("simulated cairo error");
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("simulate_crash(jvm)");
+        }
+    }
+
+    private static class CairoExceptionFunction extends BooleanFunction {
+
+        @Override
+        public boolean getBool(Record rec) {
+            throw CairoException.critical(1).put("simulated cairo exception");
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("simulate_crash(cairoException)");
+        }
     }
 
     private static class DoNothingInstance extends BooleanFunction {

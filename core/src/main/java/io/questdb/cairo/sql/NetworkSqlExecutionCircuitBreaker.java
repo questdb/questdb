@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final int throttle;
     private long buffer;
     private int fd = -1;
-    private long powerUpTime = Long.MAX_VALUE;
+    private volatile long powerUpTime = Long.MAX_VALUE;
+    private int secret;
     private int testCount;
     private long timeout;
 
@@ -65,6 +66,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void cancel() {
+        powerUpTime = Long.MIN_VALUE;
+    }
+
+    @Override
     public boolean checkIfTripped() {
         return checkIfTripped(powerUpTime, fd);
     }
@@ -75,6 +81,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             return true;
         }
         return testConnection(fd);
+    }
+
+    public void clear() {
+        secret = -1;
+        powerUpTime = Long.MAX_VALUE;
+        testCount = 0;
+        fd = -1;
+        timeout = defaultMaxTime;
     }
 
     @Override
@@ -91,6 +105,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public int getFd() {
         return fd;
+    }
+
+    public int getSecret() {
+        return secret;
+    }
+
+    public boolean isCancelled() {
+        return powerUpTime == Long.MIN_VALUE;
     }
 
     @Override
@@ -117,6 +139,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void setFd(int fd) {
         this.fd = fd;
+    }
+
+    public void setSecret(int secret) {
+        this.secret = secret;
     }
 
     public void setTimeout(long timeout) {
@@ -148,7 +174,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     private void testTimeout() {
         if (clock.getTicks() - timeout > powerUpTime) {
-            throw CairoException.nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            if (isCancelled()) {
+                throw CairoException.queryCancelled(fd);
+            } else {
+                throw CairoException.queryTimedOut(fd);
+            }
         }
     }
 

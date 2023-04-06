@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,41 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordMetadata;
-
-public class PrefixedPgLocksFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private final static RecordMetadata METADATA;
+public class PrefixedPgLocksFunctionFactory extends PgLocksFunctionFactory {
 
     public PrefixedPgLocksFunctionFactory() {
-        super("pg_catalog.pg_locks()", METADATA);
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("locktype", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("database", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("relation", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("page", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("tuple", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("virtualxid", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("transactionid", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("classid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("objid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("virtualtransaction", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("pid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("mode", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("granted", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("fastpath", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("waitstart", ColumnType.TIMESTAMP));
-        METADATA = metadata;
+        super("pg_catalog.pg_locks()");
     }
 }

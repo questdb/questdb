@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import io.questdb.std.Mutable;
 public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
-     * Not-keyed aggregation that doesn't use rosti.
+     * Non-keyed aggregation that doesn't use rosti.
      * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
      *
      * @param address        address
@@ -85,7 +85,7 @@ public interface VectorAggregateFunction extends Function, Mutable {
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');
     }
-    
+
     /**
      * Used for keyed aggregates only.
      * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.

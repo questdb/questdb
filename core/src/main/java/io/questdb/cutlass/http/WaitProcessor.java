@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -98,6 +98,11 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 return useful;
             }
         }
+    }
+
+    @Override
+    public boolean runSerially() {
+        return processInQueue() || sendToOutQueue();
     }
 
     private static int compareRetriesInQueue(Retry r1, Retry r2) {
@@ -229,10 +234,5 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             outPubSequence.done(cursor);
             return true;
         }
-    }
-
-    @Override
-    protected boolean runSerially() {
-        return processInQueue() || sendToOutQueue();
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode partitionBy;
     private QueryModel queryModel;
     private ExpressionNode timestamp;
+    private CharSequence volumeAlias;
     private boolean walEnabled;
 
     private CreateTableModel() {
@@ -91,6 +92,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         partitionBy = null;
         likeTableName = null;
         name = null;
+        volumeAlias = null;
         columnBits.clear();
         columnNames.clear();
         columnNameIndexMap.clear();
@@ -183,6 +185,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
     }
 
+    public CharSequence getVolumeAlias() {
+        return volumeAlias;
+    }
+
     public boolean isIgnoreIfExists() {
         return ignoreIfExists;
     }
@@ -241,6 +247,12 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public void setVolumeAlias(CharSequence volumeAlias) {
+        // set if the create table statement contains IN VOLUME 'volumeAlias'.
+        // volumePath will be resolved by the compiler
+        this.volumeAlias = Chars.toString(volumeAlias);
     }
 
     public void setWalEnabled(boolean walEnabled) {
@@ -341,6 +353,13 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
         if (partitionBy != null) {
             sink.put(" partition by ").put(partitionBy.token);
+            if (walEnabled) {
+                sink.put(" wal");
+            }
+        }
+
+        if (volumeAlias != null) {
+            sink.put(" in volume '").put(volumeAlias).put('\'');
         }
     }
 

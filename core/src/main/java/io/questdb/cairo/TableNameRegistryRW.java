@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
-
-import java.util.Map;
+import io.questdb.std.ObjList;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
@@ -83,13 +82,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void reloadTableNameCache() {
+    public synchronized void reloadTableNameCache(ObjList<TableToken> convertedTables) {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
         if (!nameStore.isLocked()) {
             nameStore.lock();
         }
-        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap);
+        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);
     }
 
     @Override

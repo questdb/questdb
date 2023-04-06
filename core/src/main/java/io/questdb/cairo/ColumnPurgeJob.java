@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -84,7 +83,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+        this.sqlExecutionContext.with(
+                configuration.getCairoSecurityContextFactory().getRootContext(),
+                null,
+                null
+        );
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +
                         "ts timestamp, " + // 0
@@ -99,11 +102,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         "partition_timestamp timestamp, " + // 9
                         "partition_name_txn long," + // 10
                         "completed timestamp" + // 11
-                        ") timestamp(ts) partition by MONTH",
+                        ") timestamp(ts) partition by MONTH BYPASS WAL",
                 sqlExecutionContext
         );
         this.tableToken = engine.getTableToken(tableName);
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "QuestDB system");
+        this.writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
         processTableRecords(engine);
     }

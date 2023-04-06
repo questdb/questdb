@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,14 +39,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+
     private final int columnIndex;
     private final Function filter;
     private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
-    // this instance is shared between factory and cursor
-    // factory will be resolving symbols for cursor and if successful
-    // symbol keys will be added to this hash set
-    private final IntHashSet symbolKeys = new IntHashSet();
+    private final IntHashSet symbolKeys;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -60,22 +58,28 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
+        // this instance is shared between factory and cursor
+        // factory will be resolving symbols for cursor and if successful
+        // symbol keys will be added to this hash set
+        symbolKeys = new IntHashSet();
+        DataFrameRecordCursor cursor;
         if (indexed) {
             if (filter != null) {
-                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
             } else {
-                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
+                cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
             }
         } else {
             if (filter != null) {
-                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
             } else {
-                this.cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
+                cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
             }
         }
-        this.columnIndex = columnIndex;
+        this.cursor = new DataFrameRecordCursorWrapper(cursor);
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
+        this.columnIndex = columnIndex;
         this.func = func;
     }
 
@@ -99,23 +103,109 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         Misc.free(filter);
     }
 
-    @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
-        symbolKeys.clear();
-        try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
+    private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
+
+        private final DataFrameRecordCursor delegate;
+        private RecordCursor baseCursor;
+
+        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void close() {
+            baseCursor = Misc.free(baseCursor);
+            delegate.close();
+        }
+
+        @Override
+        public IntList getColumnIndexes() {
+            return delegate.getColumnIndexes();
+        }
+
+        @Override
+        public DataFrameCursor getDataFrameCursor() {
+            return delegate.getDataFrameCursor();
+        }
+
+        @Override
+        public Record getRecord() {
+            return delegate.getRecord();
+        }
+
+        @Override
+        public Record getRecordB() {
+            return delegate.getRecordB();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return delegate.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (baseCursor != null) {
+                buildSymbolKeys();
+                baseCursor = Misc.free(baseCursor);
+            }
+            return delegate.hasNext();
+        }
+
+        @Override
+        public boolean isUsingIndex() {
+            return delegate.isUsingIndex();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return delegate.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException {
+            if (baseCursor != null) {
+                baseCursor = Misc.free(baseCursor);
+            }
+            baseCursor = recordCursorFactory.getCursor(executionContext);
+            symbolKeys.clear();
+            delegate.of(cursor, executionContext);
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            delegate.recordAt(record, atRowId);
+        }
+
+        @Override
+        public long size() {
+            return delegate.size();
+        }
+
+        @Override
+        public boolean skipTo(long rowCount) {
+            return delegate.skipTo(rowCount);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            delegate.toPlan(sink);
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
+        }
+
+        private void buildSymbolKeys() {
+            StaticSymbolTable symbolTable = getDataFrameCursor().getSymbolTable(columnIndex);
+            final Record record = baseCursor.getRecord();
+            while (baseCursor.hasNext()) {
                 int symbolKey = symbolTable.keyOf(func.get(record, 0));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }
             }
         }
-
-        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

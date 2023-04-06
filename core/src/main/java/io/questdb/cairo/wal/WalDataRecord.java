@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,6 +68,14 @@ public class WalDataRecord implements Record, Sinkable {
         final long offset = recordIndex * Character.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
+    }
+
+    // only for tests
+    @SuppressWarnings("SameParameterValue")
+    public long getDesignatedTimestampRowId(int col) {
+        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 
     @Override
@@ -238,14 +246,6 @@ public class WalDataRecord implements Record, Sinkable {
 
     private long getDesignatedTimestamp(int col) {
         final long offset = 2 * recordIndex * Long.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    // only for tests
-    @SuppressWarnings("SameParameterValue")
-    long getDesignatedTimestampRowId(int col) {
-        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }

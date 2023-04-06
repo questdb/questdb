@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,10 +77,10 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
             RecordCursor baseCursor
     ) throws SqlException {
         try {
-            AbstractNoRecordSampleByCursor cursor = getRawCursor();
-            cursor.of(baseCursor, executionContext);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
+            AbstractNoRecordSampleByCursor cursor = getRawCursor();
+            cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(baseCursor);

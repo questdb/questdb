@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -176,7 +176,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (current.updateTableModel != null) {
                 backupWhereClause(pool, current.updateTableModel);
             }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+            for (int i = 1, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
                     backupWhereClause(pool, m);
@@ -197,7 +197,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (current.updateTableModel != null) {
                 restoreWhereClause(pool, current.updateTableModel);
             }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+            for (int i = 1, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
                     restoreWhereClause(pool, m);
@@ -981,7 +981,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 } else {
                     addParsedWhereNode(n, false);
                     n = null;
-
                 }
             } else {
                 n = sqlNodeStack.poll();

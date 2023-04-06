@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,9 +56,10 @@ public interface CompiledQuery {
     short SET = 6;
     short SNAPSHOT_DB_COMPLETE = 23;
     short SNAPSHOT_DB_PREPARE = 22;
+    short TABLE_RESUME = 26;
+    short TABLE_SET_TYPE = 27;
     short TRUNCATE = 3;
-    short TYPES_COUNT = EXPLAIN;
-    short TABLE_RESUME = TYPES_COUNT + 1; //this is an odd one (covered by ALTER), do not include it in TYPES_COUNT
+    short TYPES_COUNT = TABLE_SET_TYPE;
     short UNLOCK = 16;
     short UPDATE = 14;
     short VACUUM = 17;

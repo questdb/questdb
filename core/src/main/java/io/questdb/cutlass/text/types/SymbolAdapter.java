@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ public class SymbolAdapter extends AbstractTypeAdapter {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
         utf8Sink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
+        TextUtil.utf8ToUtf16EscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putSym(column, utf8Sink);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     ) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
             args.getQuick(i).init(symbolTableSource, executionContext);
+        }
+    }
+
+    static void initCursor(ObjList<? extends Function> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).initCursor();
         }
     }
 

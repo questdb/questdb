@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,13 +39,14 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 public final class Services {
@@ -254,6 +255,9 @@ public final class Services {
                 metrics.health(),
                 Requester.PG_WIRE_SERVER
         );
+
+        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+
         return new PGWireServer(
                 configuration,
                 cairoEngine,
@@ -263,12 +267,14 @@ public final class Services {
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
+                        registry,
                         () -> new SqlExecutionContextImpl(
                                 cairoEngine,
                                 workerPool.getWorkerCount(),
                                 workerPoolManager.getSharedWorkerCount()
                         )
-                )
+                ),
+                registry
         );
     }
 }

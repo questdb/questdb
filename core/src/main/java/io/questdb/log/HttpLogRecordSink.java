@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class HttpLogRecordSink extends LogRecordSink {
 
-    static final String CRLF = "\r\n";
+    public static final String CRLF = "\r\n";
     private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
     private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
     private static final int MARK_NOT_SET = -1;
@@ -152,6 +152,14 @@ public class HttpLogRecordSink extends LogRecordSink {
         return this;
     }
 
+    @TestOnly
+    public void putContentLengthMarker() {
+        put("Content-Length:").put(CL_MARKER);
+        contentLengthEnd = _wptr - 1; // will scan backwards from here
+        put(CRLF);
+        hasContentLengthMarker = true;
+    }
+
     public HttpLogRecordSink putHeader(CharSequence localHostIp) {
         clear();
         put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
@@ -178,13 +186,5 @@ public class HttpLogRecordSink extends LogRecordSink {
     @Override
     public String toString() {
         return Chars.stringFromUtf8Bytes(address, _wptr);
-    }
-
-    @TestOnly
-    void putContentLengthMarker() {
-        put("Content-Length:").put(CL_MARKER);
-        contentLengthEnd = _wptr - 1; // will scan backwards from here
-        put(CRLF);
-        hasContentLengthMarker = true;
     }
 }

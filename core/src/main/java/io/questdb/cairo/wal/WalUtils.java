@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,8 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.mp.WorkerPool;
-import org.jetbrains.annotations.Nullable;
-
 public class WalUtils {
+    public static final String CONVERT_FILE_NAME = "_convert";
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WALID = -2;
     public static final String EVENT_FILE_NAME = "_event";
@@ -55,18 +51,4 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
-
-    public static void setupWorkerPool(
-            WorkerPool workerPool,
-            CairoEngine engine,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache ffCache
-    ) {
-        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
-            workerPool.assign(i, applyWal2TableJob);
-            workerPool.freeOnExit(applyWal2TableJob);
-        }
-    }
 }

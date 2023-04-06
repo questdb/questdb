@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -104,7 +104,7 @@ public class Table2IlpTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
+                        engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
                         bindVariableService,
                         null,
                         -1,
@@ -117,6 +117,8 @@ public class Table2IlpTest {
             }
         };
 
+        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+
         workerPool = new WorkerPool(conf);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         pgServer = new PGWireServer(
@@ -128,8 +130,10 @@ public class Table2IlpTest {
                 new PGWireServer.PGConnectionContextFactory(
                         engine,
                         conf,
+                        registry,
                         () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                )
+                ),
+                registry
         );
 
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -406,7 +410,7 @@ public class Table2IlpTest {
     private static CountDownLatch setUpWaitTableWriterRelease(String tableNameDst) {
         CountDownLatch done = new CountDownLatch(1);
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+            if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                 if (Chars.equals(tableNameDst, name.getTableName())) {
                     done.countDown();
                 }

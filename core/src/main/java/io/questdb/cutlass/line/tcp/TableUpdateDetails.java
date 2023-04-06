@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -49,12 +48,13 @@ import static io.questdb.std.Chars.utf8ToUtf16;
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private final long commitInterval;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final long defaultCommitInterval;
     private final long defaultMaxUncommittedRows;
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    private final ByteCharSequence tableNameUtf8;
     private final TableToken tableToken;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -70,13 +70,14 @@ public class TableUpdateDetails implements Closeable {
     private volatile boolean writerInError;
     private int writerThreadId;
 
-    TableUpdateDetails(
+    public TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
             TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
-            DefaultColumnTypes defaultColumnTypes
+            DefaultColumnTypes defaultColumnTypes,
+            ByteCharSequence tableNameUtf8
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
@@ -85,7 +86,6 @@ public class TableUpdateDetails implements Closeable {
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
-        this.defaultCommitInterval = configuration.getCommitIntervalDefault();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
         TableRecordMetadata tableMetadata = writer.getMetadata();
@@ -93,12 +93,13 @@ public class TableUpdateDetails implements Closeable {
         this.tableToken = writer.getTableToken();
         if (writer.supportsMultipleWriters()) {
             metadataService = null;
-            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
         } else {
             metadataService = (MetadataService) writer;
-            metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-            this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();
         }
+
+        this.commitInterval = configuration.getCommitInterval();
+        this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
+
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
@@ -108,17 +109,18 @@ public class TableUpdateDetails implements Closeable {
                     writer.getMetadata().getColumnCount()
             );
         }
+        this.tableNameUtf8 = tableNameUtf8;
     }
 
     public void addReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount++;
+            LOG.info()
+                    .$("network IO thread using table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableToken)
+                    .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
+                    .$(']').$();
         }
-        LOG.info()
-                .$("network IO thread using table [workerId=").$(workerId)
-                .$(", tableName=").$(tableToken)
-                .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                .$(']').$();
     }
 
     @Override
@@ -141,8 +143,10 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (null != writerAPI) {
                 try {
-                    if (!writerInError) {
-                        writerAPI.commit();
+                    writerAPI.commit();
+                } catch (CairoException ex) {
+                    if (!ex.isTableDropped()) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$((Throwable) ex).I$();
                     }
                 } catch (Throwable ex) {
                     LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$(ex).I$();
@@ -153,6 +157,30 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             writerThreadId = Integer.MIN_VALUE;
+        }
+    }
+
+    public void commit(boolean withLag) throws CommitFailedException {
+        if (writerAPI.getUncommittedRowCount() > 0) {
+            try {
+                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
+                if (withLag) {
+                    writerAPI.ic();
+                } else {
+                    writerAPI.commit();
+                }
+            } catch (CairoException ex) {
+                if (!ex.isTableDropped()) {
+                    handleCommitException(ex);
+                }
+                throw CommitFailedException.instance(ex, ex.isTableDropped());
+            } catch (Throwable ex) {
+                handleCommitException(ex);
+                throw CommitFailedException.instance(ex, false);
+            }
+        }
+        if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
+            setWriterInError();
         }
     }
 
@@ -176,6 +204,10 @@ public class TableUpdateDetails implements Closeable {
         return tableToken.getTableName();
     }
 
+    public ByteCharSequence getTableNameUtf8() {
+        return tableNameUtf8;
+    }
+
     public TableToken getTableToken() {
         return tableToken;
     }
@@ -192,24 +224,24 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
-    public boolean isWriterInError() {
-        return writerInError;
-    }
-
     public boolean isWal() {
         return writerThreadId == -1;
+    }
+
+    public boolean isWriterInError() {
+        return writerInError;
     }
 
     public void removeReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount--;
+            localDetailsArray[workerId].clear();
+            LOG.info()
+                    .$("network IO thread released table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableToken)
+                    .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
+                    .I$();
         }
-        localDetailsArray[workerId].clear();
-        LOG.info()
-                .$("network IO thread released table [workerId=").$(workerId)
-                .$(", tableName=").$(tableToken)
-                .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                .I$();
     }
 
     public void setAssignedToJob(boolean assignedToJob) {
@@ -226,38 +258,6 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    public void commit(boolean withLag) throws CommitFailedException {
-        if (writerAPI.getUncommittedRowCount() > 0) {
-            try {
-                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
-                if (withLag) {
-                    writerAPI.ic();
-                } else {
-                    writerAPI.commit();
-                }
-            } catch (Throwable ex) {
-                setWriterInError();
-                LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
-                try {
-                    writerAPI.rollback();
-                } catch (Throwable th) {
-                    LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
-                }
-                throw CommitFailedException.instance(ex);
-            }
-        }
-        if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
-            setWriterInError();
-        }
-    }
-
-    private long getCommitInterval() {
-        if (metadataService != null) {
-            return metadataService.getCommitInterval();
-        }
-        return defaultCommitInterval;
-    }
-
     private long getMetaMaxUncommittedRows() {
         if (metadataService != null) {
             return metadataService.getMetaMaxUncommittedRows();
@@ -265,12 +265,21 @@ public class TableUpdateDetails implements Closeable {
         return defaultMaxUncommittedRows;
     }
 
+    private void handleCommitException(Throwable ex) {
+        setWriterInError();
+        LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
+        try {
+            writerAPI.rollback();
+        } catch (Throwable th) {
+            LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
+        }
+    }
+
     long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
         if (writerAPI != null) {
-            final long commitInterval = getCommitInterval();
             long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
             // Do not commit row by row if the commit takes longer than commitInterval.
@@ -290,10 +299,12 @@ public class TableUpdateDetails implements Closeable {
             return;
         }
         LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableToken).I$();
-        nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
+        nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
         try {
             commit(true);
+        } catch (CommitFailedException ex) {
+            throw ex;
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
@@ -301,7 +312,7 @@ public class TableUpdateDetails implements Closeable {
                     .$(th)
                     .I$();
             writerAPI.rollback();
-            throw CommitFailedException.instance(th);
+            throw CommitFailedException.instance(th, false);
         }
 
         // Tick after commit.
@@ -391,8 +402,8 @@ public class TableUpdateDetails implements Closeable {
             latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex, CairoSecurityContext securityContext) {
+            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and
@@ -456,7 +467,10 @@ public class TableUpdateDetails implements Closeable {
                     // column names with non-ASCII chars are handled properly
                     columnIndexByNameUtf8.put(onHeapColNameUtf8, colWriterIndex);
 
-                    processedCols.extendAndReplace(colWriterIndex, true);
+                    if (processedCols.extendAndReplace(colWriterIndex, true)) {
+                        // column has been passed by index earlier on this event, duplicate should be skipped
+                        return DUPLICATED_COLUMN;
+                    }
                     return colWriterIndex;
                 }
                 // cannot not resolve column index even from the reader
@@ -536,6 +550,11 @@ public class TableUpdateDetails implements Closeable {
 
         void clearColumnTypes() {
             columnTypes.clear();
+        }
+
+        void clearProcessedColumns() {
+            processedCols.setAll(columnCount, false);
+            addedColsUtf16.clear();
         }
 
         String getColNameUtf16() {
@@ -629,23 +648,18 @@ public class TableUpdateDetails implements Closeable {
             return ANY_TABLE_VERSION;
         }
 
-        DirectByteSymbolLookup getSymbolLookup(int columnIndex) {
+        DirectByteSymbolLookup getSymbolLookup(int columnIndex, CairoSecurityContext securityContext) {
             if (columnIndex > -1) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);
                 if (symCache != null) {
                     return symCache;
                 }
-                return addSymbolCache(columnIndex);
+                return addSymbolCache(columnIndex, securityContext);
             }
             return NOT_FOUND_LOOKUP;
         }
 
-        void clearProcessedColumns() {
-            processedCols.setAll(columnCount, false);
-            addedColsUtf16.clear();
-        }
-
-        void resetStateIfNecessary() {
+        void resetStateIfNecessary(CairoSecurityContext securityContext) {
             // First, reset processed column tracking.
             clearProcessedColumns();
             // Second, check if writer's structure version has changed
@@ -660,7 +674,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+                    latestKnownMetadata = engine.getMetadata(securityContext, tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
                         setWriterInError();

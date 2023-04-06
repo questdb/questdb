@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,19 +55,12 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 offsetFuncPos
         );
         this.simpleMapValue = simpleMapValue;
-        this.record.of(simpleMapValue);
+        record.of(simpleMapValue);
     }
 
     @Override
     public boolean hasNext() {
+        initTimestamps();
         return baseRecord != null && notKeyedLoop(simpleMapValue);
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-        }
     }
 }

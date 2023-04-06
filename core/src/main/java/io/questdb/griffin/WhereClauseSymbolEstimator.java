@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
-final class WhereClauseSymbolEstimator implements Mutable {
+public final class WhereClauseSymbolEstimator implements Mutable {
 
     private static final int OP_EQUAL = 1;
     private static final int OP_IN = 2;
@@ -235,7 +235,7 @@ final class WhereClauseSymbolEstimator implements Mutable {
      * For more complex filters the estimates are guaranteed to be equal
      * or great than the actual count of filtered symbol values.
      */
-    IntList estimate(
+    public IntList estimate(
             AliasTranslator translator,
             ExpressionNode node,
             RecordMetadata metadata,

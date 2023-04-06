@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.std.Mutable;
 
 public class TextImportRequestTask implements Mutable {
+    private CairoSecurityContext securityContext;
     private int atomicity;
     private byte delimiter;
     private String fileName;
@@ -86,18 +88,13 @@ public class TextImportRequestTask implements Mutable {
         return headerFlag;
     }
 
-    public void of(
-            long importId,
-            String tableName,
-            String fileName,
-            boolean headerFlag,
-            String timestampColumnName,
-            byte delimiter,
-            String timestampFormat,
-            int partitionBy,
-            int atomicity
-    ) {
+    public CairoSecurityContext getSecurityContext() {
+        return securityContext;
+    }
+
+    public void of(CairoSecurityContext securityContext, long importId, String tableName, String fileName, boolean headerFlag, String timestampColumnName, byte delimiter, String timestampFormat, int partitionBy, int atomicity) {
         this.clear();
+        this.securityContext = securityContext;
         this.importId = importId;
         this.tableName = tableName;
         this.fileName = fileName;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import static io.questdb.std.Numbers.hexDigits;
 public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
-        //min capacity that works on all platforms is 16  
+        // min capacity that works on all platforms is 16  
         assert capacity >= 16;
 
         final int columnCount = types.getColumnCount();

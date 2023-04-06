@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,10 +27,10 @@ package io.questdb.std;
 import java.io.Closeable;
 
 public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
-    private final ObjectFactory<T> fact;
+    private final ObjectFactory<T> factory;
 
-    public ThreadLocal(ObjectFactory<T> fact) {
-        this.fact = fact;
+    public ThreadLocal(ObjectFactory<T> factory) {
+        this.factory = factory;
     }
 
     @Override
@@ -43,7 +43,7 @@ public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeabl
     public T get() {
         T val = super.get();
         if (val == null) {
-            val = fact.newInstance();
+            val = factory.newInstance();
             set(val);
         }
         return val;

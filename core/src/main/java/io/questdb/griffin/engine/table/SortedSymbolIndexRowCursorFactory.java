@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,27 +30,32 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Comparator;
 
 public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     private final static ThreadLocal<SortHelper> TL_SORT_HELPER = new ThreadLocal<>(SortHelper::new);
     private final int columnIndex;
+    private final IntList columnIndexes;
     private final boolean columnOrderDirectionAsc;
     private final ListBasedSymbolIndexRowCursor cursor = new ListBasedSymbolIndexRowCursor();
     private final int indexDirection;
     private final IntList symbolKeys = new IntList();
     private int symbolKeyLimit;
 
-    public SortedSymbolIndexRowCursorFactory(int columnIndex, boolean columnOrderDirectionAsc, int indexDirection) {
+    public SortedSymbolIndexRowCursorFactory(int columnIndex,
+                                             boolean columnOrderDirectionAsc,
+                                             int indexDirection,
+                                             @NotNull IntList columnIndexes) {
         this.columnIndex = columnIndex;
         this.indexDirection = indexDirection;
         this.columnOrderDirectionAsc = columnOrderDirectionAsc;
+        this.columnIndexes = columnIndexes;
     }
 
     @Override
@@ -65,10 +70,10 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader) {
         symbolKeys.clear();
 
-        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndex);
+        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndexes.get(columnIndex));
         int count = staticSymbolTable.getSymbolCount();
 
         final SortHelper sortHelper = TL_SORT_HELPER.get();
@@ -160,7 +165,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private boolean fetchNext() {
             while (index < symbolKeyLimit) {
                 current = dataFrame
-                        .getBitmapIndexReader(columnIndex, indexDirection)
+                        .getBitmapIndexReader(columnIndexes.get(columnIndex), indexDirection)
                         .getCursor(
                                 true,
                                 symbolKeys.getQuick(index++),

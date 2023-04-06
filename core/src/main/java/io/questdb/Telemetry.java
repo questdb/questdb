@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -56,12 +55,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
     private final QueueConsumer<T> taskConsumer = this::consume;
 
-    public Telemetry(TelemetryType<T> type, CairoConfiguration configuration) {
+    public Telemetry(TelemetryTypeBuilder<T> builder, CairoConfiguration configuration) {
+        TelemetryType<T> type = builder.build(configuration);
         final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);
         enabled = telemetryConfiguration.getEnabled();
         if (enabled) {
+            this.telemetryType = type;
             clock = configuration.getMicrosecondClock();
-            telemetryType = type;
             telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             telemetrySubSeq = new SCSequence();
@@ -96,13 +96,11 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (!enabled) {
             return;
         }
-        CharSequence sysPrefix = engine.getConfiguration().getSystemTableNamePrefix();
-        String tableName = sysPrefix + telemetryType.getTableName();
-
-        compiler.compile(telemetryType.getCreateSql(sysPrefix), sqlExecutionContext);
+        String tableName = telemetryType.getTableName();
+        compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
         final TableToken tableToken = engine.getTableToken(tableName);
         try {
-            writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetry");
+            writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "telemetry");
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(tableToken.getTableName())
@@ -136,7 +134,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        String getCreateSql(CharSequence prefix);
+        String getCreateSql();
 
         String getTableName();
 
@@ -150,5 +148,9 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
         }
+    }
+
+    public interface TelemetryTypeBuilder<T extends AbstractTelemetryTask> {
+        TelemetryType<T> build(CairoConfiguration configuration);
     }
 }

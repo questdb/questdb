@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -47,11 +46,7 @@ public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends Abstra
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            if (baseCursor.hasNext()) {
-                return initFunctionsAndCursor(executionContext, baseCursor);
-            }
-            Misc.free(baseCursor);
-            return EmptyTableNoSizeRecordCursor.INSTANCE;
+            return initFunctionsAndCursor(executionContext, baseCursor);
         } catch (Throwable ex) {
             Misc.free(baseCursor);
             throw ex;

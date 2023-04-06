@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -74,10 +74,12 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength);
+        return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
+
+        private final int functionPos;
         private final int maxLength;
         private final Function pattern;
         private final int patternPos;
@@ -89,13 +91,14 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         private Matcher matcher;
         private String replacementStr;
 
-        public Func(Function value, Function pattern, int patternPos, Function replacement, int replacementPos, int maxLength) {
+        public Func(Function value, Function pattern, int patternPos, Function replacement, int replacementPos, int maxLength, int functionPos) {
             this.value = value;
             this.pattern = pattern;
             this.patternPos = patternPos;
             this.replacement = replacement;
             this.replacementPos = replacementPos;
             this.maxLength = maxLength;
+            this.functionPos = functionPos;
         }
 
         @Override
@@ -117,7 +120,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             matcher.reset(cs);
             sink.clear();
 
-            boolean result = matcher.find();
+            boolean result = find();
             if (!result) {
                 sink.buffer.append(cs);
             } else {
@@ -128,7 +131,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
                                 .put(" [maxLength=").put(maxLength).put(']');
                     }
                     matcher.appendReplacement(sink.buffer, replacementStr);
-                    result = matcher.find();
+                    result = find();
                 } while (result);
                 matcher.appendTail(sink.buffer);
             }
@@ -171,6 +174,14 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
+        }
+
+        private boolean find() {
+            try {
+                return matcher.find();
+            } catch (StackOverflowError err) {
+                throw CairoException.nonCritical().put("stack overflow error [position=").put(functionPos).put(']');
+            }
         }
     }
 
@@ -215,3 +226,4 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 }
+

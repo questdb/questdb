@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -143,6 +143,18 @@ public class TimestampFormatCompiler {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
+    }
+
+    public static int getOpCode(String opName) {
+        return opMap.get(opName);
+    }
+
+    public static int getOpCount() {
+        return opList.size();
+    }
+
+    public static String getOpName(int index) {
+        return opList.getQuick(index);
     }
 
     public DateFormat compile(CharSequence pattern) {

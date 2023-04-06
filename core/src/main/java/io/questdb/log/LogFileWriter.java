@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -103,6 +103,11 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         return bufSize;
     }
 
+    @TestOnly
+    public QueueConsumer<LogRecordSink> getMyConsumer() {
+        return myConsumer;
+    }
+
     @Override
     public boolean runSerially() {
         if (subSeq.consumeAll(ring, myConsumer)) {
@@ -125,6 +130,11 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         this.location = location;
     }
 
+    @TestOnly
+    public void setMyConsumer(QueueConsumer<LogRecordSink> myConsumer) {
+        this.myConsumer = myConsumer;
+    }
+
     private void copyToBuffer(LogRecordSink sink) {
         final int l = sink.length();
         if ((sink.getLevel() & this.level) != 0 && l > 0) {
@@ -140,15 +150,5 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private void flush() {
         Files.append(fd, buf, (int) (_wptr - buf));
         _wptr = buf;
-    }
-
-    @TestOnly
-    QueueConsumer<LogRecordSink> getMyConsumer() {
-        return myConsumer;
-    }
-
-    @TestOnly
-    void setMyConsumer(QueueConsumer<LogRecordSink> myConsumer) {
-        this.myConsumer = myConsumer;
     }
 }

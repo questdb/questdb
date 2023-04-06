@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -572,7 +572,6 @@ public final class Chars {
     }
 
     public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {
-
         if (hi == lo) {
             return 0;
         }
@@ -732,7 +731,7 @@ public final class Chars {
         }
 
         CharSink b = Misc.getThreadLocalBuilder();
-        utf8Decode(lo, hi, b);
+        utf8toUtf16(lo, hi, b);
         return b.toString();
     }
 
@@ -742,7 +741,7 @@ public final class Chars {
         }
 
         CharSink b = Misc.getThreadLocalBuilder();
-        utf8Decode(seq, b);
+        utf8toUtf16(seq, b);
         return b.toString();
     }
 
@@ -865,55 +864,40 @@ public final class Chars {
         }
     }
 
-    /**
-     * Decodes bytes between lo,hi addresses into sink.
-     * Note: operation might fail in the middle and leave sink in inconsistent state.
-     *
-     * @return true if input is proper utf8 and false otherwise.
-     */
-    public static boolean utf8Decode(long lo, long hi, CharSinkBase sink) {
-        long p = lo;
-        while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
-            if (b < 0) {
-                int n = utf8DecodeMultiByte(p, hi, b, sink);
-                if (n == -1) {
-                    // UTF8 error
-                    return false;
+    // a very specialised function to decode a single utf8 character
+    // used when it doesn't make sense to allocate a temporary sink
+    // returns an integer-encoded tuple (decoded number of bytes, character in utf16 encoding, stored as short type)
+    public static int utf8CharDecode(long lo, long hi) {
+        if (lo < hi) {
+            byte b1 = Unsafe.getUnsafe().getByte(lo);
+            if (b1 < 0) {
+                if (b1 >> 5 == -2 && (b1 & 30) != 0 && hi - lo > 1) {
+                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+                    if (isNotContinuation(b2)) {
+                        return 0;
+                    }
+                    return Numbers.encodeLowHighShorts((short) 2, (short) (b1 << 6 ^ b2 ^ 3968));
                 }
-                p += n;
-            } else {
-                sink.put((char) b);
-                ++p;
-            }
-        }
-        return true;
-    }
 
-    /**
-     * Decodes bytes between lo,hi addresses into sink.
-     * Note: operation might fail in the middle and leave sink in inconsistent state.
-     *
-     * @return true if input is proper utf8 and false otherwise.
-     */
-    public static boolean utf8Decode(ByteSequence seq, CharSinkBase sink) {
-        int i = 0;
-        int len = seq.length();
-        while (i < len) {
-            byte b = seq.byteAt(i);
-            if (b < 0) {
-                int n = utf8DecodeMultiByte(seq, i, b, sink);
-                if (n == -1) {
-                    // UTF8 error
-                    return false;
+                if (b1 >> 4 == -2 && hi - lo > 2) {
+                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+                    byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+                    if (isMalformed3(b1, b2, b3)) {
+                        return 0;
+                    }
+
+                    char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
+                    if (Character.isSurrogate(c)) {
+                        return 0;
+                    }
+                    return Numbers.encodeLowHighShorts((short) 3, (short) c);
                 }
-                i += n;
+                return 0;
             } else {
-                sink.put((char) b);
-                ++i;
+                return Numbers.encodeLowHighShorts((short) 1, b1);
             }
         }
-        return true;
+        return 0;
     }
 
     public static int utf8DecodeMultiByte(long lo, long hi, int b, CharSinkBase sink) {
@@ -928,31 +912,22 @@ public final class Chars {
         return utf8Decode4Bytes(lo, hi, b, sink);
     }
 
-    public static int utf8DecodeMultiByte(ByteSequence seq, int index, int b, CharSinkBase sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
-            return utf8Decode2Bytes(seq, index, b, sink);
+    public static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
+        if (hasNonAsciiChars) {
+            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
+            return tempSink;
         }
-
-        if (b >> 4 == -2) {
-            return utf8Decode3Bytes(seq, index, b, sink);
-        }
-
-        return utf8Decode4Bytes(seq, index, b, sink);
+        return utf8CharSeq;
     }
 
-    public static int utf8DecodeMultiByteZ(long lo, int b, CharSink sink) {
-        if (b >> 5 == -2 && (b & 30) != 0) {
-            return utf8Decode2BytesZ(lo, b, sink);
+    public static void utf8ToUtf16Unchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+        tempSink.clear();
+        if (!utf8toUtf16(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
+            throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
         }
-
-        if (b >> 4 == -2) {
-            return utf8Decode3BytesZ(lo, b, sink);
-        }
-
-        return utf8Decode4BytesZ(lo, b, sink);
     }
 
-    public static boolean utf8DecodeZ(long lo, CharSink sink) {
+    public static boolean utf8ToUtf16Z(long lo, CharSink sink) {
         long p = lo;
 
         while (true) {
@@ -977,19 +952,55 @@ public final class Chars {
         return true;
     }
 
-    public static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
-        if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
-            return tempSink;
+    /**
+     * Decodes bytes between lo,hi addresses into sink.
+     * Note: operation might fail in the middle and leave sink in inconsistent state.
+     *
+     * @return true if input is proper utf8 and false otherwise.
+     */
+    public static boolean utf8toUtf16(long lo, long hi, CharSinkBase sink) {
+        long p = lo;
+        while (p < hi) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int n = utf8DecodeMultiByte(p, hi, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    return false;
+                }
+                p += n;
+            } else {
+                sink.put((char) b);
+                ++p;
+            }
         }
-        return utf8CharSeq;
+        return true;
     }
 
-    public static void utf8ToUtf16Unchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
-        tempSink.clear();
-        if (!utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
-            throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
+    /**
+     * Decodes bytes between lo,hi addresses into sink.
+     * Note: operation might fail in the middle and leave sink in inconsistent state.
+     *
+     * @return true if input is proper utf8 and false otherwise.
+     */
+    public static boolean utf8toUtf16(ByteSequence seq, CharSinkBase sink) {
+        int i = 0;
+        int len = seq.length();
+        while (i < len) {
+            byte b = seq.byteAt(i);
+            if (b < 0) {
+                int n = utf8DecodeMultiByte(seq, i, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    return false;
+                }
+                i += n;
+            } else {
+                sink.put((char) b);
+                ++i;
+            }
         }
+        return true;
     }
 
     private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
@@ -1067,42 +1078,6 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
-    }
-
-    // a very specialised function to decode a single utf8 character
-    // used when it doesn't make sense to allocate a temporary sink
-    // returns an integer-encoded tuple (decoded number of bytes, character in utf16 encoding, stored as short type)
-    public static int utf8CharDecode(long lo, long hi) {
-        if (lo < hi) {
-            byte b1 = Unsafe.getUnsafe().getByte(lo);
-            if (b1 < 0) {
-                if (b1 >> 5 == -2 && (b1 & 30) != 0 && hi - lo > 1) {
-                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-                    if (isNotContinuation(b2)) {
-                        return 0;
-                    }
-                    return Numbers.encodeLowHighShorts((short) 2, (short) (b1 << 6 ^ b2 ^ 3968));
-                }
-
-                if (b1 >> 4 == -2 && hi - lo > 2) {
-                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-                    byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-                    if (isMalformed3(b1, b2, b3)) {
-                        return 0;
-                    }
-
-                    char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
-                    if (Character.isSurrogate(c)) {
-                        return 0;
-                    }
-                    return Numbers.encodeLowHighShorts((short) 3, (short) c);
-                }
-                return 0;
-            } else {
-                return Numbers.encodeLowHighShorts((short) 1, b1);
-            }
-        }
-        return 0;
     }
 
     private static int utf8Decode2BytesZ(long lo, int b1, CharSink sink) {
@@ -1227,6 +1202,30 @@ public final class Chars {
         }
 
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
+    }
+
+    private static int utf8DecodeMultiByte(ByteSequence seq, int index, int b, CharSinkBase sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return utf8Decode2Bytes(seq, index, b, sink);
+        }
+
+        if (b >> 4 == -2) {
+            return utf8Decode3Bytes(seq, index, b, sink);
+        }
+
+        return utf8Decode4Bytes(seq, index, b, sink);
+    }
+
+    private static int utf8DecodeMultiByteZ(long lo, int b, CharSink sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return utf8Decode2BytesZ(lo, b, sink);
+        }
+
+        if (b >> 4 == -2) {
+            return utf8Decode3BytesZ(lo, b, sink);
+        }
+
+        return utf8Decode4BytesZ(lo, b, sink);
     }
 
     private static int utf8error() {

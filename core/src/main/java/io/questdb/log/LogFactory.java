@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,8 +58,8 @@ public class LogFactory implements Closeable {
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
-    static boolean envEnabled = true;
     private static LogFactory INSTANCE;
+    private static boolean envEnabled = true;
     private static boolean overwriteWithSyncLogging = false;
     private static String rootDir;
     private final MicrosecondClock clock;
@@ -117,6 +117,14 @@ public class LogFactory implements Closeable {
 
     public static void configureSync() {
         overwriteWithSyncLogging = true;
+    }
+
+    public static void disableEnv() {
+        envEnabled = false;
+    }
+
+    public static void enableEnv() {
+        envEnabled = true;
     }
 
     public static synchronized LogFactory getInstance() {
@@ -296,6 +304,11 @@ public class LogFactory implements Closeable {
             }
         }
         startThread();
+    }
+
+    @TestOnly
+    public ObjHashSet<LogWriter> getJobs() {
+        return jobs;
     }
 
     public int getQueueDepth() {
@@ -618,11 +631,6 @@ public class LogFactory implements Closeable {
 
     private void setRecordLength(int recordLength) {
         this.recordLength = recordLength;
-    }
-
-    @TestOnly
-    ObjHashSet<LogWriter> getJobs() {
-        return jobs;
     }
 
     private static class DeferredLogger implements Log {

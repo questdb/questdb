@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -183,6 +183,7 @@ class WalWriterEvents implements Closeable {
                     int symbolCount = 0;
                     for (int j = 0; j < size; j++) {
                         final CharSequence symbol = symbolMap.keys().getQuick(j);
+                        assert symbol != null;
                         final int value = symbolMap.get(symbol);
                         // Ignore symbols cached from symbolMapReader
                         if (value >= initialCount) {
@@ -258,10 +259,11 @@ class WalWriterEvents implements Closeable {
     }
 
     void rollback() {
-        eventMem.jumpTo(startOffset);
-        eventMem.putInt(-1);
+        eventMem.putInt(startOffset, -1);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn - 1);
-        ff.truncate(indexFd, (txn + 1L) << 3);
+        // Do not truncate files, these files may be read by WAL Apply job at the moment.
+        // This is very rare case, WALE will not be written anymore after this call.
+        // Not truncating the files saves from reading complexity.
     }
 
     int truncate() {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         CharSequence kind = kindFunction.getStr(null);
         Function innerFunction = args.getQuick(1);
         if (kind == null) {
-            throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+            throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
         } else if (Chars.equals(kind, "microseconds")) {
             // timestamps are in microseconds internally, there is nothing to truncate
             return innerFunction;
@@ -74,7 +74,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         } else if (Chars.equals(kind, "millennium")) {
             return new TimestampFloorFunctions.TimestampFloorMillenniumFunction(innerFunction);
         } else {
-            throw SqlException.$(argPositions.getQuick(0), "invalid kind '").put(kind).put('\'');
+            throw SqlException.$(argPositions.getQuick(0), "invalid unit '").put(kind).put('\'');
         }
     }
 }

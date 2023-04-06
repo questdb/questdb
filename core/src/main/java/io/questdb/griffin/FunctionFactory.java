@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -88,6 +88,10 @@ public interface FunctionFactory {
      * @return true if the {@link Function} produced by the factory is guaranteed to be constant for a query such that its result does not depend on any {@link Record} in the result set (i.e. now())
      */
     default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    default boolean isWindow() {
         return false;
     }
 

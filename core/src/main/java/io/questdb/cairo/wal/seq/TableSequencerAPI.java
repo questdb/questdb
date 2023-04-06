@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,6 +79,14 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void deregisterTable(final TableToken tableToken) {
+        final TableSequencerEntry tableSequencer = seqRegistry.get(tableToken.getDirName());
+        if (tableSequencer != null && tableSequencer.checkClose()) {
+            LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
+            seqRegistry.remove(tableToken.getDirName(), tableSequencer);
+        }
+    }
+
     public void dropTable(TableToken tableToken, boolean failedCreate) {
         LOG.info().$("dropping wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
@@ -95,7 +103,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void forAllWalTables(ObjList<TableToken> tableTokenBucket, boolean includeDropped, RegisteredTable callback) {
+    public void forAllWalTables(ObjList<TableToken> tableTokenBucket, boolean includeDropped, TableSequencerCallback callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.PATH.get();
@@ -110,7 +118,7 @@ public class TableSequencerAPI implements QuietCloseable {
             boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
             if (engine.isWalTable(tableToken) && !isDropped) {
                 long lastTxn;
-                int tableId;
+                int tableId = tableToken.getTableId();
 
                 try {
                     if (!seqRegistry.containsKey(tableToken.getDirName())) {
@@ -119,7 +127,6 @@ public class TableSequencerAPI implements QuietCloseable {
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        tableId = tableToken.getTableId();
                         int fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
                         lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET); // does not throw
                         ff.close(fdTxn);
@@ -127,23 +134,23 @@ public class TableSequencerAPI implements QuietCloseable {
                         // Slow path.
                         try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
                             lastTxn = tableSequencer.lastTxn();
-                            tableId = tableSequencer.getTableId();
                         }
                     }
                 } catch (CairoException ex) {
-                    LOG.critical().$("could not read WAL table transaction file [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
-                            .$(", error=").$((Throwable) ex).I$();
-                    continue;
-                }
-
-                if (tableId < 0 || lastTxn < 0) {
-                    LOG.critical().$("could not read WAL table metadata [table=").utf8(publicTableName).$(", tableId=").$(tableId)
-                            .$(", lastTxn=").$(lastTxn).I$();
-                    continue;
+                    if (ex.errnoReadPathDoesNotExist() || ex.isTableDropped()) {
+                        // Table is partially dropped, but not fully.
+                        lastTxn = -1;
+                    } else {
+                        LOG.critical().$("could not read WAL table transaction file [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
+                                .$(", error=").$((Throwable) ex).I$();
+                        continue;
+                    }
                 }
 
                 try {
-                    callback.onTable(tableId, tableToken, lastTxn);
+                    if (includeDropped || lastTxn > -1) {
+                        callback.onTable(tableId, tableToken, lastTxn);
+                    }
                 } catch (CairoException ex) {
                     LOG.critical().$("could not process table sequencer [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
                             .$(", error=").$((Throwable) ex).I$();
@@ -265,11 +272,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void registerTable(int tableId, final TableStructure tableStructure, final TableToken tableToken) {
+    public void registerTable(int tableId, final TableDescriptor tableDescriptor, final TableToken tableToken) {
         try (
-                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt1) -> {
-                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tt1);
-                    sequencer.create(tableId, tableStructure);
+                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -> {
+                    final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt);
+                    sequencer.create(tableId, tableDescriptor);
                     sequencer.open();
                     return sequencer;
                 })
@@ -316,7 +323,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
-    public void resumeTable(TableToken tableToken, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
+    public void resumeTable(CairoSecurityContext cairoSecurityContext, TableToken tableToken, long resumeFromTxn) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {
@@ -329,7 +336,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 // resume from the latest on negative value
                 if (resumeFromTxn > 0) {
                     try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableToken, WAL_2_TABLE_RESUME_REASON)) {
-                        long seqTxn = tableWriter.getSeqTxn();
+                        long seqTxn = tableWriter.getAppliedSeqTxn();
                         if (resumeFromTxn - 1 > seqTxn) {
                             // including resumeFromTxn 
                             tableWriter.commitSeqTxn(resumeFromTxn - 1);
@@ -448,7 +455,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @FunctionalInterface
-    public interface RegisteredTable {
+    public interface TableSequencerCallback {
         void onTable(int tableId, final TableToken tableName, long lastTxn);
     }
 

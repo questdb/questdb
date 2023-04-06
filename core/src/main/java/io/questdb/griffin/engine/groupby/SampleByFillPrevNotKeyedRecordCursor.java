@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,6 +60,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
 
     @Override
     public boolean hasNext() {
+        initTimestamps();
+
         if (baseRecord == null) {
             return false;
         }
@@ -70,18 +72,11 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
-            this.sampleLocalEpoch = expectedLocalEpoch;
-            this.nextSampleLocalEpoch = expectedLocalEpoch;
+            sampleLocalEpoch = expectedLocalEpoch;
+            nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
-        return notKeyedLoop(simpleMapValue);
-    }
 
-    @Override
-    public void toTop() {
-        super.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-        }
+        return notKeyedLoop(simpleMapValue);
     }
 }

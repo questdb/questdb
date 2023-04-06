@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -151,6 +151,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public void extend(int newCapacity) {
+        assert newCapacity > capacity;
+        int len = length();
+        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
+        tailPtr = headPtr + len;
+        capacity = newCapacity;
+    }
+
     @Override
     public void flush() {
         $();
@@ -226,10 +234,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public Path put(CharSequence str) {
         int l = str.length();
-        int requiredCapacity = length() + l;
-        if (requiredCapacity > capacity) {
-            extend(requiredCapacity);
-        }
+        checkExtend(l);
         Chars.asciiStrCpy(str, l, tailPtr);
         tailPtr += l;
         return this;
@@ -272,10 +277,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     @Override
     public CharSink put(char[] chars, int start, int len) {
-        int requiredCapacity = length() + len;
-        if (requiredCapacity >= capacity) {
-            extend(requiredCapacity);
-        }
+        checkExtend(len);
         Chars.asciiCopyTo(chars, start, len, tailPtr);
         tailPtr += len;
         return this;
@@ -318,7 +320,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public void toSink(CharSink sink) {
-        Chars.utf8Decode(headPtr, tailPtr, sink);
+        Chars.utf8toUtf16(headPtr, tailPtr, sink);
     }
 
     @Override
@@ -326,7 +328,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public String toString() {
         if (headPtr != 0L) {
             // Don't use Misc.getThreadLocalBuilder() to convert Path to String.
-            // This leads difficulties in debugging / running tests when FilesFacade tracks open files 
+            // This leads difficulties in debugging / running tests when FilesFacade tracks open files
             // when this method called implicitly
             final StringSink b = tlBuilder.get();
             b.clear();
@@ -341,9 +343,35 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    // allocates given buffer at path tail and sets it to 0
+    public void zeroPad(int len) {
+        checkExtend(len);
+        Vect.memset(tailPtr, len, 0);
+    }
+
+    public Path prefix(Path prefix, int prefixLen) {
+        if (prefix != null) {
+            if (prefixLen > 0) {
+                int thisLen = length();
+                checkExtend(thisLen + prefixLen);
+                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
+                Vect.memcpy(headPtr, prefix.address(), prefixLen);
+                tailPtr += prefixLen;
+            }
+        }
+        return this;
+    }
+
     private void checkClosed() {
         if (headPtr == 0L) {
             headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+        }
+    }
+
+    private void checkExtend(int len) {
+        int requiredCapacity = length() + len;
+        if (requiredCapacity > capacity) {
+            extend(requiredCapacity);
         }
     }
 
@@ -351,13 +379,5 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
             Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);
         }
-    }
-
-    void extend(int newCapacity) {
-        assert newCapacity > capacity;
-        int len = length();
-        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
-        tailPtr = headPtr + len;
-        capacity = newCapacity;
     }
 }

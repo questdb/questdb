@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -111,6 +111,16 @@ public class BoolList implements Mutable {
             return buffer[index];
         }
         return NO_ENTRY_VALUE;
+    }
+
+    public int getTrueCount() {
+        int cnt = 0;
+        for (int i = 0, n = pos; i < n; i++) {
+            if (buffer[i]) {
+                cnt++;
+            }
+        }
+        return cnt;
     }
 
     public void insert(int index, boolean element) {

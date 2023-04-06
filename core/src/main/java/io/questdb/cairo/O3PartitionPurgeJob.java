@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -102,7 +103,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
-                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                if (!Chars.startsWith(fileNameSink, WalUtils.WAL_NAME_BASE) && !Chars.equals(fileNameSink, WalUtils.SEQ_DIR)) {
+                    LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }
         } catch (NumericException e) {

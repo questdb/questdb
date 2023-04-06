@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -268,6 +268,26 @@ public class RecordComparatorCompiler {
                     fieldType = "F";
                     getterNameA = "getFloat";
                     comparatorClass = Numbers.class;
+                    break;
+                case ColumnType.GEOBYTE:
+                    fieldType = "B";
+                    getterNameA = "getGeoByte";
+                    comparatorClass = Byte.class;
+                    break;
+                case ColumnType.GEOSHORT:
+                    fieldType = "S";
+                    getterNameA = "getGeoShort";
+                    comparatorClass = Short.class;
+                    break;
+                case ColumnType.GEOINT:
+                    fieldType = "I";
+                    getterNameA = "getGeoInt";
+                    comparatorClass = Integer.class;
+                    break;
+                case ColumnType.GEOLONG:
+                    fieldType = "J";
+                    getterNameA = "getGeoLong";
+                    comparatorClass = Long.class;
                     break;
                 case ColumnType.INT:
                     fieldType = "I";

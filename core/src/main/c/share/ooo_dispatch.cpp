@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -173,7 +173,7 @@ inline TVec lookup_idx8(Vec8uq idx, const T *src) {
 
 template<typename TVec, typename T>
 inline TVec lookup_index(const int64_t i, const index_t *index, const T *src) {
-    Vec8uq row_ind1 = gather8q<1, 3, 5, 7, 9, 11, 13, 15>(index + i + 0);
+    Vec8uq row_ind1 = gather8q<1, 3, 5, 7, 9, 11, 13, 15>(index + i);
     static_assert(TVec::size() == 8);
     return lookup_idx8<TVec, T>(row_ind1, src);
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,9 @@ import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -96,8 +98,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-        this.telemetry = new Telemetry<>(TelemetryTask.TYPE, configuration);
-        this.telemetryWal = new Telemetry<>(TelemetryWalTask.TYPE, configuration);
+        this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
+        this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
             this.tableIdGenerator.open();
@@ -114,19 +116,38 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         // Migrate database files.
         try {
-            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
+            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables;
+        try {
+            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
         } catch (Throwable e) {
             close();
             throw e;
         }
 
         try {
-            this.tableNameRegistry = configuration.isReadOnlyInstance() ?
+            tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            this.tableNameRegistry.reloadTableNameCache();
+            tableNameRegistry.reloadTableNameCache(convertedTables);
         } catch (Throwable e) {
             close();
             throw e;
+        }
+
+        if (convertedTables != null) {
+            final CairoSecurityContext securityContext = configuration.getCairoSecurityContextFactory().getInstance(null);
+            for (int i = 0, n = convertedTables.size(); i < n; i++) {
+                final TableToken token = convertedTables.get(i);
+                try (TableWriter writer = getWriter(securityContext, token, "tableTypeConversion")) {
+                    writer.commitSeqTxn(0);
+                }
+            }
         }
     }
 
@@ -186,18 +207,10 @@ public class CairoEngine implements Closeable, WriterSource {
             if (null == lockedReason) {
                 boolean tableCreated = false;
                 try {
-                    int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
-                    if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
-                        throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
+                    if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
+                        throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
                     }
-                    createTableUnsafe(
-                            securityContext,
-                            mem,
-                            path,
-                            struct,
-                            tableToken,
-                            tableId
-                    );
+                    createTableUnsafe(securityContext, mem, path, struct, tableToken);
                     tableCreated = true;
                 } finally {
                     if (!keepLock) {
@@ -223,34 +236,57 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    // caller has to acquire the lock before this method is called and release the lock after the call
-    public void createTableUnsafe(
+    public void createTableInVolume(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
+            boolean ifNotExists,
             TableStructure struct,
-            TableToken tableToken,
-            int tableId
+            boolean keepLock
     ) {
         securityContext.checkWritePermission();
+        CharSequence tableName = struct.getTableName();
+        validNameOrThrow(tableName);
 
-        // only create the table after it has been registered
-        final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
-        final int mkDirMode = configuration.getMkDirMode();
-        TableUtils.createTable(
-                ff,
-                root,
-                mkDirMode,
-                mem,
-                path,
-                tableToken.getDirName(),
-                struct,
-                ColumnType.VERSION,
-                tableId
-        );
-        if (struct.isWalEnabled()) {
-            tableSequencerAPI.registerTable(tableId, struct, tableToken);
+        int tableId = (int) tableIdGenerator.getNextId();
+        TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
+        if (tableToken == null) {
+            if (ifNotExists) {
+                return;
+            }
+            throw EntryUnavailableException.instance("table exists");
+        }
+
+        try {
+            String lockedReason = lock(securityContext, tableToken, "createTable");
+            if (null == lockedReason) {
+                boolean tableCreated = false;
+                try {
+                    if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
+                        throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
+                    }
+                    createTableInVolumeUnsafe(securityContext, mem, path, struct, tableToken);
+                    tableCreated = true;
+                } finally {
+                    if (!keepLock) {
+                        unlockTableUnsafe(tableToken, null, tableCreated);
+                        LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                    }
+                }
+                tableNameRegistry.registerName(tableToken);
+            } else {
+                if (!ifNotExists) {
+                    throw EntryUnavailableException.instance(lockedReason);
+                }
+            }
+        } catch (Throwable th) {
+            if (struct.isWalEnabled()) {
+                // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
+                tableSequencerAPI.dropTable(tableToken, true);
+            }
+            throw th;
+        } finally {
+            tableNameRegistry.unlockTableName(tableToken);
         }
     }
 
@@ -274,8 +310,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
                     int errno;
-                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                        LOG.error().$("drop failed [tableName='").$(tableToken).$("', error=").$(errno).I$();
+                    if ((errno = configuration.getFilesFacade().unlinkOrRemove(path, LOG)) != 0) {
                         throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
@@ -468,10 +503,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTableToken(dirName, tableId);
     }
 
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
-        return tableNameRegistry.getTokenByDirName(dirName);
-    }
-
     public TableToken getTableTokenIfExists(CharSequence tableName) {
         return tableNameRegistry.getTableToken(tableName);
     }
@@ -496,7 +527,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
 
         if (!tableToken.isWal()) {
-            return writerPool.get(tableToken, lockReason, true);
+            return writerPool.get(tableToken, lockReason);
 
         }
         return walWriterPool.get(tableToken);
@@ -552,7 +583,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         verifyTableToken(tableToken);
-        return writerPool.get(tableToken, lockReason, true);
+        return writerPool.get(tableToken, lockReason);
     }
 
     public TableWriter getWriterOrPublishCommand(
@@ -565,8 +596,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
-    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason, boolean logBusy) {
-        return writerPool.get(tableToken, lockReason, logBusy);
+    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
+        return writerPool.get(tableToken, lockReason);
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -690,7 +721,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void reloadTableNames() {
-        tableNameRegistry.reloadTableNameCache();
+        reloadTableNames(null);
+    }
+
+    @TestOnly
+    public void reloadTableNames(ObjList<TableToken> convertedTables) {
+        tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {
@@ -699,8 +735,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return ff.rmdir(path.slash$());
     }
 
-    public void removeTableToken(TableToken tableName) {
-        tableNameRegistry.purgeToken(tableName);
+    public void removeTableToken(TableToken tableToken) {
+        tableNameRegistry.purgeToken(tableToken);
+        PoolListener listener = getPoolListener();
+        if (listener != null) {
+            listener.onEvent(
+                    PoolListener.SRC_TABLE_REGISTRY,
+                    Thread.currentThread().getId(),
+                    tableToken,
+                    PoolListener.EV_REMOVE_TOKEN,
+                    (short) 0,
+                    (short) 0
+            );
+        }
     }
 
     public TableToken rename(
@@ -759,6 +806,11 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walWriterPool.setPoolListener(poolListener);
     }
 
+    @TestOnly
+    public void setReaderListener(ReaderPool.ReaderListener readerListener) {
+        readerPool.setTableReaderListener(readerListener);
+    }
+
     public void unlock(
             @SuppressWarnings("unused") CairoSecurityContext securityContext,
             TableToken tableToken,
@@ -783,6 +835,50 @@ public class CairoEngine implements Closeable, WriterSource {
         securityContext.checkWritePermission();
         verifyTableToken(tableToken);
         writerPool.unlock(tableToken);
+    }
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
+    private void createTableInVolumeUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+        securityContext.checkWritePermission();
+
+        // only create the table after it has been registered
+        TableUtils.createTableInVolume(
+                configuration.getFilesFacade(),
+                configuration.getRoot(),
+                configuration.getMkDirMode(),
+                mem,
+                path,
+                tableToken.getDirName(),
+                struct,
+                ColumnType.VERSION,
+                tableToken.getTableId()
+        );
+
+        if (struct.isWalEnabled()) {
+            tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
+        }
+    }
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
+    private void createTableUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+        securityContext.checkWritePermission();
+
+        // only create the table after it has been registered
+        TableUtils.createTable(
+                configuration.getFilesFacade(),
+                configuration.getRoot(),
+                configuration.getMkDirMode(),
+                mem,
+                path,
+                tableToken.getDirName(),
+                struct,
+                ColumnType.VERSION,
+                tableToken.getTableId()
+        );
+
+        if (struct.isWalEnabled()) {
+            tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
+        }
     }
 
     private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to) {
@@ -823,7 +919,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         try {
             securityContext.checkWritePermission();
-            writerPool.get(tableToken, "repair", false).close();
+            writerPool.get(tableToken, "repair").close();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
             throw rethrow;

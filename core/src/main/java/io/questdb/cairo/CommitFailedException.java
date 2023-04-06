@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,15 +25,32 @@
 package io.questdb.cairo;
 
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.StringSink;
 
 public class CommitFailedException extends Exception {
     private static final ThreadLocal<CommitFailedException> tlException = new ThreadLocal<>(CommitFailedException::new);
+    protected final StringSink message = new StringSink();
+    private boolean tableDropped;
 
-    public static CommitFailedException instance(Throwable reason) {
+    public static CommitFailedException instance(Throwable reason, boolean tableDropped) {
         CommitFailedException ex = tlException.get();
         assert (ex = new CommitFailedException()) != null;
-        ex.initCause(reason);
+        ex.message.clear();
+        if (!tableDropped) {
+            ex.message.put(reason);
+        } else {
+            ex.message.put("table dropped");
+        }
+        ex.tableDropped = tableDropped;
         return ex;
     }
 
+    @Override
+    public String getMessage() {
+        return message.toString();
+    }
+
+    public boolean isTableDropped() {
+        return tableDropped;
+    }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.std.Unsafe;
 
 public class ColumnUtils {
-    static final int STATIC_COLUMN_COUNT = 32;
+    public static final int STATIC_COLUMN_COUNT = 32;
 
     public static void symbolColumnUpdateKeys(long columnMemory, long columnMemorySize, long remapTableMemory, long remapMemorySize) {
         for (int offset = 0; offset < columnMemorySize; offset += Integer.BYTES) {

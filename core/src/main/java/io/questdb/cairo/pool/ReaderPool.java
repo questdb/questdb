@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,14 +28,21 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     private final MessageBus messageBus;
+    private ReaderListener readerListener;
 
     public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
         super(configuration);
         this.messageBus = messageBus;
+    }
+
+    @TestOnly
+    public void setTableReaderListener(ReaderListener readerListener) {
+        this.readerListener = readerListener;
     }
 
     @Override
@@ -45,19 +52,34 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     @Override
     protected R newTenant(TableToken tableName, Entry<R> entry, int index) {
-        return new R(this, entry, index, tableName, messageBus);
+        return new R(this, entry, index, tableName, messageBus, readerListener);
+    }
+
+    @TestOnly
+    @FunctionalInterface
+    public interface ReaderListener {
+        void onOpenPartition(TableToken tableToken, int partitionIndex);
     }
 
     public static class R extends TableReader implements PoolTenant {
         private final int index;
+        private final ReaderListener readerListener;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
 
-        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, TableToken tableToken, MessageBus messageBus) {
+        public R(
+                AbstractMultiTenantPool<R> pool,
+                Entry<R> entry,
+                int index,
+                TableToken tableToken,
+                MessageBus messageBus,
+                ReaderListener readerListener
+        ) {
             super(pool.getConfiguration(), tableToken, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
+            this.readerListener = readerListener;
         }
 
         @Override
@@ -88,6 +110,14 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         public void goodbye() {
             entry = null;
             pool = null;
+        }
+
+        @Override
+        public long openPartition(int partitionIndex) {
+            if (readerListener != null) {
+                readerListener.onOpenPartition(getTableToken(), partitionIndex);
+            }
+            return super.openPartition(partitionIndex);
         }
 
         @Override

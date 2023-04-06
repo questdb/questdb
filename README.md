@@ -27,8 +27,8 @@ API for bulk imports and exports.
 QuestDB is well suited for financial market data, application metrics, sensor
 data, real-time analytics, dashboards, and infrastructure monitoring.
 
-QuestDB implements ANSI SQL with native time-series SQL semantics. These SQL
-semantics make it simple to correlate data from multiple sources using
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
+extensions make it simple to correlate data from multiple sources using
 relational and time-series joins. We achieve high performance by adopting a
 column-oriented storage model, parallelized vector execution, SIMD instructions,
 and low-latency techniques. The entire codebase is built from the ground up in
@@ -36,7 +36,7 @@ Java and C++, with no dependencies and zero garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img alt="QuestDB Web Console showing s SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="800" />
   </a>
 </div>
 
@@ -46,7 +46,7 @@ We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
-- Trades: live crytocurrency market data with 30M+ rows per month
+- Trades: live crypto market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
@@ -116,11 +116,10 @@ functionality, maturity and performance.
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
+results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB RAM:
 
 <div align="center">
-  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
   </a>
 </div>
 

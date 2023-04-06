@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,6 +63,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean readLink(Path softLink, Path readTo) {
+        return Files.readLink(softLink, readTo);
+    }
+
+    @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
     }
@@ -70,6 +75,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
         return Files.copyData(srcFd, destFd, offsetSrc, length);
+    }
+
+    @Override
+    public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+        return Files.copyDataToOffset(srcFd, destFd, offsetSrc, destOffset, length);
     }
 
     @Override
@@ -141,8 +151,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getDiskSize(LPSZ path) {
-        return Files.getDiskSize(path);
+    public long getDirSize(Path path) {
+        return Files.getDirSize(path);
+    }
+
+    @Override
+    public long getDiskFreeSpace(LPSZ path) {
+        return Files.getDiskFreeSpace(path);
     }
 
     @Override
@@ -181,6 +196,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return Os.isPosix() && errno == 18;
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDir(LPSZ path) {
+        return Files.isDirOrSoftLinkDir(path);
     }
 
     @Override
@@ -393,26 +413,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     public void walk(Path path, FindVisitor func) {
-        int len = path.length();
-        long p = findFirst(path);
-        if (p > 0) {
-            try {
-                do {
-                    long name = findName(p);
-                    if (Files.notDots(name)) {
-                        int type = findType(p);
-                        path.trimTo(len);
-                        if (type == Files.DT_FILE) {
-                            func.onFind(name, type);
-                        } else {
-                            walk(path.concat(name).$(), func);
-                        }
-                    }
-                } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-            }
-        }
+        Files.walk(path, func);
     }
 
     @Override

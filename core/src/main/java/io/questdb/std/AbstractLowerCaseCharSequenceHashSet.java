@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,6 +58,14 @@ abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
 
     public boolean excludes(CharSequence key, int lo, int hi) {
         return keyIndex(key, lo, hi) > -1;
+    }
+
+    public CharSequence getKey(int index) {
+        return keys[index];
+    }
+
+    public int getKeyCount() {
+        return keys.length;
     }
 
     public int keyIndex(CharSequence key) {

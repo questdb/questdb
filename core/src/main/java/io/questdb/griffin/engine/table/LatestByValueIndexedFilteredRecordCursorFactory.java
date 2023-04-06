@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
+        cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
         this.filter = filter;
     }
 
@@ -69,8 +69,10 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
-            throws SqlException {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         cursor.of(dataFrameCursor, executionContext);
         return cursor;
     }
