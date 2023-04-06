@@ -981,7 +981,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             node1.getConfigurationOverrides().setWalApplyTableTimeQuote(0);
             runApplyOnce();
 
-            TableToken token = engine.getTableToken(tableName);
+            TableToken token = engine.verifyTableName(tableName);
             try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
                 txReader.ofRO(Path.getThreadLocal(root).concat(token).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                 txReader.unsafeLoadAll();

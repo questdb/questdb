@@ -35,20 +35,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class O3MaxLagTest extends AbstractO3Test {
-    private RecordToRowCopier copier;
 
-    @Before
-    public void clearRecordToRowCopier() {
-        copier = null;
-    }
     private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
 
     @Test

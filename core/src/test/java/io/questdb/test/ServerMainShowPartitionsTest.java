@@ -44,7 +44,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -59,8 +58,7 @@ import static io.questdb.test.AbstractCairoTest.sink;
 import static io.questdb.test.AbstractGriffinTest.assertCursor;
 import static io.questdb.test.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
 import static io.questdb.test.griffin.ShowPartitionsTest.testTableName;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
-import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
+import static io.questdb.test.tools.TestUtils.*;
 
 @RunWith(Parameterized.class)
 public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
@@ -118,7 +116,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
                     SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext defaultContext = executionContext(qdb.getCairoEngine())
+                    SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getCairoEngine())
             ) {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();
@@ -138,7 +136,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine());
                     compilers.add(compiler);
                     contexts.add(context);
                     new Thread(() -> {
@@ -154,7 +152,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
                     TestListener.dumpThreadStacks();
                 }
-                dropTable(defaultCompiler, defaultContext, tableToken, isWal);
+                dropTable(defaultCompiler, defaultContext, tableToken);
                 for (int i = 0; i < numThreads; i++) {
                     compilers.get(i).close();
                     contexts.get(i).close();
@@ -168,21 +166,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
-        long time = System.currentTimeMillis();
-        while (true) {
-            try {
-                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
-                        "1000000\n");
-                break;
-            } catch (AssertionError e) {
-                if (System.currentTimeMillis() - time > 5000) {
-                    throw e;
-                }
-            }
-        }
     }
 
     private static void assertShowPartitions(
@@ -205,6 +188,21 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 cursor0.toTop();
                 assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
                 cursor1.toTop();
+            }
+        }
+    }
+
+    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
+        long time = System.currentTimeMillis();
+        while (true) {
+            try {
+                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
+                        "1000000\n");
+                break;
+            } catch (AssertionError e) {
+                if (System.currentTimeMillis() - time > 5000) {
+                    throw e;
+                }
             }
         }
     }

@@ -45,7 +45,6 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.sql.*;
@@ -119,15 +118,15 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
                 assertTableExists(tableToken, false, true);
                 createPopulateTable(engine, compiler, context, tableName, false, true, true);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
 
                 // create non wal table in standard dir, and drop it
                 tableToken = createPopulateTable(engine, compiler, context, tableName, false, false, false);
                 assertTableExists(tableToken, false, false);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
 
                 try {
-                    dropTable(compiler, context, tableToken, false);
+                    dropTable(compiler, context, tableToken);
                     Assert.fail();
                 } catch (SqlException err) {
                     TestUtils.assertContains(err.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
@@ -158,7 +157,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, false, false);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
 
                 // create normal table in other volume, then drop it
                 tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
@@ -169,7 +168,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, false, true);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -239,7 +238,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getCairoEngine();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 assertTableExists(tableToken, false, true);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -303,9 +302,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
                                     compiler0,
                                     context0,
-                                    engine.verifyTableName(tableName),
-                                    false
-                                    );
+                                    engine.verifyTableName(tableName)
+                            );
                         }
                     }
                 }
@@ -329,11 +327,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
 
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, true);
                 assertTableExists(tableToken, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -369,7 +367,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         }
                     }
                 }
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -394,7 +392,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, false);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
 
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 try {
@@ -404,7 +402,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -429,7 +427,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
 
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, false, false);
                 try {
@@ -439,7 +437,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, false);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -502,9 +500,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
                                     compiler0,
                                     context0,
-                                    engine.verifyTableName(tableName),
-                                    true
-                                    );
+                                    engine.verifyTableName(tableName)
+                            );
                         }
                     }
                 }
@@ -577,18 +574,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private static void createSoftLink(String foreignPath, String tablePath) throws IOException {
         java.nio.file.Files.createSymbolicLink(Paths.get(tablePath), Paths.get(foreignPath));
-    }
-
-    private static void deleteFolder(String folderName) {
-        File directory = Paths.get(folderName).toFile();
-        if (directory.exists() && directory.isDirectory()) {
-            try (Path path = new Path().of(folderName).$()) {
-                Files.rmdir(path);
-            }
-            Assert.assertFalse(directory.exists());
-        } else {
-            Assert.fail("does not exist: " + folderName);
-        }
     }
 
     private Thread concurrentTableCreator(
@@ -666,32 +651,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             compiler.compile(insert, context);
         }
         return engine.verifyTableName(tableName);
-    }
-
-    private TableToken createTable(CairoConfiguration cairoConfig, CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
-        return createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, false, false);
-    }
-
-    private TableToken createTableInVolume(CairoConfiguration cairoConfig, CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
-        return createPopulateTable(cairoConfig, engine, compiler, context, tableName, false, true, false);
-    }
-
-    private void dropTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken, boolean isInVolume) throws Exception {
-        dropTable(engine, compiler, context, tableToken, false, isInVolume);
-    }
-
-    private void dropTable(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken, boolean isWal, boolean isInVolume) throws Exception {
-        try (OperationFuture op = compiler.compile("DROP TABLE " + tableToken.getTableName(), context).execute(null)) {
-            op.await();
-        }
-        if (isWal) {
-            drainWalQueue(engine);
-        }
-        if (isInVolume) {
-            // drop simply unlinks, the folder remains, it is a feature
-            // delete the table's folder in the other volume
-            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName());
-        }
     }
 
     static {
