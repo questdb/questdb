@@ -308,7 +308,7 @@ public class JsonLexer implements Mutable, Closeable {
     private CharSequence getCharSequence(long lo, long hi, int position) throws JsonException {
         sink.clear();
         if (cacheSize == 0) {
-            if (!Chars.utf8Decode(lo, hi - 1, sink)) {
+            if (!Chars.utf8toUtf16(lo, hi - 1, sink)) {
                 throw unsupportedEncoding(position);
             }
         } else {
