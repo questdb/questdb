@@ -239,6 +239,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // The context is about to be returned to the pool, so we should release the memory.
             recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             responseSink.close();
+            securityContext = DenyAllCairoSecurityContext.INSTANCE;
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
