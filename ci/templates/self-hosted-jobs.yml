@@ -29,10 +29,4 @@ jobs:
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     steps:
-    - bash: |
-        echo "Test"
-        uname -a
-        pwd
-        ls -la 
-      displayName: "Test"
-
+      - template: steps.yml
