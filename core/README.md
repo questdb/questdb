@@ -239,4 +239,4 @@ You can mount host directories using `-v` option, e.g.
 For more details, see the
 [official Docker documentation](https://questdb.io/docs/get-started/docker) for
 working with QuestDB.
-<!-- (╯°□°）╯︵ ┻━┻ -->
+<!-- (╯°□°）╯︵ ┻━━━┻ -->
