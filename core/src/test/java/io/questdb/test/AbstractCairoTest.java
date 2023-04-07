@@ -196,7 +196,7 @@ public abstract class AbstractCairoTest {
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
-        LOG.info().$("begin ").$();
+        LOG.info().$("begin").$();
 
         node1 = newNode(1, "dbRoot", new StaticOverrides());
         root = node1.getRoot();
