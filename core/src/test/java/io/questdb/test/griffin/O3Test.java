@@ -1037,14 +1037,16 @@ public class O3Test extends AbstractO3Test {
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
                     TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
 
-                    // Check that there was an attempt to write a file bigger than 2GB
-                    long max = 0;
-                    for (Long wLen : writeLen) {
-                        if (wLen > max) {
-                            max = wLen;
+                    if (engine.getConfiguration().isWriterMixedIOEnabled()) {
+                        // Check that there was an attempt to write a file bigger than 2GB
+                        long max = 0;
+                        for (Long wLen : writeLen) {
+                            if (wLen > max) {
+                                max = wLen;
+                            }
                         }
+                        Assert.assertTrue(max > (2L << 30));
                     }
-                    Assert.assertTrue(max > (2L << 30));
 
                     TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
                             strColVal + "\t2022-02-24T00:51:43.301000Z\n" +

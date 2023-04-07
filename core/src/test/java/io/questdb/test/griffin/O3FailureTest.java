@@ -35,13 +35,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -137,7 +137,6 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
     private static final FilesFacade ffIndexAllocateFailure = new TestFilesFacadeImpl() {
-
         boolean failNextAlloc = false;
         int theFd = 0;
 
@@ -662,6 +661,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFixedColumnCopyPrefixFails() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeTrue(Files.allowMixedIO(root));
 
         int storageLength = 8;
         long records = 500;
@@ -1128,6 +1128,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testVarColumnCopyPrefixFails() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeTrue(Files.allowMixedIO(root));
 
         String strColVal = "[srcDataMax=165250000]";
         int storageLength = getStorageLength(strColVal);
