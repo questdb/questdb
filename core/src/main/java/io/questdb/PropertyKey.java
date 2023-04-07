@@ -125,6 +125,7 @@ public enum PropertyKey {
     CAIRO_SQL_JIT_ROWS_THRESHOLD("cairo.sql.jit.rows.threshold"),
     CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD("cairo.sql.jit.page.address.cache.threshold"),
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
+    CAIRO_WRITER_MIXED_IO_ENABLED("cairo.writer.mixed.io.enabled"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),
     CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),

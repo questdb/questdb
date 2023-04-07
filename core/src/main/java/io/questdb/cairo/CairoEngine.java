@@ -80,7 +80,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
 
-
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
@@ -93,7 +92,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.metrics = metrics;
         this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
         this.messageBus = new MessageBusImpl(configuration);
-        this.writerPool = new WriterPool(this.getConfiguration(), this.getMessageBus(), metrics);
+        this.writerPool = new WriterPool(configuration, this.getMessageBus(), metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);

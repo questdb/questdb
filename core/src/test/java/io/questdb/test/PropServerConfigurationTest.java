@@ -208,6 +208,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
+        Assert.assertEquals(Files.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
         Assert.assertTrue(configuration.getCairoConfiguration().isIOURingEnabled());
 
@@ -1002,6 +1003,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
             Assert.assertEquals(7770001, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
             Assert.assertEquals(15, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
+            Assert.assertFalse(configuration.getCairoConfiguration().isWriterMixedIOEnabled());
             Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getCairoConfiguration().getWriterFileOpenOpts());
             Assert.assertFalse(configuration.getCairoConfiguration().isIOURingEnabled());
 

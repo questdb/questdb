@@ -1010,6 +1010,8 @@ public class FilesTest {
 
     @Test
     public void testWriteConcurrent() throws Exception {
+        Assume.assumeTrue(Files.allowMixedIO(temporaryFolder.getRoot().getAbsolutePath()));
+
         final FilesFacade ff = FilesFacadeImpl.INSTANCE;
         File file = temporaryFolder.newFile();
         final int fileSize = 2 * 1024 * 1024; // in MB

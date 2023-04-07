@@ -59,6 +59,7 @@ public final class Files {
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
+    private static final long ZFS_MAGIC_NUMBER = 0x2FC12FC1;
     static IntHashSet openFds;
 
     private Files() {
@@ -66,6 +67,24 @@ public final class Files {
     }
 
     public native static boolean allocate(int fd, long size);
+
+    /**
+     * Returns whether table writer should mix mmap-based writes with pwrite() in O3 tasks.
+     * <p>
+     * In particular, returns false for ZFS as there is a known issue: <a href="https://github.com/openzfs/zfs/issues/14548">...</a>
+     */
+    public static boolean allowMixedIO(CharSequence root) {
+        if (root == null || Os.isWindows()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ(); // useful for debugging
+            return fsStatus != ZFS_MAGIC_NUMBER;
+        }
+    }
 
     public native static long append(int fd, long address, long len);
 

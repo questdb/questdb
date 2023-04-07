@@ -941,6 +941,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWriterMixedIOEnabled() {
+        return conf.isWriterMixedIOEnabled();
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return conf.mangleTableDirNames();
     }

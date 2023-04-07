@@ -306,6 +306,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
+    private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
     private int connectionPoolInitialCapacity;
@@ -496,6 +497,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
+
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
@@ -861,6 +863,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD, 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
 
+            boolean mixedIOEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WRITER_MIXED_IO_ENABLED, true);
+            this.writerMixedIOEnabled = mixedIOEnabled && Files.allowMixedIO(this.root);
+
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
             long lopts = CairoConfiguration.O_NONE;
             String[] opts = value.split("\\|");
@@ -870,7 +875,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lopts |= WRITE_FO_OPTS.valueAt(index);
                 }
             }
-            writerFileOpenOpts = lopts;
+            this.writerFileOpenOpts = lopts;
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -2402,6 +2407,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public boolean isWalSupported() {
             return walSupported;
+        }
+
+        @Override
+        public boolean isWriterMixedIOEnabled() {
+            return writerMixedIOEnabled;
         }
 
         @Override
