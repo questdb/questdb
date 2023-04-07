@@ -265,7 +265,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        LOG.info().$("begin setUpStatic ").$(Thread.currentThread().getId()).$();
         AbstractCairoTest.setUpStatic();
         node1.initGriffin(circuitBreaker);
         compiler = node1.getSqlCompiler();
@@ -278,13 +277,11 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         AbstractCairoTest.tearDownStatic();
         forEachNode(QuestDBTestNode::closeGriffin);
         circuitBreaker = null;
-        LOG.info().$("end tearDownStatic ").$(Thread.currentThread().getId()).$();
     }
 
     @Override
     @Before
     public void setUp() {
-        LOG.info().$("begin setUp ").$(Thread.currentThread().getId()).$();
         super.setUp();
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
@@ -293,7 +290,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @Override
     @After
     public void tearDown() {
-        LOG.info().$("end tearDown ").$(Thread.currentThread().getId()).$();
         super.tearDown();
         forEachNode(QuestDBTestNode::tearDownGriffin);
     }

@@ -115,7 +115,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
-        random = new Rnd(1680624884988L, 122665451528357L); //new Rnd(s0, s1);
+        random = new Rnd(s0, s1);
         getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
     }
 
@@ -184,13 +184,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 int timestampIndex = reader.getMetadata().getTimestampIndex();
                 if (cursor.hasNext()) {
                     long dataMinTs = cursor.getRecord().getLong(timestampIndex);
-                    if (dataMinTs != txnMinTs) {
-                        System.out.println("...");
-                    }
                     Assert.assertEquals(dataMinTs, txnMinTs);
                     cursor.toTop();
                 }
-                //assertCursorTwoPass(expected, cursor, metadata);
+                assertCursorTwoPass(expected, cursor, metadata);
             } else {
                 try (
                         SqlCompiler compiler = new SqlCompiler(engine);
