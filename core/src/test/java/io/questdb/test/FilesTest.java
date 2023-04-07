@@ -1009,6 +1009,68 @@ public class FilesTest {
     }
 
     @Test
+    public void testWriteConcurrent() throws Exception {
+        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        File file = temporaryFolder.newFile();
+        final int fileSize = 2 * 1024 * 1024; // in MB
+        final long valueInMem = 42;
+
+        AtomicInteger errors = new AtomicInteger();
+
+        long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().putLong(srcMem, valueInMem);
+
+        int fd = -1;
+        long mmapMem = 0;
+        try (Path dstPath = new Path().of(file.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(dstPath));
+            fd = Files.openRW(dstPath);
+            mmapMem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+            Files.fadvise(fd, 0, fileSize, Files.POSIX_FADV_RANDOM);
+
+            final int finalFd = fd;
+            long finalMmapMem = mmapMem;
+            Thread th1 = new Thread(() -> {
+                for (long offset = 0; offset < fileSize; offset += 2 * Long.BYTES) {
+                    long res = Files.write(finalFd, srcMem, Long.BYTES, offset);
+                    if (res < 0) {
+                        errors.incrementAndGet();
+                        break;
+                    }
+                    long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
+                    if (valueInMem != valueOnDisk) {
+                        System.out.println("ff.write: different values [offset=" + offset + ", valueInMem=" + valueInMem + ", valueOnDisk=" + valueOnDisk + "]");
+                        errors.incrementAndGet();
+                        break;
+                    }
+                }
+            });
+            Thread th2 = new Thread(() -> {
+                for (long offset = Long.BYTES; offset < fileSize; offset += 2 * Long.BYTES) {
+                    Unsafe.getUnsafe().putLong(finalMmapMem + offset, valueInMem);
+                    long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
+                    if (valueInMem != valueOnDisk) {
+                        System.out.println("mmap: different values [offset=" + offset + ", valueInMem=" + valueInMem + ", valueOnDisk=" + valueOnDisk + "]");
+                        errors.incrementAndGet();
+                        break;
+                    }
+                }
+            });
+
+            th1.start();
+            th2.start();
+            th1.join();
+            th2.join();
+
+            Assert.assertEquals(0, errors.get());
+        } finally {
+            Files.close(fd);
+            Unsafe.free(srcMem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.munmap(mmapMem, fileSize, MemoryTag.MMAP_DEFAULT);
+        }
+    }
+
+    @Test
     public void testWriteFails() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
@@ -1072,7 +1134,6 @@ public class FilesTest {
 
                     long long2 = Files.readNonNegativeLong(fd2, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
-
                 } finally {
                     // Release mem, fd
                     Files.close(fd1);
