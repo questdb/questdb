@@ -77,7 +77,7 @@ public class IsoWeekPartitionFormat implements DateFormat {
         long baseTs = WEEK_FORMAT.parse(in, lo, lo + 8, locale);
         lo += 8;
         if (lo < hi) {
-            return PartitionDateParseUtil.parseDayTime(in, lo, hi, baseTs, 7);
+            return PartitionDateParseUtil.parseDayTime(in, hi, lo, baseTs, 7, 1);
         }
         return baseTs;
     }

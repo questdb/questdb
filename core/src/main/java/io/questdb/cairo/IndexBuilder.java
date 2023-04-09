@@ -130,42 +130,47 @@ public class IndexBuilder extends RebuildColumnBase {
             int partitionBy,
             int indexValueBlockCapacity
     ) {
+        final int trimTo = path.length();
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
-        final int plen = path.length();
+        try {
+            final int plen = path.length();
 
-        if (ff.exists(path.$())) {
-            try (final MemoryMR roMem = indexMem) {
-                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
-                removeIndexFiles(columnName, columnNameTxn);
-                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+            if (ff.exists(path.$())) {
+                try (final MemoryMR roMem = indexMem) {
+                    long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+                    removeIndexFiles(columnName, columnNameTxn);
+                    TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
-                if (columnTop > -1L) {
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
+                    if (columnTop > -1L) {
 
-                    if (partitionSize > columnTop) {
-                        LOG.info().$("indexing [path=").utf8(path).I$();
-                        createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);
-                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                        roMem.of(
-                                ff,
-                                path,
-                                0,
-                                (partitionSize - columnTop) * Integer.BYTES,
-                                MemoryTag.MMAP_TABLE_WRITER
-                        );
-                        try {
-                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                            indexer.index(roMem, columnTop, partitionSize);
-                        } finally {
-                            indexer.clear();
+                        if (partitionSize > columnTop) {
+                            LOG.info().$("indexing [path=").utf8(path).I$();
+                            createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);
+                            TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+                            roMem.of(
+                                    ff,
+                                    path,
+                                    0,
+                                    (partitionSize - columnTop) * Integer.BYTES,
+                                    MemoryTag.MMAP_TABLE_WRITER
+                            );
+                            try {
+                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                                indexer.index(roMem, columnTop, partitionSize);
+                            } finally {
+                                indexer.clear();
+                            }
                         }
+                    } else {
+                        LOG.info().$("column is empty in partition [path=").$(path).I$();
                     }
-                } else {
-                    LOG.info().$("column is empty in partition [path=").$(path).I$();
                 }
+            } else {
+                LOG.info().$("partition does not exist [path=").$(path).I$();
             }
-        } else {
-            LOG.info().$("partition does not exist [path=").$(path).I$();
+        } finally {
+            path.trimTo(trimTo);
         }
     }
 

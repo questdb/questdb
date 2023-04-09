@@ -553,7 +553,7 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
     }
 
-    protected long getPartitionFloor(long timestamp) {
+    private long getPartitionFloor(long timestamp) {
         return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 

@@ -174,8 +174,11 @@ public final class PartitionBy {
     }
 
     public static long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy) {
+        return parsePartitionDirName(partitionName, partitionBy, 0, partitionName.length());
+    }
+
+    public static long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi) {
         CharSequence fmtStr;
-        int limit = -1;
         try {
             DateFormat fmtMethod;
             switch (partitionBy) {
@@ -206,24 +209,17 @@ public final class PartitionBy {
                 default:
                     throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
             }
-            limit = fmtStr.length();
-            if (partitionName.length() < limit) {
-                throw expectedPartitionDirNameFormatCairoException(partitionName, partitionName.length(), partitionBy);
+            int limit = fmtStr.length();
+            if (hi < 0) {
+                // Automatic partition name trimming.
+                hi = lo + limit;
             }
-            return fmtMethod.parse(partitionName, null);
+            if (hi - lo < limit) {
+                throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
+            }
+            return fmtMethod.parse(partitionName, lo, hi, null);
         } catch (NumericException e) {
-            if (partitionBy == PartitionBy.WEEK) {
-                // maybe the user used a timestamp, or a date, string.
-                int localLimit = DAY_PATTERN.length();
-                try {
-                    // trim to lowest precision needed and get the timestamp
-                    // convert timestamp to first day of the week
-                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, null));
-                } catch (NumericException ignore) {
-                    throw expectedPartitionDirNameFormatCairoException(partitionName, Math.min(partitionName.length(), localLimit), partitionBy);
-                }
-            }
-            throw expectedPartitionDirNameFormatCairoException(partitionName, limit, partitionBy);
+            throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
         }
     }
 
@@ -254,7 +250,7 @@ public final class PartitionBy {
         }
     }
 
-    private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int limit, int partitionBy) {
+    private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
         final CairoException ee = CairoException.critical(0).put('\'');
         switch (partitionBy) {
             case DAY:
@@ -273,7 +269,7 @@ public final class PartitionBy {
                 ee.put(HOUR_PATTERN);
                 break;
         }
-        ee.put("' expected, found [ts=").put(partitionName.subSequence(0, limit)).put(']');
+        ee.put("' expected, found [ts=").put(partitionName.subSequence(lo, hi)).put(']');
         return ee;
     }
 

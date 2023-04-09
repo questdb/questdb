@@ -30,9 +30,9 @@ import io.questdb.std.datetime.microtime.Timestamps;
 
 public class PartitionDateParseUtil {
 
-    public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange) throws NumericException {
+    public static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits) throws NumericException {
         checkChar(seq, pos++, lim, '-');
-        int day = Numbers.parseInt(seq, pos, pos += 2);
+        int day = Numbers.parseInt(seq, pos, pos += dayDigits);
         checkRange(day, 1, dayRange);
         if (checkLen(pos, lim)) {
             checkChar(seq, pos++, lim, 'T');
@@ -110,7 +110,7 @@ public class PartitionDateParseUtil {
             if (checkLen(p, lim)) {
                 int dayRange = Timestamps.getDaysPerMonth(month, l);
                 ts = Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l);
-                ts = parseDayTime(seq, lim, p, ts, dayRange);
+                ts = parseDayTime(seq, lim, p, ts, dayRange, 2);
             } else {
                 // year + month
                 ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));

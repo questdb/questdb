@@ -129,7 +129,6 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Before
     public void setUp4() {
         partitionO3SplitThreshold = 1000;
-//        partitionO3SplitThreshold = -1;
         Vect.resetPerformanceCounters();
     }
 

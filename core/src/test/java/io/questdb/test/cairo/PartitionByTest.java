@@ -242,8 +242,20 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testDirectoryParseFailureByMonth() {
-        assertParseFailure("'yyyy-MM' expected, found [ts=2013-0-]", "2013-0-12", PartitionBy.MONTH);
+    public void testCeilWeekBeforeAndAfterEpoch() {
+        long start = -366 * Timestamps.DAY_MICROS;
+        for (int i = 0; i < 2 * 366; i++) {
+            long timestamp = start + i * Timestamps.DAY_MICROS;
+            String date = Timestamps.toString(timestamp);
+
+            long ceil = PartitionBy.getPartitionCeilMethod(PartitionBy.WEEK).ceil(timestamp);
+            String ceilDate = Timestamps.toString(ceil);
+            String message = "ceil(" + date + ")=" + ceilDate;
+
+            Assert.assertEquals(message, 1, Timestamps.getDayOfWeek(ceil));
+            Assert.assertTrue(message, ceil > timestamp);
+            Assert.assertTrue(message, ceil <= timestamp + Timestamps.WEEK_MICROS);
+        }
     }
 
     @Test
@@ -252,8 +264,8 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testDirectoryParseFailureByYear() {
-        assertParseFailure("'yyyy' expected, found [ts=201-]", "201-03-12", PartitionBy.YEAR);
+    public void testDirectoryParseFailureByMonth() {
+        assertParseFailure("'yyyy-MM' expected, found [ts=2013-0-12]", "2013-0-12", PartitionBy.MONTH);
     }
 
     @Test
@@ -334,6 +346,37 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testDirectoryParseFailureByYear() {
+        assertParseFailure("'yyyy' expected, found [ts=201-03-12]", "201-03-12", PartitionBy.YEAR);
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    @Test
+    public void testFloorWeek() {
+        long floor1 = PartitionBy.getPartitionFloorMethod(PartitionBy.WEEK).floor(0);
+        long floor2 = PartitionBy.getPartitionFloorMethod(PartitionBy.WEEK).floor(floor1);
+        Assert.assertEquals(floor1, floor2);
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    @Test
+    public void testFloorWeekBeforeAndAfterEpoch() {
+        long start = -366 * Timestamps.DAY_MICROS;
+        for (int i = 0; i < 2 * 366; i++) {
+            long timestamp = start + i * Timestamps.DAY_MICROS;
+            String date = Timestamps.toString(timestamp);
+
+            long floor = PartitionBy.getPartitionFloorMethod(PartitionBy.WEEK).floor(timestamp);
+            String floorDate = Timestamps.toString(floor);
+            String message = "floor(" + date + ")=" + floorDate;
+
+            Assert.assertEquals(message, 1, Timestamps.getDayOfWeek(floor));
+            Assert.assertTrue(message, floor <= timestamp);
+            Assert.assertTrue(message, floor + Timestamps.WEEK_MICROS > timestamp);
+        }
+    }
+
+    @Test
     public void testPartitionDayToWeekForWholeYear() throws NumericException {
         final DateFormat weekFormat = PartitionBy.getPartitionDirFormatMethod(PartitionBy.WEEK);
         final DateFormat dayFormat = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
@@ -369,12 +412,12 @@ public class PartitionByTest {
                 sink.clear();
                 weekFormat.format(timestamp, TimestampFormatUtils.enLocale, null, sink);
                 String weekFormatted = sink.toString();
-                Assert.assertEquals(expectedWeekFormatted, weekFormatted);
+                Assert.assertEquals(expectedWeekFormatted, weekFormatted.substring(0, 8));
 
                 // assert that regardless of the format, when partitioned by week the timestamp
                 // is the same, ie. the first day of the week
                 long weekTs = PartitionBy.parsePartitionDirName(weekFormatted, PartitionBy.WEEK);
-                long dayTs = PartitionBy.parsePartitionDirName(dayFormatted, PartitionBy.WEEK);
+                long dayTs = PartitionBy.parsePartitionDirName(dayFormatted, PartitionBy.DAY);
                 Assert.assertEquals(weekTs, dayTs);
             }
         }
@@ -421,7 +464,7 @@ public class PartitionByTest {
     @Test
     public void testSetPathByWeek() throws NumericException {
         setSetPath(
-                "a/b/2020-W53",
+                "a/b/2020-W53-5",
                 "2021-01-01T00:00:00.000000Z",
                 PartitionBy.WEEK
         );
@@ -466,7 +509,7 @@ public class PartitionByTest {
     @Test
     public void testSetPathNoCalcByWeek() throws NumericException {
         setSetPathNoCalc(
-                "a/b/2020-W53",
+                "a/b/2020-W53-5",
                 "2021-01-01T00:00:00.000000Z",
                 PartitionBy.WEEK
         );

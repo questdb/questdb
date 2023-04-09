@@ -221,7 +221,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
                 long timestamp = tableTxReader.getPartitionTimestamp(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
-                TableUtils.setSinkForPartition(partitionName, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
+                PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
+                TableUtils.setPathForPartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
@@ -257,7 +258,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     }
                                     detachedTxReader.ofRO(path, partitionBy);
                                     detachedTxReader.unsafeLoadAll();
-                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+                                    int length = partitionName.indexOf(".");
+                                    if (length < 0) {
+                                        length = partitionName.length();
+                                    }
+                                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, length);
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);
