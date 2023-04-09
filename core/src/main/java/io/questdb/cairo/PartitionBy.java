@@ -212,13 +212,24 @@ public final class PartitionBy {
             int limit = fmtStr.length();
             if (hi < 0) {
                 // Automatic partition name trimming.
-                hi = lo + limit;
+                hi = lo + Math.min(limit, partitionName.length());
             }
             if (hi - lo < limit) {
                 throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
             }
             return fmtMethod.parse(partitionName, lo, hi, null);
         } catch (NumericException e) {
+            if (partitionBy == PartitionBy.WEEK) {
+                // maybe the user used a timestamp, or a date, string.
+                int localLimit = DAY_PATTERN.length();
+                try {
+                    // trim to lowest precision needed and get the timestamp
+                    // convert timestamp to first day of the week
+                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, null));
+                } catch (NumericException ignore) {
+                    throw expectedPartitionDirNameFormatCairoException(partitionName, 0, Math.min(partitionName.length(), localLimit), partitionBy);
+                }
+            }
             throw expectedPartitionDirNameFormatCairoException(partitionName, lo, hi, partitionBy);
         }
     }
