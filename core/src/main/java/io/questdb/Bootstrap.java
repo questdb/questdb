@@ -501,7 +501,7 @@ public class Bootstrap {
         long fsStatus = Files.getFileSystemStatus(path);
         path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
-        if (fsStatus < 0) {
+        if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.OSX_ARM64)) {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
         } else {
             rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();

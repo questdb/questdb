@@ -735,8 +735,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return ff.rmdir(path.slash$());
     }
 
-    public void removeTableToken(TableToken tableName) {
-        tableNameRegistry.purgeToken(tableName);
+    public void removeTableToken(TableToken tableToken) {
+        tableNameRegistry.purgeToken(tableToken);
+        PoolListener listener = getPoolListener();
+        if (listener != null) {
+            listener.onEvent(
+                    PoolListener.SRC_TABLE_REGISTRY,
+                    Thread.currentThread().getId(),
+                    tableToken,
+                    PoolListener.EV_REMOVE_TOKEN,
+                    (short) 0,
+                    (short) 0
+            );
+        }
     }
 
     public TableToken rename(

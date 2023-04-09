@@ -238,10 +238,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public Path put(CharSequence str) {
         int l = str.length();
-        int requiredCapacity = length() + l;
-        if (requiredCapacity > capacity) {
-            extend(requiredCapacity);
-        }
+        checkExtend(l);
         Chars.asciiStrCpy(str, l, tailPtr);
         tailPtr += l;
         return this;
@@ -284,10 +281,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     @Override
     public CharSink put(char[] chars, int start, int len) {
-        int requiredCapacity = length() + len;
-        if (requiredCapacity >= capacity) {
-            extend(requiredCapacity);
-        }
+        checkExtend(len);
         Chars.asciiCopyTo(chars, start, len, tailPtr);
         tailPtr += len;
         return this;
@@ -330,7 +324,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public void toSink(CharSink sink) {
-        Chars.utf8Decode(headPtr, tailPtr, sink);
+        Chars.utf8toUtf16(headPtr, tailPtr, sink);
     }
 
     @Override
@@ -353,9 +347,35 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    // allocates given buffer at path tail and sets it to 0
+    public void zeroPad(int len) {
+        checkExtend(len);
+        Vect.memset(tailPtr, len, 0);
+    }
+
+    public Path prefix(Path prefix, int prefixLen) {
+        if (prefix != null) {
+            if (prefixLen > 0) {
+                int thisLen = length();
+                checkExtend(thisLen + prefixLen);
+                Vect.memmove(headPtr + prefixLen, headPtr, thisLen);
+                Vect.memcpy(headPtr, prefix.address(), prefixLen);
+                tailPtr += prefixLen;
+            }
+        }
+        return this;
+    }
+
     private void checkClosed() {
         if (headPtr == 0L) {
             headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+        }
+    }
+
+    private void checkExtend(int len) {
+        int requiredCapacity = length() + len;
+        if (requiredCapacity > capacity) {
+            extend(requiredCapacity);
         }
     }
 

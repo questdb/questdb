@@ -25,12 +25,14 @@
 package io.questdb.log;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 public class LogRecordSink extends AbstractCharSink implements Sinkable {
+    public static final int EOL_LENGTH = Misc.EOL.length();
     public final static int UTF8_BYTE_CLASS_BAD = -1;
     public final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
     protected final long address;
@@ -67,7 +69,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
      */
     @Override
     public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr);
+        int rem = (int) (lim - _wptr - EOL_LENGTH);
         int len = cs.length();
         int n = Math.min(rem, len);
         Chars.asciiStrCpy(cs, n, _wptr);
@@ -81,7 +83,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
      */
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
-        int rem = (int) (lim - _wptr);
+        int rem = (int) (lim - _wptr - EOL_LENGTH);
         int len = hi - lo;
         int n = Math.min(rem, len);
         Chars.asciiStrCpy(cs, lo, n, _wptr);
@@ -95,7 +97,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
      */
     @Override
     public CharSink put(char c) {
-        final long left = lim - _wptr;
+        final long left = lim - _wptr - EOL_LENGTH;
         byte b = (byte) c;
         if (left >= 4) {  // 4 is the maximum byte length for a UTF-8 character.
             Unsafe.getUnsafe().putByte(_wptr++, b);
@@ -139,8 +141,18 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     }
 
     @Override
+    public CharSink putEOL() {
+        int rem = (int) (lim - _wptr);
+        int len = Misc.EOL.length();
+        int n = Math.min(rem, len);
+        Chars.asciiStrCpy(Misc.EOL, n, _wptr);
+        _wptr += n;
+        return this;
+    }
+
+    @Override
     public CharSink putUtf8(long lo, long hi) {
-        final long rem = (lim - _wptr);
+        final long rem = (lim - _wptr - EOL_LENGTH);
         final long len = hi - lo;
         if (rem >= len) {
             // Common case where the buffer fits the available space.
@@ -173,7 +185,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        Chars.utf8Decode(address, _wptr, sink);
+        Chars.utf8toUtf16(address, _wptr, sink);
     }
 
     private static int utf8byteClass(byte b) {
