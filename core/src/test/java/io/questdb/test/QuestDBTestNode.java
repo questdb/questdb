@@ -28,7 +28,8 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -137,6 +138,15 @@ public class QuestDBTestNode {
 
     public void tearDownGriffin() {
         griffin.tearDown();
+    }
+
+    @Override
+    public String toString() {
+        return "QuestDBTestNode{" +
+                "nodeId=" + nodeId +
+                ", cairo=" + cairo +
+                ", griffin=" + griffin +
+                '}';
     }
 
     private static class Cairo {
