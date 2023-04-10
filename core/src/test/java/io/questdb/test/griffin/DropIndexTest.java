@@ -36,11 +36,11 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -94,9 +94,9 @@ public class DropIndexTest extends AbstractGriffinTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        AbstractGriffinTest.tearDownStatic();
         compiler2.close();
         path = Misc.free(path);
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @Test

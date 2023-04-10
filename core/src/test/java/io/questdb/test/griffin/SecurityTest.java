@@ -27,17 +27,17 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.*;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -181,14 +181,14 @@ public class SecurityTest extends AbstractGriffinTest {
 
     @AfterClass
     public static void tearDownStatic() {
+        memoryRestrictedCompiler = Misc.free(memoryRestrictedCompiler);
+        memoryRestrictedEngine = Misc.free(memoryRestrictedEngine);
         AbstractGriffinTest.tearDownStatic();
-        Misc.free(memoryRestrictedCompiler);
-        Misc.free(memoryRestrictedEngine);
     }
 
     @After
     public void tearDown() {
-        //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
+        // we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows
         memoryRestrictedEngine.getTableIdGenerator().close();
         memoryRestrictedEngine.clear();
         memoryRestrictedEngine.getTableSequencerAPI().releaseInactive();

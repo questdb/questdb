@@ -274,17 +274,15 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
         forEachNode(QuestDBTestNode::closeGriffin);
-        circuitBreaker = null;
+        circuitBreaker = Misc.free(circuitBreaker);
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override
     @Before
     public void setUp() {
         super.setUp();
-        System.out.println("nodes:" + nodes);
-        System.out.println("node1:" + node1);
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
     }
