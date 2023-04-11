@@ -480,7 +480,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
-                if (prefixType == O3_BLOCK_DATA && prefixHi >= tableWriter.getPartitionO3SplitThreshold()) {
+                if (prefixType == O3_BLOCK_DATA && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
+                        && tableWriter.isLastForPartitioningUnit(partitionTimestamp)) {
                     // large prefix copy, better to split the partition
                     LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
                             .$(", timestamp=").$ts(partitionTimestamp)
@@ -490,6 +491,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .$(", newPartitionTimestamp=").$ts(o3TimestampLo)
                             .$(", nameTxn=").$(txn)
                             .I$();
+
                     partitionSplit = true;
                     partitionTimestamp = o3TimestampLo;
                     prefixType = O3_BLOCK_NONE;

@@ -72,6 +72,7 @@ import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
+    private static long avgRecordSize;
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -1155,7 +1156,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionO3SplitThreshold() {
-        return configuration.getPartitionO3SplitThreshold();
+        long splitMinSizeBytes = configuration.getPartitionO3SplitThreshold();
+        return splitMinSizeBytes / avgRecordSize;
     }
 
     public long getPartitionSize(int partitionIndex) {
@@ -1267,6 +1269,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
+    }
+
+    public boolean isLastForPartitioningUnit(long partitionTimestamp) {
+        long next = txWriter.getNextPartitionTimestamp(partitionTimestamp);
+        return next > txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
     }
 
     public boolean isOpen() {
@@ -6527,14 +6534,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
-    private void setAppendPosition(final long position, boolean doubleAllocate) {
+    private void setAppendPosition(final long rowCount, boolean doubleAllocate) {
+        long recordLength = 0;
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
-            setColumnSize(i, position, doubleAllocate);
+            recordLength += setColumnSize(i, rowCount, doubleAllocate);
         }
+        avgRecordSize = rowCount > 0 ? recordLength / rowCount : recordLength;
     }
 
-    private void setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
+    private long setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
+        long dataSizeBytes = 0;
         try {
             MemoryMA mem1 = getPrimaryColumn(columnIndex);
             MemoryMA mem2 = getSecondaryColumn(columnIndex);
@@ -6556,9 +6566,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
                             // Jump to the end of file to correctly trim the file
                             mem2.jumpTo((pos + 1) * Long.BYTES);
+                            dataSizeBytes = m1pos + (pos + 1) * Long.BYTES;
                             break;
                         default:
                             m1pos = pos << ColumnType.pow2SizeOf(type);
+                            dataSizeBytes = m1pos;
                             break;
                     }
                     if (doubleAllocate) {
@@ -6567,15 +6579,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     mem1.jumpTo(m1pos);
                 } else {
                     mem1.jumpTo(0);
+                    dataSizeBytes = ColumnType.sizeOf(type);
                     if (mem2 != null) {
                         mem2.jumpTo(0);
                         mem2.putLong(0);
+                        dataSizeBytes = Long.BYTES + 20;
                     }
                 }
             }
         } catch (CairoException e) {
             throwDistressException(e);
         }
+
+        return dataSizeBytes;
     }
 
     private void setO3AppendPosition(final long position) {

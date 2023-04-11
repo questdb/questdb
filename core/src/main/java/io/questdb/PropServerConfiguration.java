@@ -1898,7 +1898,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public long getPartitionO3SplitThreshold() {
-            return 1_000_000L;
+            return 300 * 1_000_000L;
         }
 
         @Override
