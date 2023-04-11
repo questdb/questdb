@@ -1751,7 +1751,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionRemoveCandidates.add(timestamp, partitionTxn);
         }
 
-        columnVersionWriter.truncate(true);
+        columnVersionWriter.truncate();
+        columnTops.zero(0);
         txWriter.removeAllPartitions();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -2167,7 +2168,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         txWriter.resetTimestamp();
-        columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
+        columnVersionWriter.truncate();
+        columnTops.zero(0);
         txWriter.truncate(columnVersionWriter.getVersion());
         try {
             clearTodoLog();
