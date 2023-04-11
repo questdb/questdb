@@ -174,7 +174,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 }
 
                 w.commit();
-                w.truncate(true);
+                w.truncate();
                 r.readUnsafe();
 
                 for (int i = 0; i < columnCount; i++) {
