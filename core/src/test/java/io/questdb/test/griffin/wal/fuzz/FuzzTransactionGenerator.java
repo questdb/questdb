@@ -51,6 +51,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfRenamingColumn,
             double probabilityOfDataInsert,
             double probabilityOfTruncate,
+            double probabilityOfSameTimestamp,
             int maxStrLenForStrColumns,
             String[] symbols
     ) {
@@ -120,6 +121,7 @@ public class FuzzTransactionGenerator {
                     size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
+                boolean allRowsSameTimestamp = rnd.nextDouble() <= probabilityOfSameTimestamp;
 
                 generateDataBlock(
                         transactionList,
@@ -137,7 +139,8 @@ public class FuzzTransactionGenerator {
                         maxStrLenForStrColumns,
                         symbols,
                         rnd.nextLong(),
-                        transactionCount
+                        transactionCount,
+                        allRowsSameTimestamp
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
@@ -291,16 +294,23 @@ public class FuzzTransactionGenerator {
             int strLen,
             String[] symbols,
             long seed,
-            long transactionCount
+            long transactionCount,
+            boolean allRowsSameTimestamp
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
         final long delta = stopTs - startTs;
         for (int i = 0; i < rowCount; i++) {
-            if (o3) {
-                timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount + i;
+            if (allRowsSameTimestamp) {
+                if (i == 0) {
+                    timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount;
+                }
             } else {
-                timestamp = timestamp + delta / rowCount;
+                if (o3) {
+                    timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount + i;
+                } else {
+                    timestamp = timestamp + delta / rowCount;
+                }
             }
             // Use stable random seeds which depends on the transaction index and timestamp
             // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp

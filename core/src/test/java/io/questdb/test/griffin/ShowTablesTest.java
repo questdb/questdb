@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,7 +35,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
@@ -48,7 +49,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances2");
                 Assert.fail();
@@ -61,7 +62,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowColumnsWithSimpleTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                             "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
@@ -80,10 +81,10 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8("table\nbalances\n", "show tables");
-            compiler.compile("create table balances2(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            compiler.compile("drop table balances", sqlExecutionContext);
+            compile("create table balances2(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("drop table balances", sqlExecutionContext);
             assertQuery8("table\nbalances2\n", "show tables");
         });
     }
@@ -91,7 +92,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8("table\nbalances\n", "select * from all_tables()");
         });
     }
@@ -99,7 +100,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery8("table\nbalances\n", "show tables");
         });
     }
@@ -113,18 +114,28 @@ public class ShowTablesTest extends AbstractGriffinTest {
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'"));
+        assertMemoryLeak(() -> assertFailure("show time", null, 5,
+                "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', " +
+                        "'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', " +
+                        "'max_identifier_length', 'standard_conforming_strings', " +
+                        "'search_path', 'datestyle', or 'time zone'"));
     }
 
     @Test
     public void testSqlSyntax1() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show");
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("expected 'tables', 'columns' or 'time zone'"));
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', " +
+                                "'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', " +
+                                "'max_identifier_length', 'standard_conforming_strings', " +
+                                "'search_path', 'datestyle', or 'time zone'"
+                );
             }
         });
     }
@@ -132,12 +143,25 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testSqlSyntax2() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns balances");
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.toString().contains("expected 'from'"));
+            }
+        });
+    }
+
+    @Test
+    public void testSqlSyntax3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances where");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [tok=where]");
             }
         });
     }

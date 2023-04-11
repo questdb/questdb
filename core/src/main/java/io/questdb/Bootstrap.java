@@ -241,8 +241,8 @@ public class Bootstrap {
                         if (shouldRename && ff.rename(path, other) == 0) {
                             log.criticalW().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW().
-                                    $("could not rename crash file [path=").$(path)
+                            log.criticalW()
+                                    .$("could not rename crash file [path=").$(path)
                                     .$(", errno=").$(ff.errno())
                                     .$(", index=").$(counter.get())
                                     .$(", max=").$(maxFiles)
@@ -501,7 +501,7 @@ public class Bootstrap {
         long fsStatus = Files.getFileSystemStatus(path);
         path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
-        if (fsStatus < 0) {
+        if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.OSX_ARM64)) {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
         } else {
             rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();

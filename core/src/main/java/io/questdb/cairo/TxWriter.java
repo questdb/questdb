@@ -294,10 +294,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.extensionListener = extensionListener;
     }
 
-    public void setMaxTimestamp(long timestamp) {
-        this.maxTimestamp = timestamp;
-    }
-
     public void setLagMaxTimestamp(long timestamp) {
         lagMaxTimestamp = timestamp;
     }
@@ -316,6 +312,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setLagTxnCount(int txnCount) {
         lagTxnCount = txnCount;
+    }
+
+    public void setMaxTimestamp(long timestamp) {
+        this.maxTimestamp = timestamp;
     }
 
     public void setMinTimestamp(long timestamp) {

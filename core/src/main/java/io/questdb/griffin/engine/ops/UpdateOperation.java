@@ -95,11 +95,11 @@ public class UpdateOperation extends AbstractOperation {
 
     public void forceTestTimeout() {
         if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            throw CairoException.nonCritical()
-                    .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker.getFd())
-                    .put(']')
-                    .setInterruption(true);
+            if (circuitBreaker.isCancelled()) {
+                throw CairoException.queryCancelled(circuitBreaker.getFd());
+            } else {
+                throw CairoException.queryTimedOut(circuitBreaker.getFd());
+            }
         }
     }
 
@@ -136,11 +136,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.nonCritical()
-                    .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker.getFd())
-                    .put(']')
-                    .setInterruption(true);
+            throw CairoException.queryTimedOut(circuitBreaker.getFd());
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();

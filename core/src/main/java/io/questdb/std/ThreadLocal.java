@@ -27,10 +27,10 @@ package io.questdb.std;
 import java.io.Closeable;
 
 public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
-    private final ObjectFactory<T> fact;
+    private final ObjectFactory<T> factory;
 
-    public ThreadLocal(ObjectFactory<T> fact) {
-        this.fact = fact;
+    public ThreadLocal(ObjectFactory<T> factory) {
+        this.factory = factory;
     }
 
     @Override
@@ -43,7 +43,7 @@ public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeabl
     public T get() {
         T val = super.get();
         if (val == null) {
-            val = fact.newInstance();
+            val = factory.newInstance();
             set(val);
         }
         return val;

@@ -214,15 +214,36 @@ public class FilesTest {
     }
 
     @Test
-    public void testDeleteDir2() throws Exception {
+    public void testDeleteDir() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
-            Assert.assertTrue(new File(r, "a/b/c").mkdirs());
-            Assert.assertTrue(new File(r, "d/e/f").mkdirs());
-            touch(new File(r, "d/1.txt"));
-            touch(new File(r, "a/b/2.txt"));
-            try (Path path = new Path().of(r.getAbsolutePath()).$()) {
-                Assert.assertEquals(0, Files.rmdir(path));
+            Assert.assertTrue(new File(r, "a" + Files.SEPARATOR + "b" + Files.SEPARATOR + "c" + Files.SEPARATOR + "d").mkdirs());
+            Assert.assertTrue(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "f").mkdirs());
+            touch(new File(r, "a" + Files.SEPARATOR + "1.txt"));
+            touch(new File(r, "a" + Files.SEPARATOR + "b" + Files.SEPARATOR + "2.txt"));
+            touch(new File(r, "a" + Files.SEPARATOR + "b" + Files.SEPARATOR + "c" + Files.SEPARATOR + "3.txt"));
+            touch(new File(r, "d" + Files.SEPARATOR + "1.txt"));
+            touch(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "2.txt"));
+            touch(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "f" + Files.SEPARATOR + "3.txt"));
+
+            try (
+                    Path targetPath = new Path().of(r.getAbsolutePath()).concat("d").$();
+                    Path linkPath = new Path().of(r.getAbsolutePath()).concat("a").concat("link_to_d").$()
+            ) {
+                Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
+                Assert.assertTrue(Files.isSoftLink(linkPath));
+
+                targetPath.of(r.getAbsolutePath()).$();
+                linkPath.of(r.getParentFile().getAbsolutePath()).concat("start_here").$();
+                Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
+                Assert.assertTrue(Files.isSoftLink(linkPath));
+
+                Assert.assertEquals(0, Files.rmdir(linkPath));
+                Assert.assertFalse(new File(linkPath.toString()).exists());
+                Assert.assertTrue(r.exists());
+                Assert.assertEquals(0L, Files.getDirSize(targetPath));
+                Assert.assertEquals(0, Files.rmdir(targetPath.slash().$()));
                 Assert.assertFalse(r.exists());
             }
         });
@@ -238,6 +259,140 @@ public class FilesTest {
                 Assert.assertTrue(Files.remove(path));
                 Assert.assertFalse(Files.exists(fd));
                 Files.close(fd);
+            }
+        });
+    }
+
+    @Test
+    public void testDirectoryContentSize() throws Exception {
+        String content = "Disk partitioning is the creation of one or more regions on secondary storage," + System.lineSeparator() +
+                "so that each region can be managed separately. These regions are called partitions." + System.lineSeparator() +
+                "The disk stores the information about the partitions' locations and sizes in an area" + System.lineSeparator() +
+                "known as the partition table that the operating system reads before any other part of" + System.lineSeparator() +
+                "the disk. Each partition then appears to the operating system as a distinct 'logical'" + System.lineSeparator() +
+                "disk that uses part of the actual disk." + System.lineSeparator();
+        assertMemoryLeak(() -> {
+            File noDir = temporaryFolder.newFolder("данные", "no");
+            try (Path path = new Path().of(noDir.getParentFile().getAbsolutePath()).$()) {
+                int rootLen = path.length();
+                createTempFile(path, "prose.txt", content);
+                long baseSize = Files.getDirSize(path.parent().$());
+                createTempFile(path, "dinner.txt", content);
+                createTempFile(path.parent(), "apple.txt", content);
+                createTempFile(path.parent().concat("no"), "lunch.txt", content);
+                createTempFile(path.parent(), "ребенок.txt", content);
+                Assert.assertEquals(5 * baseSize, Files.getDirSize(path.trimTo(rootLen).$()));
+                Assert.assertEquals(2 * baseSize, Files.getDirSize(path.concat("no").$()));
+                Assert.assertEquals(0L, Files.getDirSize(path.concat("ребенок.txt").$()));
+            }
+        });
+    }
+
+    @Test
+    public void testDirectoryContentSizeNonExistingDirectory() {
+        try (Path path = new Path().of("banana").$()) {
+            Assert.assertEquals(0L, Files.getDirSize(path));
+        }
+    }
+
+    @Test
+    public void testDirectoryContentSizeOfFile() throws IOException {
+        String content = "nothing to report";
+        File dir = temporaryFolder.newFolder("banana");
+        try (Path path = new Path().of(dir.getAbsolutePath()).$()) {
+            createTempFile(path, "small.txt", content);
+            Assert.assertEquals(0L, Files.getDirSize(path));
+        }
+    }
+
+    @Test
+    public void testDirectoryContentSizeWithLinks() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        String content = "RDBMSs favor consistency over availability and performance which" + System.lineSeparator() +
+                "complicates scaling the system horizontally with efficiency in big data" + System.lineSeparator() +
+                "scenarios. As a result, new DBMSs were developed to relax some consistency " + System.lineSeparator() +
+                "constraints and provide better scalability and performance. Many new technologies," + System.lineSeparator() +
+                "therefore, were introduced including wide-column stores Google Bigtable, " + System.lineSeparator() +
+                "Apache Cassandra, Apache HBase; key-value stores DynamoDB, LevelDB, and RocksDB;" + System.lineSeparator() +
+                "document-based stores AsterixDB, ArangoDB, and MongoDB; column-oriented" + System.lineSeparator() +
+                "stores Apache Druid and ClickHouse; graph stores Neo4j. However, the evolution" + System.lineSeparator() +
+                "of time-series applications in big data environments like large-scale scientific" + System.lineSeparator() +
+                "experiments, Internet of Things (IoT), IT infrastructure monitoring, industrial" + System.lineSeparator() +
+                "control systems, and forecasting and financial trends allowed the" + System.lineSeparator() +
+                "emergence of many Time-Series Databases (TSDB) technologies." + System.lineSeparator();
+        assertMemoryLeak(() -> {
+            File dbDir = temporaryFolder.newFolder("db", "table", "partition");
+            File backupDir = temporaryFolder.newFolder("backup", "table", "partition" + TableUtils.ATTACHABLE_DIR_MARKER);
+            File tmpDir = temporaryFolder.newFolder("tmp");
+            try (
+                    Path dbPath = new Path().of(dbDir.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path backupPath = new Path().of(backupDir.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path auxPath = new Path()
+            ) {
+                int dbPathLen = dbPath.length();
+                int backupPathLen = backupPath.length();
+                createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
+                long baseSize = Files.getDirSize(auxPath.parent().$());
+
+                // create files at table level
+                createTempFile(dbPath.concat("table"), "_meta", content);
+                createTempFile(dbPath.parent(), "_txn", content);
+                createTempFile(dbPath.parent(), "_cv", content);
+
+                // create files at partition level
+                createTempFile(dbPath.parent().concat("partition"), "timestamp.d", content);
+                createTempFile(dbPath.parent(), "column0.d", content);
+                createTempFile(dbPath.parent(), "column1.d", content);
+
+                // create a link to a file
+                Assert.assertEquals(0, Files.softLink(
+                        dbPath.parent().concat("timestamp.d").$(),
+                        auxPath.of(dbPath).parent().concat("timestamp_copy.d").$())
+                );
+
+                // create files in backup
+                createTempFile(backupPath.concat("table"), "_meta", content);
+                createTempFile(backupPath.parent(), "_txn", content);
+                createTempFile(backupPath.parent(), "_cv", content);
+                createTempFile(backupPath.parent().concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER), "timestamp.d", content);
+                createTempFile(backupPath.parent(), "column0.d", content);
+                createTempFile(backupPath.parent(), "column1.d", content);
+
+                // create an "attachable" partition
+                Assert.assertEquals(0, Files.softLink(
+                        backupPath.parent().$(),
+                        dbPath.parent().parent().concat("partitionB").$()));
+
+                // structure:
+                // db/table/_meta
+                // db/table/_txn
+                // db/table/_cv
+                // db/table/partition
+                // db/table/partition/timestamp.d
+                // db/table/partition/timestamp_copy.d -> db/table/partition/timestamp.d
+                // db/table/partition/column0.d
+                // db/table/partition/column1.d
+                // db/table/partitionB -> backup/table/partition.attachable/
+                // backup/table/_meta
+                // backup/table/_txn
+                // backup/table/_cv
+                // backup/table/partition.attachable/
+                // backup/table/partition.attachable/timestamp.d
+                // backup/table/partition.attachable/column0.d
+                // backup/table/partition.attachable/column1.d
+
+                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.trimTo(dbPathLen).$()));
+                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.concat("table").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.concat("partition").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.parent().concat("partitionB").$()));
+                Assert.assertEquals(0L, Files.getDirSize(dbPath.concat("timestamp.d").$()));
+                Assert.assertEquals(baseSize, Files.length(dbPath));
+                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.trimTo(backupPathLen).$()));
+                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.concat("table").$()));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
+                Assert.assertEquals(15 * baseSize,
+                        Files.getDirSize(dbPath.trimTo(dbPathLen).$()) + Files.getDirSize(backupPath.trimTo(backupPathLen).$())
+                );
             }
         });
     }
@@ -355,7 +510,7 @@ public class FilesTest {
                     try {
                         do {
                             nameSink.clear();
-                            Chars.utf8DecodeZ(Files.findName(pFind), nameSink);
+                            Chars.utf8ToUtf16Z(Files.findName(pFind), nameSink);
                             names.add(nameSink.toString());
                         } while (Files.findNext(pFind) > 0);
                     } finally {
@@ -615,7 +770,7 @@ public class FilesTest {
                     // Check written data
                     // Windows return 1 but Linux and others return 0 on success
                     // All return negative in case of error.
-                    Assert.assertTrue(result >= 0);
+                    Assert.assertTrue("error: " + Os.errno(), result >= 0);
 
                     fd2 = Files.openRO(path2.$());
                     long long1 = Files.readNonNegativeLong(fd2, 0L);
@@ -691,13 +846,24 @@ public class FilesTest {
                     Files.remove(path2);
                     fd2 = Files.openRW(path2.$());
 
-                    // Check copy call works
+                    // Check copy with offset call works
                     long destOffset = 1057;
                     copiedLen = Files.copyDataToOffset(fd1, fd2, offset, destOffset, fileSize - offset);
                     Assert.assertEquals(fileSize - offset, copiedLen);
 
                     long1 = Files.readNonNegativeLong(fd2, destOffset + fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);
+
+                    // Check subsequent copy call with zero offset works
+                    long anotherTestValue = 0x0987654321FEDCBAL;
+                    Unsafe.getUnsafe().putLong(mem, anotherTestValue);
+                    Files.write(fd1, mem, 8, 0);
+
+                    copiedLen = Files.copyDataToOffset(fd1, fd2, 0, 0, 8);
+                    Assert.assertEquals(8, copiedLen);
+
+                    long1 = Files.readNonNegativeLong(fd2, 0);
+                    Assert.assertEquals(anotherTestValue, long1);
                 } finally {
                     // Release mem, fd
                     Files.close(fd1);
@@ -753,6 +919,59 @@ public class FilesTest {
     public void testSoftLinkNonAsciiName() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("いくつかの列.d");
+    }
+
+    @Test
+    public void testSoftLinkRead() throws IOException {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        File dir = temporaryFolder.newFolder();
+        try (
+                Path path = new Path();
+                Path path2 = new Path();
+                Path path3 = new Path()
+        ) {
+            path.of(dir.getAbsolutePath());
+            int plen = path.length();
+
+            path.concat("text.txt").$();
+
+            Files.touch(path);
+
+            Assert.assertTrue(Files.exists(path));
+
+            path2.of("text.txt").$();//
+            path.trimTo(plen).concat("rel_link").$();
+            // relative link rel_link -> text.txt
+            Assert.assertEquals(0, Files.softLink(path2, path));
+            Assert.assertTrue(Files.isSoftLink(path));
+            Assert.assertTrue(Files.readLink(path, path3));
+            TestUtils.assertEquals(dir.getAbsolutePath() + Files.SEPARATOR + "text.txt", path3.toString());
+            // reset link sink
+            path3.of("");
+
+            // absolute link
+            path2.prefix(path, plen + 1).$();
+            path.trimTo(plen).concat("abs_link").$();
+            Assert.assertEquals(0, Files.softLink(path2, path));
+            Assert.assertTrue(Files.isSoftLink(path));
+            Assert.assertTrue(Files.readLink(path, path3));
+            TestUtils.assertEquals(dir.getAbsolutePath() + Files.SEPARATOR + "text.txt", path3.toString());
+
+            // test reading non-symbolic link, path2 is a file
+            path3.of("");
+            Assert.assertFalse(Files.readLink(path2, path3));
+            Assert.assertEquals(0, path3.length());
+
+            // test non-existing file
+            path2.trimTo(plen).concat("hello.txt").$();
+            Assert.assertFalse(Files.readLink(path2, path3));
+            Assert.assertEquals(0, path3.length());
+
+            // test directory
+            path2.trimTo(plen).$();
+            Assert.assertFalse(Files.readLink(path2, path3));
+            Assert.assertEquals(0, path3.length());
+        }
     }
 
     @Test
@@ -942,7 +1161,7 @@ public class FilesTest {
                 ));
             }
             StringSink sink = Misc.getThreadLocalBuilder();
-            Chars.utf8Decode(buffPtr, buffPtr + size, sink);
+            Chars.utf8toUtf16(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
             Files.close(fd);
@@ -987,7 +1206,7 @@ public class FilesTest {
         ) {
             int fd = -1;
             long mem = -1;
-            long diskSize = ff.getDiskSize(p2);
+            long diskSize = ff.getDiskFreeSpace(p2);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
             try {

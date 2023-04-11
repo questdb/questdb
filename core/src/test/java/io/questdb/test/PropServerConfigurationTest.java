@@ -375,6 +375,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertFalse(configuration.getCairoConfiguration().getWalEnabledDefault());
+        Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyEnabled());
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
@@ -384,6 +385,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
+        Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
+        Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
+        Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
     }
 
@@ -1135,6 +1139,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(128, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
             Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
             Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
+            Assert.assertFalse(configuration.getCairoConfiguration().isWalApplyEnabled());
             Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
             Assert.assertTrue(configuration.getWalApplyPoolConfiguration().haltOnError());
             Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
@@ -1146,6 +1151,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
             Assert.assertFalse(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
             Assert.assertEquals(120, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
+            Assert.assertEquals(100, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
+            Assert.assertEquals(42.2d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
+            Assert.assertEquals(262144, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         }
     }
 

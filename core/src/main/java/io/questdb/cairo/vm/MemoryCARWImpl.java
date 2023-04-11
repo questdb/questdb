@@ -84,6 +84,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         appendAddress = 0;
     }
 
+    @Override
     public void extend(long size) {
         checkAndExtend(pageAddress + size);
     }

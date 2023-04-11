@@ -63,6 +63,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean readLink(Path softLink, Path readTo) {
+        return Files.readLink(softLink, readTo);
+    }
+
+    @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
     }
@@ -146,8 +151,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getDiskSize(LPSZ path) {
-        return Files.getDiskSize(path);
+    public long getDirSize(Path path) {
+        return Files.getDirSize(path);
+    }
+
+    @Override
+    public long getDiskFreeSpace(LPSZ path) {
+        return Files.getDiskFreeSpace(path);
     }
 
     @Override
@@ -403,26 +413,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     public void walk(Path path, FindVisitor func) {
-        int len = path.length();
-        long p = findFirst(path);
-        if (p > 0) {
-            try {
-                do {
-                    long name = findName(p);
-                    if (Files.notDots(name)) {
-                        int type = findType(p);
-                        path.trimTo(len);
-                        if (type == Files.DT_FILE) {
-                            func.onFind(name, type);
-                        } else {
-                            walk(path.concat(name).$(), func);
-                        }
-                    }
-                } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-            }
-        }
+        Files.walk(path, func);
     }
 
     @Override

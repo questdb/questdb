@@ -44,6 +44,38 @@ import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 public class TruncateTest extends AbstractGriffinTest {
 
     @Test
+    public void testDropColumnTruncatePartitionByNone() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b',null) symbol1 " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+
+            compile("alter table y drop column symbol1", sqlExecutionContext);
+            compiler.compile("truncate table y", sqlExecutionContext);
+            try (TableWriter w = getWriter("y")) {
+                TableWriter.Row row = w.newRow(123);
+                row.cancel();
+            }
+
+            compiler.compile("insert into y values(223)", sqlExecutionContext).execute(null).await();
+
+            try (RecordCursorFactory factory = compiler.compile("select * from y", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                }
+                TestUtils.assertEquals("timestamp\n" +
+                        "1970-01-01T00:00:00.000223Z\n", sink);
+            }
+        });
+    }
+
+    @Test
     public void testDropColumnWithCachedPlanSelectFull() throws Exception {
         testDropColumnWithCachedPlan();
     }

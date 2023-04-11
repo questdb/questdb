@@ -68,7 +68,9 @@ public interface FilesFacade {
 
     int fsync(int fd);
 
-    long getDiskSize(LPSZ path);
+    long getDirSize(Path path);
+
+    long getDiskFreeSpace(LPSZ path);
 
     long getLastModified(LPSZ path);
 
@@ -137,6 +139,8 @@ public interface FilesFacade {
     int rename(LPSZ from, LPSZ to);
 
     int rmdir(Path name);
+
+    boolean readLink(Path softLink, Path readTo);
 
     int softLink(LPSZ src, LPSZ softLink);
 

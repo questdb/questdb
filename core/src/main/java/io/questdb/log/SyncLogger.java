@@ -193,7 +193,7 @@ public final class SyncLogger implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8Decode(lo, hi, this);
+        Chars.utf8toUtf16(lo, hi, this);
         return this;
     }
 

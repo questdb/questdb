@@ -82,6 +82,8 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
+    CairoSecurityContextFactory getCairoSecurityContextFactory();
+
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
     int getColumnCastModelPoolCapacity();
@@ -421,7 +423,7 @@ public interface CairoConfiguration {
 
     long getWalApplyTableTimeQuota();
 
-    double getWalSquashUncommittedRowsMultiplier();
+    long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();
 
@@ -430,6 +432,8 @@ public interface CairoConfiguration {
     int getWalRecreateDistressedSequencerAttempts();
 
     long getWalSegmentRolloverRowCount();
+
+    double getWalSquashUncommittedRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -472,6 +476,8 @@ public interface CairoConfiguration {
 
     boolean isTableTypeConversionEnabled();
 
+    boolean isWalApplyEnabled();
+
     boolean isWalSupported();
 
     /**
@@ -483,6 +489,4 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
-
-    CairoSecurityContextFactory getCairoSecurityContextFactory();
 }

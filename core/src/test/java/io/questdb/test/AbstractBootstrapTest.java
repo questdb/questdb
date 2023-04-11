@@ -25,11 +25,18 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.PropServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -51,6 +58,7 @@ public abstract class AbstractBootstrapTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
+    protected static final String CHARSET = "UTF8";
     protected static final int HTTP_MIN_PORT = 9011;
     protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
@@ -59,9 +67,11 @@ public abstract class AbstractBootstrapTest {
     protected static final int PG_PORT = 8822;
     protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     private static final File siteDir = new File(Objects.requireNonNull(ServerMain.class.getResource("/io/questdb/site/")).getFile());
-    protected static CharSequence root;
+    protected static Path auxPath;
+    protected static Path dbPath;
+    protected static int dbPathLen;
+    protected static String rootDir;
     private static boolean publicZipStubCreated = false;
-
     @Rule
     public TestName testName = new TestName();
 
@@ -80,7 +90,13 @@ public abstract class AbstractBootstrapTest {
             publicZipStubCreated = true;
         }
         try {
-            root = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
+            rootDir = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
+            dbPath = new Path().of(rootDir).concat(PropServerConfiguration.DB_DIRECTORY).$();
+            dbPathLen = dbPath.length();
+            auxPath = new Path();
+            Files.remove(dbPath.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(dbPath.trimTo(dbPathLen).concat("telemetry_config.lock").$());
+            dbPath.trimTo(dbPathLen).$();
         } catch (IOException e) {
             throw new ExceptionInInitializerError();
         }
@@ -94,8 +110,8 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
-        Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Misc.free(dbPath);
+        Misc.free(auxPath);
         temp.delete();
     }
 
@@ -105,10 +121,10 @@ public abstract class AbstractBootstrapTest {
             int pgPort,
             int ilpPort,
             String... extra) throws Exception {
-        final String confPath = root.toString() + Files.SEPARATOR + "conf";
+        final String confPath = rootDir + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
 
             // enable services
             writer.println("http.enabled=true");
@@ -152,14 +168,14 @@ public abstract class AbstractBootstrapTest {
 
         // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
             writer.println("");
         }
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+        try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
@@ -177,6 +193,15 @@ public abstract class AbstractBootstrapTest {
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
+    }
+
+    static SqlExecutionContext executionContext(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllCairoSecurityContext.INSTANCE,
+                null,
+                null,
+                -1,
+                null);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {
@@ -203,6 +228,15 @@ public abstract class AbstractBootstrapTest {
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
         }
+    }
+
+    static void dropTable(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            TableToken tableToken,
+            boolean isWal
+    ) throws Exception {
+        compiler.compile("DROP TABLE " + tableToken.getTableName(), context);
     }
 
     static {

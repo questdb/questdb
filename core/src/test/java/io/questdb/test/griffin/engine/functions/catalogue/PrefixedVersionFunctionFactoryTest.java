@@ -22,10 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.test.AbstractGriffinTest;
+import org.junit.Test;
 
-public interface ColumnMetadataCollection {
-    TableColumnMetadata getColumnMetadata(int columnIndex);
+public class PrefixedVersionFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testPrefixedCurrentSchemaFunc() throws Exception {
+        assertQuery("version\n" +
+                        Constants.PG_CATALOG_VERSION_CONSTANT.getStr(null) + '\n',
+                "select pg_catalog.version();",
+                true);
+    }
 }

@@ -181,7 +181,7 @@ public class LogAlertSocket implements Closeable {
     @TestOnly
     public void logResponse(int len) {
         responseSink.clear();
-        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
+        Chars.utf8toUtf16(inBufferPtr, inBufferPtr + len, responseSink);
         final int responseLen = responseSink.length();
         int contentLength = 0;
         int lineStart = 0;

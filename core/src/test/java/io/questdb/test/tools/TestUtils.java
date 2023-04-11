@@ -25,7 +25,6 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.test.QuestDBTestNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -46,6 +45,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.*;
+import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.cairo.LogRecordSinkAdapter;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
@@ -915,6 +915,12 @@ public final class TestUtils {
         return ts;
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
+    public static void drainCursor(RecordCursor cursor) {
+        while (cursor.hasNext()) {
+        }
+    }
+
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
         try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
             processingJob.drain(0);
@@ -1046,7 +1052,7 @@ public final class TestUtils {
         }
     }
 
-    public static String insertFromSelectPopulateTableStmt(
+    public static CharSequence insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,
             String startDate,
@@ -1114,7 +1120,7 @@ public final class TestUtils {
         }
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
-        return insertFromSelect.toString();
+        return insertFromSelect;
     }
 
     public static int maxDayOfMonth(int month) {
@@ -1463,12 +1469,6 @@ public final class TestUtils {
             } catch (AssertionError e) {
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
-        }
-    }
-
-    @SuppressWarnings("StatementWithEmptyBody")
-    public static void drainCursor(RecordCursor cursor) {
-        while (cursor.hasNext()) {
         }
     }
 

@@ -189,6 +189,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
     return link((const char *) pcharSrc, (const char *) pcharHardLink);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readLink0
+        (JNIEnv *e, jclass cl, jlong path, jlong buf, jint len) {
+    return (jint) readlink((const char *) path, (char *) buf, len);
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
         (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
 
@@ -276,8 +281,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
 
 typedef struct {
     DIR *dir;
+    int type;
     struct dirent *entry;
 } FIND;
+
+void setFind(FIND *find, struct dirent *entry) {
+    find->entry = entry;
+    find->type = entry->d_type;
+}
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findFirst
         (JNIEnv *e, jclass cl, jlong lpszName) {
@@ -307,7 +318,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findFirst
 
     FIND *find = malloc(sizeof(FIND));
     find->dir = dir;
-    find->entry = entry;
+    setFind(find, entry);
     return (jlong) find;
 }
 
@@ -320,8 +331,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
     errno = 0;
-    find->entry = readdir(find->dir);
-    if (find->entry != NULL) {
+    struct dirent *entry = readdir(find->dir);
+    if (entry) {
+        setFind(find, entry);
         return 1;
     }
     return errno == 0 ? 0 : -1;
@@ -341,7 +353,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
-    return ((FIND *) findPtr)->entry->d_type;
+    return ((FIND *) findPtr)->type;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
