@@ -430,6 +430,50 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectLast10RecordsInReverseTsOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE intervaltest (\n" +
+                    "  id long,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp (ts) PARTITION BY DAY");
+
+            compile("insert into intervaltest \n" +
+                    "select x, ('2023-04-06T00:00:00.000000Z'::timestamp::long + (x*1000))::timestamp\n" +
+                    "from long_sequence(600000)");
+
+            assertQuery("count\n1000\n",
+                    "select count(*)\n" +
+                            "from intervaltest\n" +
+                            "WHERE ts > '2023-04-06T00:09:59.000000Z'", null, false, true);
+
+            String query = "select *\n" +
+                    "from intervaltest\n" +
+                    "WHERE ts > '2023-04-06T00:09:59.000000Z' \n" +
+                    "ORDER BY ts DESC " +
+                    "LIMIT 10";
+
+            assertPlan(query, "Limit lo: 10\n" +
+                    "    DataFrame\n" +
+                    "        Row backward scan\n" +
+                    "        Interval backward scan on: intervaltest\n" +
+                    "          intervals: [static=[1680739799000001,9223372036854775807]\n");
+
+            assertQuery("id\tts\n" +
+                            "600000\t2023-04-06T00:10:00.000000Z\n" +
+                            "599999\t2023-04-06T00:09:59.999000Z\n" +
+                            "599998\t2023-04-06T00:09:59.998000Z\n" +
+                            "599997\t2023-04-06T00:09:59.997000Z\n" +
+                            "599996\t2023-04-06T00:09:59.996000Z\n" +
+                            "599995\t2023-04-06T00:09:59.995000Z\n" +
+                            "599994\t2023-04-06T00:09:59.994000Z\n" +
+                            "599993\t2023-04-06T00:09:59.993000Z\n" +
+                            "599992\t2023-04-06T00:09:59.992000Z\n" +
+                            "599991\t2023-04-06T00:09:59.991000Z\n",
+                    query, "ts###DESC", true, false);
+        });
+    }
+
+    @Test
     public void testTopBottomRange() throws Exception {
         String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                 "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +

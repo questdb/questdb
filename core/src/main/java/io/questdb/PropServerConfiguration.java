@@ -3420,7 +3420,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getServerVersion() {
-            return "11.3";
+            return "15.2";
         }
 
         @Override

@@ -22,28 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.test.AbstractGriffinTest;
+import org.junit.Test;
 
-public class VersionFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "version()";
-    }
+public class PrefixedVersionFunctionFactoryTest extends AbstractGriffinTest {
 
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PG_CATALOG_VERSION_CONSTANT;
+    @Test
+    public void testPrefixedCurrentSchemaFunc() throws Exception {
+        assertQuery("version\n" +
+                        Constants.PG_CATALOG_VERSION_CONSTANT.getStr(null) + '\n',
+                "select pg_catalog.version();",
+                true);
     }
 }

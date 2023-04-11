@@ -336,26 +336,24 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 state.info().$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
                         .$("`, q=`").utf8(state.getQuery())
                         .$("`]").$();
+            } else if (ce.isCritical()) {
+                state.critical().$("error [msg=`").$(ce.getFlyweightMessage())
+                        .$("`, errno=").$(ce.getErrno())
+                        .$(", q=`").utf8(state.getQuery())
+                        .$("`]").$();
             } else {
-                if (ce.isCritical()) {
-                    state.critical().$("error [msg=`").$(ce.getFlyweightMessage())
-                            .$("`, errno=").$(ce.getErrno())
-                            .$(", q=`").utf8(state.getQuery())
-                            .$("`]").$();
-                } else {
-                    state.error().$("error [msg=`").$(ce.getFlyweightMessage())
-                            .$("`, errno=").$(ce.getErrno())
-                            .$(", q=`").utf8(state.getQuery())
-                            .$("`]").$();
-                }
+                state.error().$("error [msg=`").$(ce.getFlyweightMessage())
+                        .$("`, errno=").$(ce.getErrno())
+                        .$(", q=`").utf8(state.getQuery())
+                        .$("`]").$();
             }
         } else if (e instanceof HttpException) {
             state.error().$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").utf8(state.getQuery()).$("`]").$();
+                    .$("`, q=`").utf8(state.getQuery())
+                    .$("`]").$();
         } else {
             state.critical().$("internal error [ex=").$(e)
-                    .$(", q=`")
-                    .utf8(state.getQuery())
+                    .$(", q=`").utf8(state.getQuery())
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.health().incrementUnhandledErrors();
