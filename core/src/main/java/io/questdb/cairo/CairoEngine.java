@@ -191,7 +191,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
-        securityContext.authorizeTableCreate();
+        securityContext.authorizeTableCreate(tableName);
 
         int tableId = (int) tableIdGenerator.getNextId();
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
@@ -246,7 +246,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
-        securityContext.authorizeTableCreate();
+        securityContext.authorizeTableCreate(tableName);
 
         int tableId = (int) tableIdGenerator.getNextId();
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
@@ -745,7 +745,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 newTableToken = tableNameRegistry.rename(tableName, newName, tableToken);
                 TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);
                 tableSequencerAPI.renameWalTable(tableToken, newTableToken);
-                return newTableToken;
             } else {
                 String lockedReason = lock(tableToken, "renameTable");
                 if (null == lockedReason) {
@@ -760,8 +759,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
                     throw EntryUnavailableException.instance(lockedReason);
                 }
-                return newTableToken;
             }
+            return newTableToken;
         } else {
             LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
             throw CairoException.nonCritical().put("Rename failed. Table '").put(tableName).put("' does not exist");

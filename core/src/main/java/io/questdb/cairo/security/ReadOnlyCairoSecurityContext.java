@@ -53,7 +53,7 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     }
 
     @Override
-    public void authorizeTableCreate() {
+    public void authorizeTableCreate(CharSequence tableName) {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
