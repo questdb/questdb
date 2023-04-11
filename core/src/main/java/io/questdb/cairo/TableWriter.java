@@ -174,6 +174,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
     private int indexCount;
+    private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = -1L;
     private long lastPartitionTimestamp;
@@ -186,7 +187,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long noOpRowCount;
     private PagedDirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
-    private int lastErrno;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
     private long o3EffectiveLag = 0L;
     private boolean o3InError = false;
@@ -1839,93 +1839,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // commit changes, there may be uncommitted rows of any partition
         commit();
 
-        final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
-        final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
-
-        timestamp = txWriter.getPartitionTimestamp(timestamp);
-        final int index = txWriter.getPartitionIndex(timestamp);
-        if (index < 0) {
-            LOG.error().$("partition is already removed [path=").utf8(path).$(", partitionTimestamp=").$ts(timestamp).I$();
-            return false;
+        // Handle split partitions.
+        // One logical partition may be split into multiple physical partitions.
+        // For example partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
+        long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
+        int partitionIndex = txWriter.getPartitionIndex(logicalPartitionTimestampToDelete);
+        boolean dropped = false;
+        if (partitionIndex >= 0) {
+            long partitionTimestamp;
+            while (partitionIndex < txWriter.getPartitionCount() &&
+                    txWriter.getLogicalPartitionTimestamp(
+                            partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex)
+                    ) == logicalPartitionTimestampToDelete) {
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+            }
         }
-
-        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-
-        if (timestamp == txWriter.getPartitionTimestamp(maxTimestamp)) {
-
-            // removing active partition
-
-            // calculate new transient row count, min/max timestamps and find the partition to open next
-            final long nextMaxTimestamp;
-            final long newTransientRowCount;
-            final long prevTimestamp;
-            if (index == 0) {
-                nextMaxTimestamp = Long.MIN_VALUE;
-                newTransientRowCount = 0L;
-                prevTimestamp = 0L; // meaningless
-            } else {
-                final int prevIndex = index - 1;
-                prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
-                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
-                try {
-                    setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
-                    nextMaxTimestamp = attachMaxTimestamp;
-                } finally {
-                    path.trimTo(rootLen);
-                }
-            }
-
-            columnVersionWriter.removePartition(timestamp);
-            txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
-            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
-            txWriter.bumpTruncateVersion();
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-
-            // No need to truncate before, files to be deleted.
-            closeActivePartition(false);
-
-            if (index != 0) {
-                openPartition(prevTimestamp);
-                setAppendPosition(newTransientRowCount, false);
-            } else {
-                rowAction = ROW_ACTION_OPEN_PARTITION;
-            }
-        } else {
-
-            // when we want to delete first partition we must find out minTimestamp from
-            // next partition if it exists, or next partition, and so on
-            //
-            // when somebody removed data directories manually and then attempts to tidy
-            // up metadata with logical partition delete we have to uphold the effort and
-            // re-compute table size and its minTimestamp from what remains on disk
-
-            // find out if we are removing min partition
-            long nextMinTimestamp = minTimestamp;
-            if (timestamp == txWriter.getPartitionTimestamp(0)) {
-                nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
-            }
-
-            columnVersionWriter.removePartition(timestamp);
-
-            txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
-            txWriter.setMinTimestamp(nextMinTimestamp);
-            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
-            txWriter.bumpTruncateVersion();
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-        }
-
-        // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
-        return true;
+        return dropped;
     }
 
     @Override
@@ -3300,6 +3229,96 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
         }
+    }
+
+    private boolean dropPartitionByExactTimestamp(long timestamp) {
+        final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
+        final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+
+        timestamp = txWriter.getPartitionTimestamp(timestamp);
+        final int index = txWriter.getPartitionIndex(timestamp);
+        if (index < 0) {
+            LOG.error().$("partition is already removed [path=").utf8(path).$(", partitionTimestamp=").$ts(timestamp).I$();
+            return false;
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+
+        if (timestamp == txWriter.getPartitionTimestamp(maxTimestamp)) {
+
+            // removing active partition
+
+            // calculate new transient row count, min/max timestamps and find the partition to open next
+            final long nextMaxTimestamp;
+            final long newTransientRowCount;
+            final long prevTimestamp;
+            if (index == 0) {
+                nextMaxTimestamp = Long.MIN_VALUE;
+                newTransientRowCount = 0L;
+                prevTimestamp = 0L; // meaningless
+            } else {
+                final int prevIndex = index - 1;
+                prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                try {
+                    setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                    nextMaxTimestamp = attachMaxTimestamp;
+                } finally {
+                    path.trimTo(rootLen);
+                }
+            }
+
+            columnVersionWriter.removePartition(timestamp);
+            txWriter.beginPartitionSizeUpdate();
+            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
+            txWriter.bumpTruncateVersion();
+
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+
+            // No need to truncate before, files to be deleted.
+            closeActivePartition(false);
+
+            if (index != 0) {
+                openPartition(prevTimestamp);
+                setAppendPosition(newTransientRowCount, false);
+            } else {
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+            }
+        } else {
+
+            // when we want to delete first partition we must find out minTimestamp from
+            // next partition if it exists, or next partition, and so on
+            //
+            // when somebody removed data directories manually and then attempts to tidy
+            // up metadata with logical partition delete we have to uphold the effort and
+            // re-compute table size and its minTimestamp from what remains on disk
+
+            // find out if we are removing min partition
+            long nextMinTimestamp = minTimestamp;
+            if (timestamp == txWriter.getPartitionTimestamp(0)) {
+                nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
+            }
+
+            columnVersionWriter.removePartition(timestamp);
+
+            txWriter.beginPartitionSizeUpdate();
+            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.setMinTimestamp(nextMinTimestamp);
+            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+            txWriter.bumpTruncateVersion();
+
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+        }
+
+        // Call O3 methods to remove check TxnScoreboard and remove partition directly
+        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        return true;
     }
 
     private void finishMetaSwapUpdate() {
@@ -4711,9 +4730,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Close last partition without truncating it.
                 long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
                 closeActivePartition(committedLastPartitionSize);
-                txWriter.fixedRowCount += oldPartitionSize;
                 if (isLastWrittenPartition) {
                     txWriter.transientRowCount = newPartitionSize;
+                    txWriter.fixedRowCount += oldPartitionSize;
                 }
             }
         }
@@ -6124,7 +6143,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ)  &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {

@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -61,6 +62,33 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 {ParallelMode.Parallel},
                 {ParallelMode.Contended}
         });
+    }
+
+    @Before
+    public void setUp4() {
+        partitionO3SplitThreshold = 1000;
+        Vect.resetPerformanceCounters();
+    }
+
+    @After
+    public void tearDown4() {
+        int count = Vect.getPerformanceCountersCount();
+        if (count > 0) {
+            tstData.setLength(0);
+            tstData.append(name.getMethodName()).append(",");
+            long total = 0;
+            for (int i = 0; i < count; i++) {
+                long val = Vect.getPerformanceCounter(i);
+                tstData.append(val).append("\t");
+                total += val;
+            }
+            tstData.append(total);
+
+            Os.sleep(10);
+            System.err.flush();
+            System.err.println(tstData);
+            System.err.flush();
+        }
     }
 
     @Test
@@ -115,42 +143,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from y", executionContext);
                     compiler.compile("insert into x select * from z", executionContext);
 
-                    String limit = " limit 2090, 2110";
-                    TestUtils.assertSqlCursors(
-                            compiler,
-                            executionContext,
-                            "zz order by ts" + limit,
-                            "x" + limit,
-                            LOG
-                    );
+                    assertX(compiler, executionContext, "zz");
                 });
-    }
-
-    @Before
-    public void setUp4() {
-        partitionO3SplitThreshold = 1000;
-        Vect.resetPerformanceCounters();
-    }
-
-    @After
-    public void tearDown4() {
-        int count = Vect.getPerformanceCountersCount();
-        if (count > 0) {
-            tstData.setLength(0);
-            tstData.append(name.getMethodName()).append(",");
-            long total = 0;
-            for (int i = 0; i < count; i++) {
-                long val = Vect.getPerformanceCounter(i);
-                tstData.append(val).append("\t");
-                total += val;
-            }
-            tstData.append(total);
-
-            Os.sleep(10);
-            System.err.flush();
-            System.err.println(tstData);
-            System.err.flush();
-        }
     }
 
     @Test
@@ -430,14 +424,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     compiler.compile("insert into x select * from z", executionContext);
 
-                    String limit = "";// " limit 3120, 3140";
-                    TestUtils.assertSqlCursors(
-                            compiler,
-                            executionContext,
-                            "y order by ts" + limit,
-                            "x" + limit,
-                            LOG
-                    );
+                    assertX(compiler, executionContext, "y");
                 });
     }
 
@@ -493,14 +480,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from y", executionContext);
                     compiler.compile("insert into x select * from z", executionContext);
 
-                    String limit = "";
-                    TestUtils.assertSqlCursors(
-                            compiler,
-                            executionContext,
-                            "zz order by ts" + limit,
-                            "x" + limit,
-                            LOG
-                    );
+                    assertX(compiler, executionContext, "zz");
                 });
     }
 
@@ -556,15 +536,26 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from y", executionContext);
                     compiler.compile("insert into x select * from z", executionContext);
 
-                    String limit = "";
-                    TestUtils.assertSqlCursors(
-                            compiler,
-                            executionContext,
-                            "zz order by ts" + limit,
-                            "x" + limit,
-                            LOG
-                    );
+                    assertX(compiler, executionContext, "zz");
                 });
+    }
+
+    private static void assertX(SqlCompiler compiler, SqlExecutionContext executionContext, String expectedTable) throws SqlException {
+        String limit = "";
+        TestUtils.assertSqlCursors(
+                compiler,
+                executionContext,
+                expectedTable + " order by ts" + limit,
+                "x" + limit,
+                LOG
+        );
+
+        TestUtils.assertEquals(
+                compiler,
+                executionContext,
+                "select count() from " + expectedTable,
+                "select count() from x"
+        );
     }
 
 

@@ -27,11 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -117,6 +118,59 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trade as (" +
+                            "select" +
+                            "  rnd_symbol('A', 'B', 'C') sym," +
+                            "  rnd_long(1, 10000000000, 0) px," +
+                            "  rnd_float() * 100 leverage," +
+                            "  rnd_timestamp(" +
+                            "    to_timestamp('2022-06-01', 'yyyy-MM-dd')," +
+                            "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
+                            "    0) ts" +
+                            "  from long_sequence(360)" +
+                            "), index(sym capacity 128) timestamp(ts) partition by week;",
+                    sqlExecutionContext);
+            assertSql(
+                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10",
+                    "year\tweek_of_year\twoy\n" +
+                            "2024\t1\t2024-W01\n" +
+                            "2023\t52\t2023-W52\n" +
+                            "2023\t51\t2023-W51\n" +
+                            "2023\t50\t2023-W50\n" +
+                            "2023\t49\t2023-W49\n" +
+                            "2023\t48\t2023-W48\n" +
+                            "2023\t47\t2023-W47\n" +
+                            "2023\t46\t2023-W46\n" +
+                            "2023\t45\t2023-W45\n" +
+                            "2023\t44\t2023-W44\n"
+            );
+
+            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+
+            assertSql(
+                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10",
+                    "year\tweek_of_year\twoy\n" +
+                            "2024\t1\t2024-W01\n" +
+                            "2023\t52\t2023-W52\n" +
+                            "2023\t48\t2023-W48\n" +
+                            "2023\t47\t2023-W47\n" +
+                            "2023\t46\t2023-W46\n" +
+                            "2023\t45\t2023-W45\n" +
+                            "2023\t44\t2023-W44\n" +
+                            "2023\t43\t2023-W43\n" +
+                            "2023\t42\t2023-W42\n" +
+                            "2023\t41\t2023-W41\n"
+            );
+        });
+    }
+
+    @Test
     public void testDropPartitionListWithOneItem0() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
@@ -182,59 +236,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
                 }
         );
-    }
-
-    @Test
-    public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table trade as (" +
-                            "select" +
-                            "  rnd_symbol('A', 'B', 'C') sym," +
-                            "  rnd_long(1, 10000000000, 0) px," +
-                            "  rnd_float() * 100 leverage," +
-                            "  rnd_timestamp(" +
-                            "    to_timestamp('2022-06-01', 'yyyy-MM-dd')," +
-                            "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
-                            "    0) ts" +
-                            "  from long_sequence(360)" +
-                            "), index(sym capacity 128) timestamp(ts) partition by week;",
-                    sqlExecutionContext);
-            assertSql(
-                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10",
-                    "year\tweek_of_year\twoy\n" +
-                            "2024\t1\t2024-W01\n" +
-                            "2023\t52\t2023-W52\n" +
-                            "2023\t51\t2023-W51\n" +
-                            "2023\t50\t2023-W50\n" +
-                            "2023\t49\t2023-W49\n" +
-                            "2023\t48\t2023-W48\n" +
-                            "2023\t47\t2023-W47\n" +
-                            "2023\t46\t2023-W46\n" +
-                            "2023\t45\t2023-W45\n" +
-                            "2023\t44\t2023-W44\n"
-            );
-
-            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
-
-            assertSql(
-                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10",
-                    "year\tweek_of_year\twoy\n" +
-                            "2024\t1\t2024-W01\n" +
-                            "2023\t52\t2023-W52\n" +
-                            "2023\t48\t2023-W48\n" +
-                            "2023\t47\t2023-W47\n" +
-                            "2023\t46\t2023-W46\n" +
-                            "2023\t45\t2023-W45\n" +
-                            "2023\t44\t2023-W44\n" +
-                            "2023\t43\t2023-W43\n" +
-                            "2023\t42\t2023-W42\n" +
-                            "2023\t41\t2023-W41\n"
-            );
-        });
     }
 
     @Test
@@ -574,6 +575,26 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropSplitLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+                    createXSplit("DAY", Timestamps.DAY_MICROS / 2000, 200); // 300 records per day
+                    compile("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    assertSql("select count() from x where timestamp in '2018-01-01'", "count\n0\n");
+                }
+        );
+    }
+
+    @Test
+    public void testDropSplitMidPartition() throws Exception {
+        assertMemoryLeak(() -> {
+                    createXSplit("DAY", Timestamps.DAY_MICROS / 300, 200); // 300 records per day
+                    compile("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    assertSql("select count() from x where timestamp in '2018-01-01'", "count\n0\n");
+                }
+        );
+    }
+
+    @Test
     public void testDropTwoPartitionsByDay() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
@@ -732,6 +753,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionDeletedFromDiskWithoutDropByNone() throws Exception {
+        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.NONE;
+        int partitionToCheck = -1;
+        String partitionDirBaseName = "default";
+        int deletedPartitionIndex = 0;
+        int rowCount = 1000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, partitionDirBaseName, deletedPartitionIndex, 1, 1, rowCount, rowCount);
+    }
+
+    @Test
     public void testPartitionDeletedFromDiskWithoutDropByWeek() throws Exception {
         String expected = "[0] Partition '2020-W02' does not exist in table 'src' directory. " +
                 "Run [ALTER TABLE src DROP PARTITION LIST '2020-W02'] " +
@@ -743,18 +776,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         int deletedPartitionIndex = 1;
         int rowCount = 10000;
         testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, 1, rowCount, 1428);
-    }
-
-    @Test
-    public void testPartitionDeletedFromDiskWithoutDropByNone() throws Exception {
-        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
-        String startDate = "2020-01-01";
-        int day = PartitionBy.NONE;
-        int partitionToCheck = -1;
-        String partitionDirBaseName = "default";
-        int deletedPartitionIndex = 0;
-        int rowCount = 1000;
-        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, partitionDirBaseName, deletedPartitionIndex, 1, 1, rowCount, rowCount);
     }
 
     @Test
@@ -830,10 +851,42 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(1000)" +
                         ") timestamp (timestamp)" +
-                        "partition by " + partitionBy,
+                        " partition by " + partitionBy,
                 sqlExecutionContext
         );
     }
+
+    private void createXSplit(String partitionBy, long increment, int splitRecord) throws SqlException {
+        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitRecord / 2);
+        createX(partitionBy, increment);
+
+        try {
+            long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * splitRecord + 1;
+            String nextTsStr = Timestamps.toUSecString(nextTimestamp);
+            compile("insert into x " +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " cast('" + nextTsStr + "' as timestamp) + x * " + increment + " ts," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n" +
+                    " from long_sequence(100)");
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 
     private void createXWithDifferentTimestampName() throws SqlException {
         compiler.compile(

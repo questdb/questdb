@@ -288,6 +288,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionFloor(timestamp);
     }
 
+    public long getLogicalPartitionTimestamp(long timestamp) {
+        return getPartitionFloor(timestamp);
+    }
+
     public long getRecordSize() {
         return size;
     }
