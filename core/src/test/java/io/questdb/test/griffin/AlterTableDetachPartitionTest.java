@@ -323,7 +323,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 compile("alter table " + tableName + " detach partition list '2020-01-01'");
 
-                compile("truncate table " + tableName + " keep symbol tables");
+                compile("truncate table " + tableName + " keep symbol maps");
 
                 renameDetachedToAttachable(tableName, "2020-01-01");
                 compile("alter table " + tableName + " attach partition list '2020-01-01'");

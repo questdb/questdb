@@ -2574,8 +2574,8 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'symbol' expected");
                 }
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || !isTablesKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'tables' expected");
+                if (tok == null || !isMapsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'maps' expected");
                 }
                 keepSymbolTables = true;
                 tok = SqlUtil.fetchNext(lexer);

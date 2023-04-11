@@ -111,10 +111,10 @@ public class TruncateTest extends AbstractGriffinTest {
             try {
                 createX();
 
-                compiler.compile("truncate table x keep symbol tables bla-bla-bla", sqlExecutionContext);
+                compiler.compile("truncate table x keep symbol maps bla-bla-bla", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(36, e.getPosition());
+                Assert.assertEquals(34, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bla]");
             } finally {
                 engine.clear();
@@ -269,7 +269,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             true
                     );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x keep symbol tables", sqlExecutionContext).getType());
+                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x keep symbol maps", sqlExecutionContext).getType());
 
                     assertQuery(
                             "count\n" +
@@ -293,7 +293,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     assertQuery("count\n10\n", "select count() from x", null, false, true);
                     assertQuery("count\n20\n", "select count() from y", null, false, true);
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x, y KEEP SYMBOL TABLES;", sqlExecutionContext).getType());
+                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x, y KEEP SYMBOL MAPS;", sqlExecutionContext).getType());
 
                     assertQuery("count\n0\n", "select count() from x", null, false, true);
                     assertQuery("count\n0\n", "select count() from y", null, false, true);
@@ -394,7 +394,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'tables' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'maps' expected");
             } finally {
                 engine.clear();
             }

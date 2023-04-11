@@ -1085,6 +1085,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'k';
     }
 
+    public static boolean isMapsKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isMaxIdentifierLength(CharSequence tok) {
         if (tok.length() != 21) {
             return false;
@@ -1723,14 +1735,12 @@ public class SqlKeywords {
         }
 
         int i = 0;
-        // @formatter:off
         return (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 'b'
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 's';
-        // @formatter:on
     }
 
     public static boolean isTextKeyword(CharSequence tok) {

@@ -141,7 +141,7 @@ public interface TableWriterAPI extends Closeable {
     void truncate();
 
     /**
-     * Truncates table, but keeps symbol tables, i.e. internal symbol string to int symbol code mappings.
+     * Truncates table, but keeps symbol tables, i.e. internal symbol string to symbol int code maps.
      * Sometimes the symbols should be kept to make sure that DETACH/ATTACH PARTITION does not lose data
      * for symbol columns. For non-WAL tables, this method has to be called when the
      * {@link CairoEngine#lockReaders(TableToken)} lock is held, i.e. when there are no readers reading from the table.
