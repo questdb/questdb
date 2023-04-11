@@ -241,8 +241,8 @@ public class Bootstrap {
                         if (shouldRename && ff.rename(path, other) == 0) {
                             log.criticalW().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW().
-                                    $("could not rename crash file [path=").$(path)
+                            log.criticalW()
+                                    .$("could not rename crash file [path=").$(path)
                                     .$(", errno=").$(ff.errno())
                                     .$(", index=").$(counter.get())
                                     .$(", max=").$(maxFiles)
