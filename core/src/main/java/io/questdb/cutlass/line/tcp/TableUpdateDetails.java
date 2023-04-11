@@ -82,24 +82,18 @@ public class TableUpdateDetails implements Closeable {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
         this.defaultColumnTypes = defaultColumnTypes;
-        final int n = netIoJobs.length;
-        CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
-        TableRecordMetadata tableMetadata = writer.getMetadata();
-        this.timestampIndex = tableMetadata.getTimestampIndex();
+        this.timestampIndex = writer.getMetadata().getTimestampIndex();
         this.tableToken = writer.getTableToken();
-        if (writer.supportsMultipleWriters()) {
-            metadataService = null;
-        } else {
-            metadataService = (MetadataService) writer;
-        }
-
+        this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = configuration.getCommitInterval();
         this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
+        final int n = netIoJobs.length;
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource

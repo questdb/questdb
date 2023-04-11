@@ -26,8 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.CairoSecurityContextFactory;
-import io.questdb.cairo.security.DefaultFactoriesFactory;
-import io.questdb.cairo.security.FactoriesFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -42,6 +40,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -256,6 +255,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final SqlParserFactory sqlParserFactory;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -473,6 +473,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.log = log;
         this.securityContextFactory = factoriesFactory.getSecurityContextFactory();
+        this.sqlParserFactory = factoriesFactory.getSqlParserFactory();
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -2195,6 +2196,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return sqlParserFactory;
+        }
+
+        @Override
         public int getSqlSmallMapKeyCapacity() {
             return sqlSmallMapKeyCapacity;
         }
@@ -2852,6 +2858,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
         }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return sqlParserFactory;
+        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
@@ -2997,6 +3008,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CairoSecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
+        }
+
+        @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitUsBeforeReload;
         }
@@ -3039,6 +3055,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean readOnlySecurityContext() {
+            return httpReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -3405,6 +3426,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return pgWorkerSleepThreshold;
+        }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return sqlParserFactory;
         }
 
         @Override

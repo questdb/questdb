@@ -44,17 +44,21 @@ public class InsertOperationImpl implements InsertOperation {
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
+    // TODO: create GrantModel/GrantOperation based on InsertModel/InsertOperation instead
+    private final boolean isGrant;
     private final long structureVersion;
     private final TableToken tableToken;
 
     public InsertOperationImpl(
             CairoEngine engine,
             TableToken tableToken,
-            long structureVersion
+            long structureVersion,
+            boolean isGrant
     ) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.structureVersion = structureVersion;
+        this.isGrant = isGrant;
     }
 
     @Override
@@ -66,7 +70,14 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "insert");
+            final TableWriterAPI writer;
+            if (isGrant) {
+                // TODO: pass target table name in model, hardcoded to 'test' for now
+                final CairoEngine engine = (CairoEngine) writerSource;
+                writer = engine.getTableWriterAPIForGrant(executionContext.getCairoSecurityContext(), tableToken, "test", "grant");
+            } else {
+                writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "insert");
+            }
             if (writer.getStructureVersion() != structureVersion ||
                     !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();

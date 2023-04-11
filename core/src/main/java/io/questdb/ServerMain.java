@@ -244,6 +244,10 @@ public class ServerMain implements Closeable {
         return config;
     }
 
+    public FunctionFactoryCache getFfCache() {
+        return ffCache;
+    }
+
     public WorkerPoolManager getWorkerPoolManager() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");

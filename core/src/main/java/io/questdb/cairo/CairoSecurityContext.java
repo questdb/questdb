@@ -26,30 +26,36 @@ package io.questdb.cairo;
 
 public interface CairoSecurityContext {
 
-    default void authorizeTableRead(TableToken tableToken) {
+    default void authorizeCopyCancel(CairoSecurityContext securityContext) {
     }
 
-    default void authorizeTableWrite(TableToken tableToken) {
-    }
-
-    default void authorizeTableCreate(CharSequence tableName) {
-    }
-
-    default void authorizeTableDrop() {
-    }
-
-    default void authorizeTableRename(TableToken tableToken) {
-    }
-
-    default void authorizeTableLock() {
+    default void authorizeCopyExecute() {
     }
 
     default void authorizeDatabaseSnapshot() {
     }
 
-    default void authorizeCopyCancel(CairoSecurityContext securityContext) {
+    default void authorizeTableCreate() {
     }
 
-    default void authorizeCopyExecute() {
+    default void authorizeTableDrop(TableToken tableToken) {
+    }
+
+    default void authorizeTableLock(TableToken tableToken) {
+    }
+
+    default void authorizeTableManage(TableToken tableToken) {
+    }
+
+    default void authorizeTableRead(TableToken tableToken) {
+    }
+
+    default void authorizeTableRename(TableToken tableToken) {
+    }
+
+    default void authorizeTableTruncate(TableToken tableToken) {
+    }
+
+    default void authorizeTableWrite(TableToken tableToken) {
     }
 }

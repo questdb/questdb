@@ -28,6 +28,8 @@ import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -157,6 +159,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public CairoSecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
+    }
+
+    @Override
     public int getSelectCacheBlockCount() {
         return 8;
     }
@@ -174,6 +181,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public String getServerVersion() {
         return "11.3";
+    }
+
+    @Override
+    public SqlParserFactory getSqlParserFactory() {
+        return SqlParserFactoryImpl.INSTANCE;
     }
 
     @Override
@@ -214,10 +226,5 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public boolean readOnlySecurityContext() {
         return false;
-    }
-
-    @Override
-    public CairoSecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
     }
 }

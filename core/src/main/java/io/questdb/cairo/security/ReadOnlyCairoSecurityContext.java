@@ -32,27 +32,7 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     public static final ReadOnlyCairoSecurityContext INSTANCE = new ReadOnlyCairoSecurityContext();
 
     @Override
-    public void authorizeTableWrite(TableToken tableToken) {
-        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableCreate(CharSequence tableName) {
-        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableDrop() {
-        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableRename(TableToken tableToken) {
-        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableLock() {
+    public void authorizeCopyExecute() {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 
@@ -62,7 +42,37 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     }
 
     @Override
-    public void authorizeCopyExecute() {
+    public void authorizeTableCreate() {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableDrop(TableToken tableToken) {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableLock(TableToken tableToken) {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableManage(TableToken tableToken) {
+        throw CairoException.nonCritical().put("Grant permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableRename(TableToken tableToken) {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableTruncate(TableToken tableToken) {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableWrite(TableToken tableToken) {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 }

@@ -22,18 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.griffin;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.ObjectPool;
 
-public interface CairoSecurityContextFactory {
-    CairoSecurityContext getInstance(CharSequence principal, boolean readOnlyContext);
-
-    default CairoSecurityContext getInstance(CharSequence principal) {
-        return getInstance(principal, false);
-    }
-
-    default CairoSecurityContext getRootContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
-    }
+public interface SqlParserFactory {
+    SqlParser getInstance(
+            CairoConfiguration configuration,
+            SqlOptimiser optimiser,
+            CharacterStore characterStore,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<QueryModel> queryModelPool,
+            PostOrderTreeTraversalAlgo traversalAlgo
+    );
 }

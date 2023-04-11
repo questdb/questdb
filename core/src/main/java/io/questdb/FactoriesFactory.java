@@ -22,18 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.griffin.SqlParserFactory;
 
-public interface CairoSecurityContextFactory {
-    CairoSecurityContext getInstance(CharSequence principal, boolean readOnlyContext);
+// TODO: rename to FactoryProvider?
+public interface FactoriesFactory {
+    CairoSecurityContextFactory getSecurityContextFactory();
 
-    default CairoSecurityContext getInstance(CharSequence principal) {
-        return getInstance(principal, false);
-    }
-
-    default CairoSecurityContext getRootContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
-    }
+    SqlParserFactory getSqlParserFactory();
 }

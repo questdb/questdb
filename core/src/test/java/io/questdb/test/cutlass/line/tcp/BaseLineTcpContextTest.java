@@ -24,11 +24,12 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.tcp.*;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -39,6 +40,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -197,6 +199,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public CairoSecurityContextFactory getSecurityContextFactory() {
+                return AllowAllSecurityContextFactory.INSTANCE;
+            }
+
+            @Override
             public long getWriterIdleTimeout() {
                 return 150;
             }
@@ -214,6 +221,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean isSymbolAsFieldSupported() {
                 return symbolAsFieldSupported;
+            }
+
+            @Override
+            public boolean readOnlySecurityContext() {
+                return false;
             }
         };
     }
@@ -283,12 +295,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         ) {
 
             @Override
-            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
-                Assert.assertEquals(0, workerId);
-                return noNetworkIOJob;
-            }
-
-            @Override
             public boolean scheduleEvent(
                     CairoSecurityContext securityContext, NetworkIOJob netIoJob,
                     LineTcpConnectionContext context,
@@ -298,6 +304,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     onCommitNewEvent.run();
                 }
                 return super.scheduleEvent(securityContext, netIoJob, context, parser);
+            }
+
+            @Override
+            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+                Assert.assertEquals(0, workerId);
+                return noNetworkIOJob;
             }
         };
         noNetworkIOJob.setScheduler(scheduler);

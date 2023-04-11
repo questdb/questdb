@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -713,6 +714,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return conf.getSqlPageFrameMinRows();
+    }
+
+    @Override
+    public SqlParserFactory getSqlParserFactory() {
+        return conf.getSqlParserFactory();
     }
 
     @Override

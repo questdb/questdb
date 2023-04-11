@@ -24,8 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.cairo.security.DefaultFactoriesFactory;
-import io.questdb.cairo.security.FactoriesFactory;
 import io.questdb.std.FilesFacade;
 
 import java.util.Map;

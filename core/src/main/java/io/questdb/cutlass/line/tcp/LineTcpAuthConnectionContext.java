@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;
@@ -56,10 +57,12 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
     private final AuthDb authDb;
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
-    private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
+    private final LineTcpReceiverConfiguration configuration;
+    private final DirectByteCharSequence userName = new DirectByteCharSequence();
     private AuthState authState;
     private boolean authenticated;
     private PublicKey pubKey;
+    private CairoSecurityContext securityContext;
 
     public LineTcpAuthConnectionContext(
             LineTcpReceiverConfiguration configuration,
@@ -71,6 +74,7 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
+        this.configuration = configuration;
         this.authDb = authDb;
     }
 
@@ -80,6 +84,14 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         authState = AuthState.WAITING_FOR_KEY_ID;
         pubKey = null;
         super.clear();
+    }
+
+    @Override
+    public IOContextResult handleIO(NetworkIOJob netIoJob) {
+        if (authenticated) {
+            return super.handleIO(netIoJob);
+        }
+        return handleAuth(netIoJob);
     }
 
     private boolean checkAllZeros(byte[] signatureRaw) {
@@ -147,9 +159,10 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private void readKeyId() {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
-            charSeq.of(recvBufStart, recvBufStart + lineEnd);
-            LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(charSeq).$(']').$();
-            pubKey = authDb.getPublicKey(charSeq);
+            userName.of(recvBufStart, recvBufStart + lineEnd);
+            LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(userName).$(']').$();
+            pubKey = authDb.getPublicKey(userName);
+            securityContext = configuration.getSecurityContextFactory().getInstance(userName, configuration.readOnlySecurityContext());
 
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
@@ -243,11 +256,8 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    public IOContextResult handleIO(NetworkIOJob netIoJob) {
-        if (authenticated) {
-            return super.handleIO(netIoJob);
-        }
-        return handleAuth(netIoJob);
+    protected CairoSecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     private enum AuthState {

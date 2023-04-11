@@ -42,7 +42,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.model.ExpressionNode.*;
 
-class SqlOptimiser {
+public class SqlOptimiser {
 
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;

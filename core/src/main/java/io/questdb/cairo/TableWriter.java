@@ -171,6 +171,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
+    private CommitListener commitListener;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -2017,6 +2018,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public void setCommitListener(CommitListener commitListener) {
+        this.commitListener = commitListener;
+    }
+
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
     }
@@ -2960,7 +2965,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            return getTxn();
+            final long txn = getTxn();
+
+            if (commitListener != null) {
+                commitListener.onCommit(txn, rowsAdded);
+            }
+            return txn;
         }
         return TableSequencer.NO_TXN;
     }
@@ -6112,7 +6122,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ)  &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {

@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -83,6 +84,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     int getRecvBufferSize();
 
+    CairoSecurityContextFactory getSecurityContextFactory();
+
     int getSelectCacheBlockCount();
 
     int getSelectCacheRowCount();
@@ -90,6 +93,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     int getSendBufferSize();
 
     String getServerVersion();
+
+    SqlParserFactory getSqlParserFactory();
 
     int getUpdateCacheBlockCount();
 
@@ -104,6 +109,4 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     boolean isUpdateCacheEnabled();
 
     boolean readOnlySecurityContext();
-
-    CairoSecurityContextFactory getSecurityContextFactory();
 }

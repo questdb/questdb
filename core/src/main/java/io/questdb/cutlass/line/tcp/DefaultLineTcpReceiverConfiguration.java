@@ -26,6 +26,8 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -164,6 +166,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public CairoSecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
+    }
+
+    @Override
     public long getSymbolCacheWaitUsBeforeReload() {
         return 500_000;
     }
@@ -205,6 +212,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public boolean isSymbolAsFieldSupported() {
+        return false;
+    }
+
+    @Override
+    public boolean readOnlySecurityContext() {
         return false;
     }
 }

@@ -26,6 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
@@ -71,6 +73,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
+        }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return SqlParserFactoryImpl.INSTANCE;
         }
     };
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {

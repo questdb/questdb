@@ -29,7 +29,6 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -123,6 +122,14 @@ public class SqlCompiler implements Closeable {
     }
 
     public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
+        this(engine, functionFactoryCache, snapshotAgent, SqlParserFactoryImpl.INSTANCE);
+    }
+
+    public SqlCompiler(
+            CairoEngine engine,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
+            SqlParserFactory sqlParserFactory) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -220,7 +227,7 @@ public class SqlCompiler implements Closeable {
                 path
         );
 
-        parser = new SqlParser(
+        parser = sqlParserFactory.getInstance(
                 configuration,
                 optimiser,
                 characterStore,
@@ -469,10 +476,10 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCairoSecurityContext().authorizeTableLock();
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
+        executionContext.getCairoSecurityContext().authorizeTableLock(tableToken);
         try {
             engine.unlockWriter(tableToken);
             return compiledQuery.ofUnlock();
@@ -663,6 +670,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "'lock' or 'unlock' expected");
             }
         } else {
+            // TODO: pass to parseUnexpected() instead
             throw SqlException.$(lexer.lastTokenPosition(), "'table' or 'system' expected");
         }
     }
@@ -1986,7 +1994,7 @@ public class SqlCompiler implements Closeable {
                 token
         )) {
             final long structureVersion = metadata.getStructureVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), structureVersion);
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), structureVersion, model.isGrant());
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
@@ -2509,6 +2517,7 @@ public class SqlCompiler implements Closeable {
                     return compiledQuery.of(factory);
                 }
                 Misc.free(factory);
+                // TODO: pass to parseUnexpected() instead
                 throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [tok=").put(tok).put(']');
             }
         }
@@ -2582,7 +2591,7 @@ public class SqlCompiler implements Closeable {
                         tok = GenericLexer.unquote(tok);
                     }
                     TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-
+                    executionContext.getCairoSecurityContext().authorizeTableTruncate(tableToken);
                     try {
                         tableWriters.add(engine.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "truncateTables"));
                     } catch (CairoException e) {

@@ -22,12 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.cairo;
 
-public class DefaultFactoriesFactory implements FactoriesFactory {
-    public static final DefaultFactoriesFactory INSTANCE = new DefaultFactoriesFactory();
-    @Override
-    public CairoSecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
-    }
+public interface CommitListener {
+    void onCommit(long txn, long rowsAdded);
 }
