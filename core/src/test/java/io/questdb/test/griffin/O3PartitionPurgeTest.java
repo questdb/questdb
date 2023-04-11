@@ -29,6 +29,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -393,6 +394,52 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
+        });
+    }
+
+    @Test
+    public void testPartitionSplitWithReaders() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(100);
+
+            TableToken token;
+            try (TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
+                    .col("x", ColumnType.INT).timestamp()) {
+                token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
+            }
+
+            Path path = Path.getThreadLocal("");
+
+            // This should lock partition 1970-01-10.1 from being deleted from disk
+            try (TableReader rdr = getReader("tbl")) {
+
+                // OOO insert
+                compiler.compile("insert into tbl select 4, '2022-02-24T12'", sqlExecutionContext);
+
+                try (TableReader rdr2 = getReader("tbl")) {
+                    // in order insert
+                    compiler.compile("insert into tbl select 2, '2022-02-26T12'", sqlExecutionContext);
+
+                    // OOO insert
+                    compiler.compile("insert into tbl select 4, '2022-02-24T12'", sqlExecutionContext);
+
+                    runPartitionPurgeJobs();
+
+                    rdr2.openPartition(0);
+                }
+
+                runPartitionPurgeJobs();
+
+                // This should not fail
+                rdr.openPartition(0);
+            }
+            runPartitionPurgeJobs();
+
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T12.1");
+            Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T12.3");
+            Assert.assertTrue(Chars.toString(path), Files.exists(path));
         });
     }
 
