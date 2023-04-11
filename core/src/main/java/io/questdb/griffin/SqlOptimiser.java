@@ -4615,6 +4615,7 @@ public class SqlOptimiser {
 
     void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try {
+            literalCollectorANames.clear();
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());
             int timestampIndex = metadata.getTimestampIndex();
@@ -4645,6 +4646,7 @@ public class SqlOptimiser {
                 CharSequence exactColName = metadata.getColumnName(columnIndex);
                 queryColumn.of(exactColName, queryColumn.getAst());
                 tempList.set(columnIndex, 1);
+                literalCollectorANames.add(exactColName);
 
                 ExpressionNode rhs = queryColumn.getAst();
                 if (rhs.type == FUNCTION) {
@@ -4654,7 +4656,11 @@ public class SqlOptimiser {
                 }
             }
 
+
             TableToken tableToken = metadata.getTableToken();
+
+            sqlExecutionContext.getCairoSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
+
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
                 // Table renamed
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
@@ -4663,6 +4669,9 @@ public class SqlOptimiser {
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {
+            if (e.isAuthorizationError()) {
+                throw e;
+            }
             throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
     }

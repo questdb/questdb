@@ -66,4 +66,7 @@ public interface CairoSecurityContext {
 
     default void authorizeTableWrite(TableToken tableToken) {
     }
+
+    default void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
 }

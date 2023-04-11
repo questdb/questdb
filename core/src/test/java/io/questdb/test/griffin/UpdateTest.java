@@ -1241,11 +1241,8 @@ public class UpdateTest extends AbstractGriffinTest {
             );
 
             try {
-                CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                try (OperationFuture fut = cq.execute(null)) {
-                    fut.await();
-                    Assert.fail();
-                }
+                compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
