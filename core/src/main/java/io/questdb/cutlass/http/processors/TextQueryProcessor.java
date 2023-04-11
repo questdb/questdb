@@ -391,6 +391,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
+    private LogRecord error(TextQueryProcessorState state) {
+        return LOG.error().$('[').$(state.getFd()).$("] ");
+    }
+
     private LogRecord info(TextQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -411,9 +415,34 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void logInternalError(Throwable e, TextQueryProcessorState state) {
-        critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
-        // This is a critical error, so we treat it as an unhandled one.
-        metrics.health().incrementUnhandledErrors();
+        if (e instanceof CairoException) {
+            CairoException ce = (CairoException) e;
+            if (ce.isInterruption()) {
+                info(state).$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
+                        .$("`, q=`").utf8(state.query)
+                        .$("`]").$();
+            } else if (ce.isCritical()) {
+                critical(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                        .$("`, errno=").$(ce.getErrno())
+                        .$("`, q=`").utf8(state.query)
+                        .$("`]").$();
+            } else {
+                error(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                        .$("`, errno=").$(ce.getErrno())
+                        .$("`, q=`").utf8(state.query)
+                        .$("`]").$();
+            }
+        } else if (e instanceof HttpException) {
+            error(state).$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
+                    .$("`, q=`").utf8(state.query)
+                    .$("`]").$();
+        } else {
+            critical(state).$("internal error [ex=").$(e)
+                    .$(", q=`").utf8(state.query)
+                    .$("`]").$();
+            // This is a critical error, so we treat it as an unhandled one.
+            metrics.health().incrementUnhandledErrors();
+        }
     }
 
     private boolean parseUrl(
