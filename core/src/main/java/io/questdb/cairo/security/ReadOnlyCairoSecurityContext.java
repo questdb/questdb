@@ -27,12 +27,23 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.ObjList;
 
 public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     public static final ReadOnlyCairoSecurityContext INSTANCE = new ReadOnlyCairoSecurityContext();
 
     @Override
     public void authorizeCopyExecute() {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAlterTableAddColumn(TableToken tableToken) {
+        throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
     }
 

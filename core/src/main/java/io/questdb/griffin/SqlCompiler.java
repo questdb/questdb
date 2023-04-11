@@ -503,11 +503,12 @@ public class SqlCompiler implements Closeable {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
                 if (SqlKeywords.isAddKeyword(tok)) {
+                    executionContext.getCairoSecurityContext().authorizeAlterTableAddColumn(tableToken);
                     return alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     tok = expectToken(lexer, "'column' or 'partition'");
                     if (SqlKeywords.isColumnKeyword(tok)) {
-                        return alterTableDropColumn(tableNamePosition, tableToken, tableMetadata);
+                        return alterTableDropColumn(executionContext.getCairoSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
                         return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                     } else {
@@ -929,7 +930,12 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private CompiledQuery alterTableDropColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {
+    private CompiledQuery alterTableDropColumn(
+            CairoSecurityContext securityContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata metadata
+    ) throws SqlException {
         AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableToken, metadata.getTableId());
         int semicolonPos = -1;
         do {
@@ -959,6 +965,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
+        securityContext.authorizeAlterTableDropColumn(tableToken, dropColumnStatement.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 

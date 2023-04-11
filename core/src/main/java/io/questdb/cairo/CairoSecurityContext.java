@@ -24,7 +24,36 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ObjList;
+
 public interface CairoSecurityContext {
+
+    default void authorizeTableRead(TableToken tableToken) {
+    }
+
+    default void authorizeTableWrite(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableAddColumn(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    default void authorizeTableCreate(CharSequence tableName) {
+    }
+
+    default void authorizeTableDrop() {
+    }
+
+    default void authorizeTableRename(TableToken tableToken) {
+    }
+
+    default void authorizeTableLock() {
+    }
+
+    default void authorizeDatabaseSnapshot() {
+    }
 
     default void authorizeCopyCancel(CairoSecurityContext securityContext) {
     }

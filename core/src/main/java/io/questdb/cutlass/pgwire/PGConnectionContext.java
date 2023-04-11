@@ -377,6 +377,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return engine.getTableWriterAPI(context, tableToken, lockReason);
     }
 
+    @Override
+    public TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason) {
+        final int index = pendingWriters.keyIndex(tableToken);
+        if (index < 0) {
+            return pendingWriters.valueAt(index);
+        }
+        return engine.getTableWriterAPIAsRoot(tableToken, lockReason);
+    }
+
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,

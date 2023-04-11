@@ -28,7 +28,8 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 
-@FunctionalInterface
 public interface WriterSource {
     TableWriterAPI getTableWriterAPI(CairoSecurityContext context, TableToken tableToken, String lockReason);
+
+    TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason);
 }

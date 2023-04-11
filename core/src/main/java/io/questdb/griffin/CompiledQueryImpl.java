@@ -141,9 +141,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(type, null);
     }
 
-    public CompiledQuery ofAlter(AlterOperation statement) {
+    public CompiledQuery ofAlter(AlterOperation alterOp) {
         of(ALTER);
-        alterOp = statement;
+        this.alterOp = alterOp;
         return this;
     }
 

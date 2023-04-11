@@ -490,13 +490,13 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(
-            CairoSecurityContext securityContext,
-            TableToken tableToken,
-            @Nullable String lockReason
-    ) {
+    public TableWriterAPI getTableWriterAPI(CairoSecurityContext securityContext, TableToken tableToken, @Nullable String lockReason) {
         authorizeWrite(securityContext, tableToken);
+        return getTableWriterAPIAsRoot(tableToken, lockReason);
+    }
 
+    @Override
+    public TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason) {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
