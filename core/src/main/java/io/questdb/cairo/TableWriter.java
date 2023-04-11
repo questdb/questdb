@@ -1777,7 +1777,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // check if we are moving timestamp from a partitioned table
         final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-        boolean timestamp = index == timestampIndex;
+        boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
             throw CairoException.nonCritical().put("Cannot remove timestamp from partitioned table");
@@ -6112,7 +6112,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ)  &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {

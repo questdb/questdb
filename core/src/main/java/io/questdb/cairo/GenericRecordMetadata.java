@@ -29,11 +29,23 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 
 public class GenericRecordMetadata extends AbstractRecordMetadata {
 
+    // Does not copy deleted columns.
+    public static GenericRecordMetadata cleanCopyOf(RecordMetadata that) {
+        if (that != null) {
+            if (that instanceof GenericRecordMetadata) {
+                return (GenericRecordMetadata) that;
+            }
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            copyNonDeletedColumns(that, metadata);
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
+    }
+
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            if (from.hasColumn(i)) {
-                to.add(from.getColumnMetadata(i));
-            }
+            to.add(from.getColumnMetadata(i));
         }
     }
 
@@ -51,6 +63,14 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             }
         }
         return metadata;
+    }
+
+    public static void copyNonDeletedColumns(RecordMetadata from, GenericRecordMetadata to) {
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            if (from.hasColumn(i)) {
+                to.add(from.getColumnMetadata(i));
+            }
+        }
     }
 
     public static GenericRecordMetadata copyOf(RecordMetadata that) {

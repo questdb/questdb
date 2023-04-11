@@ -39,7 +39,7 @@ public class TextLoaderCompletedState {
         // in order to release TableWriter back to the Engine
         this.writtenLineCount = textLoader.getWrittenLineCount();
         this.metadata = textLoader.getMetadata() != null
-                ? GenericRecordMetadata.copyOf(textLoader.getMetadata())
+                ? GenericRecordMetadata.cleanCopyOf(textLoader.getMetadata())
                 : null;
         // Some values are safe to get from TextLoader
         this.textLoader = textLoader;
