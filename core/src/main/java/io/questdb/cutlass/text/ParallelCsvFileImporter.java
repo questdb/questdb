@@ -890,23 +890,28 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
 
-        if (metadata.getColumnCount() < types.size()) {
+        final int writerColumnCount = GenericRecordMetadata.getNonDeletedColumnCount(metadata);
+        if (writerColumnCount < types.size()) {
             writer.close();
             throw TextException.$("column count mismatch [textColumnCount=").put(types.size())
-                    .put(", tableColumnCount=").put(metadata.getColumnCount())
+                    .put(", tableColumnCount=").put(writerColumnCount)
                     .put(", table=").put(tableName)
                     .put(']');
         }
 
-        //remap index is only needed to adjust names and types
-        //workers will import data into temp tables without remapping
+        // remap index is only needed to adjust names and types
+        // workers will import data into temp tables without remapping
         IntList remapIndex = new IntList();
         remapIndex.ensureCapacity(types.size());
         for (int i = 0, n = types.size(); i < n; i++) {
-
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = (columnIndex > -1 && columnIndex != i) ? columnIndex : i; // check for strict match ?
             remapIndex.set(i, idx);
+
+            if (!metadata.hasColumn(idx)) {
+                writer.close();
+                throw TextException.$("cannot match columns by their positions, please add headers [index=").put(i).put(']');
+            }
 
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = types.getQuick(i);
@@ -938,13 +943,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         }
 
-        //at this point we've to use target table columns names otherwise partition attach could fail on metadata differences
-        //(if header names or synthetic names are different from table's)
+        // at this point we've to use target table columns names otherwise partition attach could fail on metadata differences
+        // (if header names or synthetic names are different from table's)
         for (int i = 0, n = remapIndex.size(); i < n; i++) {
             names.set(i, metadata.getColumnName(remapIndex.get(i)));
         }
 
-        //add table columns missing in input file
+        // add table columns missing in input file
         if (names.size() < metadata.getColumnCount()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 boolean unused = true;
@@ -956,7 +961,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                 }
 
-                if (unused) {
+                if (unused && metadata.hasColumn(i)) {
                     names.add(metadata.getColumnName(i));
                     types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
                 }

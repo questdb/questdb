@@ -262,14 +262,14 @@ public class CairoTextWriter implements Closeable, Mutable {
         TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
 
-        // now, compare column count.
-        // Cannot continue if different
+        // Now, compare column count. Cannot continue if different.
 
-        if (metadata.getColumnCount() < detectedTypes.size()) {
+        final int writerColumnCount = GenericRecordMetadata.getNonDeletedColumnCount(metadata);
+        if (writerColumnCount < detectedTypes.size()) {
             writer.close();
             throw CairoException.nonCritical()
                     .put("column count mismatch [textColumnCount=").put(detectedTypes.size())
-                    .put(", tableColumnCount=").put(metadata.getColumnCount())
+                    .put(", tableColumnCount=").put(writerColumnCount)
                     .put(", table=").put(tableName)
                     .put(']');
         }
@@ -279,10 +279,14 @@ public class CairoTextWriter implements Closeable, Mutable {
         // now overwrite detected types with actual table column types
         remapIndex.ensureCapacity(this.types.size());
         for (int i = 0, n = this.types.size(); i < n; i++) {
-
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = (columnIndex > -1 && columnIndex != i) ? columnIndex : i; // check for strict match ?
             remapIndex.set(i, idx);
+
+            if (!metadata.hasColumn(idx)) {
+                writer.close();
+                throw CairoException.nonCritical().put("cannot match columns by their positions, please add headers or provide schema [index=").put(i).put(']');
+            }
 
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = this.types.getQuick(i);

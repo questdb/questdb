@@ -449,8 +449,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
+    // missing symbols column is filled with nulls
     @Test
-    //missing symbols column is filled with nulls
     public void testImportCsvWithMissingAndReorderedSymbolColumns() throws Exception {
         executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab2 (other symbol, txt symbol, line symbol, ts timestamp, d symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
@@ -470,8 +470,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
+    // all rows in the file fail on timestamp parsing so indexing phase will return empty result
     @Test
-    //all rows in the file fail on timestamp parsing so indexing phase will return empty result
     public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
@@ -697,6 +697,22 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "import failed [phase=indexing, msg=`could not read file");
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileFailsWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            compile("alter table tab44 drop column line;", compiler, sqlExecutionContext);
+            compile("alter table tab44 add column line symbol;", compiler, sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab44", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, false);
+                importer.process(sqlExecutionContext.getCairoSecurityContext());
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "cannot match columns by their positions, please add headers [index=0]");
             }
         });
     }
@@ -979,6 +995,23 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "2022-05-11T11:52:00.000000Z\tb\n",
                     "select * from tab",
                     "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileWhenImportingAfterColumnWasRecreated() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab62 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            compile("alter table tab62 drop column line;", compiler, sqlExecutionContext);
+            compile("alter table tab62 add column line symbol;", compiler, sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab62", "test-quotes-small.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process(sqlExecutionContext.getCairoSecurityContext());
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("count\n3\n",
+                    "select count() from tab62", null, false, false, true);
         });
     }
 

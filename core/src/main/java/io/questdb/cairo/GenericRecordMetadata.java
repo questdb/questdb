@@ -31,7 +31,9 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            to.add(from.getColumnMetadata(i));
+            if (from.hasColumn(i)) {
+                to.add(from.getColumnMetadata(i));
+            }
         }
     }
 
@@ -91,6 +93,16 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
+    public static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {
+        int count = 0;
+        for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+            if (tableMetadata.hasColumn(i)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     public static RecordMetadata removeTimestamp(RecordMetadata that) {
         if (that.getTimestampIndex() != -1) {
             if (that instanceof GenericRecordMetadata) {
@@ -115,15 +127,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             return this;
         }
         throw CairoException.duplicateColumn(meta.getName());
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
-        if (index < 0) {
-            return columnNameIndexMap.valueAt(index);
-        }
-        return -1;
     }
 
     public void setTimestampIndex(int index) {

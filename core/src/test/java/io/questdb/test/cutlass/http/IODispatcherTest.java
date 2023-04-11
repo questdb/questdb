@@ -29,7 +29,6 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
@@ -57,6 +56,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
@@ -1253,8 +1253,7 @@ public class IODispatcherTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                ValidImportResponse
-                ,
+                ValidImportResponse,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -1306,10 +1305,10 @@ public class IODispatcherTest {
                         "B00014,2017-02-01 00:33:00,,,\r\n" +
                         "B00014,2017-02-01 00:45:00,,,\r\n" +
                         "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
-                , NetworkFacadeImpl.INSTANCE
-                , false
-                , 1
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
         );
 
         // append different data structure to the same table
@@ -1324,8 +1323,7 @@ public class IODispatcherTest {
                         "5d\r\n" +
                         "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                ,
+                        "\r\n",
                 "POST /upload?overwrite=false HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -1377,10 +1375,10 @@ public class IODispatcherTest {
                         "B00014,,,,,\r\n" +
                         "B00014,,,,,\r\n" +
                         "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
-                , NetworkFacadeImpl.INSTANCE
-                , false
-                , 1
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
         );
     }
 
@@ -1462,7 +1460,6 @@ public class IODispatcherTest {
 
     @Test
     public void testImportEpochTimestamp() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(2)
