@@ -1229,7 +1229,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(0, "No active import to cancel.");
         }
 
-        textImportExecutionContext.getSecurityContext().authorizeCopyCancel(securityContext);
+        textImportExecutionContext.getOriginatorSecurityContext().authorizeCopyCancel(securityContext);
 
         long importId;
         try {

@@ -39,7 +39,7 @@ public class TextImportExecutionContext implements Mutable {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final Rnd rnd;
-    private CairoSecurityContext securityContext = DenyAllCairoSecurityContext.INSTANCE;
+    private CairoSecurityContext originatorSecurityContext = DenyAllCairoSecurityContext.INSTANCE;
 
     public TextImportExecutionContext(CairoConfiguration configuration) {
         MicrosecondClock clock = configuration.getMicrosecondClock();
@@ -49,14 +49,14 @@ public class TextImportExecutionContext implements Mutable {
     public long assignActiveImportId(CairoSecurityContext securityContext) {
         long nextId = rnd.nextPositiveLong();
         activeImportId.set(nextId);
-        this.securityContext = securityContext;
+        this.originatorSecurityContext = securityContext;
         return nextId;
     }
 
     @Override
     public void clear() {
         activeImportId.set(INACTIVE);
-        securityContext = DenyAllCairoSecurityContext.INSTANCE;
+        originatorSecurityContext = DenyAllCairoSecurityContext.INSTANCE;
     }
 
     public long getActiveImportId() {
@@ -67,7 +67,7 @@ public class TextImportExecutionContext implements Mutable {
         return circuitBreaker;
     }
 
-    public CairoSecurityContext getSecurityContext() {
-        return securityContext;
+    public CairoSecurityContext getOriginatorSecurityContext() {
+        return originatorSecurityContext;
     }
 }

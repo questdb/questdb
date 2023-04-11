@@ -37,7 +37,7 @@ public interface CairoSecurityContext {
     default void authorizeTableCreate(CharSequence tableName) {
     }
 
-    default void authorizeCopyCancel(CairoSecurityContext securityContext) {
+    default void authorizeCopyCancel(CairoSecurityContext cancellingSecurityContext) {
     }
 
     default void authorizeCopyExecute() {

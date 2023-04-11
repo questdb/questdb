@@ -32,7 +32,7 @@ public class DenyAllCairoSecurityContext extends ReadOnlyCairoSecurityContext {
     public static final DenyAllCairoSecurityContext INSTANCE = new DenyAllCairoSecurityContext();
 
     @Override
-    public void authorizeCopyCancel(CairoSecurityContext securityContext) {
+    public void authorizeCopyCancel(CairoSecurityContext cancellingSecurityContext) {
         throw CairoException.nonCritical().put("permission denied");
     }
 
