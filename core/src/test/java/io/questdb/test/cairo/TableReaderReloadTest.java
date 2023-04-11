@@ -170,7 +170,11 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 assertTable(rnd, buffer, cursor, record);
                 assertOpenPartitionCount(reader);
 
-                writer.truncate(keepSymbolTables);
+                if (keepSymbolTables) {
+                    writer.truncateSoft();
+                } else {
+                    writer.truncate();
+                }
                 Assert.assertTrue(reader.reload());
                 assertOpenPartitionCount(reader);
                 cursor = reader.getCursor();
@@ -218,7 +222,11 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 assertTable(rnd, buffer, cursor, record);
                 assertOpenPartitionCount(reader);
 
-                writer.truncate(keepSymbolTables);
+                if (keepSymbolTables) {
+                    writer.truncateSoft();
+                } else {
+                    writer.truncate();
+                }
 
                 // Write different data
                 rnd.reset(123, 123);

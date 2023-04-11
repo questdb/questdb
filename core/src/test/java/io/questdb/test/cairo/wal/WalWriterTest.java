@@ -2822,7 +2822,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             try (WalWriter walWriter = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
-                walWriter.truncate(false);
+                walWriter.truncate();
                 Assert.fail();
             } catch (UnsupportedOperationException ex) {
                 TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");

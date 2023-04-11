@@ -2589,12 +2589,16 @@ public class SqlCompiler implements Closeable {
                 final TableWriterAPI writer = tableWriters.getQuick(i);
                 try {
                     if (writer.getMetadata().isWalEnabled()) {
-                        writer.truncate(true);
+                        writer.truncateSoft();
                     } else {
                         TableToken tableToken = writer.getTableToken();
                         if (engine.lockReaders(tableToken)) {
                             try {
-                                writer.truncate(keepSymbolTables);
+                                if (keepSymbolTables) {
+                                    writer.truncateSoft();
+                                } else {
+                                    writer.truncate();
+                                }
                             } finally {
                                 engine.unlockReaders(tableToken);
                             }
