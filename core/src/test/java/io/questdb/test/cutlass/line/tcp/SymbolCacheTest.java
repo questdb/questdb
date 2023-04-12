@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.SymbolCache;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.RingQueue;
@@ -43,6 +42,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -855,6 +855,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
         @Override
         public void truncate() {
+        }
+
+        @Override
+        public void truncateSoft() {
         }
     }
 }

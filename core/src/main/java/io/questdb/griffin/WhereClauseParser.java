@@ -87,6 +87,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
+    private int withinPosition;
 
     @Override
     public void clear() {
@@ -108,6 +109,7 @@ public final class WhereClauseParser implements Mutable {
         this.preferredKeyColumn = null;
         this.allKeyValuesAreKnown = true;
         this.allKeyExcludedValuesAreKnown = true;
+        withinPosition = -1;
     }
 
     public IntrinsicModel extract(
@@ -183,6 +185,10 @@ public final class WhereClauseParser implements Mutable {
         model.filter = collapseIntrinsicNodes(root);
         createKeyValueBindVariables(model, functionParser, executionContext);
         return model;
+    }
+
+    public int getWithinPosition() {
+        return withinPosition;
     }
 
     private static short adjustComparison(boolean equalsTo, boolean isLo) {
@@ -1865,6 +1871,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
             LongList prefixes) throws SqlException {
+
         if (isWithinKeyword(node.token)) {
 
             if (prefixes.size() > 0) {
@@ -1910,6 +1917,7 @@ public final class WhereClauseParser implements Mutable {
                     processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
                 }
             }
+            withinPosition = node.position;
             return true;
         } else {
             return false;
@@ -1974,6 +1982,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
 
         prefixes.clear();
+        withinPosition = -1;
         if (node == null) return null;
 
         // pre-order iterative tree traversal

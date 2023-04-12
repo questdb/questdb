@@ -293,7 +293,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final RecordMetadata metadata = completeState.getMetadata();
         final LongList errors = completeState.getColumnErrorCounts();
 
-
         switch (state.responseState) {
             case RESPONSE_PREFIX:
                 long totalRows = completeState.getParsedLineCount();
@@ -358,7 +357,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final TextLoaderCompletedState textLoaderCompletedState = state.completeState;
         final RecordMetadata metadata = textLoaderCompletedState.getMetadata();
         LongList errors = textLoaderCompletedState.getColumnErrorCounts();
-
 
         switch (state.responseState) {
             case RESPONSE_PREFIX:

@@ -39,7 +39,6 @@ public class GenericRecordMetadataTest {
 
     @Test
     public void testBaseInterfaceDefaults() {
-
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
         metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, true, 1024, true, null));
