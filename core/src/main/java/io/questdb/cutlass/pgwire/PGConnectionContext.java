@@ -1680,6 +1680,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case 'Q': // simple query
                 sendRNQ = true;
+                engine.getMetrics().pgWire().markStart();
                 processQuery(msgLo, msgLimit, compiler);
                 break;
             case 'd': // COPY data 
@@ -2811,6 +2812,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             responseAsciiSink.putLen(addr);
         }
+        engine.getMetrics().pgWire().markComplete();
     }
 
     void prepareReadyForQuery() {
