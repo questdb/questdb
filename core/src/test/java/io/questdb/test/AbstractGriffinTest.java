@@ -743,7 +743,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expectedTimestamp == null) {
+        if (expectedTimestamp == null || expectedTimestamp.length() == 0) {
             int timestampIdx = factory.getMetadata().getTimestampIndex();
             if (timestampIdx != -1) {
                 Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
@@ -758,7 +758,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
-            Assert.assertTrue("Column " + expectedTimestamp + " can't be found in metadata", index > -1);
+            Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
             Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
             assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);

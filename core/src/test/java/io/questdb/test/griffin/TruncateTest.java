@@ -106,6 +106,23 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectStatementEnd() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+
+                compiler.compile("truncate table x keep symbol maps bla-bla-bla", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(34, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bla]");
+            } finally {
+                engine.clear();
+            }
+        });
+    }
+
+    @Test
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -162,6 +179,53 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectTableName3() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile("truncate table with", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(15, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
+            }
+        });
+    }
+
+    @Test
+    public void testExpectTableName4() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+
+                compiler.compile("truncate table x, keep", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
+            } finally {
+                engine.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testExpectTableName5() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+
+                compiler.compile("truncate table x y z", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(19, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "',' or 'keep' expected");
+            } finally {
+                engine.clear();
+            }
+        });
+    }
+
+    @Test
     public void testHappyPath() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -186,7 +250,90 @@ public class TruncateTest extends AbstractGriffinTest {
                             false,
                             true
                     );
+                }
+        );
+    }
 
+    @Test
+    public void testHappyPathKeepSymbolTables() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    assertQuery(
+                            "count\n" +
+                                    "10\n",
+                            "select count() from x",
+                            null,
+                            false,
+                            true
+                    );
+
+                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x keep symbol maps", sqlExecutionContext).getType());
+
+                    assertQuery(
+                            "count\n" +
+                                    "0\n",
+                            "select count() from x",
+                            null,
+                            false,
+                            true
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testHappyPathKeepSymbolTablesAndSemicolon() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+                    createY();
+
+                    assertQuery("count\n10\n", "select count() from x", null, false, true);
+                    assertQuery("count\n20\n", "select count() from y", null, false, true);
+
+                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x, y KEEP SYMBOL MAPS;", sqlExecutionContext).getType());
+
+                    assertQuery("count\n0\n", "select count() from x", null, false, true);
+                    assertQuery("count\n0\n", "select count() from y", null, false, true);
+                }
+        );
+    }
+
+    @Test
+    public void testHappyPathTableNameKeep() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile(
+                            "create table keep as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                                    " from long_sequence(3)" +
+                                    ") timestamp (timestamp)",
+                            sqlExecutionContext
+                    );
+
+                    assertQuery(
+                            "count\n" +
+                                    "3\n",
+                            "select count() from keep",
+                            null,
+                            false,
+                            true
+                    );
+
+                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE keep;", sqlExecutionContext).getType());
+
+                    assertQuery(
+                            "count\n" +
+                                    "0\n",
+                            "select count() from keep",
+                            null,
+                            false,
+                            true
+                    );
                 }
         );
     }
@@ -206,7 +353,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             true
                     );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x;", sqlExecutionContext).getType());
+                    Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x;", sqlExecutionContext).getType());
 
                     assertQuery(
                             "count\n" +
@@ -216,9 +363,42 @@ public class TruncateTest extends AbstractGriffinTest {
                             false,
                             true
                     );
-
                 }
         );
+    }
+
+    @Test
+    public void testKeepSymbolTablesExpectSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+
+                compiler.compile("truncate table x keep bla-bla-bla", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "'symbol' expected");
+            } finally {
+                engine.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testKeepSymbolTablesExpectTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+
+                compiler.compile("truncate table x keep symbol bla-bla-bla", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(29, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "'maps' expected");
+            } finally {
+                engine.clear();
+            }
+        });
     }
 
     @Test
@@ -259,7 +439,6 @@ public class TruncateTest extends AbstractGriffinTest {
                 }
 
                 haltLatch.countDown();
-
             }).start();
 
             useBarrier.await();
@@ -360,7 +539,6 @@ public class TruncateTest extends AbstractGriffinTest {
                     false,
                     true
             );
-
 
             Assert.assertEquals(TRUNCATE, compiler.compile("truncate table only x", sqlExecutionContext).getType());
 

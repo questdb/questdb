@@ -352,6 +352,7 @@ public class TxnTest extends AbstractCairoTest {
             int truncateIteration
     ) {
         ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        ObjList<SymbolCountProvider> zeroSymbolCounts = new ObjList<>();
         return new Thread(() -> {
             try (
                     Path path = new Path();
@@ -364,7 +365,7 @@ public class TxnTest extends AbstractCairoTest {
                 start.await();
                 for (int j = 0; j < iterations; j++) {
                     if (j % truncateIteration == 0) {
-                        txWriter.truncate(0);
+                        txWriter.truncate(0, zeroSymbolCounts);
                         LOG.info().$("writer truncated at ").$(txWriter.getTxn()).$();
                         // Create last partition back.
                         txWriter.setMaxTimestamp((maxPartitionCount + 1) * Timestamps.HOUR_MICROS);
@@ -377,9 +378,11 @@ public class TxnTest extends AbstractCairoTest {
                         if (symbolCount > symbolCounts.size()) {
                             for (int i = symbolCounts.size(); i < symbolCount; i++) {
                                 symbolCounts.add(new SymbolCountProviderImpl(i));
+                                zeroSymbolCounts.add(new SymbolCountProviderImpl(0));
                             }
                         } else {
                             symbolCounts.setPos(symbolCount);
+                            zeroSymbolCounts.setPos(symbolCount);
                         }
                         txWriter.bumpStructureVersion(symbolCounts);
 
