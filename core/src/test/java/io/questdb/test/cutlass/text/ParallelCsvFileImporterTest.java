@@ -702,23 +702,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportFileFailsWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compile("alter table tab44 drop column txt;", compiler, sqlExecutionContext);
-            compile("alter table tab44 add column txt symbol;", compiler, sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab44", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, false);
-                importer.process(sqlExecutionContext.getCairoSecurityContext());
-            }
-            refreshTablesInBaseEngine();
-            assertQuery("count\n3\n",
-                    "select count() from tab44", null, false, false, true);
-        });
-    }
-
-    @Test
     public void testImportFileFailsWhenImportingTextIntoBinaryColumn() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab36 ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
@@ -1015,6 +998,23 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             refreshTablesInBaseEngine();
             assertQuery("count\n3\n",
                     "select count() from tab62", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            compile("alter table tab44 drop column txt;", compiler, sqlExecutionContext);
+            compile("alter table tab44 add column txt symbol;", compiler, sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab44", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, false);
+                importer.process(sqlExecutionContext.getCairoSecurityContext());
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("count\n3\n",
+                    "select count() from tab44", null, false, false, true);
         });
     }
 
