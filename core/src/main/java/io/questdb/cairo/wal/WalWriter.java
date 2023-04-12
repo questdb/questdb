@@ -513,6 +513,11 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public void truncate() {
+        throw new UnsupportedOperationException("cannot truncate symbol tables on WAL table");
+    }
+
+    @Override
+    public void truncateSoft() {
         try {
             lastSegmentTxn = events.truncate();
             getSequencerTxn();
