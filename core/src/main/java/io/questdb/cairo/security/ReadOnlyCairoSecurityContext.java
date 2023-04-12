@@ -91,4 +91,19 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     public void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
+
+    @Override
+    public void authorizeAlterTableRenameColumns(TableToken tableToken, ObjList<CharSequence> columnNames) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAlterTableSetType(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
 }

@@ -1714,7 +1714,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertFailure(27, "new column name contains invalid characters",
+        assertFailure(29, "new column name contains invalid characters",
                 "create table x (" +
                         "t TIMESTAMP, " +
                         "`bool.flag` BOOLEAN) " +
@@ -2320,12 +2320,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             @Override
             public int softLink(LPSZ src, LPSZ softLink) {
                 Assert.assertEquals(target, src.toString());
-                Assert.assertEquals(root.toString() + Files.SEPARATOR + dirName, softLink.toString());
+                Assert.assertEquals(root + Files.SEPARATOR + dirName, softLink.toString());
                 return -1;
             }
         };
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             assertQuery13(
                     "geohash\n",
                     "select geohash from " + tableName,
@@ -2368,7 +2368,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String volumeAlias = "manzana";
         String volumePath = volume.getAbsolutePath();
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             Assert.assertTrue(volume.delete());
             assertQuery13(
                     "geohash\n",

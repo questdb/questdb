@@ -662,8 +662,8 @@ public class SqlParser {
 
     private void parseCreateTableColumns(GenericLexer lexer, CreateTableModel model) throws SqlException {
         while (true) {
-            final int position = lexer.lastTokenPosition();
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
+            final int position = lexer.lastTokenPosition();
             final int type = toColumnType(lexer, notTermTok(lexer));
 
             if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {

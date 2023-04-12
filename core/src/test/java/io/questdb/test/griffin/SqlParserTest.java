@@ -123,6 +123,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDuplicateColumnErrorPos() throws Exception {
+        assertFailure(
+                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
+                null,
+                79,
+                "Duplicate column [name=col4]"
+        );
+    }
+
+    @Test
     public void testAliasWithWildcard3() throws SqlException {
         assertQuery(
                 "select-virtual cast(a,long) a1, a, b from (select [a, b] from x)",
@@ -1262,7 +1272,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "T BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                122,
+                124,
                 "Duplicate column [name=T]"
         );
     }
@@ -1271,7 +1281,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableDuplicateColumnNonAscii() throws Exception {
         assertSyntaxError(
                 "create table x (侘寂 INT, 侘寂 BOOLEAN)",
-                22,
+                24,
                 "Duplicate column [name=侘寂]"
         );
     }

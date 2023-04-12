@@ -31,6 +31,16 @@ public interface CairoSecurityContext {
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
+    // the names are pairs from-to
+    default void authorizeAlterTableRenameColumns(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    default void authorizeAlterTableSetType(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
     default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 

@@ -406,8 +406,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(CairoSecurityContext securityContext, TableToken tableToken) {
-        authorizeRead(securityContext, tableToken);
-        return readerPool.get(tableToken);
+        securityContext.authorizeTableRead(tableToken);
+        return getReaderAsRoot(tableToken);
     }
 
     public TableReader getReader(
@@ -425,6 +425,11 @@ public class CairoEngine implements Closeable, WriterSource {
             throw ex;
         }
         return reader;
+    }
+
+    public TableReader getReaderAsRoot(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        return readerPool.get(tableToken);
     }
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
@@ -828,14 +833,24 @@ public class CairoEngine implements Closeable, WriterSource {
         return verifyTableName(sink);
     }
 
+    public void verifyTableToken(TableToken tableToken) {
+        TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
+        if (tt == null) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+        }
+        if (!tt.equals(tableToken)) {
+            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
+        }
+    }
+
     private void authorizeManage(CairoSecurityContext securityContext, TableToken tableToken) {
         verifyTableToken(tableToken);
         securityContext.authorizeTableManage(tableToken);
     }
 
     private void authorizeRead(CairoSecurityContext securityContext, TableToken tableToken) {
-        verifyTableToken(tableToken);
         securityContext.authorizeTableRead(tableToken);
+        verifyTableToken(tableToken);
     }
 
     private void authorizeWrite(CairoSecurityContext securityContext, TableToken tableToken) {
@@ -944,16 +959,6 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.nonCritical()
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
-        }
-    }
-
-    public void verifyTableToken(TableToken tableToken) {
-        TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (tt == null) {
-            throw CairoException.tableDoesNotExist(tableToken.getTableName());
-        }
-        if (!tt.equals(tableToken)) {
-            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
         }
     }
 
