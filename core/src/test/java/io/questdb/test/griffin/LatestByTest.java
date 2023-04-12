@@ -110,6 +110,42 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedWithPrefixes() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table pos_test\n" +
+                    "( \n" +
+                    "  ts timestamp,\n" +
+                    "  device_id symbol index,\n" +
+                    "  g8c geohash(8c)\n" +
+                    ") timestamp(ts) partition by day;");
+
+            compile("insert into pos_test values " +
+                    "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
+                    "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
+                    "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)");
+
+            String query = "SELECT *\n" +
+                    "FROM pos_test\n" +
+                    "WHERE g8c within(#46swgj10)\n" +
+                    "and ts in '2021-09-02'\n" +
+                    "LATEST ON ts \n" +
+                    "PARTITION BY device_id";
+
+            assertPlan(query,
+                    "LatestByAllIndexed\n" +
+                            "    Index backward scan on: device_id parallel: true\n" +
+                            "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
+                            "    Interval backward scan on: pos_test\n" +
+                            "      intervals: [static=[1630540800000000,1630627199999999]\n");
+
+            //prefix filter is applied AFTER latest on 
+            assertQuery("ts\tdevice_id\tg8c\n" +
+                            "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",
+                    query, "ts", true, true);
+        });
+    }
+
+    @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {

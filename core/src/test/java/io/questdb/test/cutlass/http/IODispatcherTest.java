@@ -28,10 +28,12 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -1150,6 +1152,171 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportAfterColumnWasDropped() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            try (
+                                    SqlCompiler compiler = new SqlCompiler(engine);
+                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                            ) {
+                                compiler.compile("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
+                                compile(compiler, "alter table test drop column col_b", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 243\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "col_a,ts\r\n" +
+                                                "1000,1000\r\n" +
+                                                "2000,2000\r\n" +
+                                                "3000,3000\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              WEEK  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                                ts  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                             col_a  |                      INT  |           0  |\r\n" +
+                                                "|              1  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        compiler,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "col_a\tts\n" +
+                                                "1000\t1970-01-01T00:00:00.001000Z\n" +
+                                                "2000\t1970-01-01T00:00:00.002000Z\n" +
+                                                "3000\t1970-01-01T00:00:00.003000Z\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testImportAfterColumnWasRecreated() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            try (
+                                    SqlCompiler compiler = new SqlCompiler(engine);
+                                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                            ) {
+                                compiler.compile("create table test (col_a int, col_b long)", executionContext);
+                                compile(compiler, "alter table test drop column col_a", executionContext);
+                                compile(compiler, "alter table test add column col_a long", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 243\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "col_a,col_b\r\n" +
+                                                "1000,1000\r\n" +
+                                                "2000,2000\r\n" +
+                                                "3000,3000\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                             col_b  |                     LONG  |           0  |\r\n" +
+                                                "|              1  |                                             col_a  |                     LONG  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        compiler,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "col_b\tcol_a\n" +
+                                                "1000\t1000\n" +
+                                                "2000\t2000\n" +
+                                                "3000\t3000\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
     public void testImportBadJson() throws Exception {
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -1251,8 +1418,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                ValidImportResponse
-                ,
+                ValidImportResponse,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -1304,10 +1470,10 @@ public class IODispatcherTest extends AbstractTest {
                         "B00014,2017-02-01 00:33:00,,,\r\n" +
                         "B00014,2017-02-01 00:45:00,,,\r\n" +
                         "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
-                , NetworkFacadeImpl.INSTANCE
-                , false
-                , 1
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
         );
 
         // append different data structure to the same table
@@ -1322,8 +1488,7 @@ public class IODispatcherTest extends AbstractTest {
                         "5d\r\n" +
                         "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                ,
+                        "\r\n",
                 "POST /upload?overwrite=false HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -1375,10 +1540,10 @@ public class IODispatcherTest extends AbstractTest {
                         "B00014,,,,,\r\n" +
                         "B00014,,,,,\r\n" +
                         "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
-                , NetworkFacadeImpl.INSTANCE
-                , false
-                , 1
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
         );
     }
 
@@ -1460,7 +1625,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportEpochTimestamp() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
@@ -7714,6 +7878,14 @@ public class IODispatcherTest extends AbstractTest {
                 downloadedSoFar += n;
             }
         }
+    }
+
+    private static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, executionContext);
+        try (OperationFuture future = cc.execute(null)) {
+            future.await();
+        }
+        return cc;
     }
 
     private static HttpServer createHttpServer(

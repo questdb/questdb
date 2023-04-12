@@ -514,6 +514,13 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
+        public Invocation andInit(SqlExecutionContext context) throws SqlException {
+            function1.init(null, context);
+            function2.init(null, context);
+
+            return this;
+        }
+
         private void assertString(Function func, CharSequence expected) {
             if (expected == null) {
                 Assert.assertNull(func.getStr(record));

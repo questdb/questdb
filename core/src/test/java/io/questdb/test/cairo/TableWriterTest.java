@@ -1677,18 +1677,17 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataAppendPageSize() {
-                    return 1024 * 1024; //1MB
+                    return 1024 * 1024; // 1MB
                 }
             };
             try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
                 for (int k = 0; k < 3; k++) {
                     ts = populateProducts(writer, rnd, ts, N, increment);
                     writer.commit();
                     Assert.assertEquals(N, writer.size());
-                    writer.truncate();
+                    writer.truncateSoft();
                 }
             }
 
@@ -1712,6 +1711,40 @@ public class TableWriterTest extends AbstractCairoTest {
                     throw CairoException.critical(0).put("FindNext failed");
                 }
                 return super.findNext(findPtr);
+            }
+        });
+    }
+
+    @Test
+    public void testDayPartitionTruncatePurgeSymbolTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+            Rnd rnd = new Rnd();
+            long increment = 60000L * 1000;
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public long getDataAppendPageSize() {
+                    return 1024 * 1024; // 1MB
+                }
+            };
+            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                for (int k = 0; k < 3; k++) {
+                    ts = populateProducts(writer, rnd, ts, N, increment);
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                    writer.truncate();
+                }
+            }
+
+            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
+                long ts = TimestampFormatUtils.parseTimestamp("2014-03-04T00:00:00.000Z");
+                Assert.assertEquals(0, writer.size());
+                populateProducts(writer, rnd, ts, N, increment);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
             }
         });
     }

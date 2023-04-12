@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
@@ -2811,6 +2812,20 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertWalFileExist(path, tableToken, walName, "d.k");
                 assertWalFileExist(path, tableToken, walName, "d.o");
                 assertWalFileExist(path, tableToken, walName, "d.v");
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateWithoutKeepingSymbolTablesThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            try (WalWriter walWriter = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                walWriter.truncate();
+                Assert.fail();
+            } catch (UnsupportedOperationException ex) {
+                TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
             }
         });
     }

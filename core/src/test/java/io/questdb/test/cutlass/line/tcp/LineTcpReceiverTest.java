@@ -46,7 +46,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
@@ -58,6 +57,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -862,7 +862,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 sendAndWait(lineData, tableIndex, 2);
                 mayDrainWalQueue();
                 try (TableWriterAPI w = getTableWriterAPI("weather")) {
-                    w.truncate();
+                    w.truncateSoft();
                 }
                 // drainWalQueue() call opens TableWriter one more time
                 int expectedReleases = walEnabled ? 5 : 4;
@@ -1497,7 +1497,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             mayDrainWalQueue();
             try (TableWriterAPI w = getTableWriterAPI("weather")) {
-                w.truncate();
+                w.truncateSoft();
             }
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +

@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -114,6 +113,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private CharSequence inputFileName;
     //incremented in phase 2
     private long linesIndexed;
+    private RecordMetadata metadata;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     private int partitionBy;
     private byte phase = TextImportTask.PHASE_SETUP;
@@ -142,6 +142,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     //input params end
     //index of timestamp column in input file
     private int timestampIndex;
+    private TableWriter writer;
 
     public ParallelCsvFileImporter(CairoEngine cairoEngine, int workerCount) {
         if (workerCount < 1) {
@@ -191,8 +192,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.taskDistribution = new IntList();
     }
 
-    //load balances existing partitions between given number of workers using partition sizes
-    //returns number of tasks
+    // Load balances existing partitions between given number of workers using partition sizes.
+    // Returns number of tasks.
     public static int assignPartitions(ObjList<PartitionInfo> partitions, int workerCount) {
         partitions.sort((p1, p2) -> Long.compare(p2.bytes, p1.bytes));
         long[] workerSums = new long[workerCount];
@@ -274,6 +275,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        writer = Misc.free(writer);
+        metadata = null;
         importId = -1;
         chunkStats.clear();
         indexChunkStats.clear();
@@ -414,7 +417,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         );
     }
 
-    public TableWriter parseStructure(CairoSecurityContext securityContext, int fd) throws TextImportException {
+    public void parseStructure(CairoSecurityContext securityContext, int fd) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 
@@ -444,7 +447,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();
 
-                TableWriter writer = prepareTable(
+                prepareTable(
                         securityContext,
                         textMetadataDetector.getColumnNames(),
                         textMetadataDetector.getColumnTypes(),
@@ -452,7 +455,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         typeManager
                 );
                 phaseEpilogue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
-                return writer;
             } else {
                 throw TextException.$("could not read from file '").put(inputFilePath).put("' to analyze structure");
             }
@@ -590,18 +592,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     throw TextImportException.instance(TextImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
                 }
 
-                try (TableWriter writer = parseStructure(securityContext, fd)) {
+                try {
+                    parseStructure(securityContext, fd);
                     phaseBoundaryCheck(length);
                     phaseIndexing();
                     phasePartitionImport();
-                    phaseSymbolTableMerge(writer);
-                    phaseUpdateSymbolKeys(writer);
-                    phaseBuildSymbolIndex(writer);
+                    phaseSymbolTableMerge();
+                    phaseUpdateSymbolKeys();
+                    phaseBuildSymbolIndex();
                     try {
                         movePartitions();
-                        attachPartitions(writer);
+                        attachPartitions();
                     } catch (Throwable t) {
-                        cleanUp(writer);
+                        cleanUp();
                         throw t;
                     }
                     updateImportStatus(TextImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
@@ -609,6 +612,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     cleanUp(securityContext);
                     throw t;
                 } finally {
+                    closeWriter();
                     if (createdWorkDir) {
                         removeWorkDir();
                     }
@@ -656,7 +660,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    private void attachPartitions(TableWriter writer) throws TextImportException {
+    private void attachPartitions() throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ATTACH_PARTITIONS);
 
         // Go descending, attaching last partition is more expensive than others
@@ -671,8 +675,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
-                throw TextImportException.instance(
-                                TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
+                throw TextImportException.instance(TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
                         .put(partitionDirName).put("', msg=")
                         .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
             }
@@ -681,19 +684,25 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseEpilogue(TextImportTask.PHASE_ATTACH_PARTITIONS);
     }
 
-    private void cleanUp(TableWriter writer) {
+    private void cleanUp() {
         if (targetTableStatus == TableUtils.TABLE_EXISTS && writer != null) {
             writer.truncate();
         }
     }
 
     private void cleanUp(CairoSecurityContext securityContext) {
+        closeWriter();
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
         }
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
             cairoEngine.drop(securityContext, tmpPath, tableToken);
         }
+    }
+
+    private void closeWriter() {
+        writer = Misc.free(writer);
+        metadata = null;
     }
 
     private int collect(int queuedCount, Consumer<TextImportTask> consumer) {
@@ -781,6 +790,91 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private int getTaskCount() {
         return taskDistribution.size() / 3;
+    }
+
+    private void initWriterAndOverrideImportMetadata(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            CairoSecurityContext cairoSecurityContext,
+            TypeManager typeManager
+    ) throws TextException {
+        final TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
+        final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
+
+        if (metadata.getColumnCount() < types.size()) {
+            writer.close();
+            throw TextException.$("column count mismatch [textColumnCount=").put(types.size())
+                    .put(", tableColumnCount=").put(metadata.getColumnCount())
+                    .put(", table=").put(tableName)
+                    .put(']');
+        }
+
+        // remap index is only needed to adjust names and types
+        // workers will import data into temp tables without remapping
+        final IntList remapIndex = new IntList();
+        remapIndex.ensureCapacity(types.size());
+        for (int i = 0, n = types.size(); i < n; i++) {
+            final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
+            final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
+            remapIndex.set(i, idx);
+
+            final int columnType = metadata.getColumnType(idx);
+            final TypeAdapter detectedAdapter = types.getQuick(i);
+            final int detectedType = detectedAdapter.getType();
+            if (detectedType != columnType) {
+                // when DATE type is mis-detected as STRING we
+                // would not have either date format nor locale to
+                // use when populating this field
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.DATE:
+                        logTypeError(i, detectedType);
+                        types.setQuick(i, BadDateAdapter.INSTANCE);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {
+                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
+                        } else {
+                            logTypeError(i, detectedType);
+                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        }
+                        break;
+                    case ColumnType.BINARY:
+                        writer.close();
+                        throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
+                    default:
+                        types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        break;
+                }
+            }
+        }
+
+        // at this point we've to use target table columns names otherwise partition attach could fail on metadata differences
+        // (if header names or synthetic names are different from table's)
+        for (int i = 0, n = remapIndex.size(); i < n; i++) {
+            names.set(i, metadata.getColumnName(remapIndex.get(i)));
+        }
+
+        // add table columns missing in input file
+        if (names.size() < metadata.getColumnCount()) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                boolean unused = true;
+
+                for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
+                    if (remapIndex.get(r) == i) {
+                        unused = false;
+                        break;
+                    }
+                }
+
+                if (unused) {
+                    names.add(metadata.getColumnName(i));
+                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                }
+            }
+        }
+
+        this.writer = writer;
+        this.metadata = metadata;
     }
 
     private boolean isOneOfMainDirectories(CharSequence p) {
@@ -881,95 +975,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    private TableWriter openWriterAndOverrideImportMetadata(
-            ObjList<CharSequence> names,
-            ObjList<TypeAdapter> types,
-            CairoSecurityContext cairoSecurityContext,
-            TypeManager typeManager
-    ) throws TextException {
-        TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
-        RecordMetadata metadata = writer.getMetadata();
-
-        if (metadata.getColumnCount() < types.size()) {
-            writer.close();
-            throw TextException.$("column count mismatch [textColumnCount=").put(types.size())
-                    .put(", tableColumnCount=").put(metadata.getColumnCount())
-                    .put(", table=").put(tableName)
-                    .put(']');
-        }
-
-        //remap index is only needed to adjust names and types
-        //workers will import data into temp tables without remapping
-        IntList remapIndex = new IntList();
-        remapIndex.ensureCapacity(types.size());
-        for (int i = 0, n = types.size(); i < n; i++) {
-
-            final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
-            final int idx = (columnIndex > -1 && columnIndex != i) ? columnIndex : i; // check for strict match ?
-            remapIndex.set(i, idx);
-
-            final int columnType = metadata.getColumnType(idx);
-            final TypeAdapter detectedAdapter = types.getQuick(i);
-            final int detectedType = detectedAdapter.getType();
-            if (detectedType != columnType) {
-                // when DATE type is mis-detected as STRING we
-                // would not have either date format nor locale to
-                // use when populating this field
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.DATE:
-                        logTypeError(i, detectedType);
-                        types.setQuick(i, BadDateAdapter.INSTANCE);
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {
-                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
-                        } else {
-                            logTypeError(i, detectedType);
-                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
-                        }
-                        break;
-                    case ColumnType.BINARY:
-                        writer.close();
-                        throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
-                    default:
-                        types.setQuick(i, typeManager.getTypeAdapter(columnType));
-                        break;
-                }
-            }
-        }
-
-        //at this point we've to use target table columns names otherwise partition attach could fail on metadata differences
-        //(if header names or synthetic names are different from table's)
-        for (int i = 0, n = remapIndex.size(); i < n; i++) {
-            names.set(i, metadata.getColumnName(remapIndex.get(i)));
-        }
-
-        //add table columns missing in input file
-        if (names.size() < metadata.getColumnCount()) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                boolean unused = true;
-
-                for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
-                    if (remapIndex.get(r) == i) {
-                        unused = false;
-                        break;
-                    }
-                }
-
-                if (unused) {
-                    names.add(metadata.getColumnName(i));
-                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
-                }
-            }
-        }
-
-        return writer;
-    }
-
-    private void phaseBuildSymbolIndex(TableWriter writer) throws TextImportException {
+    private void phaseBuildSymbolIndex() throws TextImportException {
         phasePrologue(TextImportTask.PHASE_BUILD_SYMBOL_INDEX);
 
-        final RecordMetadata metadata = writer.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final int tmpTableCount = getTaskCount();
 
@@ -1096,17 +1104,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         startMs = getCurrentTimeMs();
     }
 
-    private void phaseSymbolTableMerge(final TableWriter writer) throws TextImportException {
+    private void phaseSymbolTableMerge() throws TextImportException {
         phasePrologue(TextImportTask.PHASE_SYMBOL_TABLE_MERGE);
         final int tmpTableCount = getTaskCount();
 
         int queuedCount = 0;
         int collectedCount = 0;
-        TableRecordMetadata tableMetadata = writer.getMetadata();
 
-        for (int columnIndex = 0, size = tableMetadata.getColumnCount(); columnIndex < size; columnIndex++) {
-            if (ColumnType.isSymbol(tableMetadata.getColumnType(columnIndex))) {
-                final CharSequence symbolColumnName = tableMetadata.getColumnName(columnIndex);
+        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                final CharSequence symbolColumnName = metadata.getColumnName(columnIndex);
                 int tmpTableSymbolColumnIndex = targetTableStructure.getSymbolColumnIndex(symbolColumnName);
 
                 while (true) {
@@ -1120,7 +1127,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 writer,
                                 tableToken,
                                 symbolColumnName,
-                                columnIndex,
+                                metadata.getWriterIndex(columnIndex),
                                 tmpTableSymbolColumnIndex,
                                 tmpTableCount,
                                 partitionBy
@@ -1141,7 +1148,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseEpilogue(TextImportTask.PHASE_SYMBOL_TABLE_MERGE);
     }
 
-    private void phaseUpdateSymbolKeys(final TableWriter writer) throws TextImportException {
+    private void phaseUpdateSymbolKeys() throws TextImportException {
         phasePrologue(TextImportTask.PHASE_UPDATE_SYMBOL_KEYS);
 
         final int tmpTableCount = getTaskCount();
@@ -1158,16 +1165,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
-                    TableRecordMetadata tableMetadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
 
                     if (partitionSize == 0) {
                         continue;
                     }
 
-                    for (int c = 0, size = tableMetadata.getColumnCount(); c < size; c++) {
-                        if (ColumnType.isSymbol(tableMetadata.getColumnType(c))) {
-                            final CharSequence symbolColumnName = tableMetadata.getColumnName(c);
+                    for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
+                        if (ColumnType.isSymbol(metadata.getColumnType(c))) {
+                            final CharSequence symbolColumnName = metadata.getColumnName(c);
                             final int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex++);
 
                             while (true) {
@@ -1329,7 +1335,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    TableWriter prepareTable(
+    void prepareTable(
             CairoSecurityContext cairoSecurityContext,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
@@ -1355,8 +1361,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 }
             }
         }
-
-        TableWriter writer = null;
 
         try {
             targetTableStatus = cairoEngine.getStatus(path, tableToken);
@@ -1387,17 +1391,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
+                    metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;
                 case TableUtils.TABLE_EXISTS:
-                    writer = openWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
+                    initWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
 
                     if (writer.getRowCount() > 0) {
                         throw TextException.$("target table must be empty [table=").put(tableName).put(']');
                     }
 
                     CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
-                    int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                    int designatedTimestampIndex = metadata.getTimestampIndex();
                     if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
                         throw TextException.$("declared partition by unit doesn't match table's");
                     }
@@ -1419,20 +1424,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
             }
         } catch (Throwable t) {
-            if (writer != null) {
-                writer.close();
-            }
-
+            closeWriter();
             throw t;
         }
-
-        return writer;
     }
 
-    void validate(ObjList<CharSequence> names,
-                  ObjList<TypeAdapter> types,
-                  CharSequence designatedTimestampColumnName,
-                  int designatedTimestampIndex) throws TextException {
+    void validate(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            CharSequence designatedTimestampColumnName,
+            int designatedTimestampIndex
+    ) throws TextException {
         if (timestampColumn == null && designatedTimestampColumnName == null) {
             timestampIndex = NO_INDEX;
         } else if (timestampColumn != null) {
@@ -1601,11 +1603,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
-        public void of(final CharSequence tableName,
-                       final ObjList<CharSequence> names,
-                       final ObjList<TypeAdapter> types,
-                       final int timestampColumnIndex,
-                       final int partitionBy
+        public void of(
+                final CharSequence tableName,
+                final ObjList<CharSequence> names,
+                final ObjList<TypeAdapter> types,
+                final int timestampColumnIndex,
+                final int partitionBy
         ) {
             this.tableName = tableName;
             this.columnNames = names;

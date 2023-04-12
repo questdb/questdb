@@ -222,7 +222,7 @@ public class FuzzTransactionGenerator {
 
     private static void generateTruncateTable(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new TruncateTableOperation());
+        transaction.operationList.add(new FuzzTruncateTableOperation());
         transactionList.add(transaction);
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
