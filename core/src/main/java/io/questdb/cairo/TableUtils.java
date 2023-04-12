@@ -375,6 +375,12 @@ public final class TableUtils {
         }
     }
 
+    public static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+        mem.putStr(charSequence);
+        mem.putByte((byte) 0);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static long createTransitionIndex(
             MemoryR masterMeta,
             AbstractRecordMetadata slaveMeta
@@ -1401,12 +1407,6 @@ public final class TableUtils {
                 ff.close(dirFd);
             }
         }
-    }
-
-    private static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
-        mem.putStr(charSequence);
-        mem.putByte((byte) 0);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     private static int exists(FilesFacade ff, Path path) {
