@@ -208,7 +208,7 @@ public class FuzzTransactionGenerator {
                 transactionList.add(transaction);
 
                 FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
-                GenericRecordMetadata.copyColumns(tableMetadata, newMeta);
+                GenericRecordMetadata.copyColumnsUnsafe(tableMetadata, newMeta);
                 newMeta.rename(columnIndex, columnName, newColName);
                 newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
 
@@ -264,7 +264,7 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
 
         FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
-        GenericRecordMetadata.copyColumns(tableMetadata, newMeta);
+        GenericRecordMetadata.copyColumnsUnsafe(tableMetadata, newMeta);
         newMeta.add(new TableColumnMetadata(
                 newColName,
                 newType,
