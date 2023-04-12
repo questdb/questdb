@@ -705,15 +705,16 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileFailsWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compile("alter table tab44 drop column line;", compiler, sqlExecutionContext);
-            compile("alter table tab44 add column line symbol;", compiler, sqlExecutionContext);
+            compile("alter table tab44 drop column txt;", compiler, sqlExecutionContext);
+            compile("alter table tab44 add column txt symbol;", compiler, sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab44", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, false);
                 importer.process(sqlExecutionContext.getCairoSecurityContext());
-            } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), "cannot match columns by their positions, please add headers [index=0]");
             }
+            refreshTablesInBaseEngine();
+            assertQuery("count\n3\n",
+                    "select count() from tab44", null, false, false, true);
         });
     }
 
@@ -725,6 +726,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab36", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                 importer.process(sqlExecutionContext.getCairoSecurityContext());
+                Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "cannot import text into BINARY column [index=3]");
             }
@@ -873,6 +875,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab37", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                 importer.process(sqlExecutionContext.getCairoSecurityContext());
+                Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "invalid timestamp column [name='ts']");
             }
@@ -2550,13 +2553,16 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         inputRoot = TestUtils.getCsvRoot();
 
-        try (Path path = new Path().of(inputRoot).concat(fileName).$();
-             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+        try (
+                Path path = new Path().of(inputRoot).concat(fileName).$();
+                ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())
+        ) {
             importer.setMinChunkSize(1);
             importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
 
             int fd = TableUtils.openRO(ff, path, LOG);
-            try (TableWriter ignored = importer.parseStructure(sqlExecutionContext.getCairoSecurityContext(), fd)) {
+            try {
+                importer.parseStructure(sqlExecutionContext.getCairoSecurityContext(), fd);
                 long length = ff.length(fd);
                 importer.phaseBoundaryCheck(length);
                 importer.phaseIndexing();

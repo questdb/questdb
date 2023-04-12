@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.std.LongList;
@@ -38,11 +37,9 @@ public class TextLoaderCompletedState {
         // Some values are come from TableWriter and has to be copied
         // in order to release TableWriter back to the Engine
         this.writtenLineCount = textLoader.getWrittenLineCount();
-        this.metadata = textLoader.getMetadata() != null
-                ? GenericRecordMetadata.cleanCopyOf(textLoader.getMetadata())
-                : null;
         // Some values are safe to get from TextLoader
         this.textLoader = textLoader;
+        this.metadata = textLoader.getMetadata();
     }
 
     public LongList getColumnErrorCounts() {

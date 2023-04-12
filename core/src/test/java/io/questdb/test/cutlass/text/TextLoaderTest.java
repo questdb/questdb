@@ -2700,7 +2700,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"col_a\",\"type\":\"unknown\"},{\"index\":1,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":2,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                     2,
                     2
             );
@@ -2713,28 +2713,23 @@ public class TextLoaderTest extends AbstractGriffinTest {
             final String csv = "1,2\n" +
                     "1,2\n";
             final String expected = "col_b\tcol_a\n" +
-                    "2\t1\n" +
-                    "2\t1\n";
+                    "1\t2\n" +
+                    "1\t2\n";
 
             compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
             compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
             compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
 
             configureLoaderDefaults(textLoader);
-            try {
-                playText(
-                        textLoader,
-                        csv,
-                        1024,
-                        expected,
-                        "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"col_a\",\"type\":\"unknown\"},{\"index\":1,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":2,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
-                        2,
-                        2
-                );
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cannot match columns by their positions, please add headers or provide schema [index=0]");
-            }
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
         });
     }
 
