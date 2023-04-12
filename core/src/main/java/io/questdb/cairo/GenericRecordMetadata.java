@@ -29,6 +29,10 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 
 public class GenericRecordMetadata extends AbstractRecordMetadata {
 
+    /**
+     * This method will throw duplicate column exception when called on table writer metadata in case
+     * if it has deleted and re-created columns.
+     */
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
             to.add(from.getColumnMetadata(i));
@@ -115,15 +119,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             return this;
         }
         throw CairoException.duplicateColumn(meta.getName());
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
-        if (index < 0) {
-            return columnNameIndexMap.valueAt(index);
-        }
-        return -1;
     }
 
     public void setTimestampIndex(int index) {
