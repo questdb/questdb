@@ -1154,7 +1154,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportAfterColumnWasDropped() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -1236,7 +1236,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportAfterColumnWasRecreated() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -7880,12 +7880,11 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    private static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
         try (OperationFuture future = cc.execute(null)) {
             future.await();
         }
-        return cc;
     }
 
     private static HttpServer createHttpServer(
@@ -7927,7 +7926,7 @@ public class IODispatcherTest extends AbstractTest {
             int requestCount,
             long pauseBetweenSendAndReceive,
             @SuppressWarnings("SameParameterValue") boolean print
-    ) throws InterruptedException {
+    ) {
         sendAndReceive(
                 nf,
                 request,
@@ -7947,7 +7946,7 @@ public class IODispatcherTest extends AbstractTest {
             long pauseBetweenSendAndReceive,
             boolean print,
             boolean expectReceiveDisconnect
-    ) throws InterruptedException {
+    ) {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(nf)
                 .withExpectReceiveDisconnect(expectReceiveDisconnect)
