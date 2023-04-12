@@ -1778,7 +1778,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // check if we are moving timestamp from a partitioned table
         final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-        boolean timestamp = index == timestampIndex;
+        boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
             throw CairoException.nonCritical().put("Cannot remove timestamp from partitioned table");
