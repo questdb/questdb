@@ -56,7 +56,7 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
         super(metadata);
 
         GenericRecordMetadata internalMeta = new GenericRecordMetadata();
-        GenericRecordMetadata.copyColumnsUnsafe(metadata, internalMeta);
+        GenericRecordMetadata.copyColumns(metadata, internalMeta);
         internalMeta.add(COUNT_COLUMN_META);
 
         columnTypes.clear();

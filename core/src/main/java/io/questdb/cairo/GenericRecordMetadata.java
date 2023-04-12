@@ -30,10 +30,10 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 public class GenericRecordMetadata extends AbstractRecordMetadata {
 
     /**
-     * This method will throw when called on table writer metadata in case of deleted and re-created columns.
-     * Use this method at your own risk.
+     * This method will throw duplicate column exception when called on table writer metadata in case
+     * if it has deleted and re-created columns.
      */
-    public static void copyColumnsUnsafe(RecordMetadata from, GenericRecordMetadata to) {
+    public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
             to.add(from.getColumnMetadata(i));
         }
@@ -69,7 +69,7 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
 
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        copyColumnsUnsafe(that, metadata);
+        copyColumns(that, metadata);
         return metadata;
     }
 
