@@ -306,7 +306,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
-    private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
     private int connectionPoolInitialCapacity;
@@ -862,9 +861,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitRowsThreshold = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD, 1024 * 1024);
             this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD, 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_JIT_DEBUG_ENABLED, false);
-
-            boolean mixedIOEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WRITER_MIXED_IO_ENABLED, true);
-            this.writerMixedIOEnabled = mixedIOEnabled && Files.allowMixedIO(this.root);
 
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
             long lopts = CairoConfiguration.O_NONE;
@@ -2407,11 +2403,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public boolean isWalSupported() {
             return walSupported;
-        }
-
-        @Override
-        public boolean isWriterMixedIOEnabled() {
-            return writerMixedIOEnabled;
         }
 
         @Override

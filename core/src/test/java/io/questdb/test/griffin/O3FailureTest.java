@@ -661,7 +661,6 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFixedColumnCopyPrefixFails() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        Assume.assumeTrue(Files.allowMixedIO(root));
 
         int storageLength = 8;
         long records = 500;
@@ -1128,7 +1127,6 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testVarColumnCopyPrefixFails() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        Assume.assumeTrue(Files.allowMixedIO(root));
 
         String strColVal = "[srcDataMax=165250000]";
         int storageLength = getStorageLength(strColVal);

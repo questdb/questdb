@@ -480,7 +480,9 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
-    boolean isWriterMixedIOEnabled();
+    default boolean isWriterMixedIOEnabled() {
+        return true;
+    }
 
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
