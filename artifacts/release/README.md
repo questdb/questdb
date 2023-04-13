@@ -26,7 +26,7 @@ mvn release:clean
 
 ## Perform release
 
-This step will to the following:
+This step will do the following:
 - create tag in `git` repo
 - roll the versions on your branch from one snapshot to the next, e.g. from 7.1.1-SNAPSHOT to 7.1.2-SNAPSHOT
 - publish `jar` to maven central
