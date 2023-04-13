@@ -151,6 +151,7 @@ open module io.questdb {
             //nullif
             io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfIFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfLongFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory,
 
 //                   '<' operator

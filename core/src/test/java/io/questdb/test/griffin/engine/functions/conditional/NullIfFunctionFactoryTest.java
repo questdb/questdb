@@ -99,6 +99,39 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLongConstNull() throws Exception {
+        assertQuery(
+                "nullif1\tnullif2\n" +
+                        "NaN\t5\n",
+                "select nullif(null,5::long) nullif1, nullif(5::long,null) nullif2",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLongSimple() throws Exception {
+        assertQuery(
+                "long\tnullif\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\tNaN\n" +
+                        "4\t4\n" +
+                        "5\t5\n",
+                "select long,nullif(long,3) from x",
+                "create table x as (" +
+                        "select x as long\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrSimple() throws Exception {
         assertQuery(
                 "str1\tstr2\tnullif\n" +
