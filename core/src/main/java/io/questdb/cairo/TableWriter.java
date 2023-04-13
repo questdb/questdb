@@ -3957,7 +3957,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcDataMax,
                         partitionMutates
                 );
-
             }
         }
     }
@@ -5318,7 +5317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                     } else {
                         srcDataMax = 0;
-                        // A version needed to housekeep dropped partitions
+                        // A version needed to housekeep dropped partitions.
                         // When partition created without O3 merge, use `txn-1` as partition version.
                         // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
                         // be written within the same commit when new partition initially written in order
@@ -6114,7 +6113,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ)  &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
                 !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
         ) {
             try {
