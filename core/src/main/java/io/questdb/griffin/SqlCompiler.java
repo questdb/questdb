@@ -30,6 +30,7 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.*;
@@ -167,7 +168,6 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor compileRollback = this::compileRollback;
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
-        final KeywordBasedExecutor repairTables = this::repairTables;
         final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
@@ -180,8 +180,6 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
         keywordBasedExecutors.put("ALTER", alterTable);
-        keywordBasedExecutors.put("repair", repairTables);
-        keywordBasedExecutors.put("REPAIR", repairTables);
         keywordBasedExecutors.put("reindex", reindexTable);
         keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
@@ -2462,30 +2460,6 @@ public class SqlCompiler implements Closeable {
                 .$(", errno=").$(errno)
                 .$(']').$();
         return false;
-    }
-
-    private CompiledQuery repairTables(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !isTableKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
-        }
-
-        do {
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (tok == null || Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.getPosition(), "table name expected");
-            }
-
-            if (Chars.isQuoted(tok)) {
-                tok = GenericLexer.unquote(tok);
-            }
-            tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-            tok = SqlUtil.fetchNext(lexer);
-
-        } while (tok != null && Chars.equals(tok, ','));
-        return compiledQuery.ofRepair();
     }
 
     private void setupTextLoaderFromModel(CopyModel model) {

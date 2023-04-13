@@ -99,7 +99,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
-        this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, this::executeCopy);

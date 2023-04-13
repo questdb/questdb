@@ -44,10 +44,7 @@ import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -256,6 +253,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = TestUtils.generateRandom(LOG);

@@ -673,9 +673,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 boolean hasResult = statement.execute(
                         "CREATE TABLE test(l long,ts timestamp); " +
                                 "INSERT INTO test VALUES(1989, 0); " +
-                                "REPAIR TABLE test; " +
                                 "SELECT l from test;");
-                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1989L)));
+                assertResults(statement, hasResult, Result.ZERO, count(1), data(row(1989L)));
             }
         });
     }
