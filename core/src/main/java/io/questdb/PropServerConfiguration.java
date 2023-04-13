@@ -306,6 +306,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
+    private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
     private int connectionPoolInitialCapacity;
@@ -455,10 +456,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
+            boolean writerMixedIOEnabled,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
 
+        this.writerMixedIOEnabled = writerMixedIOEnabled;
         this.log = log;
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
@@ -2403,6 +2406,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public boolean isWalSupported() {
             return walSupported;
+        }
+
+        @Override
+        public boolean isWriterMixedIOEnabled() {
+            return writerMixedIOEnabled;
         }
 
         @Override

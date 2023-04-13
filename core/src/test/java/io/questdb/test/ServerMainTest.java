@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -127,7 +128,15 @@ public class ServerMainTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
             env.put("QDB_HTTP_ENABLED", "false");
-            Bootstrap bootstrap = new Bootstrap(null, env, null, "-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            Bootstrap bootstrap = new Bootstrap(
+                    new DefaultBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            return env;
+                        }
+                    },
+                    TestUtils.getServerMainArgs(rootDir)
+            );
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 Assert.assertFalse(serverMain.getConfiguration().getHttpServerConfiguration().isEnabled());
                 serverMain.start();

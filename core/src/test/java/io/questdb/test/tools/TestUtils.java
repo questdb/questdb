@@ -24,6 +24,7 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
@@ -1034,6 +1035,14 @@ public final class TestUtils {
         };
     }
 
+    public static String[] getServerMainArgs(CharSequence root) {
+        return new String[]{
+                "-d",
+                Chars.toString(root),
+                Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
+        };
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.getTableToken(tableName));
     }
@@ -1375,6 +1384,14 @@ public final class TestUtils {
         return ptr;
     }
 
+    public static void unchecked(CheckedRunnable runnable) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     // used in tests
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
@@ -1539,6 +1556,11 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong1()) + " " +
                 Long.toHexString(expected.getLong2()) + " " +
                 Long.toHexString(expected.getLong3());
+    }
+
+    @FunctionalInterface
+    public interface CheckedRunnable {
+        void run() throws Throwable;
     }
 
     @FunctionalInterface

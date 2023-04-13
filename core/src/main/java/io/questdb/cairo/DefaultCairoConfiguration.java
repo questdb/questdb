@@ -954,6 +954,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWriterMixedIOEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return false;
     }

@@ -22,27 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cliutil;
+package io.questdb;
 
+import io.questdb.std.FilesFacade;
 
-import io.questdb.ServerConfigurationException;
-import io.questdb.cairo.IndexBuilder;
-import io.questdb.cutlass.json.JsonException;
-import io.questdb.log.LogFactory;
+import java.util.Map;
 
-import java.io.IOException;
+public interface BootstrapConfiguration {
+    String getBanner();
 
-import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
-import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
+    Map<String, String> getEnv();
 
-public class RebuildIndex {
-    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
-        LogFactory.configureSync();
-        RebuildColumnCommandArgs params = parseCommandArgs(args, RebuildIndex.class.getName());
-        if (params == null) {
-            // Invalid params, usage already printed
-            return;
-        }
-        runColumnRebuild(params, new IndexBuilder());
-    }
+    FilesFacade getFilesFacade();
+
+    ServerConfiguration getServerConfiguration();
+
+    boolean isWriterMixedIOEnabled();
+
+    boolean useSite();
 }

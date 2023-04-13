@@ -26,11 +26,10 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -44,6 +43,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -114,7 +114,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 fos.close();
             }
             properties.load(is);
-            serverConf = new PropServerConfiguration(root.toString(), properties, null, LOG, null);
+            serverConf = new PropServerConfiguration(root.toString(), properties, null, true, LOG, null);
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
