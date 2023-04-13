@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class NullIfIFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "nullif(Ii)";
+        return "nullif(II)";
     }
 
     @Override
@@ -50,33 +50,36 @@ public class NullIfIFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
+        return new NullIfIFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final int replacement;
-        private final Function value;
+    private static class NullIfIFunction extends IntFunction implements BinaryFunction {
+        private final Function intFunc1;
+        private final Function intFunc2;
 
-        public NullIfIFunction(Function value, int replacement) {
-            super();
-            this.value = value;
-            this.replacement = replacement;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
+        public NullIfIFunction(Function intFunc1, Function intFunc2) {
+            this.intFunc1 = intFunc1;
+            this.intFunc2 = intFunc2;
         }
 
         @Override
         public int getInt(Record rec) {
-            final int val = value.getInt(rec);
-            return val == replacement ? Numbers.INT_NaN : val;
+            return intFunc1.getInt(rec) == intFunc2.getInt(rec) ? Numbers.INT_NaN : intFunc1.getInt(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return intFunc1;
+        }
+
+        @Override
+        public Function getRight() {
+            return intFunc2;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("nullif(").val(value).val(',').val(replacement).val(')');
+            sink.val("nullif(").val(intFunc1).val(',').val(intFunc2).val(')');
         }
     }
 }
