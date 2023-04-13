@@ -99,7 +99,7 @@ public class AbstractO3Test extends AbstractTest {
             CairoEngine engine
     ) throws SqlException {
         TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
-        TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
+        TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
     }
 
     protected static void assertIndexConsistency(

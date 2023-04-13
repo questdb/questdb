@@ -2814,9 +2814,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.verifyTableName("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
 
@@ -2824,9 +2822,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
 
         drainWalQueue(engine);
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.verifyTableName("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -2868,9 +2864,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.verifyTableName("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
 
@@ -2878,9 +2872,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
 
         drainWalQueue(engine);
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.verifyTableName("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -2985,9 +2977,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.verifyTableName("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
         o3MemMaxPages = Integer.MAX_VALUE;
@@ -2995,9 +2985,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
         drainWalQueue(engine);
 
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.verifyTableName("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,

@@ -515,11 +515,11 @@ public final class TestUtils {
         }
     }
 
-    public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
+    public static void assertIndexBlockCapacity(CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
         TableToken tt = engine.verifyTableName(tableName);
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
+        try (TableReader rdr = engine.getReader(tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
 
@@ -1002,10 +1002,6 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
-    }
-
-    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
-        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
     }
 
     @NotNull

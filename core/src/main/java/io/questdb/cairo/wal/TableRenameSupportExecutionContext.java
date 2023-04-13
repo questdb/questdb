@@ -52,12 +52,12 @@ class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), this.tableToken, version);
+        return getCairoEngine().getReader(this.tableToken, version);
     }
 
     @Override
     public TableReader getReader(TableToken tableName) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), this.tableToken);
+        return getCairoEngine().getReader(this.tableToken);
     }
 
     @Override

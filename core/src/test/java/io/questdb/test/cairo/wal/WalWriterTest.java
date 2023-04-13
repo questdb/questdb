@@ -2710,7 +2710,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 walWriter.commit();
             }
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 assertEquals(4, reader.getMetadata().getColumnCount());
                 assertEquals(5, reader.getTransientRowCount());
                 RecordCursor cursor = reader.getCursor();

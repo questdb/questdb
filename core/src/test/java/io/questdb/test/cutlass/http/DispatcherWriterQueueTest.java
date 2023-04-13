@@ -412,13 +412,6 @@ public class DispatcherWriterQueueTest extends AbstractTest {
         testUpdateSucceedsAfterReaderOutOfDateException(1, 30_000L);
     }
 
-    private TableReader getReader(CairoEngine engine, String tableName) {
-        return engine.getReader(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.verifyTableName(tableName)
-        );
-    }
-
     private void runAlterOnBusyTable(
             AlterVerifyAction alterVerifyAction,
             int errorsExpected,
@@ -491,7 +484,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseInactive();
-                try (TableReader rdr = getReader(engine, tableName)) {
+                try (TableReader rdr = engine.getReader(tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
@@ -609,7 +602,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseAllReaders();
-                try (TableReader rdr = getReader(engine, tableName)) {
+                try (TableReader rdr = engine.getReader(tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {

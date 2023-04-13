@@ -405,17 +405,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return this.writerPool.getPoolListener();
     }
 
-    public TableReader getReader(CairoSecurityContext securityContext, TableToken tableToken) {
-        securityContext.authorizeTableRead(tableToken);
-        return getReaderAsRoot(tableToken);
+    public TableReader getReader(CharSequence tableName) {
+        return getReader(verifyTableName(tableName));
     }
 
-    public TableReader getReader(
-            CairoSecurityContext securityContext,
-            TableToken tableToken,
-            long version
-    ) {
-        authorizeRead(securityContext, tableToken);
+    public TableReader getReader(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        return readerPool.get(tableToken);
+    }
+
+    public TableReader getReader(TableToken tableToken, long version) {
+        verifyTableToken(tableToken);
         final int tableId = tableToken.getTableId();
         TableReader reader = readerPool.get(tableToken);
         if ((version > -1 && reader.getVersion() != version)
@@ -427,11 +427,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
-    public TableReader getReaderAsRoot(TableToken tableToken) {
-        verifyTableToken(tableToken);
-        return readerPool.get(tableToken);
-    }
-
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }
@@ -440,7 +435,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // todo: untested verification
         verifyTableToken(tableToken);
         try {
-            return getReader(securityContext, tableToken);
+            return getReader(tableToken);
         } catch (CairoException e) {
             // Cannot open reader on existing table is pretty bad.
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
@@ -448,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tryRepairTable(securityContext, tableToken, e);
         }
         try {
-            return getReader(securityContext, tableToken);
+            return getReader(tableToken);
         } catch (CairoException e) {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
@@ -849,11 +844,6 @@ public class CairoEngine implements Closeable, WriterSource {
             verifyTableToken(tableToken);
         }
         securityContext.authorizeTableManage(tableToken);
-    }
-
-    private void authorizeRead(CairoSecurityContext securityContext, TableToken tableToken) {
-        verifyTableToken(tableToken);
-        securityContext.authorizeTableRead(tableToken);
     }
 
     private void authorizeWrite(CairoSecurityContext securityContext, TableToken tableToken) {

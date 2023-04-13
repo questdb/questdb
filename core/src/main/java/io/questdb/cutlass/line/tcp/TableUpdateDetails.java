@@ -396,8 +396,8 @@ public class TableUpdateDetails implements Closeable {
             latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex, CairoSecurityContext securityContext) {
-            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
+        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and
@@ -642,13 +642,13 @@ public class TableUpdateDetails implements Closeable {
             return ANY_TABLE_VERSION;
         }
 
-        DirectByteSymbolLookup getSymbolLookup(int columnIndex, CairoSecurityContext securityContext) {
+        DirectByteSymbolLookup getSymbolLookup(int columnIndex) {
             if (columnIndex > -1) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);
                 if (symCache != null) {
                     return symCache;
                 }
-                return addSymbolCache(columnIndex, securityContext);
+                return addSymbolCache(columnIndex);
             }
             return NOT_FOUND_LOOKUP;
         }

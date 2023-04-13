@@ -94,7 +94,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         });
 
         Thread readerThread = new Thread(() -> {
-            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 start.await();
                 int colAdded = -1, newColsAdded;
                 while (colAdded < totalColAddCount) {

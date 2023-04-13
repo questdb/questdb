@@ -65,13 +65,13 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLockEngagement(true, tableName);
             assertSegmentLockEngagement(false, tableName, 1, 0);  // Old segment is unlocked.
             assertSegmentLockEngagement(true, tableName, 1, 1);
 
             // Release WAL and segments.
             engine.releaseInactive();
-            assertWalLockEngagement(false, tableName, 1);
+            assertWalLockEngagement(false, tableName);
             assertSegmentLockEngagement(false, tableName, 1, 0);
             assertSegmentLockEngagement(false, tableName, 1, 1);
 
@@ -96,11 +96,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     "2\t2022-02-24T00:00:01.000000Z\tx\n");
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalLockExistence(false, tableName);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 1, 0);
+            assertSegmentLockExistence(false, tableName, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
+            assertSegmentLockExistence(false, tableName, 1);
         });
     }
 
@@ -351,11 +351,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             allowRemove.set(false);
             runWalPurgeJob(ff);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName);
 
             allowRemove.set(true);
             runWalPurgeJob(ff);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalLockExistence(false, tableName);
         });
     }
 
@@ -443,17 +443,17 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             drainWalQueue();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLockExistence(true, tableName, 0);
             assertSegmentLockEngagement(true, tableName, 1, 0);  // Segment 0 is locked.
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLockEngagement(true, tableName);
 
             compile("alter table " + tableName + " add column s1 string");
             compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLockEngagement(true, tableName);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1, 1);
+            assertSegmentLockExistence(true, tableName, 1);
             assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
             assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
 
@@ -465,7 +465,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
                 runWalPurgeJob();
-                assertSegmentLockExistence(false, tableName, 1, 0);
+                assertSegmentLockExistence(false, tableName, 0);
 
                 // "stuff" is untouched.
                 Assert.assertTrue(path.toString(), ff.exists(path));
@@ -638,11 +638,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLockExistence(true, tableName, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
+            assertSegmentLockExistence(false, tableName, 1);
 
             // Altering the table doesn't create a new segment yet.
             compile("alter table " + tableName + " add column sss string");
@@ -676,17 +676,17 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             // Purging will now clean up the inactive segmentId==0, but leave segmentId==1
             runWalPurgeJob();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 1, 0);
+            assertSegmentLockExistence(false, tableName, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1, 1);
+            assertSegmentLockExistence(true, tableName, 1);
 
             // Releasing inactive writers and purging will also delete the wal directory.
             engine.releaseInactive();
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalLockExistence(false, tableName);
         });
     }
 
@@ -703,7 +703,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             getTableWriterAPI(tableName).close();
 
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName);
             assertSegmentExistence(true, tableName, 1, 0);
 
             // Released before committing anything to the sequencer.
@@ -711,7 +711,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalLockExistence(false, tableName);
         });
     }
 

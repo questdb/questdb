@@ -441,22 +441,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
-        return engine.getReader(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.verifyTableName(tableName)
-        );
-    }
-
     protected static TableReader getReader(CharSequence tableName) {
-        return engine.getReader(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.verifyTableName(tableName)
-        );
+        return engine.getReader(tableName);
     }
 
     protected static TableReader getReader(TableToken tt) {
-        return engine.getReader(securityContext, tt);
+        return engine.getReader(tt);
     }
 
     protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {

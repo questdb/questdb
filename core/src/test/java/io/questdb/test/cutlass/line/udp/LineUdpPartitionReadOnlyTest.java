@@ -242,7 +242,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 if (expectedNewEvents > 0) {
                     long start = System.currentTimeMillis();
                     while (System.currentTimeMillis() - start < 2000L) {
-                        try (TableReader reader = engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken)) {
+                        try (TableReader reader = engine.getReader(tableToken)) {
                             if (1111 + expectedNewEvents <= reader.size()) {
                                 break;
                             }
@@ -250,7 +250,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Os.sleep(1L);
                     }
 
-                    try (TableReader reader = engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken)) {
+                    try (TableReader reader = engine.getReader(tableToken)) {
                         int partitionCount = reader.getPartitionCount();
                         Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
                         for (int i = 0; i < partitionCount; i++) {

@@ -44,6 +44,9 @@ public interface CairoSecurityContext {
     default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
+    default void authorizeSelect(TableToken tableName, ObjList<CharSequence> columnNames) {
+    }
+
     default void authorizeTableCreate(CharSequence tableName) {
     }
 
@@ -63,9 +66,6 @@ public interface CairoSecurityContext {
     }
 
     default void authorizeTableManage(TableToken tableToken) {
-    }
-
-    default void authorizeTableRead(TableToken tableToken) {
     }
 
     default void authorizeTableRename(TableToken tableToken) {

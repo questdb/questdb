@@ -179,7 +179,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         if (engine.getStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
             return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
         }
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+        try (TableReader reader = engine.getReader(tableToken)) {
             return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
     }

@@ -3631,9 +3631,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(CairoSecurityContext cairoSecurityContext, TableToken tableName, long version) {
+                public TableReader getReader(TableToken tableToken, long version) {
                     fiddler.run(this);
-                    return super.getReader(cairoSecurityContext, tableName, version);
+                    return super.getReader(tableToken, version);
                 }
             }) {
                 try (
@@ -4623,9 +4623,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(CairoSecurityContext cairoSecurityContext, TableToken tableName, long tableVersion) {
+            public TableReader getReader(TableToken tableToken, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(cairoSecurityContext, tableName, tableVersion);
+                return super.getReader(tableToken, tableVersion);
             }
         }) {
 
@@ -4635,7 +4635,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             ) {
                     compiler.compile(sql, sqlExecutionContext);
                     Assert.assertTrue(fiddler.isHappy());
-                    try (TableReader reader = getReader(engine, "Y")) {
+                try (TableReader reader = engine.getReader("Y")) {
                         sink.clear();
                         reader.getMetadata().toJson(sink);
                         TestUtils.assertEquals(expectedMetadata, sink);

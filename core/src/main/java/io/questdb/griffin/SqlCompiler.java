@@ -1242,7 +1242,7 @@ public class SqlCompiler implements Closeable {
     ) throws SqlException {
         executionContext.getCairoSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
-            try (TableReader reader = engine.getReaderAsRoot(tableToken)) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }

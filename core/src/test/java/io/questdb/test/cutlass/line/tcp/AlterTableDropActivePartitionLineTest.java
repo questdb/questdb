@@ -170,12 +170,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // check table reader size
                 long beforeDropSize;
-                try (
-                        TableReader reader = engine.getReader(
-                                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                                token
-                        )
-                ) {
+                try (TableReader reader = engine.getReader(token)) {
                     beforeDropSize = reader.size();
                     Assert.assertTrue(beforeDropSize > 0L);
                 }
@@ -195,12 +190,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 ilpAgentHalted.await();
 
                 // check size
-                try (
-                        TableReader reader = engine.getReader(
-                                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                                token
-                        )
-                ) {
+                try (TableReader reader = engine.getReader(token)) {
                     Assert.assertTrue(beforeDropSize > reader.size());
                 }
 

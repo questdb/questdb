@@ -27,6 +27,7 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.ObjList;
 
 public class DenyAllCairoSecurityContext extends ReadOnlyCairoSecurityContext {
     public static final DenyAllCairoSecurityContext INSTANCE = new DenyAllCairoSecurityContext();
@@ -37,7 +38,7 @@ public class DenyAllCairoSecurityContext extends ReadOnlyCairoSecurityContext {
     }
 
     @Override
-    public void authorizeTableRead(TableToken tableToken) {
+    public void authorizeSelect(TableToken tableName, ObjList<CharSequence> columnNames) {
         throw CairoException.nonCritical().put("permission denied");
     }
 }

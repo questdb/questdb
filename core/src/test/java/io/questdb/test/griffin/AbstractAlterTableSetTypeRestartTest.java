@@ -79,14 +79,14 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         }
     }
 
-    static void setSeqTxn(CairoEngine engine, TableToken token, long seqTxn) {
+    static void setSeqTxn(CairoEngine engine, TableToken token) {
         try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
-            writer.commitSeqTxn(seqTxn);
+            writer.commitSeqTxn(12345);
         }
     }
 
     static void assertSeqTxn(CairoEngine engine, TableToken token, long expectedSeqTxn) {
-        try (final TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
+        try (final TableReader reader = engine.getReader(token)) {
             assertEquals(expectedSeqTxn, reader.getTxFile().getSeqTxn());
         }
     }

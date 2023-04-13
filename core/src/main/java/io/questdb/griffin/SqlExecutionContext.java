@@ -99,11 +99,11 @@ public interface SqlExecutionContext extends Closeable {
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableName, long version) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, version);
+        return getCairoEngine().getReader(tableName, version);
     }
 
     default TableReader getReader(TableToken tableName) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), tableName);
+        return getCairoEngine().getReader(tableName);
     }
 
     long getRequestFd();

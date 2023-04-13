@@ -348,7 +348,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 offset,
                                 entity.getValue(),
                                 parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
                         throw castError("tag", columnWriterIndex, colType, entity.getName());
@@ -415,7 +415,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -438,7 +438,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addSymbol(
                                     offset,
                                     entity.getValue(),
-                                    parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -476,7 +476,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                         offset,
                                         entityValue,
                                         parser.hasNonAsciiChars(),
-                                        localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                        localDetails.getSymbolLookup(columnWriterIndex)
                                 );
                                 break;
 
@@ -507,7 +507,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -552,7 +552,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -576,7 +576,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                     offset,
                                     entity.getValue(),
                                     parser.hasNonAsciiChars(),
-                                    localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                    localDetails.getSymbolLookup(columnWriterIndex)
                             );
                             break;
 
@@ -591,7 +591,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 offset,
                                 entity.getValue(),
                                 parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex, securityContext)
+                                localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
                         throw castError("symbol", columnWriterIndex, colType, entity.getName());

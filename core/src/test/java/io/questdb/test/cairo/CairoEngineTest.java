@@ -88,7 +88,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
-                TableReader reader = engine.getReader(securityContext, x, -1);
+                TableReader reader = engine.getReader(x, -1);
                 TableWriter writer = engine.getWriter(securityContext, x, "test");
                 Assert.assertEquals(1, engine.getBusyReaderCount());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
@@ -210,7 +210,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TableToken x = createX(engine);
-                try (TableReader reader = engine.getReader(securityContext, x)) {
+                try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
                     Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(x, "testing"));
                     assertReader(engine, x);
@@ -267,7 +267,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, x));
 
                 try {
-                    engine.getReader(securityContext, x);
+                    engine.getReader(x);
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -310,7 +310,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TableToken x = createX(engine);
-                try (TableReader reader = TestUtils.getReader(engine, x)) {
+                try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
                     try {
                         engine.drop(securityContext, path, x);
@@ -478,7 +478,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertWriter(engine, x);
                 try {
-                    engine.getReader(securityContext, x, 2);
+                    engine.getReader(x, 2);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }
@@ -488,7 +488,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     private void assertReader(CairoEngine engine, TableToken name) {
-        try (TableReader reader = engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), name)) {
+        try (TableReader reader = engine.getReader(name)) {
             Assert.assertNotNull(reader);
         }
     }

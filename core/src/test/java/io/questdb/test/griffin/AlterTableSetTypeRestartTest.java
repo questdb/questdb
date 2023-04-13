@@ -239,7 +239,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
                 final CairoEngine engine = questdb.getCairoEngine();
                 final TableToken token = engine.verifyTableName(tableName);
-                setSeqTxn(engine, token, 12345L);
+                setSeqTxn(engine, token);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
