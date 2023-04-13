@@ -27,10 +27,10 @@ package io.questdb.test.griffin.wal.fuzz;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
 
-public class TruncateTableOperation implements FuzzTransactionOperation {
+public class FuzzTruncateTableOperation implements FuzzTransactionOperation {
     @Override
     public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
-        tableWriter.truncate();
+        tableWriter.truncateSoft();
         return true;
     }
 }

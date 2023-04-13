@@ -26,11 +26,14 @@ package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.*;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -2679,6 +2682,59 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWriteAfterColumnWasRecreated() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String csv = "col_a,col_b\n" +
+                    "1,2\n" +
+                    "1,2\n";
+            final String expected = "col_b\tcol_a\n" +
+                    "2\t1\n" +
+                    "2\t1\n";
+
+            compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
+            compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
+            compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
+
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
+        });
+    }
+
+    @Test
+    public void testWriteAfterColumnWasRecreatedNoHeader() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String csv = "1,2\n" +
+                    "1,2\n";
+            final String expected = "col_b\tcol_a\n" +
+                    "1\t2\n" +
+                    "1\t2\n";
+
+            compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
+            compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
+            compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
+
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"col_b\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"col_a\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
+        });
+    }
+
+    @Test
     public void testWriteErrors() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
@@ -2838,13 +2894,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            compiler.compile(
-                    "create table test" +
-                            "(t timestamp" +
-                            ", s symbol" +
-                            ", v double)",
-                    sqlExecutionContext
-            );
+            compiler.compile("create table test (t timestamp, s symbol, v double)", sqlExecutionContext);
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
@@ -3009,6 +3059,14 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 sink,
                 expected
         );
+    }
+
+    private static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, executionContext);
+        try (OperationFuture future = cc.execute(null)) {
+            future.await();
+        }
+        return cc;
     }
 
     private static String extractLast(Path path) {
