@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public interface CairoSecurityContext {
 
@@ -71,6 +72,9 @@ public interface CairoSecurityContext {
     }
 
     default void authorizeTableManage(TableToken tableToken) {
+    }
+
+    default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
     }
 
     default void authorizeTableRename(TableToken tableToken) {

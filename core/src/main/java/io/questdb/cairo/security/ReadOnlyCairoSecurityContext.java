@@ -121,4 +121,9 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     public void authorizeTableVacuum(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
+
+    @Override
+    public void authorizeTableReindex(TableToken tableToken, CharSequence columnName) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
 }
