@@ -509,13 +509,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
+    @Override
     public TableWriterAPI getTableWriterAPIForGrant(
             CairoSecurityContext securityContext,
             TableToken tableToken,
             CharSequence targetTable,
             @Nullable String lockReason
     ) {
-        authorizeManage(securityContext, getTableTokenIfExists(targetTable));
+        authorizeManage(securityContext, targetTable != null ? getTableTokenIfExists(targetTable) : null);
 
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
@@ -844,13 +845,15 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void authorizeManage(CairoSecurityContext securityContext, TableToken tableToken) {
-        verifyTableToken(tableToken);
+        if (tableToken != null) {
+            verifyTableToken(tableToken);
+        }
         securityContext.authorizeTableManage(tableToken);
     }
 
     private void authorizeRead(CairoSecurityContext securityContext, TableToken tableToken) {
-        securityContext.authorizeTableRead(tableToken);
         verifyTableToken(tableToken);
+        securityContext.authorizeTableRead(tableToken);
     }
 
     private void authorizeWrite(CairoSecurityContext securityContext, TableToken tableToken) {

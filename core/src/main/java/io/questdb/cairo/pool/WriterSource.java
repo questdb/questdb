@@ -32,4 +32,6 @@ public interface WriterSource {
     TableWriterAPI getTableWriterAPI(CairoSecurityContext context, TableToken tableToken, String lockReason);
 
     TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason);
+
+    TableWriterAPI getTableWriterAPIForGrant(CairoSecurityContext securityContext, TableToken tableToken, CharSequence targetTable, String lockReason);
 }

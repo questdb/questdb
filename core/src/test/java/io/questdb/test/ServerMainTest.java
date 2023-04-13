@@ -43,7 +43,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() ->createDummyConfiguration());
+        TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
     }
 
