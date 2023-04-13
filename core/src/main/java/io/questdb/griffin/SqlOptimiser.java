@@ -2220,7 +2220,9 @@ class SqlOptimiser {
                             && nested.getLatestBy().size() == 0
             ) {
                 model.setTimestamp(timestamp);
+                model.setExplicitTimestamp(nested.isExplicitTimestamp());
                 nested.setTimestamp(null);
+                nested.setExplicitTimestamp(false);
             }
         }
 
@@ -3327,6 +3329,7 @@ class SqlOptimiser {
                 limit.setLimit(limitNode, null);
                 limit.setNestedModel(nested);
                 limit.setTimestamp(nested.getTimestamp());
+                limit.setExplicitTimestamp(nested.isExplicitTimestamp());
 
                 int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
                 if (timestampKey < 0) {

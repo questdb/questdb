@@ -2082,6 +2082,7 @@ public final class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             model.setTimestamp(timestamp);
+            model.setExplicitTimestamp(true);
             tok = optTok(lexer);
         }
         return tok;
