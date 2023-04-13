@@ -44,6 +44,11 @@ public interface CairoSecurityContext {
     default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
+    // when insert SQL doesn't specify any columns (this means all columns) the 'columnName' list
+    // will be empty
+    default void authorizeInsert(CharSequence tableName, ObjList<CharSequence> columnNames) {
+    }
+
     default void authorizeSelect(TableToken tableName, ObjList<CharSequence> columnNames) {
     }
 
@@ -72,6 +77,9 @@ public interface CairoSecurityContext {
     }
 
     default void authorizeTableTruncate(TableToken tableToken) {
+    }
+
+    default void authorizeTableVacuum(TableToken tableToken) {
     }
 
     default void authorizeTableWrite(TableToken tableToken) {

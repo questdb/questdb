@@ -75,9 +75,10 @@ public class InsertOperationImpl implements InsertOperation {
             final TableWriterAPI writer;
             if (isGrant) {
                 // TODO: pass target table name in model, hardcoded to null for now (DB level grant)
+                // todo: we should not be checking permissions here, it is too late
                 writer = writerSource.getTableWriterAPIForGrant(securityContext, tableToken, null, "grant");
             } else {
-                writer = writerSource.getTableWriterAPI(securityContext, tableToken, "insert");
+                writer = writerSource.getTableWriterAPIAsRoot(tableToken, "insert");
             }
             if (writer.getStructureVersion() != structureVersion ||
                     !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {

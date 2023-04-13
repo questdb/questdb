@@ -29,7 +29,6 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -1341,10 +1340,15 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.INSERT:
                 InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
-                    return validateAndOptimiseInsertAsSelect(insertModel, executionContext);
+                    validateAndOptimiseInsertAsSelect(executionContext, insertModel);
                 } else {
-                    return lightlyValidateInsertModel(insertModel);
+                    lightlyValidateInsertModel(insertModel);
                 }
+                executionContext.getCairoSecurityContext().authorizeInsert(
+                        insertModel.getTableName(),
+                        insertModel.getColumnNameList()
+                );
+                return insertModel;
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
@@ -2323,7 +2327,7 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {
+    private void lightlyValidateInsertModel(InsertModel model) throws SqlException {
         ExpressionNode tableNameExpr = model.getTableNameExpr();
         if (tableNameExpr.type != ExpressionNode.LITERAL) {
             throw SqlException.$(tableNameExpr.position, "literal expected");
@@ -2343,8 +2347,6 @@ public class SqlCompiler implements Closeable {
                 }
             }
         }
-
-        return model;
     }
 
     private RecordCursorFactory prepareForUpdate(
@@ -2731,7 +2733,7 @@ public class SqlCompiler implements Closeable {
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        executionContext.getCairoSecurityContext().authorizeTableWrite(rdr.getTableToken());
+                        executionContext.getCairoSecurityContext().authorizeTableVacuum(rdr.getTableToken());
                         if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableToken(), partitionBy)) {
                             throw SqlException.$(
                                     tableNamePos,
@@ -2751,17 +2753,13 @@ public class SqlCompiler implements Closeable {
         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
     }
 
-    private InsertModel validateAndOptimiseInsertAsSelect(
-            InsertModel model,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
+    private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);
-        return model;
     }
 
     private void validateTableModelAndCreateTypeCast(
