@@ -3041,7 +3041,6 @@ public class SqlCompiler implements Closeable {
                         backupWriter.commit();
                     }
                 } // release reader lock
-
                 int renameRootLen = dstPath.length();
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableToken).$();

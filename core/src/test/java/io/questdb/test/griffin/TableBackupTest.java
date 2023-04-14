@@ -93,14 +93,14 @@ public class TableBackupTest {
         return Arrays.asList(new Object[][]{
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.HOUR},
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.DAY},
-//                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
+                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.MONTH},
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.YEAR},
 
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.NONE},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.HOUR},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.DAY},
-//                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.WEEK},
+                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.WEEK},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.MONTH},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.YEAR}
         });
@@ -230,32 +230,22 @@ public class TableBackupTest {
 
     @Test
     public void testBackupDatabaseGeohashColumnsWithColumnTops() throws Exception {
+        Assume.assumeTrue(PartitionBy.isPartitioned(PartitionBy.fromString(partitionBy)));
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(
-                    "CREATE TABLE " + tableName + " AS (" +
-                            "  SELECT" +
-                            "      rnd_geohash(2) g1," +
-                            "      rnd_geohash(15) g2," +
-                            "      timestamp_sequence(0, 1000000000) ts" +
-                            "  FROM long_sequence(2)" +
-                            ") TIMESTAMP(ts) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL")
-            );
-            execute("alter table " + tableName + " add column g4 geohash(30b)");
-            execute("alter table " + tableName + " add column g8 geohash(32b)");
-            execute(
-                    "insert into " + tableName + " " +
-                            " select " +
-                            " rnd_geohash(2) g1," +
-                            " rnd_geohash(15) g2," +
-                            " timestamp_sequence(10000000000, 500000000) ts," +
-                            " rnd_geohash(31) g4," +
-                            " rnd_geohash(42) g8" +
-                            " from long_sequence(3)"
-            );
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+            execute("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
+            execute("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
+            execute("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
+                    " SELECT" +
+                    "     rnd_geohash(30)," +
+                    "     rnd_geohash(32)," +
+                    "     timestamp_sequence(" +
+                    "         to_timestamp('2023-04-14T17:00:00', 'yyyy-MM-ddTHH:mm:ss'), " +
+                    "         100000L)" +
+                    " FROM long_sequence(3))");
             backupDatabase();
             setFinalBackupPath();
-            assertTables(mainEngine.getTableToken(tableName));
+            assertTables(tableToken);
             assertDatabase();
         });
     }
@@ -380,29 +370,17 @@ public class TableBackupTest {
 
     @Test
     public void testSuccessiveBackups() throws Exception {
+        Assume.assumeTrue(PartitionBy.isPartitioned(PartitionBy.fromString(partitionBy)));
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(
-                    "CREATE TABLE " + tableName + " AS (" +
-                            "  SELECT" +
-                            "      rnd_symbol(4,4,4,2) sym," +
-                            "      rnd_double(2) d," +
-                            "      timestamp_sequence(0, 1000000000) ts" +
-                            "  FROM long_sequence(10)" +
-                            ") TIMESTAMP(ts) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL"));
-            TableToken tableToken = mainEngine.getTableToken(tableName);
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             backupTable(tableToken);
             setFinalBackupPath();
             StringSink firstBackup = new StringSink();
             selectAll(tableToken, false, sink1);
             selectAll(tableToken, true, firstBackup);
             Assert.assertEquals(sink1, firstBackup);
-            execute(
-                    "insert into " + tableName +
-                            " select * from (" +
-                            " select rnd_symbol(4,4,4,2) sym, rnd_double(2) d, timestamp_sequence(10000000000, 500000000) ts from long_sequence(5)" +
-                            ") timestamp(ts)"
-            );
+
+            execute("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(6) + ')');
             backupTable(tableToken);
             setFinalBackupPath(1);
             assertTables(tableToken);
@@ -441,6 +419,40 @@ public class TableBackupTest {
                 Assert.assertTrue(ex.getMessage().startsWith("[13] could not create backup "));
             }
         });
+    }
+
+    private static String selectGenerator(int size) {
+        return " SELECT" +
+                "     rnd_boolean() bool," +
+                "     rnd_char() char," +
+                "     rnd_byte(2,50) byte," +
+                "     rnd_short() short1," +
+                "     rnd_short(10,1024) short2," +
+                "     rnd_int() int1," +
+                "     rnd_int(0, 30, 2) int2," +
+                "     rnd_long() long1," +
+                "     rnd_long(100,200,2) long2," +
+                "     rnd_float(2) float," +
+                "     rnd_double(2) double," +
+                "     rnd_date(to_date('2022', 'yyyy'), to_date('2023', 'yyyy'), 2) date," +
+                "     rnd_timestamp(" +
+                "         to_timestamp('2022', 'yyyy'), " +
+                "         to_timestamp('2023', 'yyyy'), " +
+                "         2) timestamp1," +
+                "     timestamp_sequence(" +
+                "         to_timestamp('2023-04-14T17:00:00', 'yyyy-MM-ddTHH:mm:ss'), " +
+                "         100000L) timestamp2," +
+                "     rnd_symbol(4,4,4,2) symbol," +
+                "     rnd_str(3,3,2) string," +
+                "     rnd_bin(10, 20, 2) binary," +
+                "     rnd_geohash(7) g7," +
+                "     rnd_geohash(15) g15," +
+                "     rnd_geohash(23) g23," +
+                "     rnd_geohash(31) g31," +
+                "     rnd_geohash(60) g60," +
+                "     rnd_uuid4() uuid," +
+                "     rnd_long256() long256" +
+                " FROM long_sequence(" + size + ')';
     }
 
     private static String testTableName(String tableName) {
@@ -515,38 +527,9 @@ public class TableBackupTest {
 
     private TableToken executeCreateTableStmt(String tableName) throws SqlException {
         String finalTableName = testTableName(tableName);
-        String create = "CREATE TABLE " + finalTableName + " AS (" +
-                "  SELECT" +
-                "      rnd_boolean() bool," +
-                "      rnd_char() char," +
-                "      rnd_byte(2,50) byte," +
-                "      rnd_short() short1," +
-                "      rnd_short(10,1024) short2," +
-                "      rnd_int() int1," +
-                "      rnd_int(0, 30, 2) int2," +
-                "      rnd_long() long1," +
-                "      rnd_long(100,200,2) long2," +
-                "      rnd_float(2) float," +
-                "      rnd_double(2) double," +
-                "      rnd_date(to_date('2022', 'yyyy'), to_date('2023', 'yyyy'), 2) date," +
-                "      rnd_timestamp(" +
-                "          to_timestamp('2022', 'yyyy'), " +
-                "          to_timestamp('2023', 'yyyy'), " +
-                "          2) timestamp1," +
-                "      x::timestamp + 1000000000 timestamp2," +
-                "      rnd_symbol(4,4,4,2) symbol," +
-                "      rnd_str(3,3,2) string," +
-                "      rnd_bin(10, 20, 2) binary," +
-                "      rnd_geohash(7) g7," +
-                "      rnd_geohash(15) g15," +
-                "      rnd_geohash(23) g23," +
-                "      rnd_geohash(31) g31," +
-                "      rnd_geohash(60) g60," +
-                "      rnd_uuid4() uuid," +
-                "      rnd_long256() long256" +
-                "  FROM long_sequence(10000)" +
+        String create = "CREATE TABLE '" + finalTableName + "' AS (" +
+                selectGenerator(10000) +
                 ") TIMESTAMP(timestamp2) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL");
-
         try (OperationFuture future = mainCompiler.compile(create, mainSqlExecutionContext).execute(null)) {
             future.await();
         }
