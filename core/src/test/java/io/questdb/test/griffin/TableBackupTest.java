@@ -442,7 +442,8 @@ public class TableBackupTest {
                 "     timestamp_sequence(" +
                 "         to_timestamp('2023-04-14T17:00:00', 'yyyy-MM-ddTHH:mm:ss'), " +
                 "         100000L) timestamp2," +
-                "     rnd_symbol(4,4,4,2) symbol," +
+                "     rnd_symbol(4,4,4,2) symbol1," +
+                "     rnd_symbol(4,4,4,2) symbol2," +
                 "     rnd_str(3,3,2) string," +
                 "     rnd_bin(10, 20, 2) binary," +
                 "     rnd_geohash(7) g7," +
@@ -529,7 +530,7 @@ public class TableBackupTest {
         String finalTableName = testTableName(tableName);
         String create = "CREATE TABLE '" + finalTableName + "' AS (" +
                 selectGenerator(10000) +
-                ") TIMESTAMP(timestamp2) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL");
+                "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL");
         try (OperationFuture future = mainCompiler.compile(create, mainSqlExecutionContext).execute(null)) {
             future.await();
         }
