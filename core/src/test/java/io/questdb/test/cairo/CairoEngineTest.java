@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -45,7 +44,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 
 public class CairoEngineTest extends AbstractCairoTest {
@@ -221,27 +219,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLockWriter_ReadOnlyContext() throws Exception {
-        assertMemoryLeak(() -> {
-            CairoSecurityContext readOnlyContext = ReadOnlyCairoSecurityContext.INSTANCE;
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                TableToken x = CreateTableTestUtils.create(model);
-                try {
-                    engine.lockWriter(readOnlyContext, x, "testing");
-                    fail("acquiring a write lock in read-only context should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
-
-                    // check the lock was actually NOT acquired
-                    assertNull(engine.lockWriter(securityContext, x, "testing"));
-                    // and release it again to prevent leaks
-                    engine.unlockWriter(x);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testNewTableRename() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -263,7 +240,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TableToken x = createX(engine);
                 assertReader(engine, x);
                 assertWriter(engine, x);
-                engine.drop(securityContext, path, x);
+                engine.drop(path, x);
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, x));
 
                 try {
@@ -285,7 +262,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRemoveNewTable() {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             TableToken x = createX(engine);
-            engine.drop(securityContext, path, x);
+            engine.drop(path, x);
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, x));
         }
     }
@@ -296,7 +273,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createY(engine);
                 try {
-                    engine.drop(securityContext, path, engine.verifyTableName("x"));
+                    engine.drop(path, engine.verifyTableName("x"));
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
@@ -313,7 +290,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
                     try {
-                        engine.drop(securityContext, path, x);
+                        engine.drop(path, x);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -330,7 +307,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableWriter writer = getWriter(engine, x.getTableName())) {
                     Assert.assertNotNull(writer);
                     try {
-                        engine.drop(securityContext, path, x);
+                        engine.drop(path, x);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }

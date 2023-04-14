@@ -399,7 +399,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.drop(securityContext, path, engine.verifyTableName("all"));
+            engine.drop(path, engine.verifyTableName("all"));
         }
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
 

@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -4081,7 +4080,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
+                engine.drop(path, tt);
             }
         }
     }

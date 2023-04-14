@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -32,7 +32,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 public class PGBasicAuthenticator implements PGAuthenticator {
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final String password;
-    private final CairoSecurityContext securityContext;
+    private final SecurityContext securityContext;
     private final String username;
 
     public PGBasicAuthenticator(CairoSecurityContextFactory securityContextFactory, String username, String password, boolean readOnly) {
@@ -42,7 +42,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
     }
 
     @Override
-    public CairoSecurityContext authenticate(
+    public SecurityContext authenticate(
             CharSequence username,
             long msg,
             long msgLimit

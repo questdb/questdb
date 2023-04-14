@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 
 public class AllowAllSecurityContextFactory implements CairoSecurityContextFactory {
     public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
@@ -33,7 +33,7 @@ public class AllowAllSecurityContextFactory implements CairoSecurityContextFacto
     }
 
     @Override
-    public CairoSecurityContext getInstance(CharSequence principal, boolean readOnlyContext) {
-        return readOnlyContext ? ReadOnlyCairoSecurityContext.INSTANCE : AllowAllCairoSecurityContext.INSTANCE;
+    public SecurityContext getInstance(CharSequence principal, boolean readOnlyContext) {
+        return readOnlyContext ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
     }
 }

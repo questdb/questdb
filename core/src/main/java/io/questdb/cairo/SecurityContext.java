@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public interface CairoSecurityContext {
+public interface SecurityContext {
 
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
@@ -56,7 +56,7 @@ public interface CairoSecurityContext {
     default void authorizeTableCreate(CharSequence tableName) {
     }
 
-    default void authorizeCopyCancel(CairoSecurityContext cancellingSecurityContext) {
+    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
     default void authorizeCopyExecute() {
@@ -68,9 +68,7 @@ public interface CairoSecurityContext {
     default void authorizeTableDrop(TableToken tableToken) {
     }
 
-    default void authorizeTableLock(TableToken tableToken) {
-    }
-
+    // todo: suspect usage
     default void authorizeTableManage(TableToken tableToken) {
     }
 
@@ -86,6 +84,7 @@ public interface CairoSecurityContext {
     default void authorizeTableVacuum(TableToken tableToken) {
     }
 
+    // todo: suspect usage
     default void authorizeTableWrite(TableToken tableToken) {
     }
 

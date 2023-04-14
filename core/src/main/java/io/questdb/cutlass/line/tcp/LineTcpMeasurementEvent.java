@@ -291,7 +291,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createMeasurementEvent(
-            CairoSecurityContext securityContext,
+            SecurityContext securityContext,
             TableUpdateDetails tud,
             LineTcpParser parser,
             int workerId

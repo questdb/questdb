@@ -653,7 +653,7 @@ public class TableUpdateDetails implements Closeable {
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetStateIfNecessary(CairoSecurityContext securityContext) {
+        void resetStateIfNecessary(SecurityContext securityContext) {
             // First, reset processed column tracking.
             clearProcessedColumns();
             // Second, check if writer's structure version has changed

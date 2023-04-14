@@ -408,7 +408,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
 
         context.with(
-                context.getCairoSecurityContext(),
+                context.getSecurityContext(),
                 context.getBindVariableService(),
                 context.getRandom(),
                 context.getRequestFd(),
@@ -426,7 +426,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
             TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
         } finally {
             context.with(
-                    context.getCairoSecurityContext(),
+                    context.getSecurityContext(),
                     context.getBindVariableService(),
                     context.getRandom(),
                     context.getRequestFd(),

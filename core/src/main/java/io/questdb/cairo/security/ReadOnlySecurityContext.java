@@ -25,12 +25,12 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
 
-public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
-    public static final ReadOnlyCairoSecurityContext INSTANCE = new ReadOnlyCairoSecurityContext();
+public class ReadOnlySecurityContext implements SecurityContext {
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
 
     @Override
     public void authorizeCopyExecute() {
@@ -59,11 +59,6 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
 
     @Override
     public void authorizeTableDrop(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableLock(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -113,7 +108,7 @@ public class ReadOnlyCairoSecurityContext implements CairoSecurityContext {
     }
 
     @Override
-    public void authorizeCopyCancel(CairoSecurityContext cancellingSecurityContext) {
+    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

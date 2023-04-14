@@ -323,7 +323,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
-    public void resumeTable(CairoSecurityContext cairoSecurityContext, TableToken tableToken, long resumeFromTxn) {
+    public void resumeTable(SecurityContext securityContext, TableToken tableToken, long resumeFromTxn) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 if (!sequencer.isSuspended()) {
@@ -335,7 +335,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 }
                 // resume from the latest on negative value
                 if (resumeFromTxn > 0) {
-                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableToken, WAL_2_TABLE_RESUME_REASON)) {
+                    try (TableWriter tableWriter = engine.getWriter(securityContext, tableToken, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getAppliedSeqTxn();
                         if (resumeFromTxn - 1 > seqTxn) {
                             // including resumeFromTxn 

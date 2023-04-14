@@ -25,7 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
@@ -62,8 +62,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
@@ -93,7 +93,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableToken.getTableName())) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -124,7 +124,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -156,7 +156,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -187,7 +187,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -228,7 +228,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -250,7 +250,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableToken.getTableName())) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -282,7 +282,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -315,7 +315,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("d", ColumnType.SHORT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 2, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -358,8 +358,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
                     addColumn(walWriter1, "c", ColumnType.INT);
@@ -369,7 +369,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try (TableModel model = defaultModel(tableToken.getTableName())) {
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 0, 0)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 0)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -385,7 +385,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 model.col("d", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 0, 0)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 0)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableToken.getTableName(), reader.getTableName());
@@ -410,8 +410,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
                     addColumn(walWriter1, "c", ColumnType.INT);
@@ -427,7 +427,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (TableModel model = defaultModel(tableName)) {
                 model.col("c", ColumnType.INT);
                 model.col("d", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -458,7 +458,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 0, 0)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 0)) {
                     assertEquals(4, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -483,7 +483,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -510,7 +510,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -542,7 +542,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(eventCursor.hasNext());
                 }
                 model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 1, 2)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 2)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -593,7 +593,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try {
-                    engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 2, 1);
+                    engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1);
                     fail("Segment 2 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
@@ -613,7 +613,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(tableName);
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 125);
@@ -623,7 +623,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -663,7 +663,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -684,7 +684,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 assertEquals(0, walWriter.getSegmentRowCount());
                 TableWriter.Row row = walWriter.newRow(0);
@@ -710,7 +710,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 3)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 3)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -755,7 +755,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 for (int i = 0; i < 18; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -788,7 +788,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 44)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 44)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -846,7 +846,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 1, 7)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 7)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -906,7 +906,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     TableWriter.Row row;
                     int walId = -1;
                     boolean countedDown = false;
-                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                         walId = walWriter.getWalId();
                         final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
                         counter.incrementAndGet();
@@ -960,7 +960,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     final String walName = WAL_NAME_BASE + walId;
 
                     for (int i = 0; i < count; i++) {
-                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 2 * i, numOfRows)) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2 * i, numOfRows)) {
                             assertEquals(2, reader.getRealColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
@@ -996,7 +996,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             assertFalse(eventCursor.hasNext());
                         }
 
-                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 2 * i + 1, 0)) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2 * i + 1, 0)) {
                             assertEquals(2, reader.getRealColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
@@ -1060,7 +1060,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 new Thread(() -> {
                     TableWriter.Row row;
                     int walId = -1;
-                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                         walId = walWriter.getWalId();
                         final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
                         assertEquals(counter.get() > 0 ? maxRowCount : 0, walWriter.getSegmentRowCount());
@@ -1112,7 +1112,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     final String walName = WAL_NAME_BASE + walId;
 
                     for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
-                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, segmentId, maxRowCount)) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, segmentId, maxRowCount)) {
                             assertEquals(3, reader.getColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
@@ -1290,7 +1290,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 tableToken = createTable(model);
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 final RowInserter ins = new RowInserter() {
                     private long count;
                     private long ts = 1000000000L;
@@ -1367,8 +1367,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
@@ -1400,8 +1400,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
@@ -1433,8 +1433,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
@@ -1498,7 +1498,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 final String walName;
                 final IntList walSymbolCounts = new IntList();
-                try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+                try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     assertEquals(tableName, walWriter.getTableToken().getTableName());
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
@@ -1564,7 +1564,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     walWriter.commit();
                 }
 
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
                     assertEquals(31, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1666,8 +1666,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
@@ -1697,7 +1697,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1728,7 +1728,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1764,7 +1764,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("a", ColumnType.BYTE)
                     .wal()
             ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(1, reader.getRealColumnCount());
                     assertEquals(walName1, reader.getWalName());
@@ -1795,7 +1795,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(1, reader.getRealColumnCount());
                     assertEquals(walName2, reader.getWalName());
@@ -1837,7 +1837,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -1847,7 +1847,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1880,7 +1880,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try {
-                    engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 1, 0);
+                    engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 0);
                     fail("Segment 1 should not exist");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only [file=" + engine.getConfiguration().getRoot() +
@@ -1900,7 +1900,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -1921,7 +1921,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 2)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 2)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1987,7 +1987,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 12);
@@ -2021,7 +2021,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("b", ColumnType.SYMBOL)
                     .col("c", ColumnType.SYMBOL)
             ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2078,7 +2078,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("a", ColumnType.INT)
                     .col("c", ColumnType.SYMBOL)
             ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2123,8 +2123,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
@@ -2154,7 +2154,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2185,7 +2185,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2222,7 +2222,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("c", ColumnType.STRING)
                     .wal()
             ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName1, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName1, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName1, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2253,7 +2253,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName2, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName2, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName2, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2295,7 +2295,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 assertEquals(0, walWriter.getSegmentRowCount());
                 TableWriter.Row row = walWriter.newRow(0);
@@ -2318,7 +2318,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 2)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 2)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2352,7 +2352,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 1, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2406,7 +2406,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             String wal1Name;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 wal1Name = walWriter.getWalName();
                 for (int i = 0; i < 18; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -2440,7 +2440,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             engine.clear();
 
             String wal2Name;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 wal2Name = walWriter.getWalName();
                 for (int i = 0; i < 18; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -2472,7 +2472,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, wal1Name, 0, 44)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal1Name, 0, 44)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(wal1Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2530,7 +2530,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, wal1Name, 1, 7)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal1Name, 1, 7)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(wal1Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2564,7 +2564,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, wal2Name, 0, 34)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal2Name, 0, 34)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(wal2Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2622,7 +2622,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, wal2Name, 1, 7)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, wal2Name, 1, 7)) {
                     assertEquals(2, reader.getColumnCount());
                     assertEquals(wal2Name, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -2689,7 +2689,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final String walName;
             final IntList walSymbolCounts = new IntList();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -2737,7 +2737,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertNull(reader.getSymbolMapReader(3).valueOf(2));
             }
 
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 10L)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 10L)) {
                 assertEquals(4, reader.getColumnCount());
                 assertEquals(10, reader.size());
                 RecordCursor cursor = reader.getDataCursor();
@@ -2821,7 +2821,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(AllowAllSecurityContext.INSTANCE, tableToken)) {
                 walWriter.truncate();
                 Assert.fail();
             } catch (UnsupportedOperationException ex) {
@@ -2888,7 +2888,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 tableToken = createTable(model);
             }
 
-            WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
+            WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken);
             TableWriter.Row row = walWriter.newRow(0);
             row.putInt(0, 1);
             row.append();
@@ -2921,7 +2921,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             ) {
                 tableToken = createTable(model);
             }
-            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
@@ -3001,7 +3001,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final String walName;
             final long ts = Os.currentTimeMicros();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(ts);
                 row.putByte(0, (byte) 1);
@@ -3014,7 +3014,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 walWriter.commit();
             }
 
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, 3)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 3)) {
                 assertEquals(3, reader.getColumnCount());
                 assertEquals(walName, reader.getWalName());
                 assertEquals(tableName, reader.getTableName());

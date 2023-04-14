@@ -25,15 +25,15 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
 
-public class DenyAllCairoSecurityContext extends ReadOnlyCairoSecurityContext {
-    public static final DenyAllCairoSecurityContext INSTANCE = new DenyAllCairoSecurityContext();
+public class DenyAllSecurityContext extends ReadOnlySecurityContext {
+    public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
 
     @Override
-    public void authorizeCopyCancel(CairoSecurityContext cancellingSecurityContext) {
+    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.nonCritical().put("permission denied");
     }
 

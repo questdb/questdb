@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -93,7 +93,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
 
     static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
         return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
+                AllowAllSecurityContext.INSTANCE,
                 null,
                 null,
                 -1,

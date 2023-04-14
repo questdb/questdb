@@ -109,7 +109,7 @@ public class TelemetryConfigLogger implements Closeable {
             TableToken tableToken
     ) throws SqlException {
         final TableWriter configWriter = compiler.getEngine().getWriter(
-                sqlExecutionContext.getCairoSecurityContext(),
+                sqlExecutionContext.getSecurityContext(),
                 tableToken,
                 "telemetryConfig"
         );

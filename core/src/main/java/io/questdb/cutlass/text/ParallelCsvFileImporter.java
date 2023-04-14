@@ -417,7 +417,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         );
     }
 
-    public void parseStructure(CairoSecurityContext securityContext, int fd) throws TextImportException {
+    public void parseStructure(SecurityContext securityContext, int fd) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 
@@ -573,7 +573,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseEpilogue(TextImportTask.PHASE_INDEXING);
     }
 
-    public void process(CairoSecurityContext securityContext) throws TextImportException {
+    public void process(SecurityContext securityContext) throws TextImportException {
         final long startMs = getCurrentTimeMs();
 
         int fd = -1;
@@ -600,16 +600,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     phaseSymbolTableMerge();
                     phaseUpdateSymbolKeys();
                     phaseBuildSymbolIndex();
-                    try {
-                        movePartitions();
-                        attachPartitions();
-                    } catch (Throwable t) {
-                        cleanUp();
-                        throw t;
-                    }
+                    movePartitions();
+                    attachPartitions();
                     updateImportStatus(TextImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
-                    cleanUp(securityContext);
+                    cleanUp();
                     throw t;
                 } finally {
                     closeWriter();
@@ -688,15 +683,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (targetTableStatus == TableUtils.TABLE_EXISTS && writer != null) {
             writer.truncate();
         }
-    }
-
-    private void cleanUp(CairoSecurityContext securityContext) {
         closeWriter();
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
         }
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.drop(securityContext, tmpPath, tableToken);
+            cairoEngine.drop(tmpPath, tableToken);
         }
     }
 
@@ -795,10 +787,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void initWriterAndOverrideImportMetadata(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
-            CairoSecurityContext cairoSecurityContext,
+            SecurityContext securityContext,
             TypeManager typeManager
     ) throws TextException {
-        final TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
+        final TableWriter writer = cairoEngine.getWriter(securityContext, tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
         if (metadata.getColumnCount() < types.size()) {
@@ -1336,7 +1328,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     void prepareTable(
-            CairoSecurityContext cairoSecurityContext,
+            SecurityContext securityContext,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             Path path,
@@ -1390,12 +1382,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     );
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
-                    writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
+                    writer = cairoEngine.getWriter(securityContext, tableToken, LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;
                 case TableUtils.TABLE_EXISTS:
-                    initWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
+                    initWriterAndOverrideImportMetadata(names, types, securityContext, typeManager);
 
                     if (writer.getRowCount() > 0) {
                         throw TextException.$("target table must be empty [table=").put(tableName).put(']');

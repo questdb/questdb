@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -173,7 +173,7 @@ public class SecurityTest extends AbstractGriffinTest {
 
         readOnlyExecutionContext = new SqlExecutionContextImpl(memoryRestrictedEngine, 1)
                 .with(
-                        ReadOnlyCairoSecurityContext.INSTANCE,
+                        ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
@@ -246,7 +246,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
-                sqlExecutionContext.with(ReadOnlyCairoSecurityContext.INSTANCE, null);
+                sqlExecutionContext.with(ReadOnlySecurityContext.INSTANCE, null);
                 try {
                     compiler.compile("backup table balances", sqlExecutionContext);
                     Assert.fail();
@@ -442,7 +442,7 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testMemoryResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(ReadOnlyCairoSecurityContext.INSTANCE,
+                .with(ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
@@ -966,7 +966,7 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testTreeResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(ReadOnlyCairoSecurityContext.INSTANCE,
+                .with(ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,

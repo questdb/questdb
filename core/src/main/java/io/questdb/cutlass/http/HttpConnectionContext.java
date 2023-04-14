@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.DenyAllCairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -57,7 +57,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
         throw RetryOperationException.INSTANCE;
     };
-    private CairoSecurityContext securityContext;
+    private SecurityContext securityContext;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -78,7 +78,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         // this is default behaviour until the security context is overridden with correct principal
-        this.securityContext = DenyAllCairoSecurityContext.INSTANCE;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
     }
 
@@ -133,7 +133,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
-        this.securityContext = DenyAllCairoSecurityContext.INSTANCE;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
         clearSuspendEvent();
         LOG.debug().$("closed").$();
     }
@@ -150,7 +150,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return retryAttemptAttributes;
     }
 
-    public CairoSecurityContext getSecurityContext() {
+    public SecurityContext getSecurityContext() {
         return securityContext;
     }
 
@@ -239,7 +239,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // The context is about to be returned to the pool, so we should release the memory.
             recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             responseSink.close();
-            securityContext = DenyAllCairoSecurityContext.INSTANCE;
+            securityContext = DenyAllSecurityContext.INSTANCE;
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
@@ -343,7 +343,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private void configureSecurityContext() {
-        if (securityContext == DenyAllCairoSecurityContext.INSTANCE) {
+        if (securityContext == DenyAllSecurityContext.INSTANCE) {
             securityContext = configuration.getSecurityContextFactory().getInstance(
                     headerParser.getHeader("Authorization"),
                     configuration.readOnlySecurityContext()

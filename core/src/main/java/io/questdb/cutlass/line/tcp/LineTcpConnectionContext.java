@@ -26,9 +26,9 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.CommitFailedException;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -254,8 +254,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return false;
     }
 
-    protected CairoSecurityContext getSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    protected SecurityContext getSecurityContext() {
+        return AllowAllSecurityContext.INSTANCE;
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {

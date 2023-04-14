@@ -258,7 +258,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     public boolean scheduleEvent(
-            CairoSecurityContext securityContext,
+            SecurityContext securityContext,
             NetworkIOJob netIoJob,
             LineTcpConnectionContext ctx,
             LineTcpParser parser
@@ -332,7 +332,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(CairoSecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -647,7 +647,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private boolean dispatchEvent(
-            CairoSecurityContext securityContext,
+            SecurityContext securityContext,
             NetworkIOJob netIoJob,
             LineTcpParser parser,
             TableUpdateDetails tud
@@ -673,7 +673,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             @NotNull NetworkIOJob netIoJob,
             @NotNull LineTcpConnectionContext ctx,
             @NotNull LineTcpParser parser,
-            CairoSecurityContext securityContext
+            SecurityContext securityContext
     ) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
@@ -775,7 +775,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             int tudKeyIndex,
             CharSequence tableNameUtf16,
             ByteCharSequence tableNameUtf8,
-            CairoSecurityContext securityContext
+            SecurityContext securityContext
     ) {
         unsafeCalcThreadLoad();
         long leastLoad = Long.MAX_VALUE;

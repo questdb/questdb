@@ -100,7 +100,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
         final TableToken tableToken = engine.verifyTableName(tableName);
         try {
-            writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "telemetry");
+            writer = engine.getWriter(sqlExecutionContext.getSecurityContext(), tableToken, "telemetry");
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(tableToken.getTableName())

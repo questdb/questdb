@@ -344,9 +344,9 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
             TableToken tableToken = engine.verifyTableName(tableName);
             try (
-                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
-                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
-                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)
             ) {
                 compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
 

@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.security.DenyAllCairoSecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -229,7 +229,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         )
                 : null;
         this.sqlExecutionContext = sqlExecutionContext;
-        this.sqlExecutionContext.with(DenyAllCairoSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
+        this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
@@ -355,7 +355,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndUpdateIsCached = false;
         clear();
         this.fd = -1;
-        sqlExecutionContext.with(DenyAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+        sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
         registry.remove(circuitBreakerId);
@@ -369,7 +369,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, TableToken tableToken, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(SecurityContext context, TableToken tableToken, String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
@@ -387,7 +387,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPIForGrant(CairoSecurityContext context, TableToken tableToken, CharSequence targetTable, @Nullable String lockReason) {
+    public TableWriterAPI getTableWriterAPIForGrant(SecurityContext context, TableToken tableToken, CharSequence targetTable, @Nullable String lockReason) {
         return engine.getTableWriterAPIForGrant(context, tableToken, targetTable, lockReason);
     }
 
@@ -1281,21 +1281,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long msgLimit
     ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException {
 
-        CairoSecurityContext cairoSecurityContext = null;
+        SecurityContext securityContext = null;
         // First, try to authenticate as the read-only user if it's configured.
         if (roUserAuthenticator != null) {
             try {
-                cairoSecurityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
+                securityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
             } catch (AuthenticationException ignore) {
                 // Wrong user, never mind.
             }
         }
         // Next, authenticate as the primary user if we failed to recognize the read-only user.
-        if (cairoSecurityContext == null) {
-            cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+        if (securityContext == null) {
+            securityContext = authenticator.authenticate(username, msgLo, msgLimit);
         }
-        if (cairoSecurityContext != null) {
-            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
+        if (securityContext != null) {
+            sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
             authenticationRequired = false;
             prepareLoginOk();
             sendAndReset();
@@ -1542,7 +1542,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sqlExecutionContext.getSharedWorkerCount()
         );
         newSqlExecutionContext.with(
-                sqlExecutionContext.getCairoSecurityContext(),
+                sqlExecutionContext.getSecurityContext(),
                 bindVariableService,
                 sqlExecutionContext.getRandom(),
                 sqlExecutionContext.getRequestFd(),
@@ -2600,7 +2600,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
 
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, WRITER_LOCK_REASON)) {
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getSecurityContext(), tableToken, WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

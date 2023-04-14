@@ -318,7 +318,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             ConcurrentLinkedQueue<Throwable> errors
     ) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "apply trans test");
+        final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableToken, "apply trans test");
         writers.add(walWriter);
 
         return new Thread(() -> {
@@ -447,7 +447,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
             TableToken token = engine.verifyTableName(tableName);
-            writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), token, "apply trans test"));
+            writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), token, "apply trans test"));
         }
 
         Rnd tempRnd = new Rnd();

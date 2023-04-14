@@ -831,8 +831,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return sqlExecutionContext.getCairoSecurityContext();
+        public SecurityContext getSecurityContext() {
+            return sqlExecutionContext.getSecurityContext();
         }
 
         @Override

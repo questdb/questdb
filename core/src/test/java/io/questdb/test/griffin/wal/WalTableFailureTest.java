@@ -64,7 +64,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
@@ -106,7 +106,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
@@ -200,9 +200,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             IntHashSet badWalIds = new IntHashSet();
 
             try (
-                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)
             ) {
                 Assert.assertEquals(1, walWriter1.getWalId());
                 Assert.assertEquals(2, walWriter2.getWalId());
@@ -214,8 +214,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             int badWriterId;
             try (
-                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
+                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test");
+                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test")
             ) {
 
                 badWalIds.add(badWriterId = ((WalWriter) alterWriter).getWalId());
@@ -256,16 +256,16 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 Misc.free(alterOp);
             }
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                 Assert.assertTrue(badWalIds.excludes(walWriter1.getWalId()));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                     Assert.assertTrue(badWalIds.excludes(walWriter2.getWalId()));
 
-                    try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                         Assert.assertTrue(badWalIds.excludes(walWriter3.getWalId()));
                         Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
                     }
@@ -313,8 +313,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             AlterOperation alterOp = null;
             try (
-                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
+                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test");
+                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test")
             ) {
 
                 AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofRenameColumn(1, tableName, 0);
@@ -337,11 +337,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 Misc.free(alterOp);
             }
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                 Assert.assertEquals(1, walWriter1.getWalId());
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                     Assert.assertEquals(3, walWriter2.getWalId());
                 }
             }
@@ -360,7 +360,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
@@ -402,7 +402,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             TableToken tableToken = createStandardWalTable(tableName);
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableToken, "test")) {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
@@ -496,7 +496,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
@@ -532,7 +532,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                 Assert.assertEquals(1, walWriter.getWalId());
 
                 AlterOperation dodgyAlterOp = new AlterOperation() {
@@ -569,7 +569,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 }
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                 // Wal Writer 1 is not pooled
                 Assert.assertEquals(2, walWriter.getWalId());
             }
@@ -706,7 +706,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
             //noinspection CatchMayIgnoreException
             try (WalWriter writer = engine.getWalWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
+                    sqlExecutionContext.getSecurityContext(),
                     tableName)
             ) {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
@@ -1144,7 +1144,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
 
             AlterOperation alterOperation = null;
-            try (TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tt, "test")) {
+            try (TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), tt, "test")) {
                 try {
                     alterOperation = alterOperationFunc.apply(tt);
                     alterWriter2.apply(alterOperation, true);
@@ -1166,8 +1166,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
 
             AlterOperation alterOperation = null;
-            try (TableWriterAPI alterWriter1 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), token, "test");
-                 TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), token, "test")) {
+            try (TableWriterAPI alterWriter1 = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), token, "test");
+                 TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getSecurityContext(), token, "test")) {
 
                 alterOperation = alterOperationFunc.apply(token);
                 alterWriter1.apply(alterOperation, true);
@@ -1301,9 +1301,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            try (WalWriter ignore = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter ignore = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                 compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
-                try (WalWriter insertedWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter insertedWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());

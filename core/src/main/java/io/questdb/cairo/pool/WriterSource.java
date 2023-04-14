@@ -24,14 +24,14 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 
 public interface WriterSource {
-    TableWriterAPI getTableWriterAPI(CairoSecurityContext context, TableToken tableToken, String lockReason);
+    TableWriterAPI getTableWriterAPI(SecurityContext context, TableToken tableToken, String lockReason);
 
     TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason);
 
-    TableWriterAPI getTableWriterAPIForGrant(CairoSecurityContext securityContext, TableToken tableToken, CharSequence targetTable, String lockReason);
+    TableWriterAPI getTableWriterAPIForGrant(SecurityContext securityContext, TableToken tableToken, CharSequence targetTable, String lockReason);
 }

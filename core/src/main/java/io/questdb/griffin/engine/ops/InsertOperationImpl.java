@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
@@ -50,12 +50,7 @@ public class InsertOperationImpl implements InsertOperation {
     private final long structureVersion;
     private final TableToken tableToken;
 
-    public InsertOperationImpl(
-            CairoEngine engine,
-            TableToken tableToken,
-            long structureVersion,
-            boolean isGrant
-    ) {
+    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long structureVersion, boolean isGrant) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.structureVersion = structureVersion;
@@ -71,7 +66,7 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+            final SecurityContext securityContext = executionContext.getSecurityContext();
             final TableWriterAPI writer;
             if (isGrant) {
                 // TODO: pass target table name in model, hardcoded to null for now (DB level grant)

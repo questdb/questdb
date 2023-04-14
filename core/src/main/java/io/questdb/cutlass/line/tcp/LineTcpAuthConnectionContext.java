@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;
@@ -62,7 +62,7 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private AuthState authState;
     private boolean authenticated;
     private PublicKey pubKey;
-    private CairoSecurityContext securityContext;
+    private SecurityContext securityContext;
 
     public LineTcpAuthConnectionContext(
             LineTcpReceiverConfiguration configuration,
@@ -256,7 +256,7 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    protected CairoSecurityContext getSecurityContext() {
+    protected SecurityContext getSecurityContext() {
         return securityContext;
     }
 

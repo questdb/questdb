@@ -146,7 +146,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             asyncWriterCommand.setCommandCorrelationId(correlationId);
 
             try (TableWriter writer = engine.getWriterOrPublishCommand(
-                    executionContext.getCairoSecurityContext(),
+                    executionContext.getSecurityContext(),
                     asyncWriterCommand.getTableToken(),
                     asyncWriterCommand
             )) {

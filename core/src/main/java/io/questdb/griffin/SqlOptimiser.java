@@ -788,7 +788,7 @@ public class SqlOptimiser {
                                 literalCollectorANames.add(topDownColumns.getQuick(i).getName());
                             }
 
-                            executionContext.getCairoSecurityContext().authorizeSelect(
+                            executionContext.getSecurityContext().authorizeSelect(
                                     executionContext.getTableToken(tab),
                                     literalCollectorANames
                             );
@@ -4705,7 +4705,7 @@ public class SqlOptimiser {
 
             TableToken tableToken = metadata.getTableToken();
 
-            sqlExecutionContext.getCairoSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
+            sqlExecutionContext.getSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
 
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
                 // Table renamed

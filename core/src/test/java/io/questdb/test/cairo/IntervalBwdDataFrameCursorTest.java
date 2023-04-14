@@ -362,7 +362,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final int timestampIndex;
 
             final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
-            final CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+            final SecurityContext securityContext = executionContext.getSecurityContext();
 
             try (TableReader reader = engine.getReader(tableToken)) {
                 timestampIndex = reader.getMetadata().getTimestampIndex();

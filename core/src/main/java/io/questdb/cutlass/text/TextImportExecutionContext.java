@@ -25,8 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.DenyAllCairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -39,14 +39,14 @@ public class TextImportExecutionContext implements Mutable {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final Rnd rnd;
-    private CairoSecurityContext originatorSecurityContext = DenyAllCairoSecurityContext.INSTANCE;
+    private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
     public TextImportExecutionContext(CairoConfiguration configuration) {
         MicrosecondClock clock = configuration.getMicrosecondClock();
         this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
     }
 
-    public long assignActiveImportId(CairoSecurityContext securityContext) {
+    public long assignActiveImportId(SecurityContext securityContext) {
         long nextId = rnd.nextPositiveLong();
         activeImportId.set(nextId);
         this.originatorSecurityContext = securityContext;
@@ -56,7 +56,7 @@ public class TextImportExecutionContext implements Mutable {
     @Override
     public void clear() {
         activeImportId.set(INACTIVE);
-        originatorSecurityContext = DenyAllCairoSecurityContext.INSTANCE;
+        originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
     public long getActiveImportId() {
@@ -67,7 +67,7 @@ public class TextImportExecutionContext implements Mutable {
         return circuitBreaker;
     }
 
-    public CairoSecurityContext getOriginatorSecurityContext() {
+    public SecurityContext getOriginatorSecurityContext() {
         return originatorSecurityContext;
     }
 }

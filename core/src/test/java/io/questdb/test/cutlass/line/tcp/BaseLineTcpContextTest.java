@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
@@ -296,7 +296,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public boolean scheduleEvent(
-                    CairoSecurityContext securityContext, NetworkIOJob netIoJob,
+                    SecurityContext securityContext, NetworkIOJob netIoJob,
                     LineTcpConnectionContext context,
                     LineTcpParser parser
             ) {

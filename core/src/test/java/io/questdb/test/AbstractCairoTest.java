@@ -100,7 +100,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int queryCacheEventQueueCapacity = -1;
-    protected static CairoSecurityContext securityContext;
+    protected static SecurityContext securityContext;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;

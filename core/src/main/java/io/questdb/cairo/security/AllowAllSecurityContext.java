@@ -24,8 +24,8 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 
-public class AllowAllCairoSecurityContext implements CairoSecurityContext {
-    public static final AllowAllCairoSecurityContext INSTANCE = new AllowAllCairoSecurityContext();
+public class AllowAllSecurityContext implements SecurityContext {
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
 }

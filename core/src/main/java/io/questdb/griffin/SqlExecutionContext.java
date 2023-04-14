@@ -67,7 +67,7 @@ public interface SqlExecutionContext extends Closeable {
     @NotNull
     CairoEngine getCairoEngine();
 
-    CairoSecurityContext getCairoSecurityContext();
+    SecurityContext getSecurityContext();
 
     @NotNull
     SqlExecutionCircuitBreaker getCircuitBreaker();
@@ -82,12 +82,12 @@ public interface SqlExecutionContext extends Closeable {
 
     default TableRecordMetadata getMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getCairoSecurityContext(), tableToken);
+        return engine.getMetadata(getSecurityContext(), tableToken);
     }
 
     default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getCairoSecurityContext(), tableToken, structureVersion);
+        return engine.getMetadata(getSecurityContext(), tableToken, structureVersion);
     }
 
     long getMicrosecondTimestamp();

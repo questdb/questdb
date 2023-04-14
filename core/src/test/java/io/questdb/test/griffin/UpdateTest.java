@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1233,7 +1233,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
-                    ReadOnlyCairoSecurityContext.INSTANCE,
+                    ReadOnlySecurityContext.INSTANCE,
                     bindVariableService,
                     null,
                     -1
