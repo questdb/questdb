@@ -397,7 +397,6 @@ public class TableBackupTest {
             selectAll(tableToken, false, sink1);
             selectAll(tableToken, true, firstBackup);
             Assert.assertEquals(sink1, firstBackup);
-
             execute(
                     "insert into " + tableName +
                             " select * from (" +
@@ -405,14 +404,11 @@ public class TableBackupTest {
                             ") timestamp(ts)"
             );
             backupTable(tableToken);
-
-            setFinalBackupPath();
-            selectAll(tableToken, true, sink2);
-            Assert.assertNotEquals(sink1, sink2);
-
-            // Check previous backup is unaffected
             setFinalBackupPath(1);
             assertTables(tableToken);
+            // Check previous backup is unaffected
+            selectAll(tableToken, true, sink2);
+            Assert.assertNotEquals(firstBackup, sink2);
         });
     }
 
@@ -486,15 +482,6 @@ public class TableBackupTest {
         });
     }
 
-    private void assertTableTxnSeq() {
-        if (isWal) {
-            path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            Assert.assertTrue(Files.exists(path));
-            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            Assert.assertTrue(Files.exists(finalBackupPath));
-        }
-    }
-
     private void assertTables(TableToken tableToken) throws Exception {
         selectAll(tableToken, false, sink1);
         selectAll(tableToken, true, sink2);
@@ -541,12 +528,12 @@ public class TableBackupTest {
                 "      rnd_long(100,200,2) long2," +
                 "      rnd_float(2) float," +
                 "      rnd_double(2) double," +
-                "      rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) date," +
+                "      rnd_date(to_date('2022', 'yyyy'), to_date('2023', 'yyyy'), 2) date," +
                 "      rnd_timestamp(" +
-                "          to_timestamp('2015', 'yyyy'), " +
-                "          to_timestamp('2016', 'yyyy'), " +
+                "          to_timestamp('2022', 'yyyy'), " +
+                "          to_timestamp('2023', 'yyyy'), " +
                 "          2) timestamp1," +
-                "      timestamp_sequence(0, 1000000000) timestamp2," +
+                "      x::timestamp + 1000000000 timestamp2," +
                 "      rnd_symbol(4,4,4,2) symbol," +
                 "      rnd_str(3,3,2) string," +
                 "      rnd_bin(10, 20, 2) binary," +
@@ -557,7 +544,7 @@ public class TableBackupTest {
                 "      rnd_geohash(60) g60," +
                 "      rnd_uuid4() uuid," +
                 "      rnd_long256() long256" +
-                "  FROM long_sequence(10)" +
+                "  FROM long_sequence(10000)" +
                 ") TIMESTAMP(timestamp2) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL");
 
         try (OperationFuture future = mainCompiler.compile(create, mainSqlExecutionContext).execute(null)) {
@@ -573,9 +560,9 @@ public class TableBackupTest {
         SqlExecutionContext context = mainSqlExecutionContext;
         try {
             if (backup) {
-                engine = new CairoEngine(mainConfiguration);
-                compiler = new SqlCompiler(engine);
+                engine = new CairoEngine(new DefaultTestCairoConfiguration(finalBackupPath.toString()));
                 context = TestUtils.createSqlExecutionCtx(engine);
+                compiler = new SqlCompiler(engine);
             }
             TestUtils.printSql(compiler, context, tableToken.getTableName(), sink);
         } finally {
