@@ -3639,7 +3639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             try (
                     TableReader reader = executionContext.getReader(tableToken);
-                    TableRecordMetadata metadata = executionContext.getMetadata(tableToken, model.getTableVersion())
+                    TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getTableVersion())
             ) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
             }

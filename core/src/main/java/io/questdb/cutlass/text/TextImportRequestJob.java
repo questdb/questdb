@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -101,7 +100,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 sqlExecutionContext
         );
         this.statusTableToken = engine.verifyTableName(statusTableName);
-        this.writer = engine.getWriter(AllowAllSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
+        this.writer = engine.getWriter(statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
         this.path = new Path();
@@ -163,7 +162,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             // if we closed the writer, we need to reopen it again
             if (writer == null) {
                 try {
-                    writer = engine.getWriter(AllowAllSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
+                    writer = engine.getWriter(statusTableToken, "QuestDB system");
                 } catch (Throwable e) {
                     LOG.error()
                             .$("could not re-open writer [table=").$(statusTableToken)
@@ -223,7 +222,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
-                    parallelImporter.process(task.getSecurityContext());
+                    parallelImporter.process();
                 } else {
                     serialImporter.of(
                             task.getTableName(),

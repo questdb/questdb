@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -631,7 +632,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     private static int getTablesInRegistrySize() {
-        ObjList<TableToken> bucket = new ObjList<>();
+        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
         engine.getTableTokens(bucket, true);
         return bucket.size();
     }

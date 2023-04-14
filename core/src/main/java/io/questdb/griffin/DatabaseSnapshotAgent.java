@@ -367,7 +367,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
-                                TableReader reader = engine.getReaderWithRepair(executionContext.getSecurityContext(), tableToken);
+                                TableReader reader = engine.getReaderWithRepair(tableToken);
                                 snapshotReaders.add(reader);
 
                                 path.trimTo(snapshotLen).concat(tableToken);

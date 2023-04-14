@@ -87,7 +87,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertEquals(listener, engine.getPoolListener());
 
                 TableReader reader = engine.getReader(x, -1);
-                TableWriter writer = engine.getWriter(securityContext, x, "test");
+                TableWriter writer = engine.getWriter(x, "test");
                 Assert.assertEquals(1, engine.getBusyReaderCount());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
 
@@ -471,7 +471,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     private void assertWriter(CairoEngine engine, TableToken name) {
-        try (TableWriter w = engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), name, "testing")) {
+        try (TableWriter w = engine.getWriter(name, "testing")) {
             Assert.assertNotNull(w);
         }
     }

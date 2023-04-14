@@ -212,7 +212,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
                 // set partition read-only state
                 final long[] partitionSizes = new long[partitionIsReadOnly.length];
-                try (TableWriter writer = engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "read-only-state")) {
+                try (TableWriter writer = engine.getWriter(tableToken, "read-only-state")) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
                     Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);

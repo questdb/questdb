@@ -477,7 +477,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false);
     }
 
-    private void checkNoSuspendedTables(ObjList<TableToken> tableTokenBucket) {
+    private void checkNoSuspendedTables(ObjHashSet<TableToken> tableTokenBucket) {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
 
@@ -611,7 +611,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
-            ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1, null)) {
@@ -757,7 +757,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 sharedWorkerPool.halt();
             }
 
-            checkNoSuspendedTables(new ObjList<>());
+            checkNoSuspendedTables(new ObjHashSet<>());
+
             for (int i = 0; i < tableCount; i++) {
                 String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
                 String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);

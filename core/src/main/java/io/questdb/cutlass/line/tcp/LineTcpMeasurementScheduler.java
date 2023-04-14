@@ -300,7 +300,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                appendToWal(securityContext, netIoJob, parser, tud);
+                appendToWal(netIoJob, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -316,7 +316,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             return false;
         }
-        return dispatchEvent(securityContext, netIoJob, parser, tud);
+        return dispatchEvent(netIoJob, parser, tud);
     }
 
     private static long getEventSlotSize(int maxMeasurementSize) {
@@ -332,12 +332,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+    private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
-        ld.resetStateIfNecessary(securityContext);
+        ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
         WalWriter ww = (WalWriter) tud.getWriter();
@@ -647,7 +647,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private boolean dispatchEvent(
-            SecurityContext securityContext,
             NetworkIOJob netIoJob,
             LineTcpParser parser,
             TableUpdateDetails tud
@@ -659,7 +658,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (tud.isWriterInError()) {
                     throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
                 }
-                queue[writerThreadId].get(seq).createMeasurementEvent(securityContext, tud, parser, netIoJob.getWorkerId());
+                queue[writerThreadId].get(seq).createMeasurementEvent(tud, parser, netIoJob.getWorkerId());
             } finally {
                 pubSeq[writerThreadId].done(seq);
             }
@@ -741,7 +740,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 configuration,
                                 engine,
                                 engine.getWalWriter(
-                                        securityContext,
                                         tableToken
                                 ),
                                 -1,

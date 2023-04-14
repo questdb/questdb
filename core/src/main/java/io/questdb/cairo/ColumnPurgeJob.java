@@ -106,7 +106,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 sqlExecutionContext
         );
         this.tableToken = engine.verifyTableName(tableName);
-        this.writer = engine.getWriter(sqlExecutionContext.getSecurityContext(), tableToken, "QuestDB system");
+        this.writer = engine.getWriter(tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
         processTableRecords(engine);
     }

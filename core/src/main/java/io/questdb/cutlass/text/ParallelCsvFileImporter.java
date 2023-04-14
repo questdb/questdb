@@ -417,7 +417,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         );
     }
 
-    public void parseStructure(SecurityContext securityContext, int fd) throws TextImportException {
+    public void parseStructure(int fd) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 
@@ -448,7 +448,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 forceHeader = textMetadataDetector.isHeader();
 
                 prepareTable(
-                        securityContext,
                         textMetadataDetector.getColumnNames(),
                         textMetadataDetector.getColumnTypes(),
                         inputFilePath,
@@ -573,7 +572,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseEpilogue(TextImportTask.PHASE_INDEXING);
     }
 
-    public void process(SecurityContext securityContext) throws TextImportException {
+    public void process() throws TextImportException {
         final long startMs = getCurrentTimeMs();
 
         int fd = -1;
@@ -593,7 +592,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 }
 
                 try {
-                    parseStructure(securityContext, fd);
+                    parseStructure(fd);
                     phaseBoundaryCheck(length);
                     phaseIndexing();
                     phasePartitionImport();
@@ -787,10 +786,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void initWriterAndOverrideImportMetadata(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
-            SecurityContext securityContext,
             TypeManager typeManager
     ) throws TextException {
-        final TableWriter writer = cairoEngine.getWriter(securityContext, tableToken, LOCK_REASON);
+        final TableWriter writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
         if (metadata.getColumnCount() < types.size()) {
@@ -1327,13 +1325,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    void prepareTable(
-            SecurityContext securityContext,
-            ObjList<CharSequence> names,
-            ObjList<TypeAdapter> types,
-            Path path,
-            TypeManager typeManager
-    ) throws TextException {
+    void prepareTable(ObjList<CharSequence> names, ObjList<TypeAdapter> types, Path path, TypeManager typeManager) throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
@@ -1382,12 +1374,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     );
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
-                    writer = cairoEngine.getWriter(securityContext, tableToken, LOCK_REASON);
+                    writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;
                 case TableUtils.TABLE_EXISTS:
-                    initWriterAndOverrideImportMetadata(names, types, securityContext, typeManager);
+                    initWriterAndOverrideImportMetadata(names, types, typeManager);
 
                     if (writer.getRowCount() > 0) {
                         throw TextException.$("target table must be empty [table=").put(tableName).put(']');

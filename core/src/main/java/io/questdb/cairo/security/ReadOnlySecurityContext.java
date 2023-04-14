@@ -27,15 +27,11 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 public class ReadOnlySecurityContext implements SecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
-
-    @Override
-    public void authorizeCopyExecute() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
 
     @Override
     public void authorizeAlterTableAddColumn(TableToken tableToken) {
@@ -43,47 +39,12 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDatabaseSnapshot() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableCreate(CharSequence tableName) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableDrop(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeGrant(TableToken tableToken) {
-        throw CairoException.authorization().put("Grant permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableRename(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableTruncate(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableWrite(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -98,8 +59,23 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeCopyExecute() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeDatabaseSnapshot() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeGrant(TableToken tableToken) {
+        throw CairoException.authorization().put("Grant permission denied").setCacheable(true);
     }
 
     @Override
@@ -108,17 +84,42 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void authorizeTableVacuum(TableToken tableToken) {
+    public void authorizeTableCreate(CharSequence tableName) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableDrop(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
     public void authorizeTableReindex(TableToken tableToken, CharSequence columnName) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableRename(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableTruncate(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeTableVacuum(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 }

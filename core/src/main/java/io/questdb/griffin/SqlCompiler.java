@@ -1140,7 +1140,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().resumeTable(executionContext.getSecurityContext(), tableToken, resumeFromTxn);
+            engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetryOrigin.WAL_APPLY, WAL_APPLY_RESUME);
             return compiledQuery.ofTableResume();
         } catch (CairoException ex) {
@@ -1990,7 +1990,7 @@ public class SqlCompiler implements Closeable {
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
-        try (TableRecordMetadata metadata = engine.getMetadata(executionContext.getSecurityContext(), token)) {
+        try (TableRecordMetadata metadata = engine.getMetadata(token)) {
             final long structureVersion = metadata.getStructureVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), structureVersion, model.isGrant());
             final int metadataTimestampIndex = metadata.getTimestampIndex();
@@ -2882,8 +2882,7 @@ public class SqlCompiler implements Closeable {
         protected final Path srcPath = new Path();
         private final Path dstPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
-        private final ObjHashSet<TableToken> tableNames = new ObjHashSet<>();
-        private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+        private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
         private transient String cachedTmpBackupRoot;
         private transient int changeDirPrefixLen;
         private transient int currDirPrefixLen;
@@ -2897,7 +2896,6 @@ public class SqlCompiler implements Closeable {
                 }
             }
         };
-        private transient SqlExecutionContext currentExecutionContext;
 
         public void clear() {
             srcPath.trimTo(0);
@@ -2906,13 +2904,11 @@ public class SqlCompiler implements Closeable {
             changeDirPrefixLen = 0;
             currDirPrefixLen = 0;
             tableBackupRowCopiedCache.clear();
-            tableNames.clear();
+            tableTokens.clear();
         }
 
         @Override
         public void close() {
-            assert null == currentExecutionContext;
-            assert tableNames.isEmpty();
             tableBackupRowCopiedCache.clear();
             Misc.free(srcPath);
             Misc.free(dstPath);
@@ -2927,7 +2923,7 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        private void backupTable(@NotNull TableToken tableToken, @NotNull SqlExecutionContext executionContext) {
+        private void backupTable(@NotNull TableToken tableToken) {
             LOG.info().$("starting backup of ").$(tableToken).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
@@ -2940,11 +2936,9 @@ public class SqlCompiler implements Closeable {
             int renameRootLen = dstPath.length();
             String tableName = tableToken.getTableName();
             try {
-                SecurityContext securityContext = executionContext.getSecurityContext();
-                // todo: looks like reader should be using engine to resolve table name
-                try (TableReader reader = executionContext.getReader(tableToken)) {
+                try (TableReader reader = engine.getReader(tableToken)) {
                     cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
-                    try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableToken, cachedTmpBackupRoot)) {
+                    try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedTmpBackupRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
                         srcPath.of(tableName).slash().put(reader.getVersion()).$();
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
@@ -3086,21 +3080,18 @@ public class SqlCompiler implements Closeable {
         }
 
         private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) {
-            currentExecutionContext = executionContext;
-            try {
-                setupBackupRenamePath();
-                cdDbRenamePath();
-                engine.getTableTokens(tableTokenBucket, false);
-                for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                    backupTable(tableTokenBucket.getQuick(i), executionContext);
-                }
-                backupTabIndexFile();
-                cdConfRenamePath();
-                ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind);
-                return compiledQuery.ofBackupTable();
-            } finally {
-                currentExecutionContext = null;
+            tableTokens.clear();
+            setupBackupRenamePath();
+            cdDbRenamePath();
+            engine.getTableTokens(tableTokens, false);
+            executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                backupTable(tableTokens.get(i));
             }
+            backupTabIndexFile();
+            cdConfRenamePath();
+            ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind);
+            return compiledQuery.ofBackupTable();
         }
 
         private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
@@ -3108,7 +3099,7 @@ public class SqlCompiler implements Closeable {
             cdDbRenamePath();
 
             try {
-                tableNames.clear();
+                tableTokens.clear();
                 while (true) {
                     CharSequence tok = SqlUtil.fetchNext(lexer);
                     if (null == tok) {
@@ -3116,7 +3107,7 @@ public class SqlCompiler implements Closeable {
                     }
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-                    tableNames.add(tableToken);
+                    tableTokens.add(tableToken);
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (null == tok || Chars.equals(tok, ';')) {
@@ -3127,13 +3118,15 @@ public class SqlCompiler implements Closeable {
                     }
                 }
 
-                for (int n = 0; n < tableNames.size(); n++) {
-                    backupTable(tableNames.get(n), executionContext);
+                executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
+
+                for (int n = 0; n < tableTokens.size(); n++) {
+                    backupTable(tableTokens.get(n));
                 }
 
                 return compiledQuery.ofBackupTable();
             } finally {
-                tableNames.clear();
+                tableTokens.clear();
             }
         }
     }

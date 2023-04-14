@@ -1044,7 +1044,7 @@ public final class TestUtils {
     }
 
     public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
-        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
+        return engine.getWriter(tableToken, "test");
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {

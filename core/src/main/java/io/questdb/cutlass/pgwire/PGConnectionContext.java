@@ -2600,7 +2600,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
 
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getSecurityContext(), tableToken, WRITER_LOCK_REASON)) {
+            try (TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

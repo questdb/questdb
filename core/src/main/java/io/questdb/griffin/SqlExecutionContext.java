@@ -81,13 +81,11 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     default TableRecordMetadata getMetadata(TableToken tableToken) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getSecurityContext(), tableToken);
+        return getCairoEngine().getMetadata(tableToken);
     }
 
     default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getSecurityContext(), tableToken, structureVersion);
+        return getCairoEngine().getMetadata(tableToken, structureVersion);
     }
 
     long getMicrosecondTimestamp();

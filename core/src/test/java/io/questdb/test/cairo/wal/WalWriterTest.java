@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
@@ -62,8 +61,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
@@ -228,7 +227,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -358,8 +357,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
                     addColumn(walWriter1, "c", ColumnType.INT);
@@ -410,8 +409,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
                     addColumn(walWriter1, "c", ColumnType.INT);
@@ -483,7 +482,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -613,7 +612,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(tableName);
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 125);
@@ -663,7 +662,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -684,7 +683,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 assertEquals(0, walWriter.getSegmentRowCount());
                 TableWriter.Row row = walWriter.newRow(0);
@@ -755,7 +754,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 for (int i = 0; i < 18; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -906,7 +905,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     TableWriter.Row row;
                     int walId = -1;
                     boolean countedDown = false;
-                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                    try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                         walId = walWriter.getWalId();
                         final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
                         counter.incrementAndGet();
@@ -1060,7 +1059,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 new Thread(() -> {
                     TableWriter.Row row;
                     int walId = -1;
-                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                    try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                         walId = walWriter.getWalId();
                         final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
                         assertEquals(counter.get() > 0 ? maxRowCount : 0, walWriter.getSegmentRowCount());
@@ -1290,7 +1289,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 tableToken = createTable(model);
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 final RowInserter ins = new RowInserter() {
                     private long count;
                     private long ts = 1000000000L;
@@ -1367,8 +1366,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
@@ -1400,8 +1399,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
@@ -1433,8 +1432,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
@@ -1498,7 +1497,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 final String walName;
                 final IntList walSymbolCounts = new IntList();
-                try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     assertEquals(tableName, walWriter.getTableToken().getTableName());
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
@@ -1666,8 +1665,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
@@ -1837,7 +1836,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -1900,7 +1899,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
@@ -1987,7 +1986,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 12);
@@ -2123,8 +2122,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
@@ -2295,7 +2294,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 assertEquals(0, walWriter.getSegmentRowCount());
                 TableWriter.Row row = walWriter.newRow(0);
@@ -2406,7 +2405,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             TableToken tableToken = createTable(testName.getMethodName());
 
             String wal1Name;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 wal1Name = walWriter.getWalName();
                 for (int i = 0; i < 18; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -2440,7 +2439,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             engine.clear();
 
             String wal2Name;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 wal2Name = walWriter.getWalName();
                 for (int i = 0; i < 18; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -2689,7 +2688,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final String walName;
             final IntList walSymbolCounts = new IntList();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
@@ -2821,7 +2820,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(AllowAllSecurityContext.INSTANCE, tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walWriter.truncate();
                 Assert.fail();
             } catch (UnsupportedOperationException ex) {
@@ -2888,7 +2887,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 tableToken = createTable(model);
             }
 
-            WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken);
+            WalWriter walWriter = engine.getWalWriter(tableToken);
             TableWriter.Row row = walWriter.newRow(0);
             row.putInt(0, 1);
             row.append();
@@ -2921,7 +2920,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             ) {
                 tableToken = createTable(model);
             }
-            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter ignored = engine.getWalWriter(tableToken)) {
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
@@ -3001,7 +3000,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final String walName;
             final long ts = Os.currentTimeMicros();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 walName = walWriter.getWalName();
                 TableWriter.Row row = walWriter.newRow(ts);
                 row.putByte(0, (byte) 1);

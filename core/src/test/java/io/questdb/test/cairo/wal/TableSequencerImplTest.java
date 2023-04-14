@@ -200,7 +200,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
-        try (WalWriter ww = engine.getWalWriter(securityContext, engine.verifyTableName(tableName))) {
+        try (WalWriter ww = engine.getWalWriter(engine.verifyTableName(tableName))) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {

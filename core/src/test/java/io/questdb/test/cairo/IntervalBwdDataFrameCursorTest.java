@@ -362,7 +362,6 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final int timestampIndex;
 
             final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
-            final SecurityContext securityContext = executionContext.getSecurityContext();
 
             try (TableReader reader = engine.getReader(tableToken)) {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
@@ -419,7 +418,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.reload());
                 }
 
-                try (TableWriter writer = engine.getWriter(securityContext, tableToken, "testing")) {
+                try (TableWriter writer = engine.getWriter(tableToken, "testing")) {
                     writer.removeColumn("b");
                 }
 

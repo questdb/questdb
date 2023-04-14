@@ -141,10 +141,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         if (convertedTables != null) {
-            final SecurityContext rootSecurityContext = configuration.getCairoSecurityContextFactory().getRootContext();
             for (int i = 0, n = convertedTables.size(); i < n; i++) {
                 final TableToken token = convertedTables.get(i);
-                try (TableWriter writer = getWriter(rootSecurityContext, token, "tableTypeConversion")) {
+                try (TableWriter writer = getWriter(token, "tableTypeConversion")) {
                     writer.commitSeqTxn(0);
                 }
             }
@@ -320,12 +319,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getBackupWriter(
-            SecurityContext securityContext,
-            TableToken tableToken,
-            CharSequence backupDirName
-    ) {
-        authorizeWrite(securityContext, tableToken);
+    public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
+        verifyTableToken(tableToken);
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
         return new TableWriter(
                 configuration,
@@ -365,17 +360,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public TableRecordMetadata getMetadata(SecurityContext securityContext, TableToken tableToken) {
+    public TableRecordMetadata getMetadata(TableToken tableToken) {
         verifyTableToken(tableToken);
         try {
             return metadataPool.get(tableToken);
         } catch (CairoException e) {
-            tryRepairTable(securityContext, tableToken, e);
+            tryRepairTable(tableToken, e);
         }
         return metadataPool.get(tableToken);
     }
 
-    public TableRecordMetadata getMetadata(SecurityContext securityContext, TableToken tableToken, long structureVersion) {
+    public TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
         verifyTableToken(tableToken);
         try {
             final TableRecordMetadata metadata = metadataPool.get(tableToken);
@@ -386,7 +381,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             return metadata;
         } catch (CairoException e) {
-            tryRepairTable(securityContext, tableToken, e);
+            tryRepairTable(tableToken, e);
         }
         return metadataPool.get(tableToken);
     }
@@ -426,7 +421,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.entries();
     }
 
-    public TableReader getReaderWithRepair(SecurityContext securityContext, TableToken tableToken) {
+    public TableReader getReaderWithRepair(TableToken tableToken) {
         // todo: untested verification
         verifyTableToken(tableToken);
         try {
@@ -435,7 +430,7 @@ public class CairoEngine implements Closeable, WriterSource {
             // Cannot open reader on existing table is pretty bad.
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be. Opening writer fixes the table mess.
-            tryRepairTable(securityContext, tableToken, e);
+            tryRepairTable(tableToken, e);
         }
         try {
             return getReader(tableToken);
@@ -480,13 +475,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTableToken(sink);
     }
 
-    public void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped) {
+    public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
         tableNameRegistry.getTableTokens(bucket, includeDropped);
     }
 
     @Override
     public TableWriterAPI getTableWriterAPI(SecurityContext securityContext, TableToken tableToken, @Nullable String lockReason) {
-        securityContext.authorizeTableWrite(tableToken);
+        //todo: inline
         return getTableWriterAPIAsRoot(tableToken, lockReason);
     }
 
@@ -554,26 +549,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
-    public @NotNull WalWriter getWalWriter(SecurityContext securityContext, TableToken tableToken) {
-        authorizeWrite(securityContext, tableToken);
+    public @NotNull WalWriter getWalWriter(TableToken tableToken) {
+        verifyTableToken(tableToken);
         return walWriterPool.get(tableToken);
     }
 
-    public TableWriter getWriter(
-            SecurityContext securityContext,
-            TableToken tableToken,
-            String lockReason
-    ) {
-        authorizeWrite(securityContext, tableToken);
+    public TableWriter getWriter(TableToken tableToken, String lockReason) {
+        verifyTableToken(tableToken);
         return writerPool.get(tableToken, lockReason);
     }
 
-    public TableWriter getWriterOrPublishCommand(
-            SecurityContext securityContext,
-            TableToken tableToken,
-            @NotNull AsyncWriterCommand asyncWriterCommand
-    ) {
-        authorizeWrite(securityContext, tableToken);
+    public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
+        verifyTableToken(tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
@@ -827,11 +814,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private void authorizeWrite(SecurityContext securityContext, TableToken tableToken) {
-        verifyTableToken(tableToken);
-        securityContext.authorizeTableWrite(tableToken);
-    }
-
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         // only create the table after it has been registered
@@ -903,13 +885,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private void tryRepairTable(
-            SecurityContext securityContext,
-            TableToken tableToken,
-            RuntimeException rethrow
-    ) {
+    private void tryRepairTable(TableToken tableToken, RuntimeException rethrow) {
         try {
-            securityContext.authorizeTableWrite(tableToken);
             writerPool.get(tableToken, "repair").close();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.

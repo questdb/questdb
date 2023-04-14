@@ -202,7 +202,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             engine.getTableTokens(tableTokenBucket, true);
             if (0 != tableTokenBucket.size()) {
                 Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
@@ -368,7 +368,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 throw new RuntimeException(ref.get());
             }
 
-            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             engine.getTableTokens(tableTokenBucket, true);
             if (tableCount != tableTokenBucket.size()) {
                 Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
@@ -498,7 +498,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     private static int getNonDroppedSize(TableNameRegistry ro) {
-        ObjList<TableToken> bucket = new ObjList<>();
+        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
         ro.getTableTokens(bucket, false);
         return bucket.size();
     }
@@ -569,13 +569,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         });
     }
 
-    private String formatTableDirs(ObjList<TableToken> tableTokenBucket) {
+    private String formatTableDirs(ObjHashSet<TableToken> tableTokenBucket) {
         StringSink ss = new StringSink();
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             if (i > 0) {
                 ss.put(", ");
             }
-            ss.put(tableTokenBucket.getQuick(i).getTableName());
+            ss.put(tableTokenBucket.get(i).getTableName());
         }
         return ss.toString();
     }

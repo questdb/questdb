@@ -653,7 +653,7 @@ public class TableUpdateDetails implements Closeable {
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetStateIfNecessary(SecurityContext securityContext) {
+        void resetStateIfNecessary() {
             // First, reset processed column tracking.
             clearProcessedColumns();
             // Second, check if writer's structure version has changed
@@ -668,7 +668,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    latestKnownMetadata = engine.getMetadata(securityContext, tableToken);
+                    latestKnownMetadata = engine.getMetadata(tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
                         setWriterInError();

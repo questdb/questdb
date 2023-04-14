@@ -459,10 +459,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @NotNull
     protected static WalWriter getWalWriter(CharSequence tableName) {
-        return engine.getWalWriter(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.verifyTableName(tableName)
-        );
+        return engine.getWalWriter(engine.verifyTableName(tableName));
     }
 
     protected static TableWriter getWriter(CharSequence tableName) {
@@ -474,7 +471,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableWriter getWriter(TableToken tt) {
-        return engine.getWriter(securityContext, tt, "testing");
+        return engine.getWriter(tt, "testing");
     }
 
     protected static QuestDBTestNode newNode(int nodeId) {

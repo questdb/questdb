@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import org.jetbrains.annotations.NotNull;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -64,7 +64,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
-        private final ObjList<TableToken> tableBucket = new ObjList<>();
+        private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         private CairoEngine engine;
         private int tableIndex = -1;
         private String tableName = null;

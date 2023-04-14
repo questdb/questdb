@@ -33,7 +33,6 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,6 +43,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -200,9 +200,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             IntHashSet badWalIds = new IntHashSet();
 
             try (
-                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName);
-                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName);
-                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)
+                    WalWriter walWriter1 = engine.getWalWriter(tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(tableName);
+                    WalWriter walWriter3 = engine.getWalWriter(tableName)
             ) {
                 Assert.assertEquals(1, walWriter1.getWalId());
                 Assert.assertEquals(2, walWriter2.getWalId());
@@ -256,16 +256,16 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 Misc.free(alterOp);
             }
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableName)) {
                 Assert.assertTrue(badWalIds.excludes(walWriter1.getWalId()));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableName)) {
                     Assert.assertTrue(badWalIds.excludes(walWriter2.getWalId()));
 
-                    try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+                    try (WalWriter walWriter3 = engine.getWalWriter(tableName)) {
                         Assert.assertTrue(badWalIds.excludes(walWriter3.getWalId()));
                         Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
                     }
@@ -337,11 +337,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 Misc.free(alterOp);
             }
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableName)) {
                 Assert.assertEquals(1, walWriter1.getWalId());
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableName)) {
                     Assert.assertEquals(3, walWriter2.getWalId());
                 }
             }
@@ -532,7 +532,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
                 Assert.assertEquals(1, walWriter.getWalId());
 
                 AlterOperation dodgyAlterOp = new AlterOperation() {
@@ -569,7 +569,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 }
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
                 // Wal Writer 1 is not pooled
                 Assert.assertEquals(2, walWriter.getWalId());
             }
@@ -705,10 +705,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
             //noinspection CatchMayIgnoreException
-            try (WalWriter writer = engine.getWalWriter(
-                    sqlExecutionContext.getSecurityContext(),
-                    tableName)
-            ) {
+            try (WalWriter writer = engine.getWalWriter(tableName)) {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
@@ -1301,9 +1298,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            try (WalWriter ignore = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+            try (WalWriter ignore = engine.getWalWriter(tableName)) {
                 compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
-                try (WalWriter insertedWriter = engine.getWalWriter(sqlExecutionContext.getSecurityContext(), tableName)) {
+                try (WalWriter insertedWriter = engine.getWalWriter(tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());

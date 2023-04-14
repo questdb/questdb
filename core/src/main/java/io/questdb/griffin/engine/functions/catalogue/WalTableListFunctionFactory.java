@@ -119,7 +119,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final TxReader txReader = new TxReader(ff);
-            private final ObjList<TableToken> tableBucket = new ObjList<>();
+            private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private int tableIndex = -1;
 
             @Override

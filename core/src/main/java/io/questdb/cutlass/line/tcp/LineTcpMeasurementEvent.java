@@ -291,14 +291,13 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createMeasurementEvent(
-            SecurityContext securityContext,
             TableUpdateDetails tud,
             LineTcpParser parser,
             int workerId
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
-        localDetails.resetStateIfNecessary(securityContext);
+        localDetails.resetStateIfNecessary();
         this.tableUpdateDetails = tud;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {

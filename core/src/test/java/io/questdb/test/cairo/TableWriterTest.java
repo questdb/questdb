@@ -274,7 +274,7 @@ public class TableWriterTest extends AbstractCairoTest {
                                 .ofAddColumn(0, tableToken, tableId)
                                 .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(securityContext, tableToken, alterOp)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, alterOp)) {
                             if (writer != null) {
                                 writer.publishAsyncWriterCommand(alterOp);
                             }

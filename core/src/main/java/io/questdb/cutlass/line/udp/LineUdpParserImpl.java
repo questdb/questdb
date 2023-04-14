@@ -182,7 +182,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(AllowAllSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
+        TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
@@ -227,7 +227,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
         try {
-            entry.writer = engine.getWriter(AllowAllSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
+            entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);

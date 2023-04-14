@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,6 +52,9 @@ public interface SecurityContext {
     }
 
     default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    default void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
     }
 
     default void authorizeTableCreate(CharSequence tableName) {
@@ -81,10 +85,6 @@ public interface SecurityContext {
     }
 
     default void authorizeTableVacuum(TableToken tableToken) {
-    }
-
-    // todo: suspect usage
-    default void authorizeTableWrite(TableToken tableToken) {
     }
 
     default void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {

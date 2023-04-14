@@ -41,13 +41,13 @@ class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
     @Override
     public TableRecordMetadata getMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getSecurityContext(), this.tableToken);
+        return engine.getMetadata(this.tableToken);
     }
 
     @Override
     public TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(getSecurityContext(), this.tableToken, structureVersion);
+        return engine.getMetadata(this.tableToken, structureVersion);
     }
 
     @Override
