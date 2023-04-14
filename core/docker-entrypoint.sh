@@ -9,7 +9,9 @@ RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
 
 find_and_own_dir() {
     if [ "$FIND_AND_OWN_DIR" = "true" ]; then
-        find "${1}{/conf,/db,/public}" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
+        [ -d "${1}/conf" ] && find "${1}/conf" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
+        [ -d "${1}/public" ] && find "${1}/public" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
+        [ -d "${1}/db" ] && find "${1}/db" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
     fi
 }
 
