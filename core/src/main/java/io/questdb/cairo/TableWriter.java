@@ -27,6 +27,9 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
+import io.questdb.cairo.frm.Frame;
+import io.questdb.cairo.frm.FrameAlgebra;
+import io.questdb.cairo.frm.file.PartitionFrameFactory;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -72,7 +75,6 @@ import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
-    private static long avgRecordSize;
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -91,6 +93,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
+    private static long avgRecordSize;
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
@@ -140,6 +143,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final boolean parallelIndexerEnabled;
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
+    private final PartitionFrameFactory partitionFrameFactory;
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
@@ -237,6 +241,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
+        this.partitionFrameFactory = new PartitionFrameFactory(configuration.getFilesFacade(), configuration.getWriterFileOpenOpts());
         this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
@@ -1293,6 +1298,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
+    @TestOnly
+    public void mergeAllPartitions() {
+        long targetPartition = txWriter.getPartitionTimestamp(0);
+        TableUtils.setPathForPartition(path, partitionBy, targetPartition, txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition));
+
+        try (
+                Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, txWriter.getPartitionSizeByPartitionTimestamp(targetPartition))
+        ) {
+            while (txWriter.getPartitionCount() > 1) {
+                long sourcePartition = txWriter.getPartitionTimestamp(1);
+
+                other.trimTo(rootLen);
+                long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
+                TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
+                long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(sourcePartition);
+                if (sourcePartition == txWriter.getLastPartitionTimestamp()) {
+                    partitionSize = txWriter.getTransientRowCount();
+                }
+
+                assert partitionSize > 0;
+                LOG.info().$("merging partition [table=").$(tableToken)
+                        .$(", source=").$ts(sourcePartition).$(", sourceSize=").$(partitionSize)
+                        .$(", target=").$ts(targetPartition).$(", targetSize=").$(targetFrame.getSize()).$();
+                try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
+                    FrameAlgebra.append(targetFrame, sourceFrame);
+                }
+
+                txWriter.removeAttachedPartitions(sourcePartition);
+                partitionRemoveCandidates.clear();
+                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+            }
+
+            txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getSize());
+            txWriter.transientRowCount = targetFrame.getSize();
+            txWriter.fixedRowCount = 0;
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
+
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+        processPartitionRemoveCandidates();
+    }
+
+    private static ColumnVersionWriter openColumnVersionFile(FilesFacade ff, Path path, int rootLen) {
+        path.concat(COLUMN_VERSION_FILE_NAME).$();
+        try {
+            return new ColumnVersionWriter(ff, path);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     @Override
     public Row newRow() {
         return newRow(0L);
@@ -2208,12 +2268,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return -1;
     }
 
-    private static ColumnVersionWriter openColumnVersionFile(FilesFacade ff, Path path, int rootLen) {
-        path.concat(COLUMN_VERSION_FILE_NAME).$();
+    private void doClose(boolean truncate) {
+        // destroy() may already closed everything
+        boolean tx = inTransaction();
+        freeSymbolMapWriters();
+        freeIndexers();
+        Misc.free(txWriter);
+        Misc.free(metaMem);
+        Misc.free(ddlMem);
+        Misc.free(indexMem);
+        Misc.free(other);
+        Misc.free(todoMem);
+        Misc.free(attachMetaMem);
+        Misc.free(attachColumnVersionReader);
+        Misc.free(attachIndexBuilder);
+        Misc.free(columnVersionWriter);
+        Misc.free(o3ColumnTopSink);
+        Misc.free(o3PartitionUpdateSink);
+        Misc.free(slaveTxReader);
+        Misc.free(commandQueue);
+        updateOperatorImpl = Misc.free(updateOperatorImpl);
+        dropIndexOperator = null;
+        noOpRowCount = 0L;
+        lastOpenPartitionTs = -1L;
+        lastOpenPartitionIsReadOnly = false;
+        Misc.free(partitionFrameFactory);
+        freeColumns(truncate & !distressed);
         try {
-            return new ColumnVersionWriter(ff, path, 0);
+            releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
-            path.trimTo(rootLen);
+            Misc.free(txnScoreboard);
+            Misc.free(path);
+            Misc.free(o3TimestampMem);
+            Misc.free(o3TimestampMemCpy);
+            Misc.free(ownMessageBus);
+            if (tempMem16b != 0) {
+                Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
+                tempMem16b = 0;
+            }
+            LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
         }
     }
 
@@ -3197,44 +3290,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkO3Errors();
     }
 
-    private void doClose(boolean truncate) {
-        // destroy() may already closed everything
-        boolean tx = inTransaction();
-        freeSymbolMapWriters();
-        freeIndexers();
-        Misc.free(txWriter);
-        Misc.free(metaMem);
-        Misc.free(ddlMem);
-        Misc.free(indexMem);
-        Misc.free(other);
-        Misc.free(todoMem);
-        Misc.free(attachMetaMem);
-        Misc.free(attachColumnVersionReader);
-        Misc.free(attachIndexBuilder);
-        Misc.free(columnVersionWriter);
-        Misc.free(o3ColumnTopSink);
-        Misc.free(o3PartitionUpdateSink);
-        Misc.free(slaveTxReader);
-        Misc.free(commandQueue);
-        updateOperatorImpl = Misc.free(updateOperatorImpl);
-        dropIndexOperator = null;
-        noOpRowCount = 0L;
-        lastOpenPartitionTs = -1L;
-        lastOpenPartitionIsReadOnly = false;
-        freeColumns(truncate & !distressed);
-        try {
-            releaseLock(!truncate | tx | performRecovery | distressed);
-        } finally {
-            Misc.free(txnScoreboard);
-            Misc.free(path);
-            Misc.free(o3TimestampMem);
-            Misc.free(o3TimestampMemCpy);
-            Misc.free(ownMessageBus);
-            if (tempMem16b != 0) {
-                Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
-                tempMem16b = 0;
-            }
-            LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+    private long mapAppendColumnBuffer(MemoryMA column, long offset, long size, boolean rw) {
+        if (size == 0) {
+            return 0;
+        }
+
+        column.jumpTo(offset + size);
+        long address = column.map(offset, size);
+
+
+        // column could not provide necessary length of buffer
+        // because perhaps its internal buffer is not big enough
+        if (address != 0) {
+            return address;
+        } else {
+            return -TableUtils.mapAppendColumnBuffer(ff, column.getFd(), offset, size, rw, MemoryTag.MMAP_TABLE_WRITER);
         }
     }
 
@@ -3455,7 +3525,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return (masterRef - o3MasterRef + 1) / 2;
     }
 
-
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
@@ -3576,35 +3645,63 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long mapAppendColumnBuffer(MemoryMA column, long offset, long size, boolean rw) {
-        if (size == 0) {
-            return 0;
-        }
-
-        column.jumpTo(offset + size);
-        long address = column.map(offset, size);
-
-        // column could not provide necessary length of buffer
-        // because perhaps its internal buffer is not big enough
-        if (address != 0) {
-            return address;
-        } else {
-            // Linux requires the mmap offset to be page aligned
-            long alignedOffset = Files.floorPageSize(offset);
-            long alignedExtraLen = offset - alignedOffset;
-            long mapAddr = rw ?
-                    mapRW(ff, column.getFd(), size + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER) :
-                    mapRO(ff, column.getFd(), size + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
-            return -(mapAddr + alignedExtraLen);
+    private void mapAppendColumnBufferRelease(long address, long offset, long size) {
+        if (address < 0) {
+            TableUtils.mapAppendColumnBufferRelease(ff, -address, offset, size, MemoryTag.MMAP_TABLE_WRITER);
         }
     }
 
-    private void mapAppendColumnBufferRelease(long address, long offset, long size) {
-        if (address < 0) {
-            long alignedOffset = Files.floorPageSize(offset);
-            long alignedExtraLen = offset - alignedOffset;
+    private void mergePartitions(long targetPartition, long sourcePartition) {
+        try {
+            TableUtils.setPathForPartition(path, partitionBy, targetPartition, txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition));
+            Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, txWriter.getPartitionSizeByPartitionTimestamp(targetPartition));
 
-            ff.munmap(-address - alignedExtraLen, size + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
+            TableUtils.setPathForPartition(other, partitionBy, sourcePartition, txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition));
+            Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, txWriter.getPartitionSizeByPartitionTimestamp(sourcePartition));
+
+            FrameAlgebra.append(targetFrame, sourceFrame);
+
+            txWriter.removeAttachedPartitions(sourcePartition);
+            txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getSize());
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
+    }
+
+    private void mergeSplitPartitions(long o3TimestampMin, long o3TimestampMax, int maxSubPartitionCount) {
+        // Take the control of split partition population here.
+        // When the number of split partitions is too big, start merging them together.
+        // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
+        long logicalPartition = txWriter.getLogicalPartitionTimestamp(o3TimestampMin);
+        int partitionIndex = txWriter.getPartitionIndex(logicalPartition) - 1;
+        int partitionCount = txWriter.getPartitionCount();
+        LongList subpartitions = new LongList();
+
+        while (logicalPartition < o3TimestampMax && ++partitionIndex < partitionCount) {
+            long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
+            long newLogicalPartition = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+
+            if (logicalPartition == newLogicalPartition) {
+                subpartitions.add(partitionTimestamp);
+            } else {
+                if (subpartitions.size() > maxSubPartitionCount) {
+                    mergeSplitPartitions(subpartitions, maxSubPartitionCount);
+                }
+                logicalPartition = newLogicalPartition;
+                subpartitions.clear();
+            }
+        }
+    }
+
+    private void mergeSplitPartitions(LongList subpartitions, int mergeCount) {
+        assert subpartitions.size() > mergeCount + 1;
+        long targetPartitionTimestamp = subpartitions.get(0);
+        if (noReaderLocks(targetPartitionTimestamp)) {
+            for (int i = 0; i < mergeCount; i++) {
+                long partitionToMerge = subpartitions.get(i + 1);
+                mergePartitions(targetPartitionTimestamp, partitionToMerge);
+            }
         }
     }
 
@@ -3692,6 +3789,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
+    }
+
+    private boolean noReaderLocks(long partitionTimestamp) {
+        // TODO: look up in txn file.
+        return true;
     }
 
     /**
@@ -5588,6 +5690,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("shifting lag rows up [table=").$(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
             o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax, 0L, false, this.o3MoveLagRef);
         }
+
+        // Check if partitions are split into too many pieces and merge few of them back.
+        mergeSplitPartitions(o3TimestampMax, o3TimestampMin, 10);
     }
 
     private void processPartitionRemoveCandidates() {

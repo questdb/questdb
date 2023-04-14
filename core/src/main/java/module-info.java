@@ -105,6 +105,8 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.long128;
     exports io.questdb.cairo.wal;
     exports io.questdb.cairo.wal.seq;
+    exports io.questdb.cairo.frm;
+    exports io.questdb.cairo.frm.file;
 
     provides FunctionFactory with
             // test functions

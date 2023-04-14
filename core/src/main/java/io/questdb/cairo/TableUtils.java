@@ -163,7 +163,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
-    static final long META_OFFSET_PARTITION_BY = 4;
+    public static final long META_OFFSET_PARTITION_BY = 4;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -866,6 +866,22 @@ public final class TableUtils {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
+        // Linux requires the mmap offset to be page aligned
+        long alignedOffset = Files.floorPageSize(offset);
+        long alignedExtraLen = offset - alignedOffset;
+        long mapAddr = rw ?
+                mapRW(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
+                mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
+        return mapAddr + alignedExtraLen;
+    }
+
+    public static void mapAppendColumnBufferRelease(FilesFacade ff, long address, long offset, long size, int memoryTag) {
+        long alignedOffset = Files.floorPageSize(offset);
+        long alignedExtraLen = offset - alignedOffset;
+        ff.munmap(address - alignedExtraLen, size + alignedExtraLen, memoryTag);
     }
 
     public static int openRO(FilesFacade ff, LPSZ path, Log log) {
