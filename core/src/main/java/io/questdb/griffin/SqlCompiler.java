@@ -1280,18 +1280,22 @@ public class SqlCompiler implements Closeable {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
                 return optimiser.optimise((QueryModel) model, executionContext);
-            case ExecutionModel.INSERT:
+            case ExecutionModel.INSERT: {
                 InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
                     validateAndOptimiseInsertAsSelect(executionContext, insertModel);
                 } else {
                     lightlyValidateInsertModel(insertModel);
                 }
-                executionContext.getSecurityContext().authorizeInsert(
-                        insertModel.getTableName(),
-                        insertModel.getColumnNameList()
-                );
+                final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
+                if (insertModel.isGrant()) {
+                    // todo: not enough context, there is no information of what is being granted
+                    executionContext.getSecurityContext().authorizeGrant(tableToken);
+                } else {
+                    executionContext.getSecurityContext().authorizeInsert(tableToken, insertModel.getColumnNameList());
+                }
                 return insertModel;
+            }
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());

@@ -47,10 +47,10 @@ public interface SecurityContext {
 
     // when insert SQL doesn't specify any columns (this means all columns) the 'columnName' list
     // will be empty
-    default void authorizeInsert(CharSequence tableName, ObjList<CharSequence> columnNames) {
+    default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
-    default void authorizeSelect(TableToken tableName, ObjList<CharSequence> columnNames) {
+    default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     default void authorizeTableCreate(CharSequence tableName) {
@@ -68,8 +68,7 @@ public interface SecurityContext {
     default void authorizeTableDrop(TableToken tableToken) {
     }
 
-    // todo: suspect usage
-    default void authorizeTableManage(TableToken tableToken) {
+    default void authorizeGrant(TableToken tableToken) {
     }
 
     default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {

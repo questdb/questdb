@@ -506,7 +506,10 @@ public class CairoEngine implements Closeable, WriterSource {
             CharSequence targetTable,
             @Nullable String lockReason
     ) {
-        authorizeManage(securityContext, targetTable != null ? getTableTokenIfExists(targetTable) : null);
+        TableToken tableToken1 = targetTable != null ? getTableTokenIfExists(targetTable) : null;
+        if (tableToken1 != null) {
+            verifyTableToken(tableToken1);
+        }
 
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
@@ -822,13 +825,6 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
         }
-    }
-
-    private void authorizeManage(SecurityContext securityContext, TableToken tableToken) {
-        if (tableToken != null) {
-            verifyTableToken(tableToken);
-        }
-        securityContext.authorizeTableManage(tableToken);
     }
 
     private void authorizeWrite(SecurityContext securityContext, TableToken tableToken) {

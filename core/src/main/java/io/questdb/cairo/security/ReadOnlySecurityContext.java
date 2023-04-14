@@ -63,7 +63,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableManage(TableToken tableToken) {
+    public void authorizeGrant(TableToken tableToken) {
         throw CairoException.authorization().put("Grant permission denied").setCacheable(true);
     }
 
@@ -103,7 +103,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeInsert(CharSequence tableName, ObjList<CharSequence> columnNames) {
+    public void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 

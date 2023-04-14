@@ -38,7 +38,7 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
-    public void authorizeSelect(TableToken tableName, ObjList<CharSequence> columnNames) {
+    public void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.nonCritical().put("permission denied");
     }
 }
