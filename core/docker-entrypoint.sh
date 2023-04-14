@@ -4,12 +4,12 @@ export QDB_PACKAGE=${QDB_PACKAGE:-docker}
 
 QUESTDB_DATA_DIR=${QUESTDB_DATA_DIR:-"/var/lib/questdb"}
 IGNORE_DATA_ROOT_MOUNT_CHECK=${IGNORE_DATA_ROOT_MOUNT_CHECK:-"false"}
-IGNORE_FIND_AND_OWN_DIR=${IGNORE_FIND_AND_OWN_DIR:-"false"}
+FIND_AND_OWN_DIR=${FIND_AND_OWN_DIR:-"false"}
 RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
 
 find_and_own_dir() {
-    if [ "$IGNORE_FIND_AND_OWN_DIR" = "false" ]; then
-        find "$1" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
+    if [ "$FIND_AND_OWN_DIR" = "true" ]; then
+        find "${1}{/conf,/db,/public}" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
     fi
 }
 
