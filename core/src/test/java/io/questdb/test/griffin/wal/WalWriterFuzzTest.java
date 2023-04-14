@@ -83,7 +83,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Before
     public void setUp() {
         configOverrideO3ColumnMemorySize(512 * 1024);
-        setFuzzProperties(100, 1000);
+        setFuzzProperties(100, 1000, 2);
         super.setUp();
     }
 
@@ -108,14 +108,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzz(rnd);
     }
 
     @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
     }
@@ -125,7 +125,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzz(rnd);
     }
 
@@ -144,7 +144,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 50,
                 1
         );
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzz(rnd, testName.getMethodName(), 1, false, false);
     }
 
@@ -152,7 +152,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalWriteFullRandom() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setRandomAppendPageSize(rnd);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         fullRandomFuzz(rnd);
     }
 
@@ -160,7 +160,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(4));
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         fullRandomFuzz(rnd, tableCount);
     }
 
@@ -179,7 +179,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 50,
                 1
         );
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzz(rnd, testName.getMethodName(), 1, false, false);
     }
 
@@ -202,6 +202,22 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testWalWriteRollbackHeavy() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalWriteRollbackHeavyToFix() throws Exception {
+        Rnd rnd = new Rnd(172899420086666L, 1681485132960L);//TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -217,24 +233,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 50,
                 3 + rnd.nextInt(20)
         );
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzz(rnd, testName.getMethodName(), tableCount, false, true);
-    }
-
-    @Test
-    public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testWalWriteRollbackHeavyToFix() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd);
     }
 
     @Test
@@ -261,7 +261,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd));
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         runFuzz(rnd);
     }
 

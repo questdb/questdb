@@ -676,7 +676,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
         if (srcDataTop == -1) {
             try {
-                srcDataTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax);
+                // When partition is split, it's column top remains same.
+                // On writing to the split partition second time the column top can be bigger than the partition.
+                // Trim column top to partition top.
+                srcDataTop = Math.min(srcDataMax, tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax));
                 if (srcDataTop == srcDataMax) {
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
                 }
@@ -1308,11 +1311,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
-            // When partition is split, it's column top remains same.
-            // On writing to the split partition second time the column top can be bigger than the partition.
-            // Trim column top to partition top.
-            srcDataTop = Math.min(srcDataTop, srcDataMax);
-
             if (srcDataTop > 0) {
                 // Size of data actually in the file.
                 final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
@@ -1681,7 +1679,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         // not set, we need to check file existence and read
         if (srcDataTop == -1) {
             try {
-                srcDataTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax);
+                srcDataTop = Math.min(tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax), srcDataMax);
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 1 [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
@@ -1917,11 +1915,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             pathToNewPartition.trimTo(pplen);
-            // When partition is split, it's column top remains same.
-            // On writing to the split partition second time the column top can be bigger than the partition.
-            // Trim column top to partition top.
-            srcDataTop = Math.min(srcDataTop, srcDataMax);
-
             if (srcDataTop > 0) {
                 // Size of data actually in the index (fixed) file.
                 final long srcDataActualBytes = (srcDataMax - srcDataTop) * Long.BYTES;

@@ -165,7 +165,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int lo,
             int hi
     ) {
-        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
+        boolean partitionInTxnFile = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp) >= 0;
         if (partitionInTxnFile) {
             processPartition0(
                     ff,
@@ -286,7 +286,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long currentPartitionTs = partitionList.get(i + 1);
                 if (currentPartitionTs != partitionTimestamp) {
                     if (i > lo + 2 ||
-                            (i > 0 && txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0)) {
+                            (i > 0 && txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp) < 0)) {
                         processPartition(
                                 ff,
                                 path,
@@ -303,6 +303,24 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     lo = i;
                     partitionTimestamp = currentPartitionTs;
                 }
+
+//                boolean partitionInTxnFile = txReader.getPartitionIndex(currentPartitionTs) > 0;
+//                if (!partitionInTxnFile) {
+//                    processDetachedPartition(
+//                            ff,
+//                            path,
+//                            tableRootLen,
+//                            txReader,
+//                            txnScoreboard,
+//                            partitionTimestamp,
+//                            partitionBy,
+//                            partitionList,
+//                            lo,
+//                            i + 2
+//                    );
+//                    lo = i;
+//                    partitionTimestamp = currentPartitionTs;
+//                }
             }
             // Tail
             if (n > lo + 2 || txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0) {

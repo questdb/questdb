@@ -168,6 +168,8 @@ public interface CairoConfiguration {
 
     int getMaxFileNameLength();
 
+    int getO3PartitionSplitMaxCount();
+
     int getMaxSwapFileCount();
 
     int getMaxSymbolNotEqualsCount();

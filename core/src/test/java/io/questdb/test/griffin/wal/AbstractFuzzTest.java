@@ -106,6 +106,10 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         return symbols;
     }
 
+    protected static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
+        return 1 + rnd.nextInt(2);
+    }
+
     protected static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
         try (TableWriterAPI writer = getWriter(tableName)) {
             int transactionSize = transactions.size();
@@ -172,9 +176,10 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         this.equalTsRowsProb = equalTsRowsProb;
     }
 
-    protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold) {
+    protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
         node1.getConfigurationOverrides().setWalApplyTableTimeQuote(maxApplyTimePerTable);
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(splitPartitionThreshold);
+        node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(o3PartitionSplitMaxCount);
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {

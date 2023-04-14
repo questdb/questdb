@@ -389,6 +389,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long maxHttpQueryResponseRowLimit;
     private double maxRequiredDelimiterStdDev;
     private double maxRequiredLineLengthStdDev;
+    private final int o3PartitionSplitMaxCount;
     private int metadataStringPoolCapacity;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
@@ -945,6 +946,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
+            this.o3PartitionSplitMaxCount = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MAX_COUNT, 4);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -1784,6 +1786,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxFileNameLength() {
             return maxFileNameLength;
+        }
+
+        @Override
+        public int getO3PartitionSplitMaxCount() {
+            return o3PartitionSplitMaxCount;
         }
 
         @Override

@@ -327,6 +327,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionSplitMaxCount() {
+        return 3;
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return 30;
     }

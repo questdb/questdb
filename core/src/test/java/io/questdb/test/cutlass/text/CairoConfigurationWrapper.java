@@ -311,6 +311,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionSplitMaxCount() {
+        return conf.getO3PartitionSplitMaxCount();
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return conf.getMaxSwapFileCount();
     }

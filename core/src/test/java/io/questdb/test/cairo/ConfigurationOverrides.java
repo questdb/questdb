@@ -80,6 +80,8 @@ public interface ConfigurationOverrides {
 
     long getO3MinLag();
 
+    int getO3PartitionSplitMaxCount();
+
     int getPageFrameMaxRows();
 
     int getPageFrameReduceQueueCapacity();
@@ -205,6 +207,8 @@ public interface ConfigurationOverrides {
     void setO3MaxLag(long configOverrideO3MaxLag);
 
     void setO3MinLag(long minLag);
+
+    void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount);
 
     void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
 

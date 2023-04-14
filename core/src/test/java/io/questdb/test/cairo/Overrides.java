@@ -47,6 +47,7 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    private int o3PartitionSplitMaxCount = -1;
     private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
@@ -212,6 +213,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getO3MinLag() {
         return o3MinLag;
+    }
+
+    @Override
+    public int getO3PartitionSplitMaxCount() {
+        return o3PartitionSplitMaxCount;
     }
 
     @Override
@@ -570,6 +576,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setO3MinLag(long minLag) {
         o3MinLag = minLag;
+    }
+
+    @Override
+    public void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount) {
+        this.o3PartitionSplitMaxCount = o3PartitionSplitMaxCount;
     }
 
     @Override
