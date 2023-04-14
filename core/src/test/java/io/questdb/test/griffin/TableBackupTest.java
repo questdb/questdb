@@ -33,11 +33,9 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
@@ -63,11 +61,11 @@ import java.util.Collection;
 public class TableBackupTest {
 
     private static final int ERRNO_EIO = 5;
+    private static final String TABLE_NAME_SUFFIX = "すばらしい";
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
     private final boolean isWal;
     private final String partitionBy;
-    private final String tableNameSuffix;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     @Rule
@@ -83,41 +81,28 @@ public class TableBackupTest {
     private int mkdirsErrnoCountDown = 0;
     private Path path;
     private int renameErrno;
+    private FilesFacade testFf;
 
-    public TableBackupTest(AbstractCairoTest.WalMode walMode, String tableNameSuffix, int partitionBy) {
+    public TableBackupTest(AbstractCairoTest.WalMode walMode, int partitionBy) {
         isWal = walMode == AbstractCairoTest.WalMode.WITH_WAL;
-        this.tableNameSuffix = tableNameSuffix;
         this.partitionBy = PartitionBy.toString(partitionBy);
     }
 
-    @Parameterized.Parameters(name = "{0}-{1}-{2}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {AbstractCairoTest.WalMode.WITH_WAL, null, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.WITH_WAL, null, PartitionBy.DAY},
-//                {AbstractCairoTest.WalMode.WITH_WAL, null, PartitionBy.WEEK}, // broken
-                {AbstractCairoTest.WalMode.WITH_WAL, null, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.WITH_WAL, null, PartitionBy.YEAR},
-//
-                {AbstractCairoTest.WalMode.WITH_WAL, "すばらしい", PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.WITH_WAL, "すばらしい", PartitionBy.DAY},
-//                {AbstractCairoTest.WalMode.WITH_WAL, "すばらしい", PartitionBy.WEEK}, // broken
-                {AbstractCairoTest.WalMode.WITH_WAL, "すばらしい", PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.WITH_WAL, "すばらしい", PartitionBy.YEAR},
+                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.HOUR},
+                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.DAY},
+//                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
+                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.MONTH},
+                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.YEAR},
 
-                {AbstractCairoTest.WalMode.NO_WAL, null, PartitionBy.NONE},
-                {AbstractCairoTest.WalMode.NO_WAL, null, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.NO_WAL, null, PartitionBy.DAY},
-//                {AbstractCairoTest.WalMode.NO_WAL, null, PartitionBy.WEEK}, // broken
-                {AbstractCairoTest.WalMode.NO_WAL, null, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.NO_WAL, null, PartitionBy.YEAR},
-
-                {AbstractCairoTest.WalMode.NO_WAL, "すばらしい", PartitionBy.NONE},
-                {AbstractCairoTest.WalMode.NO_WAL, "すばらしい", PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.NO_WAL, "すばらしい", PartitionBy.DAY},
-//                {AbstractCairoTest.WalMode.NO_WAL, "すばらしい", PartitionBy.WEEK}, // broken
-                {AbstractCairoTest.WalMode.NO_WAL, "すばらしい", PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.NO_WAL, "すばらしい", PartitionBy.YEAR}
+                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.NONE},
+                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.HOUR},
+                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.DAY},
+//                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.WEEK},
+                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.MONTH},
+                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.YEAR}
         });
     }
 
@@ -127,7 +112,9 @@ public class TableBackupTest {
         finalBackupPath = new Path();
         mkdirsErrno = -1;
         renameErrno = -1;
-        FilesFacade ff = new TestFilesFacadeImpl() {
+        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
+        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+        testFf = new TestFilesFacadeImpl() {
             private int nextErrno = -1;
 
             @Override
@@ -161,8 +148,6 @@ public class TableBackupTest {
                 return super.rename(from, to);
             }
         };
-        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
-        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         mainConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
             public DateFormat getBackupDirTimestampFormat() {
@@ -176,7 +161,7 @@ public class TableBackupTest {
 
             @Override
             public FilesFacade getFilesFacade() {
-                return ff;
+                return testFf;
             }
 
             @Override
@@ -187,7 +172,9 @@ public class TableBackupTest {
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
         mainSqlExecutionContext = TestUtils.createSqlExecutionCtx(mainEngine);
-        File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
+
+        // create dummy mainConfiguration
+        File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));
         Assert.assertTrue(confRoot.mkdirs());
         Assert.assertTrue(new File(confRoot, "server.conf").createNewFile());
         Assert.assertTrue(new File(confRoot, "mime.types").createNewFile());
@@ -197,101 +184,47 @@ public class TableBackupTest {
 
     @After
     public void tearDown() {
-        finalBackupPath.close();
-        path.close();
-        mainSqlExecutionContext.close();
-        mainCompiler.close();
-        mainEngine.close();
+        Misc.free(finalBackupPath);
+        Misc.free(path);
+        Misc.free(mainSqlExecutionContext);
+        Misc.free(mainCompiler);
+        Misc.free(mainEngine);
     }
 
     @Test
     public void testAllTypesPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (" +
-                            "select" +
-                            "    rnd_char() ch," +
-                            "    rnd_long256() ll," +
-                            "    rnd_int() a1," +
-                            "    rnd_int(0, 30, 2) a," +
-                            "    rnd_boolean() b," +
-                            "    rnd_str(3,3,2) c," +
-                            "    rnd_double(2) d," +
-                            "    rnd_float(2) e," +
-                            "    rnd_short(10,1024) f," +
-                            "    rnd_short() f1," +
-                            "    rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            "    rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
-                            "    rnd_symbol(4,4,4,2) i," +
-                            "    rnd_long(100,200,2) j," +
-                            "    rnd_long() j1," +
-                            "    timestamp_sequence(0, 1000000000) k," +
-                            "    rnd_byte(2,50) l," +
-                            "    rnd_bin(10, 20, 2) m" +
-                            "  from long_sequence(1000)" +
-                            ") timestamp(k)"
-            ));
-            execute("backup table " + tableName);
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+            backupTable(tableToken);
             setFinalBackupPath();
-            assertTables(tableName);
+            assertTables(tableToken);
         });
     }
 
     @Test
     public void testBackupDatabase() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName1 = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName1 + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
-            String tableName2 = tableName1 + "_sugus";
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName2 + " as (select" +
-                            " rnd_long256() ll," +
-                            " timestamp_sequence(10000000000, 500000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
-            execute("backup database");
+            testTableName(testName.getMethodName());
+            TableToken table1 = executeCreateTableStmt(testName.getMethodName());
+            TableToken table2 = executeCreateTableStmt(table1.getTableName() + "_sugus");
+            backupDatabase();
             setFinalBackupPath();
-            assertTables(tableName1);
-            assertTables(tableName2);
-            assertTabIndex();
-            assertTabRegistry();
-            assertConf();
+            assertTables(table1);
+            assertTables(table2);
+            assertDatabase();
         });
     }
 
     @Test
     public void testBackupDatabaseGeohashColumns() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName1 = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName1 + " as (select" +
-                            " rnd_geohash(2) g1," +
-                            " rnd_geohash(15) g2," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(1)) timestamp(ts)"
-            ));
-            String tableName2 = tableName1 + "_sea";
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName2 + " as (select" +
-                            " rnd_geohash(31) g4," +
-                            " rnd_geohash(42) g8," +
-                            " timestamp_sequence(10000000000, 500000000) ts" +
-                            " from long_sequence(1)) timestamp(ts)"
-            ));
-            execute("backup database");
+            TableToken table1 = executeCreateTableStmt(testName.getMethodName());
+            TableToken table2 = executeCreateTableStmt(table1.getTableName() + "_sea");
+            backupDatabase();
             setFinalBackupPath();
-            assertTables(tableName1);
-            assertTables(tableName2);
-            assertTabIndex();
-            assertTabRegistry();
-            assertConf();
+            assertTables(table1);
+            assertTables(table2);
+            assertDatabase();
         });
     }
 
@@ -299,13 +232,15 @@ public class TableBackupTest {
     public void testBackupDatabaseGeohashColumnsWithColumnTops() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (select" +
-                            " rnd_geohash(2) g1," +
-                            " rnd_geohash(15) g2," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(2)) timestamp(ts)"
-            ));
+            execute(
+                    "CREATE TABLE " + tableName + " AS (" +
+                            "  SELECT" +
+                            "      rnd_geohash(2) g1," +
+                            "      rnd_geohash(15) g2," +
+                            "      timestamp_sequence(0, 1000000000) ts" +
+                            "  FROM long_sequence(2)" +
+                            ") TIMESTAMP(ts) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL")
+            );
             execute("alter table " + tableName + " add column g4 geohash(30b)");
             execute("alter table " + tableName + " add column g8 geohash(32b)");
             execute(
@@ -318,12 +253,10 @@ public class TableBackupTest {
                             " rnd_geohash(42) g8" +
                             " from long_sequence(3)"
             );
-            execute("backup database");
+            backupDatabase();
             setFinalBackupPath();
-            assertTables(tableName);
-            assertTabIndex();
-            assertTabRegistry();
-            assertConf();
+            assertTables(mainEngine.getTableToken(tableName));
+            assertDatabase();
         });
     }
 
@@ -331,15 +264,8 @@ public class TableBackupTest {
     public void testCompromisedTableName() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                String tableName = testTableName(testName.getMethodName());
-                execute(addPartitionByAndWalSuffix(
-                        "create table " + tableName + " as (select" +
-                                " rnd_symbol(4,4,4,2) sym," +
-                                " rnd_double(2) d," +
-                                " timestamp_sequence(0, 1000000000) ts" +
-                                " from long_sequence(10)) timestamp(ts)"
-                ));
-                execute("backup table .." + Files.SEPARATOR + tableName);
+                TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+                execute("backup table .." + Files.SEPARATOR + tableToken.getTableName());
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("'.' is an invalid table name", ex.getFlyweightMessage());
@@ -352,18 +278,11 @@ public class TableBackupTest {
         backupRoot = null;
         assertMemoryLeak(() -> {
             try {
-                String tableName = testTableName(testName.getMethodName());
-                execute(addPartitionByAndWalSuffix(
-                        "create table " + tableName + " as (select" +
-                                " rnd_symbol(4,4,4,2) sym," +
-                                " rnd_double(2) d," +
-                                " timestamp_sequence(0, 1000000000) ts" +
-                                " from long_sequence(6666)) timestamp(ts)"
-                ));
-                execute("backup table " + tableName);
+                TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+                backupTable(tableToken);
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertEquals(ex.getFlyweightMessage(), "Backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
+                TestUtils.assertEquals("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set", ex.getFlyweightMessage());
             }
         });
     }
@@ -398,15 +317,8 @@ public class TableBackupTest {
     public void testInvalidSql3() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                String tableName = testTableName(testName.getMethodName());
-                execute(addPartitionByAndWalSuffix(
-                        "create table " + tableName + " as (select" +
-                                " rnd_symbol(4,4,4,2) sym," +
-                                " rnd_double(2) d," +
-                                " timestamp_sequence(0, 1000000000) ts" +
-                                " from long_sequence(6666)) timestamp(ts)"
-                ));
-                execute("backup table " + tableName + " tb2");
+                TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+                execute("backup table " + tableToken.getTableName() + " tb2");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("expected ','", ex.getFlyweightMessage());
@@ -418,15 +330,8 @@ public class TableBackupTest {
     public void testMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                String tableName = testTableName(testName.getMethodName());
-                execute(addPartitionByAndWalSuffix(
-                        "create table " + tableName + " as (select" +
-                                " rnd_symbol(4,4,4,2) sym," +
-                                " rnd_double(2) d," +
-                                " timestamp_sequence(0, 1000000000) ts" +
-                                " from long_sequence(6666)) timestamp(ts)"
-                ));
-                execute("backup table " + tableName + ", tb2");
+                TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+                execute("backup table " + tableToken.getTableName() + ", tb2");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
@@ -437,66 +342,39 @@ public class TableBackupTest {
     @Test
     public void testMultipleTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName1 = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName1 + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
-            String tableName2 = tableName1 + "_yip";
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName2 + " as (select" +
-                            " rnd_long256() ll," +
-                            " timestamp_sequence(10000000000, 500000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"));
-            execute("backup table " + tableName1 + ", " + tableName2 + "");
+            TableToken token1 = executeCreateTableStmt(testName.getMethodName());
+            TableToken token2 = executeCreateTableStmt(token1.getTableName() + "_yip");
+            execute("backup table " + token1.getTableName() + ", " + token2.getTableName());
             setFinalBackupPath();
-            assertTables(tableName1);
-            assertTables(tableName2);
+            assertTables(token1);
+            assertTables(token2);
         });
     }
 
     @Test
     public void testRenameFailure() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             renameErrno = ERRNO_EIO;
             try {
-                execute("backup table " + tableName + ";");
+                backupTable(tableToken);
                 Assert.fail();
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[5] could not rename "));
             }
-            execute("backup table " + tableName + ";");
+            backupTable(tableToken);
             setFinalBackupPath(1);
-            assertTables(tableName);
+            assertTables(tableToken);
         });
     }
 
     @Test
-    public void testSimpleTable1() throws Exception {
+    public void testSimpleTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
-
-            execute("backup table " + tableName + ";");
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+            backupTable(tableToken);
             setFinalBackupPath();
-            assertTables(tableName);
+            assertTables(tableToken);
         });
     }
 
@@ -504,59 +382,52 @@ public class TableBackupTest {
     public void testSuccessiveBackups() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(10)) timestamp(ts)"));
-            execute("backup table " + tableName);
+            execute(
+                    "CREATE TABLE " + tableName + " AS (" +
+                            "  SELECT" +
+                            "      rnd_symbol(4,4,4,2) sym," +
+                            "      rnd_double(2) d," +
+                            "      timestamp_sequence(0, 1000000000) ts" +
+                            "  FROM long_sequence(10)" +
+                            ") TIMESTAMP(ts) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL"));
+            TableToken tableToken = mainEngine.getTableToken(tableName);
+            backupTable(tableToken);
             setFinalBackupPath();
-            StringSink sink3 = new StringSink();
-            selectAll(tableName, false, sink1);
-            selectAll(tableName, true, sink3);
-            Assert.assertEquals(sink1, sink3);
+            StringSink firstBackup = new StringSink();
+            selectAll(tableToken, false, sink1);
+            selectAll(tableToken, true, firstBackup);
+            Assert.assertEquals(sink1, firstBackup);
+
             execute(
                     "insert into " + tableName +
                             " select * from (" +
                             " select rnd_symbol(4,4,4,2) sym, rnd_double(2) d, timestamp_sequence(10000000000, 500000000) ts from long_sequence(5)" +
                             ") timestamp(ts)"
             );
-            execute("backup table " + tableName);
-            selectAll(tableName, false, sink1);
-            setFinalBackupPath(1);
-            selectAll(tableName, true, sink2);
-            TestUtils.assertEquals(sink1, sink2);
-            // Check previous backup is unaffected
+            backupTable(tableToken);
+
             setFinalBackupPath();
-            selectAll(tableName, true, sink1);
-            TestUtils.assertEquals(sink3, sink1);
+            selectAll(tableToken, true, sink2);
+            Assert.assertNotEquals(sink1, sink2);
+
+            // Check previous backup is unaffected
+            setFinalBackupPath(1);
+            assertTables(tableToken);
         });
     }
 
     @Test
     public void testTableBackupDirExists() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             try (Path path = new Path()) {
-                TableToken tableToken = mainEngine.getTableToken(tableName);
                 path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableToken).slash$();
-                int rc = TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
-                Assert.assertEquals(0, rc);
-            }
-            try {
-                execute("backup table " + tableName + ";");
+                Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode()));
+                backupTable(tableToken);
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Backup dir already exists [path=");
-                TestUtils.assertContains(ex.getFlyweightMessage(), ", table=" + tableName + ']');
+                TestUtils.assertContains(ex.getFlyweightMessage(), "backup dir already exists [path=");
+                TestUtils.assertContains(ex.getFlyweightMessage(), ", table=" + tableToken.getTableName() + ']');
             }
         });
     }
@@ -564,18 +435,11 @@ public class TableBackupTest {
     @Test
     public void testTableBackupDirNotWritable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testTableName(testName.getMethodName());
-            execute(addPartitionByAndWalSuffix(
-                    "create table " + tableName + " as (select" +
-                            " rnd_symbol(4,4,4,2) sym," +
-                            " rnd_double(2) d," +
-                            " timestamp_sequence(0, 1000000000) ts" +
-                            " from long_sequence(6666)) timestamp(ts)"
-            ));
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             try {
                 mkdirsErrno = 13;
                 mkdirsErrnoCountDown = 2;
-                mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
+                backupTable(tableToken);
                 Assert.fail();
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[13] could not create backup "));
@@ -583,18 +447,30 @@ public class TableBackupTest {
         });
     }
 
-    private String addPartitionByAndWalSuffix(String createTable) {
-        createTable += " PARTITION BY " + partitionBy;
-        return createTable + (isWal ? " WAL" : " BYPASS WAL");
+    private static String testTableName(String tableName) {
+        int idx = tableName.indexOf('[');
+        return (idx > 0 ? tableName.substring(0, idx) : tableName) + '_' + TABLE_NAME_SUFFIX;
     }
 
-    private void assertConf() {
+    private void assertDatabase() {
+        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(path));
+        finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(finalBackupPath));
+
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
         final int trimLen = finalBackupPath.length();
         Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
+
+        if (isWal) {
+            path.parent().concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            Assert.assertTrue(Files.exists(path));
+            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            Assert.assertTrue(Files.exists(finalBackupPath));
+        }
     }
 
     private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
@@ -610,54 +486,103 @@ public class TableBackupTest {
         });
     }
 
-    private void assertTabIndex() {
-        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(path));
-        finalBackupPath.concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(finalBackupPath));
-    }
-
-    private void assertTabRegistry() {
+    private void assertTableTxnSeq() {
         if (isWal) {
-            path.of(mainConfiguration.getRoot()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             Assert.assertTrue(Files.exists(path));
-            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$();
+            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             Assert.assertTrue(Files.exists(finalBackupPath));
         }
     }
 
-    private void assertTables(String tb1) throws Exception {
-        selectAll(tb1, false, sink1);
-        selectAll(tb1, true, sink2);
+    private void assertTables(TableToken tableToken) throws Exception {
+        selectAll(tableToken, false, sink1);
+        selectAll(tableToken, true, sink2);
         TestUtils.assertEquals(sink1, sink2);
     }
 
-    private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
-        CairoEngine engine = null;
-        SqlCompiler compiler = null;
-        SqlExecutionContext sqlExecutionContext = null;
+    private void backupDatabase() throws SqlException {
+        execute("BACKUP DATABASE");
+    }
+
+    private void backupTable(TableToken tableToken) throws SqlException {
+        execute("BACKUP TABLE '" + tableToken.getTableName() + '\'');
+    }
+
+    private void drainWalQueue() {
+        if (isWal) {
+            try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(mainEngine, 1, 1, null)) {
+                walApplyJob.drain(0);
+                new CheckWalTransactionsJob(mainEngine).run(0);
+                walApplyJob.drain(0);
+            }
+        }
+    }
+
+    private void execute(CharSequence query) throws SqlException {
+        try (OperationFuture future = mainCompiler.compile(query, mainSqlExecutionContext).execute(null)) {
+            future.await();
+        }
+        drainWalQueue();
+    }
+
+    private TableToken executeCreateTableStmt(String tableName) throws SqlException {
+        String finalTableName = testTableName(tableName);
+        String create = "CREATE TABLE " + finalTableName + " AS (" +
+                "  SELECT" +
+                "      rnd_boolean() bool," +
+                "      rnd_char() char," +
+                "      rnd_byte(2,50) byte," +
+                "      rnd_short() short1," +
+                "      rnd_short(10,1024) short2," +
+                "      rnd_int() int1," +
+                "      rnd_int(0, 30, 2) int2," +
+                "      rnd_long() long1," +
+                "      rnd_long(100,200,2) long2," +
+                "      rnd_float(2) float," +
+                "      rnd_double(2) double," +
+                "      rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) date," +
+                "      rnd_timestamp(" +
+                "          to_timestamp('2015', 'yyyy'), " +
+                "          to_timestamp('2016', 'yyyy'), " +
+                "          2) timestamp1," +
+                "      timestamp_sequence(0, 1000000000) timestamp2," +
+                "      rnd_symbol(4,4,4,2) symbol," +
+                "      rnd_str(3,3,2) string," +
+                "      rnd_bin(10, 20, 2) binary," +
+                "      rnd_geohash(7) g7," +
+                "      rnd_geohash(15) g15," +
+                "      rnd_geohash(23) g23," +
+                "      rnd_geohash(31) g31," +
+                "      rnd_geohash(60) g60," +
+                "      rnd_uuid4() uuid," +
+                "      rnd_long256() long256" +
+                "  FROM long_sequence(10)" +
+                ") TIMESTAMP(timestamp2) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL");
+
+        try (OperationFuture future = mainCompiler.compile(create, mainSqlExecutionContext).execute(null)) {
+            future.await();
+        }
+        drainWalQueue();
+        return mainEngine.getTableToken(finalTableName);
+    }
+
+    private void selectAll(TableToken tableToken, boolean backup, MutableCharSink sink) throws Exception {
+        CairoEngine engine = mainEngine;
+        SqlCompiler compiler = mainCompiler;
+        SqlExecutionContext context = mainSqlExecutionContext;
         try {
             if (backup) {
-                CairoConfiguration backupConfiguration = new DefaultTestCairoConfiguration(finalBackupPath.toString());
-                engine = new CairoEngine(backupConfiguration);
-                sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                engine = new CairoEngine(mainConfiguration);
                 compiler = new SqlCompiler(engine);
-            } else {
-                engine = mainEngine;
-                compiler = mainCompiler;
-                sqlExecutionContext = mainSqlExecutionContext;
+                context = TestUtils.createSqlExecutionCtx(engine);
             }
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select * from " + tableName,
-                    sink
-            );
+            TestUtils.printSql(compiler, context, tableToken.getTableName(), sink);
         } finally {
             if (backup) {
                 Misc.free(engine);
                 Misc.free(compiler);
-                Misc.free(sqlExecutionContext);
+                Misc.free(context);
             }
         }
     }
@@ -677,25 +602,5 @@ public class TableBackupTest {
         finalBackupPath.slash$();
         finalBackupPathLen = finalBackupPath.length();
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
-    }
-
-    private String testTableName(String tableName) {
-        int idx = tableName.indexOf('[');
-        tableName = idx > 0 ? tableName.substring(0, idx) : tableName;
-        return tableNameSuffix == null ? tableName : tableName + '_' + tableNameSuffix;
-    }
-
-    protected void execute(CharSequence query) throws SqlException {
-        try (OperationFuture future = mainCompiler.compile(query, mainSqlExecutionContext).execute(null)) {
-            future.await();
-        }
-        if (isWal) {
-            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(mainEngine, 1, 1, null)) {
-                CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(mainEngine);
-                while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
-                    Os.sleep(0L);
-                }
-            }
-        }
     }
 }
