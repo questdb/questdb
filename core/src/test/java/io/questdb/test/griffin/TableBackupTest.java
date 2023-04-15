@@ -65,7 +65,7 @@ public class TableBackupTest {
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
     private final boolean isWal;
-    private final String partitionBy;
+    private final int partitionBy;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     @Rule
@@ -85,7 +85,7 @@ public class TableBackupTest {
 
     public TableBackupTest(AbstractCairoTest.WalMode walMode, int partitionBy) {
         isWal = walMode == AbstractCairoTest.WalMode.WITH_WAL;
-        this.partitionBy = PartitionBy.toString(partitionBy);
+        this.partitionBy = partitionBy;
     }
 
     @Parameterized.Parameters(name = "{0}-{1}")
@@ -230,7 +230,7 @@ public class TableBackupTest {
 
     @Test
     public void testBackupDatabaseGeohashColumnsWithColumnTops() throws Exception {
-        Assume.assumeTrue(PartitionBy.isPartitioned(PartitionBy.fromString(partitionBy)));
+        Assume.assumeTrue(PartitionBy.isPartitioned(partitionBy));
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             execute("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
@@ -370,7 +370,7 @@ public class TableBackupTest {
 
     @Test
     public void testSuccessiveBackups() throws Exception {
-        Assume.assumeTrue(PartitionBy.isPartitioned(PartitionBy.fromString(partitionBy)));
+        Assume.assumeTrue(PartitionBy.isPartitioned(partitionBy));
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             backupTable(tableToken);
@@ -530,7 +530,7 @@ public class TableBackupTest {
         String finalTableName = testTableName(tableName);
         String create = "CREATE TABLE '" + finalTableName + "' AS (" +
                 selectGenerator(10000) +
-                "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) PARTITION BY " + partitionBy + (isWal ? " WAL" : " BYPASS WAL");
+                "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) PARTITION BY " + PartitionBy.toString(partitionBy) + (isWal ? " WAL" : " BYPASS WAL");
         try (OperationFuture future = mainCompiler.compile(create, mainSqlExecutionContext).execute(null)) {
             future.await();
         }
