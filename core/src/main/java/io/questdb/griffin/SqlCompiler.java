@@ -3078,6 +3078,8 @@ public class SqlCompiler implements Closeable {
             dstPath.of(configuration.getBackupRoot()).slash();
             int plen = dstPath.length();
             int n = 0;
+            // There is a race here, two threads could try and create the same dstPath,
+            // only one will succeed the other will throw a CairoException. It could be serialised
             do {
                 dstPath.trimTo(plen);
                 format.format(epochMicros, configuration.getDefaultDateLocale(), null, dstPath);
@@ -3087,8 +3089,8 @@ public class SqlCompiler implements Closeable {
                 dstPath.slash$();
                 n++;
             } while (ff.exists(dstPath));
-            // the winner will succeed the looser thread will get this exception
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
+                // the winner will succeed the looser thread will get this exception
                 throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
             dstPathRoot = dstPath.length();
