@@ -195,6 +195,10 @@ public abstract class AbstractBootstrapTest {
         }
     }
 
+    static void dropTable(SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken) throws Exception {
+        compiler.compile("DROP TABLE '" + tableToken.getTableName() + '\'', context);
+    }
+
     static SqlExecutionContext executionContext(CairoEngine engine) {
         return new SqlExecutionContextImpl(engine, 1).with(
                 AllowAllCairoSecurityContext.INSTANCE,
@@ -228,15 +232,6 @@ public abstract class AbstractBootstrapTest {
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
         }
-    }
-
-    static void dropTable(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            TableToken tableToken,
-            boolean isWal
-    ) throws Exception {
-        compiler.compile("DROP TABLE " + tableToken.getTableName(), context);
     }
 
     static {

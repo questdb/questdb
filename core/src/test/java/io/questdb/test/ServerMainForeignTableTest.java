@@ -118,15 +118,15 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
                 assertTableExists(tableToken, false, true);
                 createPopulateTable(engine, compiler, context, tableName, false, true, true);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
 
                 // create non wal table in standard dir, and drop it
                 tableToken = createPopulateTable(engine, compiler, context, tableName, false, false, false);
                 assertTableExists(tableToken, false, false);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
 
                 try {
-                    dropTable(compiler, context, tableToken, false);
+                    dropTable(compiler, context, tableToken);
                     Assert.fail();
                 } catch (SqlException err) {
                     TestUtils.assertContains(err.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
@@ -157,7 +157,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, false, false);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
 
                 // create normal table in other volume, then drop it
                 tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
@@ -168,7 +168,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, false, true);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -238,7 +238,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getCairoEngine();
                 TableToken tableToken = engine.getTableToken(tableName);
                 assertTableExists(tableToken, false, true);
-                dropTable(compiler, context, tableToken, false);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -289,12 +289,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     ).start();
                     startBarrier.await();
                     haltLatch.await();
-                    dropTable(
-                            compiler0,
-                            context0,
-                            engine.getTableToken(tableName),
-                            false
-                    );
+                    dropTable(compiler0, context0, engine.getTableToken(tableName));
                 }
             }
         });
@@ -316,11 +311,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
 
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, true);
                 assertTableExists(tableToken, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -356,7 +351,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         }
                     }
                 }
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -381,7 +376,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, false);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
 
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 try {
@@ -391,7 +386,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -416,7 +411,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, true);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
 
                 tableToken = createPopulateTable(engine, compiler, context, tableName, true, false, false);
                 try {
@@ -426,7 +421,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
                 assertTableExists(tableToken, true, false);
-                dropTable(compiler, context, tableToken, true);
+                dropTable(compiler, context, tableToken);
             }
         });
     }
@@ -476,12 +471,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     ).start();
                     startBarrier.await();
                     haltLatch.await();
-                    dropTable(
-                            compiler0,
-                            context0,
-                            engine.getTableToken(tableName),
-                            true
-                    );
+                    dropTable(compiler0, context0, engine.getTableToken(tableName));
                 }
             }
         });

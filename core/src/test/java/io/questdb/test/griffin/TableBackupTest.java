@@ -46,6 +46,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
@@ -61,7 +62,6 @@ import java.util.Collection;
 public class TableBackupTest {
 
     private static final int ERRNO_EIO = 5;
-    private static final String TABLE_NAME_SUFFIX = "すばらしい";
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
     private final boolean isWal;
@@ -104,6 +104,38 @@ public class TableBackupTest {
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.MONTH},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.YEAR}
         });
+    }
+
+    public static TableToken executeCreateTableStmt(
+            @NotNull String tableName,
+            int partitionBy,
+            boolean isWal,
+            int numRows,
+            @NotNull SqlCompiler compiler,
+            @NotNull SqlExecutionContext context
+    ) throws SqlException {
+        executeSqlStmt(
+                "CREATE TABLE '" + tableName + "' AS (" +
+                        selectGenerator(numRows) +
+                        "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
+                        "PARTITION BY " + PartitionBy.toString(partitionBy) +
+                        (isWal ? " WAL" : " BYPASS WAL"),
+                compiler, context);
+        return compiler.getEngine().getTableToken(tableName);
+    }
+
+    public static void executeInsertGeneratorStmt(
+            TableToken tableToken,
+            int size,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', compiler, sqlExecutionContext);
+    }
+
+    public static String testTableName(String tableName, String tableNameSuffix) {
+        int idx = tableName.indexOf('[');
+        return (idx > 0 ? tableName.substring(0, idx) : tableName) + '_' + tableNameSuffix;
     }
 
     @Before
@@ -192,34 +224,10 @@ public class TableBackupTest {
     }
 
     @Test
-    public void testAllTypesPartitionedTable() throws Exception {
-        assertMemoryLeak(() -> {
-            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-            backupTable(tableToken);
-            setFinalBackupPath();
-            assertTables(tableToken);
-        });
-    }
-
-    @Test
     public void testBackupDatabase() throws Exception {
         assertMemoryLeak(() -> {
-            testTableName(testName.getMethodName());
             TableToken table1 = executeCreateTableStmt(testName.getMethodName());
             TableToken table2 = executeCreateTableStmt(table1.getTableName() + "_sugus");
-            backupDatabase();
-            setFinalBackupPath();
-            assertTables(table1);
-            assertTables(table2);
-            assertDatabase();
-        });
-    }
-
-    @Test
-    public void testBackupDatabaseGeohashColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            TableToken table1 = executeCreateTableStmt(testName.getMethodName());
-            TableToken table2 = executeCreateTableStmt(table1.getTableName() + "_sea");
             backupDatabase();
             setFinalBackupPath();
             assertTables(table1);
@@ -233,9 +241,9 @@ public class TableBackupTest {
         Assume.assumeTrue(PartitionBy.isPartitioned(partitionBy));
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-            execute("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
-            execute("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
-            execute("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
+            executeSqlStmt("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
+            executeSqlStmt("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
+            executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
                     " SELECT" +
                     "     rnd_geohash(30)," +
                     "     rnd_geohash(32)," +
@@ -251,11 +259,21 @@ public class TableBackupTest {
     }
 
     @Test
+    public void testBackupTable() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
+            backupTable(tableToken);
+            setFinalBackupPath();
+            assertTables(tableToken);
+        });
+    }
+
+    @Test
     public void testCompromisedTableName() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                execute("backup table .." + Files.SEPARATOR + tableToken.getTableName());
+                executeSqlStmt("backup table .." + Files.SEPARATOR + tableToken.getTableName());
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("'.' is an invalid table name", ex.getFlyweightMessage());
@@ -281,7 +299,7 @@ public class TableBackupTest {
     public void testInvalidSql1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                execute("backup something");
+                executeSqlStmt("backup something");
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertEquals(7, ex.getPosition());
@@ -294,7 +312,7 @@ public class TableBackupTest {
     public void testInvalidSql2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                execute("backup table");
+                executeSqlStmt("backup table");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
@@ -308,7 +326,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                execute("backup table " + tableToken.getTableName() + " tb2");
+                executeSqlStmt("backup table " + tableToken.getTableName() + " tb2");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("expected ','", ex.getFlyweightMessage());
@@ -321,7 +339,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                execute("backup table " + tableToken.getTableName() + ", tb2");
+                executeSqlStmt("backup table " + tableToken.getTableName() + ", tb2");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
@@ -334,7 +352,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             TableToken token1 = executeCreateTableStmt(testName.getMethodName());
             TableToken token2 = executeCreateTableStmt(token1.getTableName() + "_yip");
-            execute("backup table " + token1.getTableName() + ", " + token2.getTableName());
+            executeSqlStmt("backup table " + token1.getTableName() + ", " + token2.getTableName());
             setFinalBackupPath();
             assertTables(token1);
             assertTables(token2);
@@ -359,16 +377,6 @@ public class TableBackupTest {
     }
 
     @Test
-    public void testSimpleTable() throws Exception {
-        assertMemoryLeak(() -> {
-            TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-            backupTable(tableToken);
-            setFinalBackupPath();
-            assertTables(tableToken);
-        });
-    }
-
-    @Test
     public void testSuccessiveBackups() throws Exception {
         Assume.assumeTrue(PartitionBy.isPartitioned(partitionBy));
         assertMemoryLeak(() -> {
@@ -380,7 +388,7 @@ public class TableBackupTest {
             selectAll(tableToken, true, firstBackup);
             Assert.assertEquals(sink1, firstBackup);
 
-            execute("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(6) + ')');
+            executeInsertGeneratorStmt(tableToken);
             backupTable(tableToken);
             setFinalBackupPath(1);
             assertTables(tableToken);
@@ -421,6 +429,12 @@ public class TableBackupTest {
         });
     }
 
+    private static void executeSqlStmt(CharSequence stmt, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)) {
+            future.await();
+        }
+    }
+
     private static String selectGenerator(int size) {
         return " SELECT" +
                 "     rnd_boolean() bool," +
@@ -454,11 +468,6 @@ public class TableBackupTest {
                 "     rnd_uuid4() uuid," +
                 "     rnd_long256() long256" +
                 " FROM long_sequence(" + size + ')';
-    }
-
-    private static String testTableName(String tableName) {
-        int idx = tableName.indexOf('[');
-        return (idx > 0 ? tableName.substring(0, idx) : tableName) + '_' + TABLE_NAME_SUFFIX;
     }
 
     private void assertDatabase() {
@@ -502,11 +511,11 @@ public class TableBackupTest {
     }
 
     private void backupDatabase() throws SqlException {
-        execute("BACKUP DATABASE");
+        mainCompiler.compile("BACKUP DATABASE", mainSqlExecutionContext);
     }
 
     private void backupTable(TableToken tableToken) throws SqlException {
-        execute("BACKUP TABLE '" + tableToken.getTableName() + '\'');
+        mainCompiler.compile("BACKUP TABLE '" + tableToken.getTableName() + '\'', mainSqlExecutionContext);
     }
 
     private void drainWalQueue() {
@@ -519,23 +528,20 @@ public class TableBackupTest {
         }
     }
 
-    private void execute(CharSequence query) throws SqlException {
-        try (OperationFuture future = mainCompiler.compile(query, mainSqlExecutionContext).execute(null)) {
-            future.await();
-        }
+    private TableToken executeCreateTableStmt(String tableName) throws SqlException {
+        TableToken tableToken = executeCreateTableStmt(testTableName(tableName, "すばらしい"), partitionBy, isWal, 10000, mainCompiler, mainSqlExecutionContext);
+        drainWalQueue();
+        return tableToken;
+    }
+
+    private void executeInsertGeneratorStmt(TableToken tableToken) throws SqlException {
+        executeInsertGeneratorStmt(tableToken, 6, mainCompiler, mainSqlExecutionContext);
         drainWalQueue();
     }
 
-    private TableToken executeCreateTableStmt(String tableName) throws SqlException {
-        String finalTableName = testTableName(tableName);
-        String create = "CREATE TABLE '" + finalTableName + "' AS (" +
-                selectGenerator(10000) +
-                "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) PARTITION BY " + PartitionBy.toString(partitionBy) + (isWal ? " WAL" : " BYPASS WAL");
-        try (OperationFuture future = mainCompiler.compile(create, mainSqlExecutionContext).execute(null)) {
-            future.await();
-        }
+    private void executeSqlStmt(String stmt) throws SqlException {
+        executeSqlStmt(stmt, mainCompiler, mainSqlExecutionContext);
         drainWalQueue();
-        return mainEngine.getTableToken(finalTableName);
     }
 
     private void selectAll(TableToken tableToken, boolean backup, MutableCharSink sink) throws Exception {

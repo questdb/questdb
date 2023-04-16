@@ -161,7 +161,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
                     TestListener.dumpThreadStacks();
                 }
-                dropTable(defaultCompiler, defaultContext, tableToken, isWal);
+                dropTable(defaultCompiler, defaultContext, tableToken);
                 for (int i = 0; i < numThreads; i++) {
                     compilers.get(i).close();
                     contexts.get(i).close();
@@ -175,21 +175,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
-        long time = System.currentTimeMillis();
-        while (true) {
-            try {
-                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
-                        "1000000\n");
-                break;
-            } catch (AssertionError e) {
-                if (System.currentTimeMillis() - time > 5000) {
-                    throw e;
-                }
-            }
-        }
     }
 
     private static void assertShowPartitions(
@@ -212,6 +197,21 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 cursor0.toTop();
                 assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
                 cursor1.toTop();
+            }
+        }
+    }
+
+    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
+        long time = System.currentTimeMillis();
+        while (true) {
+            try {
+                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
+                        "1000000\n");
+                break;
+            } catch (AssertionError e) {
+                if (System.currentTimeMillis() - time > 5000) {
+                    throw e;
+                }
             }
         }
     }
