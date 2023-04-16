@@ -232,7 +232,8 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         cc = compiler.compile("SELECT count(*) n FROM '" + tableToken.getTableName() + '\'', context);
         try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
             TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
-            return Long.parseLong(sink.toString().strip());
+            sink.clear(sink.length() - 1);
+            return Long.parseLong(sink.toString());
         }
     }
 
