@@ -1680,7 +1680,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case 'Q': // simple query
                 sendRNQ = true;
-                engine.getMetrics().pgWire().markStart();
                 processQuery(msgLo, msgLimit, compiler);
                 break;
             case 'd': // COPY data 
@@ -2404,6 +2403,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long limit,
             @Transient SqlCompiler compiler
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, BadProtocolException {
+        engine.getMetrics().pgWire().markStart();
         prepareForNewQuery();
         isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
         CharacterStoreEntry e = characterStore.newEntry();
