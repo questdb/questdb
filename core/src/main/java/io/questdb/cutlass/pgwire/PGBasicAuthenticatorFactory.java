@@ -22,30 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
-
-class DefaultFactoriesFactory implements FactoriesFactory {
-    static final DefaultFactoriesFactory INSTANCE = new DefaultFactoriesFactory();
+public final class PGBasicAuthenticatorFactory implements PGAuthenticatorFactory {
+    public static final PGBasicAuthenticatorFactory INSTANCE = new PGBasicAuthenticatorFactory();
 
     @Override
-    public PGAuthenticatorFactory getPGAuthenticatorFactory() {
-        return PGBasicAuthenticatorFactory.INSTANCE;
+    public PGAuthenticator getInstance(PGWireConfiguration configuration) {
+        return new PGBasicAuthenticator(configuration.getSecurityContextFactory(), configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
     }
 
     @Override
-    public CairoSecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
-    }
-
-    @Override
-    public SqlParserFactory getSqlParserFactory() {
-        return SqlParserFactoryImpl.INSTANCE;
+    public PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration) {
+        assert configuration.isReadOnlyUserEnabled();
+        return new PGBasicAuthenticator(configuration.getSecurityContextFactory(), configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true);
     }
 }

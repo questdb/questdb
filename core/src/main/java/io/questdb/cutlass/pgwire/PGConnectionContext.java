@@ -215,10 +215,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
 
-        //todo: who is responsible for authentication configuration?
-        this.authenticator = new EmptyPGAuthenticator(configuration.getSecurityContextFactory(), false);
+        PGAuthenticatorFactory authenticatorFactory = configuration.getAuthenticatorFactory();
+        this.authenticator = authenticatorFactory.getInstance(configuration);
         this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
-                ? new EmptyPGAuthenticator(configuration.getSecurityContextFactory(), true)
+                ? authenticatorFactory.getInstanceReadOnly(configuration)
                 : null;
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());

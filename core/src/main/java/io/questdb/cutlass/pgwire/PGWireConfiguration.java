@@ -35,6 +35,8 @@ import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
+    PGAuthenticatorFactory getAuthenticatorFactory();
+
     int getBinParamCountCapacity();
 
     int getCharacterStoreCapacity();

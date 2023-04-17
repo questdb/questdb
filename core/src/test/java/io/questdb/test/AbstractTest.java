@@ -47,7 +47,8 @@ public class AbstractTest {
             // We only supply it for server main to pass argument validation
             @Override
             public ServerConfiguration getServerConfiguration() {
-                return new TestServerConfiguration(root, enableHttp, enableLineTcp, enablePgWire, workerCountShared, 0, 0, 0, factoriesFactory.getSecurityContextFactory());
+                return new TestServerConfiguration(root, enableHttp, enableLineTcp, enablePgWire, workerCountShared, 0, 0, 0,
+                        factoriesFactory.getSecurityContextFactory(), factoriesFactory.getPGAuthenticatorFactory());
             }
         }, TestUtils.getServerMainArgs(root)));
     }

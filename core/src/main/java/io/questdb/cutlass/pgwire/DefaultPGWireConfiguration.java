@@ -53,6 +53,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     };
 
     @Override
+    public PGAuthenticatorFactory getAuthenticatorFactory() {
+        return PGBasicAuthenticatorFactory.INSTANCE;
+    }
+
+    @Override
     public int getBinParamCountCapacity() {
         return 4;
     }

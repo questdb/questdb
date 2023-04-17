@@ -22,30 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
+public interface PGAuthenticatorFactory {
 
-class DefaultFactoriesFactory implements FactoriesFactory {
-    static final DefaultFactoriesFactory INSTANCE = new DefaultFactoriesFactory();
+    PGAuthenticator getInstance(PGWireConfiguration configuration);
 
-    @Override
-    public PGAuthenticatorFactory getPGAuthenticatorFactory() {
-        return PGBasicAuthenticatorFactory.INSTANCE;
-    }
-
-    @Override
-    public CairoSecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
-    }
-
-    @Override
-    public SqlParserFactory getSqlParserFactory() {
-        return SqlParserFactoryImpl.INSTANCE;
-    }
+    PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration);
 }

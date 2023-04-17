@@ -35,6 +35,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.StationaryMillisClock;
@@ -58,8 +59,14 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final boolean enableHttp;
     private final boolean enableLineTcp;
     private final boolean enablePgWire;
+    private final PGAuthenticatorFactory pgAuthenticatorFactory;
     private final CairoSecurityContextFactory securityContextFactory;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
+        @Override
+        public PGAuthenticatorFactory getAuthenticatorFactory() {
+            return pgAuthenticatorFactory;
+        }
+
         @Override
         public CairoSecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
@@ -134,7 +141,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             int workerCountHttp,
             int workerCountLineTcpIO,
             int workerCountLineTcpWriter,
-            CairoSecurityContextFactory securityContextFactory
+            CairoSecurityContextFactory securityContextFactory,
+            PGAuthenticatorFactory pgAuthenticatorFactory
     ) {
         super(root);
         this.workerCountHttp = workerCountHttp;
@@ -145,6 +153,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         this.workerCountLineTcpIO = workerCountLineTcpIO;
         this.workerCountLineTcpWriter = workerCountLineTcpWriter;
         this.securityContextFactory = securityContextFactory;
+        this.pgAuthenticatorFactory = pgAuthenticatorFactory;
     }
 
     @Override

@@ -36,6 +36,7 @@ import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -175,6 +176,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final PGAuthenticatorFactory pgAuthenticatorFactory;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
@@ -474,6 +476,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.securityContextFactory = factoriesFactory.getSecurityContextFactory();
         this.sqlParserFactory = factoriesFactory.getSqlParserFactory();
+        this.pgAuthenticatorFactory = factoriesFactory.getPGAuthenticatorFactory();
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -3293,6 +3296,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
+        @Override
+        public PGAuthenticatorFactory getAuthenticatorFactory() {
+            return pgAuthenticatorFactory;
+        }
+
         @Override
         public int getBinParamCountCapacity() {
             return pgBinaryParamsCapacity;
