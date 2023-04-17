@@ -40,6 +40,7 @@ public class AbstractTest {
     @Rule
     public TestName testName = new TestName();
 
+    @SuppressWarnings("unused")
     public static ServerMain newServer(boolean enableHttp, boolean enableLineTcp, boolean enablePgWire, int workerCountShared, FactoriesFactory factoriesFactory) {
         return new ServerMain(new Bootstrap(new DefaultBootstrapConfiguration() {
 
@@ -47,8 +48,18 @@ public class AbstractTest {
             // We only supply it for server main to pass argument validation
             @Override
             public ServerConfiguration getServerConfiguration() {
-                return new TestServerConfiguration(root, enableHttp, enableLineTcp, enablePgWire, workerCountShared, 0, 0, 0,
-                        factoriesFactory.getSecurityContextFactory(), factoriesFactory.getPGAuthenticatorFactory());
+                return new TestServerConfiguration(
+                        root,
+                        enableHttp,
+                        enableLineTcp,
+                        enablePgWire,
+                        workerCountShared,
+                        0,
+                        0,
+                        0,
+                        factoriesFactory.getSecurityContextFactory(),
+                        factoriesFactory.getPGAuthenticatorFactory()
+                );
             }
         }, TestUtils.getServerMainArgs(root)));
     }
@@ -60,7 +71,7 @@ public class AbstractTest {
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("setup logger").$();
-        root = temp.newFolder("dbroot").getAbsolutePath();
+        root = temp.newFolder("dbRoot").getAbsolutePath();
     }
 
     @AfterClass

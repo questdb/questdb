@@ -378,11 +378,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return engine.getTableWriterAPIAsRoot(tableToken, lockReason);
     }
 
-    @Override
-    public TableWriterAPI getTableWriterAPIForGrant(SecurityContext context, TableToken tableToken, CharSequence targetTable, @Nullable String lockReason) {
-        return engine.getTableWriterAPIForGrant(context, tableToken, targetTable, lockReason);
-    }
-
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,

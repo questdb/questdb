@@ -494,24 +494,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
-    @Override
-    public TableWriterAPI getTableWriterAPIForGrant(
-            SecurityContext securityContext,
-            TableToken tableToken,
-            CharSequence targetTable,
-            @Nullable String lockReason
-    ) {
-        TableToken tableToken1 = targetTable != null ? getTableTokenIfExists(targetTable) : null;
-        if (tableToken1 != null) {
-            verifyTableToken(tableToken1);
-        }
-
-        if (!tableToken.isWal()) {
-            return writerPool.get(tableToken, lockReason);
-        }
-        return walWriterPool.get(tableToken);
-    }
-
     public Telemetry<TelemetryTask> getTelemetry() {
         return telemetry;
     }

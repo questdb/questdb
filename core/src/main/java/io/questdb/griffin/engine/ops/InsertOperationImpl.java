@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
@@ -45,16 +44,13 @@ public class InsertOperationImpl implements InsertOperation {
     private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
-    // TODO: create GrantModel/GrantOperation based on InsertModel/InsertOperation instead
-    private final boolean isGrant;
     private final long structureVersion;
     private final TableToken tableToken;
 
-    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long structureVersion, boolean isGrant) {
+    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long structureVersion) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.structureVersion = structureVersion;
-        this.isGrant = isGrant;
     }
 
     @Override
@@ -66,15 +62,8 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final SecurityContext securityContext = executionContext.getSecurityContext();
             final TableWriterAPI writer;
-            if (isGrant) {
-                // TODO: pass target table name in model, hardcoded to null for now (DB level grant)
-                // todo: we should not be checking permissions here, it is too late
-                writer = writerSource.getTableWriterAPIForGrant(securityContext, tableToken, null, "grant");
-            } else {
-                writer = writerSource.getTableWriterAPIAsRoot(tableToken, "insert");
-            }
+            writer = writerSource.getTableWriterAPIAsRoot(tableToken, "insert");
             if (writer.getStructureVersion() != structureVersion ||
                     !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();
