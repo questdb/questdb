@@ -504,6 +504,20 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
+    public static Long256 implicitCastStrAsLong256(CharSequence value) {
+        if (value == null || value.length() == 0) {
+            return Long256Impl.NULL_LONG256;
+        }
+        Long256 long256 = new Long256Impl();
+        int start = 0;
+        int end = value.length();
+        if (end > 2 && value.charAt(start) == '0' && (value.charAt(start + 1) | 32) == 'x') {
+            start += 2;
+        }
+        Long256FromCharSequenceDecoder.decode(value, start, end, long256);
+        return long256;
+    }
+
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
             Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);

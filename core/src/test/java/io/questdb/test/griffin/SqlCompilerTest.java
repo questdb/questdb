@@ -3824,6 +3824,27 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertLong256() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "long256\n",
+                "long256",
+                "create table long256 (long256 long256)",
+                null,
+                "insert into long256 values" +
+                        "('0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3a')," +
+                        "('0X6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3b')," +
+                        "('6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c')",
+                "long256\n" +
+                        "0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3a\n" +
+                        "0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3b\n" +
+                        "0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c\n",
+                true,
+                true,
+                false
+        ));
+    }
+
+    @Test
     public void testInsertNullSymbol() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
@@ -4633,16 +4654,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                    compiler.compile(sql, sqlExecutionContext);
-                    Assert.assertTrue(fiddler.isHappy());
-                    try (TableReader reader = getReader(engine, "Y")) {
-                        sink.clear();
-                        reader.getMetadata().toJson(sink);
-                        TestUtils.assertEquals(expectedMetadata, sink);
-                    }
-
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                compiler.compile(sql, sqlExecutionContext);
+                Assert.assertTrue(fiddler.isHappy());
+                try (TableReader reader = getReader(engine, "Y")) {
+                    sink.clear();
+                    reader.getMetadata().toJson(sink);
+                    TestUtils.assertEquals(expectedMetadata, sink);
                 }
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            }
         }
     }
 
