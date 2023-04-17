@@ -214,19 +214,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
-        this.authenticator = new PGBasicAuthenticator(
-                configuration.getSecurityContextFactory(),
-                configuration.getDefaultUsername(),
-                configuration.getDefaultPassword(),
-                configuration.readOnlySecurityContext()
-        );
+
+        //todo: who is responsible for authentication configuration?
+        this.authenticator = new EmptyPGAuthenticator(configuration.getSecurityContextFactory(), false);
         this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
-                ? new PGBasicAuthenticator(
-                configuration.getSecurityContextFactory(),
-                configuration.getReadOnlyUsername(),
-                configuration.getReadOnlyPassword(),
-                true
-        )
+                ? new EmptyPGAuthenticator(configuration.getSecurityContextFactory(), true)
                 : null;
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
@@ -2302,7 +2294,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=" .length(), valueHi));
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
                                 if (this.statementTimeout > 0) {
                                     circuitBreaker.setTimeout(statementTimeout);
                                 }
