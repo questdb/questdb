@@ -1288,12 +1288,7 @@ public class SqlCompiler implements Closeable {
                     lightlyValidateInsertModel(insertModel);
                 }
                 final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
-                if (insertModel.isGrant()) {
-                    // todo: not enough context, there is no information of what is being granted
-                    executionContext.getSecurityContext().authorizeGrant(tableToken);
-                } else {
-                    executionContext.getSecurityContext().authorizeInsert(tableToken, insertModel.getColumnNameList());
-                }
+                executionContext.getSecurityContext().authorizeInsert(tableToken, insertModel.getColumnNameList());
                 return insertModel;
             }
             case ExecutionModel.UPDATE:
@@ -1992,7 +1987,7 @@ public class SqlCompiler implements Closeable {
 
         try (TableRecordMetadata metadata = engine.getMetadata(token)) {
             final long structureVersion = metadata.getStructureVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), structureVersion, model.isGrant());
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), structureVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();

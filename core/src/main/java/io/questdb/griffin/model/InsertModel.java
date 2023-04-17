@@ -36,7 +36,6 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private final IntList endOfRowTupleValuesPositions = new IntList();
     private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private long batchSize = -1;
-    private boolean isGrant;
     private long o3MaxLag = 0;
     private QueryModel queryModel;
     private int selectKeywordPosition;
@@ -133,16 +132,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return tableNameExpr;
     }
 
-    public boolean isGrant() {
-        return isGrant;
-    }
-
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
-    }
-
-    public void setGrant(boolean isGrant) {
-        this.isGrant = isGrant;
     }
 
     public void setO3MaxLag(long o3MaxLag) {
