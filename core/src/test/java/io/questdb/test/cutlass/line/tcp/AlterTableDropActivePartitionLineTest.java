@@ -97,7 +97,6 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 serverMain.start();
 
                 final CairoEngine engine = serverMain.getCairoEngine();
-                engine.reloadTableNames();
 
                 // create table over PGWire
                 try (

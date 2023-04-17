@@ -837,7 +837,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
         String tabex3 = "tabex3";
         CharSequence dirName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(dirName).slash$()) {
+        try (Path p = Path.getThreadLocal(root).concat(dirName).slash$()) {
             TestFilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
 
