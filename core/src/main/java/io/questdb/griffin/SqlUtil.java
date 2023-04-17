@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -509,7 +508,7 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static Long256Function implicitCastStrAsLong256(CharSequence value) {
+    public static Long256Constant implicitCastStrAsLong256(CharSequence value) {
         if (value == null || value.length() == 0) {
             return Long256NullConstant.INSTANCE;
         }
