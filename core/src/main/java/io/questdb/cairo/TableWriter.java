@@ -884,18 +884,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commit();
         }
 
+        timestamp = txWriter.getLogicalPartitionTimestamp(timestamp);
+        if (timestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            return AttachDetachStatus.DETACH_ERR_ACTIVE;
+        }
+
+        // To detach the partition, squash it into single folder if required
+        if (!squashSplitPartitions(timestamp, txWriter.ceilPartitionTimestamp(timestamp), 1)) {
+            // Cannot squash to single partition before detaching because of active table readers.
+            return AttachDetachStatus.DETACH_ERR_CANNOT_SQUASH;
+        }
+
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex == -1) {
             assert !txWriter.attachedPartitionsContains(timestamp);
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
         }
 
-        long maxTimestamp = txWriter.getMaxTimestamp();
-        if (timestamp == txWriter.getPartitionTimestamp(maxTimestamp)) {
-            return AttachDetachStatus.DETACH_ERR_ACTIVE;
-        }
         long minTimestamp = txWriter.getMinTimestamp();
-
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         Path detachedPath = Path.PATH.get();
 
@@ -3617,140 +3623,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3PartitionUpdate(
-            long timestampMin,
-            long partitionTimestamp,
-            final long newPartitionSize,
-            final long oldPartitionSize,
-            boolean partitionMutates,
-            boolean isLastWrittenPartition
-    ) {
-        txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
-        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-
-        final long newPartitionTimestamp = partitionTimestamp;
-        final int newPartitionIndex = partitionIndex;
-        if (partitionIndex < 0) {
-            // This is partition split. Instead of rewriting partition because of O3 merge
-            // the partition is kept, and its tail rewritten.
-            // The new partition overlaps in time with the previous one.
-            partitionTimestamp = txWriter.getPartitionTimestamp(partitionTimestamp);
-            partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-        }
-
-        if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
-            if (partitionMutates) {
-                // Last partition is rewritten.
-                closeActivePartition(true);
-            } else if (!isLastWrittenPartition) {
-                // Last partition is appended, and it is not the last partition anymore.
-                closeActivePartition(oldPartitionSize);
-            } else {
-                // Last partition is appended, and it is still the last partition.
-                setAppendPosition(oldPartitionSize, false);
-            }
-        }
-
-        LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
-                .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
-                .$(", partitionTimestamp=").$ts(partitionTimestamp)
-                .$(", partitionMutates=").$(partitionMutates)
-                .$(", lastPartitionTimestamp=").$(lastPartitionTimestamp)
-                .$(", partitionSize=").$(oldPartitionSize)
-                .I$();
-
-        if (newPartitionTimestamp != partitionTimestamp) {
-            LOG.info()
-                    .$("split partition [table=").utf8(tableToken.getTableName())
-                    .$(", ts=").$ts(partitionTimestamp)
-                    .$(", txn=").$(txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp))
-                    .$(", oldPartitionSize=").$(oldPartitionSize)
-                    .$(", ts=").$ts(newPartitionTimestamp)
-                    .$(", txn=").$(txWriter.txn)
-                    .$(", newPartitionSize=").$(newPartitionSize)
-                    .I$();
-            this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, partitionTimestamp);
-            txWriter.bumpPartitionTableVersion();
-            txWriter.updateAttachedPartitionSizeByIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
-            if (partitionTimestamp == lastPartitionTimestamp) {
-                // Close last partition without truncating it.
-                long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
-                closeActivePartition(committedLastPartitionSize);
-                if (isLastWrittenPartition) {
-                    txWriter.transientRowCount = newPartitionSize;
-                    txWriter.fixedRowCount += oldPartitionSize;
-                }
-            }
-        }
-
-        if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {
-            final long srcDataTxn = txWriter.getPartitionNameTxnByIndex(partitionIndex);
-            LOG.info()
-                    .$("merged partition [table=`").utf8(tableToken.getTableName())
-                    .$("`, ts=").$ts(partitionTimestamp)
-                    .$(", txn=").$(txWriter.txn).I$();
-            txWriter.updatePartitionSizeAndTxnByIndex(partitionIndex, oldPartitionSize);
-            partitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
-            txWriter.bumpPartitionTableVersion();
-        } else {
-            if (partitionTimestamp != lastPartitionTimestamp) {
-                txWriter.bumpPartitionTableVersion();
-            }
-            txWriter.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, oldPartitionSize);
-        }
-    }
-
-    private void squashSplitPartitions(int partitionIndexLo, int partitionIndexHi) {
-        assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
-        if (partitionIndexHi > partitionIndexLo + 1) {
-            long targetPartition = txWriter.getPartitionTimestamp(partitionIndexLo);
-            TableUtils.setPathForPartition(path, partitionBy, targetPartition, txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition));
-
-            try (
-                    Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, txWriter.getPartitionSizeByPartitionTimestamp(targetPartition))
-            ) {
-                for (int i = partitionIndexLo + 1; i < partitionIndexHi; i++) {
-                    long sourcePartition = txWriter.getPartitionTimestamp(partitionIndexLo + 1);
-
-                    other.trimTo(rootLen);
-                    long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                    TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
-                    long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(sourcePartition);
-                    if (sourcePartition == txWriter.getLastPartitionTimestamp()) {
-                        partitionSize = txWriter.getTransientRowCount();
-                    }
-
-                    assert partitionSize > 0;
-                    LOG.info().$("squashing partitions [table=").$(tableToken)
-                            .$(", source=").$ts(sourcePartition).$(", sourceSize=").$(partitionSize)
-                            .$(", target=").$ts(targetPartition).$(", targetSize=").$(targetFrame.getSize()).I$();
-                    try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
-                        FrameAlgebra.append(targetFrame, sourceFrame);
-                    }
-
-                    txWriter.removeAttachedPartitions(sourcePartition);
-                    partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
-                }
-
-                txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getSize());
-                if (txWriter.getPartitionCount() == partitionIndexLo + 1) {
-                    // last partition is merged.
-                    assert !metadata.isWalEnabled();
-                    txWriter.transientRowCount = targetFrame.getSize();
-                    txWriter.fixedRowCount = 0;
-                }
-            } finally {
-                path.trimTo(rootLen);
-                other.trimTo(rootLen);
-            }
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-            processPartitionRemoveCandidates();
-        }
-    }
-
     private void mmapWalColumns(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.length();
@@ -3838,7 +3710,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean noReaderLocks(long partitionTimestamp) {
-        // TODO: look up in txn file.
         return true;
     }
 
@@ -4827,38 +4698,86 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.debug().$("switched partition to memory").$();
     }
 
-    private void squashSplitPartitions(long o3TimestampMin, long o3TimestampMax, int maxSubPartitionCount) {
-        if (o3TimestampMin > txWriter.getMaxTimestamp()) {
-            return;
+    private void o3PartitionUpdate(
+            long timestampMin,
+            long partitionTimestamp,
+            final long newPartitionSize,
+            final long oldPartitionSize,
+            boolean partitionMutates,
+            boolean isLastWrittenPartition
+    ) {
+        txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
+        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+
+        final long newPartitionTimestamp = partitionTimestamp;
+        final int newPartitionIndex = partitionIndex;
+        if (partitionIndex < 0) {
+            // This is partition split. Instead of rewriting partition because of O3 merge
+            // the partition is kept, and its tail rewritten.
+            // The new partition overlaps in time with the previous one.
+            partitionTimestamp = txWriter.getPartitionTimestamp(partitionTimestamp);
+            partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         }
 
-        // Take the control of split partition population here.
-        // When the number of split partitions is too big, start merging them together.
-        // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
-        long logicalPartition = txWriter.getLogicalPartitionTimestamp(o3TimestampMin);
-        int partitionIndex = txWriter.getPartitionIndex(logicalPartition);
-        int targetPartitionIndex = partitionIndex;
-
-        while (logicalPartition < o3TimestampMax && ++partitionIndex < txWriter.getPartitionCount() - 1) {
-            long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
-            long newLogicalPartition = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-
-            if (logicalPartition != newLogicalPartition) {
-                int subpartitions = partitionIndex - targetPartitionIndex;
-                if (subpartitions > Math.max(1, maxSubPartitionCount)) {
-                    squashSplitPartitions(targetPartitionIndex, partitionIndex);
-                }
-                // reset to new logical partition
-                logicalPartition = newLogicalPartition;
-                partitionIndex = txWriter.getPartitionIndex(newLogicalPartition);
-                targetPartitionIndex = partitionIndex;
+        if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
+            if (partitionMutates) {
+                // Last partition is rewritten.
+                closeActivePartition(true);
+            } else if (!isLastWrittenPartition) {
+                // Last partition is appended, and it is not the last partition anymore.
+                closeActivePartition(oldPartitionSize);
+            } else {
+                // Last partition is appended, and it is still the last partition.
+                setAppendPosition(oldPartitionSize, false);
             }
         }
 
-        // Don't merge last partition, it has WAL lag data.
-        int subpartitions = txWriter.getPartitionCount() - 1 - targetPartitionIndex;
-        if (subpartitions > Math.max(1, maxSubPartitionCount)) {
-            squashSplitPartitions(targetPartitionIndex, txWriter.getPartitionCount() - 1);
+        LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
+                .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
+                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                .$(", partitionMutates=").$(partitionMutates)
+                .$(", lastPartitionTimestamp=").$(lastPartitionTimestamp)
+                .$(", partitionSize=").$(oldPartitionSize)
+                .I$();
+
+        if (newPartitionTimestamp != partitionTimestamp) {
+            LOG.info()
+                    .$("split partition [table=").utf8(tableToken.getTableName())
+                    .$(", ts=").$ts(partitionTimestamp)
+                    .$(", txn=").$(txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp))
+                    .$(", oldPartitionSize=").$(oldPartitionSize)
+                    .$(", ts=").$ts(newPartitionTimestamp)
+                    .$(", txn=").$(txWriter.txn)
+                    .$(", newPartitionSize=").$(newPartitionSize)
+                    .I$();
+            this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, partitionTimestamp);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.updateAttachedPartitionSizeByIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
+            if (partitionTimestamp == lastPartitionTimestamp) {
+                // Close last partition without truncating it.
+                long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
+                closeActivePartition(committedLastPartitionSize);
+                if (isLastWrittenPartition) {
+                    txWriter.transientRowCount = newPartitionSize;
+                    txWriter.fixedRowCount += oldPartitionSize;
+                }
+            }
+        }
+
+        if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {
+            final long srcDataTxn = txWriter.getPartitionNameTxnByIndex(partitionIndex);
+            LOG.info()
+                    .$("merged partition [table=`").utf8(tableToken.getTableName())
+                    .$("`, ts=").$ts(partitionTimestamp)
+                    .$(", txn=").$(txWriter.txn).I$();
+            txWriter.updatePartitionSizeAndTxnByIndex(partitionIndex, oldPartitionSize);
+            partitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
+            txWriter.bumpPartitionTableVersion();
+        } else {
+            if (partitionTimestamp != lastPartitionTimestamp) {
+                txWriter.bumpPartitionTableVersion();
+            }
+            txWriter.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, oldPartitionSize);
         }
     }
 
@@ -6743,6 +6662,105 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (o3mem2 != null) {
                 o3mem2.truncate();
             }
+        }
+    }
+
+    private boolean squashPartitionRange(int maxSubPartitionCount, long logicalPartitionTimestamp, int partitionIndexLo, int partitionIndexHi) {
+        if (partitionIndexHi == txWriter.getPartitionCount()) {
+            // This is the last partition. It is quite special so we do not want to squash it.
+            partitionIndexHi--;
+        }
+        int subpartitions = partitionIndexHi - partitionIndexLo;
+        if (subpartitions > Math.max(1, maxSubPartitionCount)) {
+            if (noReaderLocks(logicalPartitionTimestamp)) {
+                squashSplitPartitions(partitionIndexLo, partitionIndexLo + (subpartitions - maxSubPartitionCount) + 1);
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean squashSplitPartitions(long timestampMin, long timestampMax, int maxSubPartitionCount) {
+        if (timestampMin > txWriter.getMaxTimestamp()) {
+            return true;
+        }
+
+        // Take the control of split partition population here.
+        // When the number of split partitions is too big, start merging them together.
+        // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
+        long logicalPartition = txWriter.getLogicalPartitionTimestamp(timestampMin);
+        int partitionIndex = txWriter.getPartitionIndex(logicalPartition);
+        int partitionIndexLo = partitionIndex;
+
+        boolean allSquashed = true;
+        while (logicalPartition < timestampMax && ++partitionIndex < txWriter.getPartitionCount() - 1) {
+            long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
+            long newLogicalPartition = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+
+            if (logicalPartition != newLogicalPartition) {
+                allSquashed &= squashPartitionRange(maxSubPartitionCount, logicalPartition, partitionIndexLo, partitionIndex);
+
+                // reset to new logical partition
+                logicalPartition = newLogicalPartition;
+                partitionIndex = txWriter.getPartitionIndex(newLogicalPartition);
+                partitionIndexLo = partitionIndex;
+            }
+        }
+
+        allSquashed &= squashPartitionRange(maxSubPartitionCount, logicalPartition, partitionIndexLo, partitionIndex);
+        return allSquashed;
+    }
+
+    private void squashSplitPartitions(int partitionIndexLo, int partitionIndexHi) {
+        assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
+        if (partitionIndexHi > partitionIndexLo + 1) {
+            long targetPartition = txWriter.getPartitionTimestamp(partitionIndexLo);
+            TableUtils.setPathForPartition(path, partitionBy, targetPartition, txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition));
+
+            try (
+                    Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, txWriter.getPartitionSizeByPartitionTimestamp(targetPartition))
+            ) {
+                for (int i = partitionIndexLo + 1; i < partitionIndexHi; i++) {
+                    long sourcePartition = txWriter.getPartitionTimestamp(partitionIndexLo + 1);
+
+                    other.trimTo(rootLen);
+                    long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
+                    TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
+                    long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(sourcePartition);
+                    if (sourcePartition == txWriter.getLastPartitionTimestamp()) {
+                        partitionSize = txWriter.getTransientRowCount();
+                    }
+
+                    assert partitionSize > 0;
+                    LOG.info().$("squashing partitions [table=").$(tableToken)
+                            .$(", source=").$ts(sourcePartition).$(", sourceSize=").$(partitionSize)
+                            .$(", target=").$ts(targetPartition).$(", targetSize=").$(targetFrame.getSize()).I$();
+                    try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
+                        FrameAlgebra.append(targetFrame, sourceFrame);
+                    }
+
+                    txWriter.removeAttachedPartitions(sourcePartition);
+                    columnVersionWriter.removePartition(sourcePartition);
+                    partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+                }
+
+                txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getSize());
+                if (txWriter.getPartitionCount() == partitionIndexLo + 1) {
+                    // last partition is merged.
+                    assert !metadata.isWalEnabled();
+                    txWriter.transientRowCount = targetFrame.getSize();
+                    txWriter.fixedRowCount = 0;
+                }
+            } finally {
+                path.trimTo(rootLen);
+                other.trimTo(rootLen);
+            }
+
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+            processPartitionRemoveCandidates();
         }
     }
 

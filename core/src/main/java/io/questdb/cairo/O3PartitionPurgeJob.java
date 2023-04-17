@@ -303,24 +303,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     lo = i;
                     partitionTimestamp = currentPartitionTs;
                 }
-
-//                boolean partitionInTxnFile = txReader.getPartitionIndex(currentPartitionTs) > 0;
-//                if (!partitionInTxnFile) {
-//                    processDetachedPartition(
-//                            ff,
-//                            path,
-//                            tableRootLen,
-//                            txReader,
-//                            txnScoreboard,
-//                            partitionTimestamp,
-//                            partitionBy,
-//                            partitionList,
-//                            lo,
-//                            i + 2
-//                    );
-//                    lo = i;
-//                    partitionTimestamp = currentPartitionTs;
-//                }
             }
             // Tail
             if (n > lo + 2 || txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0) {

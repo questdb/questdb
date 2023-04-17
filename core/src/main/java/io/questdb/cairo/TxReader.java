@@ -228,6 +228,10 @@ public class TxReader implements Closeable, Mutable {
         return partitionCeilMethod.ceil(timestamp);
     }
 
+    public long ceilPartitionTimestamp(long timestamp) {
+        return partitionCeilMethod.ceil(timestamp);
+    }
+
     public long getPartitionNameTxn(int i) {
         return getPartitionNameTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }

@@ -659,8 +659,11 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-10', 60*60*1000000L) ts from long_sequence(1)) timestamp(ts) partition by HOUR", sqlExecutionContext);
+                compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-09T22', 60*60*1000000L) ts" +
+                        " from long_sequence(10)) " +
+                        " timestamp(ts) partition by HOUR", sqlExecutionContext);
 
+                // Remove middle partition
                 TableToken tableToken = engine.getTableToken("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
@@ -680,7 +683,29 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 }
                 runPartitionPurgeJobs();
 
+                // Remove last partition
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T00").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                try (TableReader rdr = getReader("tbl")) {
+                    try (TableReader rdr2 = getReader("tbl")) {
+                        compile("alter table tbl drop partition list '1970-01-10T07'", sqlExecutionContext);
+                        runPartitionPurgeJobs();
+
+                        // This should not fail
+                        rdr2.openPartition(0);
+                    }
+                    runPartitionPurgeJobs();
+
+                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    // This should not fail
+                    rdr.openPartition(0);
+                }
+                runPartitionPurgeJobs();
+
+                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10T07").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });

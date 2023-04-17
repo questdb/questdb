@@ -1083,6 +1083,45 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testDetachAttachSplitPartition() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    String tableName = testName.getMethodName();
+                    node1.getConfigurationOverrides().setPartitionO3SplitThreshold(300);
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        TableToken token = createPopulateTable(
+                                1,
+                                tab.timestamp("ts")
+                                        .col("si", ColumnType.SYMBOL).indexed(true, 250)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s", ColumnType.SYMBOL),
+                                1000,
+                                "2022-06-01",
+                                2
+                        );
+
+                        // Split partition by committing O3 to "2022-06-01"
+                        compile("insert into " + tableName + "(ts) select ts + 12 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
+                        //noinspection resource
+                        Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T120252-799000.1").concat("ts.d");
+                        FilesFacade ff = configuration.getFilesFacade();
+                        Assert.assertTrue(ff.exists(path.$()));
+
+                        // Detach partition "2022-06-01", should squash partition into 1 piece and detach it
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        assertSql("select min(ts) from " + tableName, "min\n" +
+                                "2022-06-02T00:02:52.299000Z\n");
+
+                        renameDetachedToAttachable(tableName, "2022-06-01");
+                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        assertSql("select min(ts) from " + tableName, "min\n" +
+                                "2022-06-01T00:02:52.799000Z\n");
+                    }
+                });
+    }
+
+    @Test
     public void testDetachNonPartitionedNotAllowed() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -1145,39 +1184,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
                                 "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
                                 "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
-                        tableName
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testDetachPartitionLongerName() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(
-                        1,
-                        tab.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        5,
-                        "2022-06-01",
-                        4);
-
-                String timestampDay = "2022-06-02";
-                try (TableWriter writer = getWriter(tableName)) {
-                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
-                }
-                renameDetachedToAttachable(tableName, timestampDay);
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
-                assertContent(
-                        "l\ti\tts\n" +
-                                "1\t1\t2022-06-01T19:11:59.800000Z\n" +
-                                "2\t2\t2022-06-02T14:23:59.600000Z\n" +
-                                "3\t3\t2022-06-03T09:35:59.400000Z\n" +
-                                "4\t4\t2022-06-04T04:47:59.200000Z\n" +
-                                "5\t5\t2022-06-04T23:59:59.000000Z\n",
                         tableName
                 );
             }
@@ -1429,6 +1435,39 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionLongerName() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-02";
+                try (TableWriter writer = getWriter(tableName)) {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                }
+                renameDetachedToAttachable(tableName, timestampDay);
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
+                assertContent(
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\n" +
+                                "2\t2\t2022-06-02T14:23:59.600000Z\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\n",
+                        tableName
+                );
             }
         });
     }
