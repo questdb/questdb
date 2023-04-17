@@ -55,6 +55,7 @@ steps:
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
+        -Dtest.argLine=$(testArgLine)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
@@ -77,6 +78,7 @@ steps:
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
+        -Dtest.argLine=$(testArgLine)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
