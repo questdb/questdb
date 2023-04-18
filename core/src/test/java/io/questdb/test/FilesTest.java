@@ -572,7 +572,6 @@ public class FilesTest {
                     }
                     long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
                     if (valueInMem != valueOnDisk) {
-                        System.out.println("ff.write: different values [offset=" + offset + ", valueInMem=" + valueInMem + ", valueOnDisk=" + valueOnDisk + "]");
                         errors.incrementAndGet();
                         break;
                     }
@@ -583,7 +582,6 @@ public class FilesTest {
                     Unsafe.getUnsafe().putLong(finalMmapMem + offset, valueInMem);
                     long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
                     if (valueInMem != valueOnDisk) {
-                        System.out.println("mmap: different values [offset=" + offset + ", valueInMem=" + valueInMem + ", valueOnDisk=" + valueOnDisk + "]");
                         errors.incrementAndGet();
                         break;
                     }
