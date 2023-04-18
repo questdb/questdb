@@ -79,6 +79,28 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntNonConstant() throws Exception {
+        assertQuery(
+                "nullif\n" +
+                        "5\n" +
+                        "NaN\n" +
+                        "4\n",
+
+                "select nullif(five, four) from x \n" +
+                        "UNION \n" +
+                        "select nullif(five, five) from x \n" +
+                        "UNION \n" +
+                        "select nullif(four, five) from x \n",
+                "create table x as (" +
+                        "SELECT 5 as five, 4 as four" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testIntSimple() throws Exception {
         assertQuery(
                 "int\tnullif\n" +
@@ -110,6 +132,29 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testLongNonConstant() throws Exception {
+        assertQuery(
+                "nullif\n" +
+                        "5\n" +
+                        "NaN\n" +
+                        "4\n",
+
+                "select nullif(five, four) from x \n" +
+                        "UNION \n" +
+                        "select nullif(five, five) from x \n" +
+                        "UNION \n" +
+                        "select nullif(four, five) from x \n",
+                "create table x as (" +
+                        "SELECT 5::long as five, 4::long as four" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
 
     @Test
     public void testLongSimple() throws Exception {
