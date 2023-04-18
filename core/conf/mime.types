@@ -1,4 +1,4 @@
-# This file maps Internet media types to unique file extension(s).
+# This file maps internet media types to unique file extension(s).
 # Although created for httpd, this file is used by many software systems
 # and has been placed in the public domain for unlimited redisribution.
 #
@@ -11,7 +11,7 @@
 # Internet media types should be registered as described in RFC 4288.
 # The registry is at <http://www.iana.org/assignments/media-types/>.
 #
-# MIME type (lowercased)			Extensions
+# MIME type (lowercase)			Extensions
 # ============================================	==========
 # application/1d-interleaved-parityfec
 # application/3gpp-ims+xml
