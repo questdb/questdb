@@ -73,7 +73,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             if (truncate) {
                 long appendOffset = getAppendOffset();
                 truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
-                long sz = Math.min(size, truncateSize);
+                // If this is lazy close of unused memory the underlying file can be already truncated using another fd
+                // and memset can lead to SIGBUS on Linux. Check the phisical file length before trying to memset to the map
+                long sz = Math.min(ff.length(fd), Math.min(size, truncateSize));
                 if (appendOffset < sz) {
                     Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
                 }

@@ -659,6 +659,35 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateSameFileWithDifferentFd() {
+        final Path path = Path.getThreadLocal(root).concat("t.d").$();
+
+        MemoryCMARW rwMem1 = Vm.getCMARWInstance(
+                TestFilesFacadeImpl.INSTANCE,
+                path,
+                Files.PAGE_SIZE,
+                (long) (Files.PAGE_SIZE * 1.5),
+                MemoryTag.MMAP_DEFAULT,
+                configuration.getWriterFileOpenOpts()
+        );
+
+        MemoryCMARW rwMem2 = Vm.getCMARWInstance(
+                TestFilesFacadeImpl.INSTANCE,
+                path,
+                Files.PAGE_SIZE,
+                (long) (Files.PAGE_SIZE * 3.5),
+                MemoryTag.MMAP_DEFAULT,
+                configuration.getWriterFileOpenOpts()
+        );
+
+        rwMem1.close();
+
+        rwMem2.jumpTo((long) (Files.PAGE_SIZE * 2.5));
+        // Assert no errors on close
+        rwMem2.close();
+    }
+
+    @Test
     public void testTruncate() {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1").$()) {
