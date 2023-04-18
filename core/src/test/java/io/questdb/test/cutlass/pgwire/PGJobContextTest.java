@@ -6419,7 +6419,7 @@ nodejs code:
                             ResultSet rs0 = select1.executeQuery();
                             sink.clear();
                             assertResultSet("version[VARCHAR]\n" +
-                                    "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit\n", sink, rs0);
+                                    "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB\n", sink, rs0);
                             rs0.close();
                         }
                         try (PreparedStatement select2 = connection.prepareStatement("select timestamp from y")) {
