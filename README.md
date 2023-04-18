@@ -166,7 +166,7 @@ with contributing:
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   of QuestDB and submit a pull request with your proposed changes.
 
-✨ As a sign of our gratitude, we also send **QuestDB swag** to our
+✨ As a sign of our gratitude, we also send **QuestDB swags** to our
 contributors. [Claim your swag here.](https://questdb.io/community)
 
 A big thanks goes to the following wonderful people who have contributed to
