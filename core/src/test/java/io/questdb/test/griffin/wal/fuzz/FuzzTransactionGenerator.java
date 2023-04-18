@@ -67,9 +67,6 @@ public class FuzzTransactionGenerator {
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
 
-        // To prevent long loops of cancelling rows, limit max probability of cancelling rows
-        probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
-
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
         transactionCount = Math.min(transactionCount, 1_500_000 / rowCount);
 
@@ -142,6 +139,7 @@ public class FuzzTransactionGenerator {
                         maxStrLenForStrColumns,
                         symbols,
                         rnd.nextLong(),
+                        transactionCount,
                         allRowsSameTimestamp
                 );
                 rowCount -= blockRows;
@@ -295,6 +293,7 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
+            long seed,
             long transactionCount,
             boolean allRowsSameTimestamp
     ) {
@@ -313,8 +312,10 @@ public class FuzzTransactionGenerator {
                     timestamp = timestamp + delta / rowCount;
                 }
             }
-            long seed1 = rnd.nextLong();
-            long seed2 = rnd.nextLong();
+            // Use stable random seeds which depends on the transaction index and timestamp
+            // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
+            long seed1 = seed + timestamp;
+            long seed2 = timestamp;
             transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
