@@ -1803,6 +1803,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareParams(responseAsciiSink, "integer_datetimes", "on");
         prepareParams(responseAsciiSink, "client_encoding", "UTF8");
         prepareReadyForQuery();
+        sendRNQ = true;
     }
 
     private void prepareLoginResponse() {
