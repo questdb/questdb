@@ -84,7 +84,6 @@ public class TableReaderReloadBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
-
         TableToken tableToken = new TableToken("test", "test", 0, false);
         writer = new TableWriter(configuration, tableToken, Metrics.disabled());
         writer.truncate();
