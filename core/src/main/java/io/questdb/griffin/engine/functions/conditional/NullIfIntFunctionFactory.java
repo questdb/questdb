@@ -36,7 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullIfIFunctionFactory implements FunctionFactory {
+public class NullIfIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "nullif(II)";
@@ -50,14 +50,14 @@ public class NullIfIFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new NullIfIFunction(args.getQuick(0), args.getQuick(1));
+        return new NullIfIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class NullIfIFunction extends IntFunction implements BinaryFunction {
+    private static class NullIfIntFunction extends IntFunction implements BinaryFunction {
         private final Function intFunc1;
         private final Function intFunc2;
 
-        public NullIfIFunction(Function intFunc1, Function intFunc2) {
+        public NullIfIntFunction(Function intFunc1, Function intFunc2) {
             this.intFunc1 = intFunc1;
             this.intFunc2 = intFunc2;
         }
