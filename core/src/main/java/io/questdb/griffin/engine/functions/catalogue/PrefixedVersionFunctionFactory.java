@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.TableColumnMetadata;
-
-public interface ColumnMetadataCollection {
-    TableColumnMetadata getColumnMetadata(int columnIndex);
+public class PrefixedVersionFunctionFactory extends VersionFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "pg_catalog.version()";
+    }
 }

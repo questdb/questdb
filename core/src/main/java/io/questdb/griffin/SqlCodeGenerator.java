@@ -65,7 +65,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -260,8 +260,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                              int columnSplit,
                                                              RecordValueSink slaveValueSink,
                                                              IntList columnIndex,
-                                                             JoinContext joinContext) {
-        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex, joinContext);
+                                                             JoinContext joinContext,
+                                                             ColumnFilter masterTableKeyColumns) {
+        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
+                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex,
+                joinContext, masterTableKeyColumns);
     }
 
     private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
@@ -276,8 +279,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                            int columnSplit,
                                                            RecordValueSink slaveValueSink,
                                                            IntList columnIndex,
-                                                           JoinContext joinContext) {
-        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex, joinContext);
+                                                           JoinContext joinContext,
+                                                           ColumnFilter masterTableKeyColumns) {
+        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
+                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink,
+                columnIndex, joinContext, masterTableKeyColumns);
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
@@ -499,6 +505,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
             if (intHashSet.excludes(k)) {
+                // if a slave column is not in key, it must be of fixed length.
+                // why? our maps do not support variable length types in values, only in keys
                 if (ColumnType.isVariableLength(slaveMetadata.getColumnType(k))) {
                     throw SqlException
                             .position(joinPosition).put("right side column '")
@@ -507,6 +515,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        // at this point listColumnFilterB has column indexes of the master record that are JOIIN keys
+        // so masterSink writes key columns of master record to a sink
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
@@ -536,89 +546,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList columnIndex = new IntList(slaveMetadata.getColumnCount());
             // In map record value columns go first, so at this stage
             // we add to metadata all slave columns that are not keys.
-            // Add same columns to filter while we are in this loop.
+            // Add the same columns to filter while we are in this loop.
+
+            // We clear listColumnFilterB because after this loop it will
+            // contain indexes of slave table columns that are not keys.
+            ColumnFilter masterTableKeyColumns = listColumnFilterB.copy();
             listColumnFilterB.clear();
             valueTypes.clear();
             ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
-            if (slaveMetadata instanceof AbstractRecordMetadata) {
-                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                    if (intHashSet.excludes(i)) {
-                        final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(i);
-                        metadata.add(slaveAlias, m);
-                        listColumnFilterB.add(i + 1);
-                        columnIndex.add(i);
-                        valueTypes.add(m.getType());
-                        slaveTypes.add(m.getType());
-                    }
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                if (intHashSet.excludes(i)) {
+                    // this is not a key column. Add it to metadata as it is. Symbols columns are kept as symbols
+                    final TableColumnMetadata m = slaveMetadata.getColumnMetadata(i);
+                    metadata.add(slaveAlias, m);
+                    listColumnFilterB.add(i + 1);
+                    columnIndex.add(i);
+                    valueTypes.add(m.getType());
+                    slaveTypes.add(m.getType());
                 }
+            }
 
-                // now add key columns to metadata
-                for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                    int index = listColumnFilterA.getColumnIndexFactored(i);
-                    final TableColumnMetadata m = ((AbstractRecordMetadata) slaveMetadata).getColumnMetadata(index);
-                    if (ColumnType.isSymbol(m.getType())) {
-                        metadata.add(
-                                slaveAlias,
-                                m.getName(),
-                                ColumnType.STRING,
-                                false,
-                                0,
-                                false,
-                                null
-                        );
-                        slaveTypes.add(ColumnType.STRING);
-                    } else {
-                        metadata.add(slaveAlias, m);
-                        slaveTypes.add(m.getType());
-                    }
-                    columnIndex.add(index);
-                }
-            } else {
-                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                    if (intHashSet.excludes(i)) {
-                        int type = slaveMetadata.getColumnType(i);
-                        metadata.add(
-                                slaveAlias,
-                                slaveMetadata.getColumnName(i),
-                                type,
-                                slaveMetadata.isColumnIndexed(i),
-                                slaveMetadata.getIndexValueBlockCapacity(i),
-                                slaveMetadata.isSymbolTableStatic(i),
-                                slaveMetadata.getMetadata(i)
-                        );
-                        listColumnFilterB.add(i + 1);
-                        columnIndex.add(i);
-                        valueTypes.add(type);
-                        slaveTypes.add(type);
-                    }
-                }
-
-                // now add key columns to metadata
-                for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                    int index = listColumnFilterA.getColumnIndexFactored(i);
-                    int type = slaveMetadata.getColumnType(index);
-                    if (ColumnType.isSymbol(type)) {
-                        type = ColumnType.STRING;
-                    }
-                    metadata.add(
-                            slaveAlias,
-                            slaveMetadata.getColumnName(index),
-                            type,
-                            slaveMetadata.isColumnIndexed(i),
-                            slaveMetadata.getIndexValueBlockCapacity(i),
-                            slaveMetadata.isSymbolTableStatic(i),
-                            slaveMetadata.getMetadata(i)
-                    );
-                    columnIndex.add(index);
-                    slaveTypes.add(type);
-                }
+            // now add key columns to metadata
+            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                int index = listColumnFilterA.getColumnIndexFactored(i);
+                final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
+                metadata.add(slaveAlias, m);
+                slaveTypes.add(m.getType());
+                columnIndex.add(index);
             }
 
 
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
-
             return generator.create(
                     configuration,
                     metadata,
@@ -628,16 +588,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     valueTypes,
                     slaveTypes,
                     masterSink,
-                    RecordSinkFactory.getInstance(
+                    RecordSinkFactory.getInstance( // slaveKeySink
                             asm,
                             slaveMetadata,
                             listColumnFilterA,
                             true
                     ),
                     masterMetadata.getColumnCount(),
-                    RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
+                    RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
-                    joinContext
+                    joinContext,
+                    masterTableKeyColumns
             );
 
         } catch (Throwable e) {
@@ -2747,7 +2708,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final QueryColumn qc = columns.getQuick(i);
             if (!(qc instanceof AnalyticColumn)) {
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m = AbstractRecordMetadata.copyOf(baseMetadata, columnIndex);
+                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                 chainMetadata.add(i, m);
                 factoryMetadata.add(i, m);
                 chainTypes.add(i, m.getType());
@@ -2768,7 +2729,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int addAt = columnCount;
         for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
             if (intHashSet.excludes(i)) {
-                final TableColumnMetadata m = AbstractRecordMetadata.copyOf(baseMetadata, i);
+                final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
                 chainMetadata.add(addAt, m);
                 chainTypes.add(addAt, m.getType());
                 listColumnFilterA.extendAndSet(addAt, addAt + 1);
@@ -3015,7 +2976,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             columnCrossIndex.add(index);
 
             if (queryColumn.getAlias() == null) {
-                selectMetadata.add(AbstractRecordMetadata.copyOf(metadata, index));
+                selectMetadata.add(metadata.getColumnMetadata(index));
             } else {
                 selectMetadata.add(
                         new TableColumnMetadata(
@@ -3036,7 +2997,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
-            selectMetadata.add(AbstractRecordMetadata.copyOf(metadata, timestampIndex));
+            selectMetadata.add(metadata.getColumnMetadata(timestampIndex));
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -3079,7 +3040,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = readerMetadata.getColumnType(columnIndex);
 
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
-                distinctColumnMetadata.add(AbstractRecordMetadata.copyOf(readerMetadata, columnIndex));
+                distinctColumnMetadata.add(readerMetadata.getColumnMetadata(columnIndex));
                 if (ColumnType.isSymbol(columnType) || columnType == ColumnType.INT) {
 
                     final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
@@ -3787,6 +3748,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prefixes
         );
 
+        if (prefixes.size() > 0) {
+            if (latestByColumnCount < 1) {
+                throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY clause");
+            } else {
+                for (int i = 0; i < latestByColumnCount; i++) {
+                    int idx = listColumnFilterA.getColumnIndexFactored(i);
+                    if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) ||
+                            !myMeta.isColumnIndexed(idx)) {
+                        throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause requires LATEST BY using only indexed symbol columns");
+                    }
+                }
+            }
+        }
+
         model.setWhereClause(withinExtracted);
 
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
@@ -3836,6 +3811,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getLatestBy().clear();
                     Misc.free(filter);
                     return new EmptyTableRecordCursorFactory(myMeta);
+                }
+
+                if (prefixes.size() > 0 && filter != null) {
+                    throw SqlException.$(whereClauseParser.getWithinPosition(), "WITHIN clause doesn't work with filters");
                 }
 
                 // a sub-query present in the filter may have used the latest by
@@ -4420,14 +4399,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = myMeta.getColumnType(index);
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BOOLEAN:
+                    case ColumnType.BYTE:
                     case ColumnType.CHAR:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
                     case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DOUBLE:
                     case ColumnType.LONG256:
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
                     case ColumnType.UUID:
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
                     case ColumnType.LONG128:
                         // we are reusing collections which leads to confusing naming for this method
                         // keyTypes are types of columns we collect 'latest by' for
@@ -4442,7 +4430,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY");
                 }
             }
         }
@@ -4609,10 +4597,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int typeB = typesB.getColumnType(i);
 
             if (typeA == typeB && typeA != ColumnType.SYMBOL) {
-                metadata.add(AbstractRecordMetadata.copyOf(typesA, i));
+                metadata.add(typesA.getColumnMetadata(i));
             } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
                 // CHAR is "specially" assignable from SHORT, but we don't want that
-                metadata.add(AbstractRecordMetadata.copyOf(typesA, i));
+                metadata.add(typesA.getColumnMetadata(i));
             } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL) {
                 // even though A is assignable to B (e.g. A union B)
                 // set metadata will use A column names
@@ -4656,7 +4644,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnSplit,
                 RecordValueSink slaveValueSink,
                 IntList columnIndex,
-                JoinContext joinContext
+                JoinContext joinContext,
+                ColumnFilter masterTableKeyColumns
         );
     }
 

@@ -395,6 +395,10 @@ public abstract class AbstractCairoTest {
         return false;  // Could not obtain lock.
     }
 
+    protected static TableToken createTable(TableModel model) {
+        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
+    }
+
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
         return new ApplyWal2TableJob(node.getEngine(), 1, 1, null);
     }
@@ -565,10 +569,6 @@ public abstract class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
     }
 
-    protected static TableToken createTable(TableModel model) {
-        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
-    }
-
     protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
@@ -620,7 +620,7 @@ public abstract class AbstractCairoTest {
         WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
     }
 
-    protected enum WalMode {
+    public enum WalMode {
         WITH_WAL, NO_WAL
     }
 

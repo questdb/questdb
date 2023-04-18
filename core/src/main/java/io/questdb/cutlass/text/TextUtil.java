@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class TextUtil {
-    public static void utf8Decode(long lo, long hi, CharSink sink) throws Utf8Exception {
+    public static void utf8ToUtf16(long lo, long hi, CharSink sink) throws Utf8Exception {
         long p = lo;
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
@@ -47,7 +47,7 @@ public class TextUtil {
         }
     }
 
-    public static void utf8DecodeEscConsecutiveQuotes(long lo, long hi, CharSink sink) throws Utf8Exception {
+    public static void utf8ToUtf16EscConsecutiveQuotes(long lo, long hi, CharSink sink) throws Utf8Exception {
         long p = lo;
         int quoteCount = 0;
 

@@ -29,10 +29,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
 
 public class LatestByTest extends AbstractGriffinTest {
@@ -106,6 +106,42 @@ public class LatestByTest extends AbstractGriffinTest {
 
                 timestamp += 10000L;
             }
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedWithPrefixes() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table pos_test\n" +
+                    "( \n" +
+                    "  ts timestamp,\n" +
+                    "  device_id symbol index,\n" +
+                    "  g8c geohash(8c)\n" +
+                    ") timestamp(ts) partition by day;");
+
+            compile("insert into pos_test values " +
+                    "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
+                    "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
+                    "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)");
+
+            String query = "SELECT *\n" +
+                    "FROM pos_test\n" +
+                    "WHERE g8c within(#46swgj10)\n" +
+                    "and ts in '2021-09-02'\n" +
+                    "LATEST ON ts \n" +
+                    "PARTITION BY device_id";
+
+            assertPlan(query,
+                    "LatestByAllIndexed\n" +
+                            "    Index backward scan on: device_id parallel: true\n" +
+                            "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
+                            "    Interval backward scan on: pos_test\n" +
+                            "      intervals: [static=[1630540800000000,1630627199999999]\n");
+
+            //prefix filter is applied AFTER latest on 
+            assertQuery("ts\tdevice_id\tg8c\n" +
+                            "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",
+                    query, "ts", true, true);
         });
     }
 
@@ -344,6 +380,103 @@ public class LatestByTest extends AbstractGriffinTest {
                     true,
                     true);
         });
+    }
+
+    @Test
+    public void testLatestByPartitionByByte() throws Exception {
+        testLatestByPartitionBy("byte", "1", "2");
+    }
+
+    @Test
+    public void testLatestByPartitionByDate() throws Exception {
+        testLatestByPartitionBy("date", "'2020-05-05T00:00:00.000Z'", "'2020-05-06T00:00:00.000Z'");
+    }
+
+    @Test
+    public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
+        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+
+        // forecasts for 2020-05-05
+        compile("insert into forecasts values " +
+                "  ('2020-05-05', '2020-05-02', 40), " +
+                "  ('2020-05-05', '2020-05-03', 41), " +
+                "  ('2020-05-05', '2020-05-04', 42)"
+        );
+
+        // forecasts for 2020-05-06
+        compile("insert into forecasts values " +
+                "  ('2020-05-06', '2020-05-01', 140), " +
+                "  ('2020-05-06', '2020-05-03', 141), " +
+                "  ('2020-05-06', '2020-05-05', 142), " +// this row has the same ts as following one and will be de-duped
+                "  ('2020-05-07', '2020-05-05', 143)"
+        );
+
+        // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
+        String query = "select when, version, temperature from forecasts latest on version partition by version";
+        String expected = "when\tversion\ttemperature\n" +
+                "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t41.0\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
+
+        assertQuery(expected, query, "version", true, true);
+    }
+
+    @Test
+    public void testLatestByPartitionByDouble() throws Exception {
+        testLatestByPartitionBy("double", "0.0", "1.0");
+    }
+
+    @Test
+    public void testLatestByPartitionByFloat() throws Exception {
+        testLatestByPartitionBy("float", "0.0000", "1.0000");
+    }
+
+    @Test
+    public void testLatestByPartitionByGeoByte() throws Exception {
+        testLatestByPartitionBy("geohash(1c)", "#u", "#v");
+    }
+
+    @Test
+    public void testLatestByPartitionByGeoInt() throws Exception {
+        testLatestByPartitionBy("geohash(4c)", "#uuuu", "#vvvv");
+    }
+
+    @Test
+    public void testLatestByPartitionByGeoLong() throws Exception {
+        testLatestByPartitionBy("geohash(7c)", "#uuuuuuu", "#vvvvvvv");
+    }
+
+    @Test
+    public void testLatestByPartitionByGeoShort() throws Exception {
+        testLatestByPartitionBy("geohash(2c)", "#uu", "#vv");
+    }
+
+    @Test
+    public void testLatestByPartitionByTimestamp() throws Exception {
+        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+
+        // forecasts for 2020-05-05
+        compile("insert into forecasts values " +
+                "  ('2020-05-05', '2020-05-02', 40), " +
+                "  ('2020-05-05', '2020-05-03', 41), " +
+                "  ('2020-05-05', '2020-05-04', 42)"
+        );
+
+        // forecasts for 2020-05-06
+        compile("insert into forecasts values " +
+                "  ('2020-05-06', '2020-05-01', 140), " +
+                "  ('2020-05-06', '2020-05-03', 141), " +
+                "  ('2020-05-06', '2020-05-05', 142)"
+        );
+
+        String query = "select when, version, temperature from forecasts latest on version partition by when";
+        String expected = "when\tversion\ttemperature\n" +
+                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
+
+        assertQuery(expected, query, "version", true, true);
     }
 
     @Test
@@ -1013,6 +1146,28 @@ public class LatestByTest extends AbstractGriffinTest {
             }
         }
         return sink.toString();
+    }
+
+    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws SqlException {
+        compile("create table forecasts " +
+                "( when " + partitionByType + ", " +
+                "version timestamp, " +
+                "temperature double) timestamp(version) partition by day");
+        compile("insert into forecasts values " +
+                "  (" + valueA + ", '2020-05-02', 40), " +
+                "  (" + valueA + ", '2020-05-03', 41), " +
+                "  (" + valueA + ", '2020-05-04', 42), " +
+                "  (" + valueB + ", '2020-05-01', 140), " +
+                "  (" + valueB + ", '2020-05-03', 141), " +
+                "  (" + valueB + ", '2020-05-05', 142)"
+        );
+
+        String query = "select when, version, temperature from forecasts latest on version partition by when";
+        String expected = "when\tversion\ttemperature\n" +
+                valueA.replaceAll("'|#", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                valueB.replaceAll("'|#", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+
+        assertQuery(expected, query, "version", true, true);
     }
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {

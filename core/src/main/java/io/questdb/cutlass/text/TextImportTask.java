@@ -465,7 +465,8 @@ public class TextImportTask {
                 CairoEngine cairoEngine,
                 TableStructure tableStructure,
                 CharSequence root,
-                int index, RecordMetadata metadata) {
+                int index, RecordMetadata metadata
+        ) {
             this.cairoEngine = cairoEngine;
             this.tableStructure = tableStructure;
             this.root = root;
@@ -482,14 +483,17 @@ public class TextImportTask {
             TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
 
             final int columnCount = metadata.getColumnCount();
-            try (TableWriter w = new TableWriter(configuration,
-                    tableToken,
-                    cairoEngine.getMessageBus(),
-                    null,
-                    true,
-                    DefaultLifecycleManager.INSTANCE,
-                    root,
-                    cairoEngine.getMetrics())) {
+            try (
+                    TableWriter w = new TableWriter(configuration,
+                            tableToken,
+                            cairoEngine.getMessageBus(),
+                            null,
+                            true,
+                            DefaultLifecycleManager.INSTANCE,
+                            root,
+                            cairoEngine.getMetrics()
+                    )
+            ) {
                 for (int i = 0; i < columnCount; i++) {
                     if (metadata.isColumnIndexed(i)) {
                         w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
@@ -522,15 +526,16 @@ public class TextImportTask {
             this.partitionBy = -1;
         }
 
-        public void of(CairoConfiguration cfg,
-                       CharSequence importRoot,
-                       TableWriter writer,
-                       TableToken tableToken,
-                       CharSequence column,
-                       int columnIndex,
-                       int symbolColumnIndex,
-                       int tmpTableCount,
-                       int partitionBy
+        public void of(
+                CairoConfiguration cfg,
+                CharSequence importRoot,
+                TableWriter writer,
+                TableToken tableToken,
+                CharSequence column,
+                int columnIndex,
+                int symbolColumnIndex,
+                int tmpTableCount,
+                int partitionBy
         ) {
             this.cfg = cfg;
             this.importRoot = importRoot;

@@ -25,10 +25,10 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -2811,6 +2812,20 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertWalFileExist(path, tableToken, walName, "d.k");
                 assertWalFileExist(path, tableToken, walName, "d.o");
                 assertWalFileExist(path, tableToken, walName, "d.v");
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateWithoutKeepingSymbolTablesThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            try (WalWriter walWriter = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+                walWriter.truncate();
+                Assert.fail();
+            } catch (UnsupportedOperationException ex) {
+                TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
             }
         });
     }

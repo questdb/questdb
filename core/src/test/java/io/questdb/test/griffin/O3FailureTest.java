@@ -35,13 +35,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -2799,7 +2799,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_long256(5) l256," +
-                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " timestamp_sequence('2020-02-24T01',1000L) ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2837,7 +2837,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "count\n" +
                         "50020\n",
                 "max\n" +
-                        "2020-02-24T00:00:04.999900Z\n"
+                        "2020-02-24T01:00:00.019000Z\n"
         );
     }
 
@@ -2853,7 +2853,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_str(5,16,2) str," +
-                        " timestamp_sequence('2020-02-24',1000L) ts" +
+                        " timestamp_sequence('2020-02-24T01',1000L) ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
                 executionContext
@@ -2891,7 +2891,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "count\n" +
                         "50020\n",
                 "max\n" +
-                        "2020-02-24T00:00:04.999900Z\n"
+                        "2020-02-24T01:00:00.019000Z\n"
         );
     }
 

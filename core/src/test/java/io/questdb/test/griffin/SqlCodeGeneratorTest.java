@@ -32,17 +32,17 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -5113,39 +5113,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByUnsupportedColumnTypes() throws Exception {
-        // unsupported: [BYTE, DATE, TIMESTAMP, FLOAT, DOUBLE, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY]
+        // unsupported: [BINARY]
         CharSequence createTableDDL = "create table comprehensive as (" +
                 "    select" +
-                "        rnd_byte(2,50) byte, " +
-                "        rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 2) date, " +
-                "        rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 2) timestamp, " +
-                "        rnd_float(2) float, " +
-                "        rnd_double(2) double, " +
-                "        rnd_geohash(5) gbyte, " +
-                "        rnd_geohash(15) gshort, " +
-                "        rnd_geohash(30) gint, " +
-                "        rnd_geohash(60) glong, " +
                 "        rnd_bin(10, 20, 2) binary, " +
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY";
-        assertFailure(
-                "comprehensive latest on ts partition by byte",
-                createTableDDL,
-                40,
-                "byte (BYTE): " + expectedTail);
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH] are supported in LATEST BY";
+        assertCompile(createTableDDL);
         for (String[] nameType : new String[][]{
-                {"date", "DATE"},
-                {"timestamp", "TIMESTAMP"},
-                {"float", "FLOAT"},
-                {"double", "DOUBLE"},
-                {"gbyte", "GEOHASH(1c)"},
-                {"gshort", "GEOHASH(3c)"},
-                {"gint", "GEOHASH(6c)"},
-                {"glong", "GEOHASH(12c)"},
-                {"binary", "BINARY"},
-                {"ts", "TIMESTAMP"}}) {
+                {"binary", "BINARY"}}) {
             assertFailure(
                     "comprehensive latest on ts partition by " + nameType[0],
                     null,
@@ -7643,6 +7621,85 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testWithinClauseWithFilterFails() throws Exception {
+        assertFailure(
+                "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
+                "create table tab as " +
+                        "(" +
+                        " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym) timestamp(ts)",
+                28,
+                "WITHIN clause doesn't work with filters"
+        );
+    }
+
+    @Test
+    public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
+        assertFailure(
+                "select * from tab where geo within(#zz) latest on ts partition by x",
+                "create table tab as " +
+                        "(" +
+                        " select  x, " +
+                        "         rnd_symbol('a', 'b') sym_idx, " +
+                        "         rnd_symbol('c') sym_noidx, " +
+                        "         rnd_geohash(10) geo, " +
+                        "         x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym_idx) timestamp(ts)",
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
+
+        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
+                null,
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+
+        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
+                null,
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+
+        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
+                null,
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+    }
+
+    @Test
+    public void testWithinClauseWithTsFilter() throws Exception {
+        assertQuery("x\tsym\tgeo\tts\n" +
+                        "17\ta\tzz\t1970-01-01T00:00:00.000017Z\n" +
+                        "18\tb\tzz\t1970-01-01T00:00:00.000018Z\n",
+                "select * " +
+                        "from t1 " +
+                        "where geo within(#zz) " +
+                        "and ts < '1970-01-01T00:00:00.000019Z' " +
+                        "latest on ts " +
+                        "partition by sym",
+                "create table t1 as " +
+                        "(" +
+                        " select  x, rnd_symbol('a', 'b') sym, #zz as geo, x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym) timestamp(ts) ", "ts", true, true);
+    }
+
+    @Test
+    public void testWithinClauseWithoutLatestByFails() throws Exception {
+        assertFailure(
+                "select * from tab where geo within(#zz)",
+                "create table tab as " +
+                        "(" +
+                        " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym) timestamp(ts)",
+                28,
+                "WITHIN clause requires LATEST BY clause"
         );
     }
 

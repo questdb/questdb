@@ -433,7 +433,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
     private void assembleLine() {
         int nEntities = lineTcpParser.getEntityCount();
-        Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
+        Chars.utf8toUtf16(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
         int n = 0;
         boolean tagsComplete = false;
         while (n < nEntities) {
@@ -444,12 +444,12 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             } else {
                 sink.put(',');
             }
-            Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), sink);
+            Chars.utf8toUtf16(entity.getName().getLo(), entity.getName().getHi(), sink);
             sink.put('=');
             switch (entity.getType()) {
                 case LineTcpParser.ENTITY_TYPE_STRING:
                     sink.put('"');
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    Chars.utf8toUtf16(entity.getValue().getLo(), entity.getValue().getHi(), sink);
                     sink.put('"');
                     break;
                 case LineTcpParser.ENTITY_TYPE_INTEGER:
@@ -457,7 +457,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                     sink.put(entity.getValue()).put('i');
                     break;
                 default:
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    Chars.utf8toUtf16(entity.getValue().getLo(), entity.getValue().getHi(), sink);
                     break;
             }
         }
@@ -487,7 +487,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                         assembleLine();
                     } else {
                         final StringSink tmpSink = new StringSink();
-                        if (Chars.utf8Decode(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
+                        if (Chars.utf8toUtf16(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
                             sink.put(tmpSink.toString());
                         }
                         sink.put("--ERROR=");

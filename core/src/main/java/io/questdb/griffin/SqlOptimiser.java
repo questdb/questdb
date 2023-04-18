@@ -109,6 +109,8 @@ class SqlOptimiser {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    private CharSequence tempColumnAlias;
+    private QueryModel tempQueryModel;
 
     SqlOptimiser(
             CairoConfiguration configuration,
@@ -354,7 +356,7 @@ class SqlOptimiser {
 
     //add table prefix to all column references to make it easier to compare expressions  
     private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel) throws SqlException {
-        this.sqlNodeStack.clear();
+        sqlNodeStack.clear();
 
         ExpressionNode temp = replaceIfUnaliasedLiteral(node, baseModel);
         if (temp != node) {
@@ -365,13 +367,13 @@ class SqlOptimiser {
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
                         temp = replaceIfUnaliasedLiteral(node.rhs, baseModel);
                         if (node.rhs == temp) {
-                            this.sqlNodeStack.push(node.rhs);
+                            sqlNodeStack.push(node.rhs);
                         } else {
                             node.rhs = temp;
                         }
@@ -393,7 +395,7 @@ class SqlOptimiser {
                         ExpressionNode e = node.args.getQuick(i);
                         temp = replaceIfUnaliasedLiteral(e, baseModel);
                         if (e == temp) {
-                            this.sqlNodeStack.push(e);
+                            sqlNodeStack.push(e);
                         } else {
                             node.args.setQuick(i, temp);
                         }
@@ -409,7 +411,7 @@ class SqlOptimiser {
                     }
                 }
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
     }
@@ -860,7 +862,7 @@ class SqlOptimiser {
                 if (functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                     return true;
                 }
-                this.sqlNodeStack.push(node.rhs);
+                sqlNodeStack.push(node.rhs);
             }
 
             if (node.lhs != null) {
@@ -870,7 +872,7 @@ class SqlOptimiser {
                 node = node.lhs;
             } else {
                 if (!sqlNodeStack.isEmpty()) {
-                    node = this.sqlNodeStack.poll();
+                    node = sqlNodeStack.poll();
                 } else {
                     node = null;
                 }
@@ -1066,7 +1068,7 @@ class SqlOptimiser {
         }
     }
 
-    //add existing group by column to outer & distinct models
+    // add existing group by column to outer & distinct models
     private boolean createSelectColumn(
             CharSequence alias,
             CharSequence columnName,
@@ -1496,13 +1498,13 @@ class SqlOptimiser {
             ObjList<ExpressionNode> groupByNodes,
             ObjList<CharSequence> groupByAliases
     ) throws SqlException {
-        this.sqlNodeStack.clear();
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.rhs != null) {
                     ExpressionNode n = replaceIfAggregateOrLiteral(node.rhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
                     if (node.rhs == n) {
-                        this.sqlNodeStack.push(node.rhs);
+                        sqlNodeStack.push(node.rhs);
                     } else {
                         node.rhs = n;
                     }
@@ -1516,7 +1518,7 @@ class SqlOptimiser {
                     node = null;
                 }
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
     }
@@ -1544,12 +1546,12 @@ class SqlOptimiser {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         boolean replaced = false;
-        this.sqlNodeStack.clear();
+        sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
 
                 if (node.rhs != null) {
@@ -1562,7 +1564,7 @@ class SqlOptimiser {
                             sqlExecutionContext
                     );
                     if (node.rhs == n) {
-                        this.sqlNodeStack.push(node.rhs);
+                        sqlNodeStack.push(node.rhs);
                     } else {
                         node.rhs = n;
                         replaced = true;
@@ -1585,7 +1587,7 @@ class SqlOptimiser {
                     replaced = true;
                 }
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
         return replaced;
@@ -1600,18 +1602,18 @@ class SqlOptimiser {
             boolean analyticCall
     ) throws SqlException {
 
-        this.sqlNodeStack.clear();
+        sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
                         ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel, analyticCall);
                         if (node.rhs == n) {
-                            this.sqlNodeStack.push(node.rhs);
+                            sqlNodeStack.push(node.rhs);
                         } else {
                             node.rhs = n;
                         }
@@ -1629,7 +1631,7 @@ class SqlOptimiser {
                         ExpressionNode e = node.args.getQuick(i);
                         ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, analyticCall);
                         if (e == n) {
-                            this.sqlNodeStack.push(e);
+                            sqlNodeStack.push(e);
                         } else {
                             node.args.setQuick(i, n);
                         }
@@ -1645,25 +1647,25 @@ class SqlOptimiser {
                     }
                 }
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
     }
 
     private void emitLiteralsTopDown(@Transient ExpressionNode node, QueryModel model) {
-        this.sqlNodeStack.clear();
+        sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
         addTopDownColumn(node, model);
 
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
                         addTopDownColumn(node.rhs, model);
-                        this.sqlNodeStack.push(node.rhs);
+                        sqlNodeStack.push(node.rhs);
                     }
 
                     if (node.lhs != null) {
@@ -1674,7 +1676,7 @@ class SqlOptimiser {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
                         addTopDownColumn(e, model);
-                        this.sqlNodeStack.push(e);
+                        sqlNodeStack.push(e);
                     }
 
                     final ExpressionNode e = node.args.getQuick(0);
@@ -1682,7 +1684,7 @@ class SqlOptimiser {
                     node = e;
                 }
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
     }
@@ -1843,14 +1845,32 @@ class SqlOptimiser {
         return column;
     }
 
+    private CharSequence getTranslatedColumnAlias(QueryModel model, QueryModel stopModel, CharSequence token) {
+        if (model == stopModel) {
+            return token;
+        }
+
+        CharSequence nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
+        if (nestedAlias != null) {
+            CharSequence alias = model.getColumnNameToAliasMap().get(nestedAlias);
+            if (alias == null) {
+                tempQueryModel = model;
+                tempColumnAlias = nestedAlias;
+            }
+            return alias;
+        } else {
+            return null;
+        }
+    }
+
     private boolean hasAggregates(ExpressionNode node) {
 
-        this.sqlNodeStack.clear();
+        sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 switch (node.type) {
                     case LITERAL:
@@ -1863,16 +1883,28 @@ class SqlOptimiser {
                         break;
                     default:
                         if (node.rhs != null) {
-                            this.sqlNodeStack.push(node.rhs);
+                            sqlNodeStack.push(node.rhs);
                         }
                         break;
                 }
 
                 node = node.lhs;
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
+        return false;
+    }
+
+    private boolean hasAnalyticColumn(QueryModel limitModel) {
+        ObjList<QueryColumn> columns = limitModel.getColumns();
+
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i) instanceof AnalyticColumn) {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -3186,7 +3218,7 @@ class SqlOptimiser {
                                                           QueryModel groupByModel,
                                                           ObjList<ExpressionNode> groupByNodes,
                                                           ObjList<CharSequence> groupByAliases) throws SqlException {
-        this.sqlNodeStack.clear();
+        sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
@@ -3198,13 +3230,13 @@ class SqlOptimiser {
 
         ExpressionNode node = topLevelNode;
 
-        while (!this.sqlNodeStack.isEmpty() || node != null) {
+        while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
                         temp = replaceIfGroupByExpressionOrAggregate(node.rhs, groupByModel, groupByNodes, groupByAliases);
                         if (node.rhs == temp) {
-                            this.sqlNodeStack.push(node.rhs);
+                            sqlNodeStack.push(node.rhs);
                         } else {
                             node.rhs = temp;
                         }
@@ -3226,7 +3258,7 @@ class SqlOptimiser {
                         ExpressionNode e = node.args.getQuick(i);
                         temp = replaceIfGroupByExpressionOrAggregate(e, groupByModel, groupByNodes, groupByAliases);
                         if (e == temp) {
-                            this.sqlNodeStack.push(e);
+                            sqlNodeStack.push(e);
                         } else {
                             node.args.setQuick(i, temp);
                         }
@@ -3242,7 +3274,7 @@ class SqlOptimiser {
                     }
                 }
             } else {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             }
         }
 
@@ -3424,6 +3456,40 @@ class SqlOptimiser {
                         if (index < 0) {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
+
+                            tempQueryModel = null;
+                            tempColumnAlias = null;
+
+                            // if necessary, propagate column to limit model that'll receive order by 
+                            if (limitModel != baseParent &&
+                                    !hasAnalyticColumn(limitModel) && // analytic model doesn't support aliases
+                                    getTranslatedColumnAlias(limitModel, baseParent, orderBy.token) == null) {
+                                //add column ref to the most-nested model that doesn't have it  
+                                alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOf(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
+                                tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
+
+                                //and then push to upper models 
+                                QueryModel m = limitModel;
+                                while (m != tempQueryModel) {
+                                    m.addBottomUpColumn(nextColumn(alias));
+                                    m = m.getNestedModel();
+                                }
+
+                                tempQueryModel = null;
+                                tempColumnAlias = null;
+                                orderBy.token = alias;
+
+                                //if necessary, add external model to maintain output  
+                                if (limitModel == model && wrapper == null) {
+                                    wrapper = queryModelPool.next();
+                                    wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                    for (int j = 0; j < modelColumnCount; j++) {
+                                        wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
+                                    }
+                                    result = wrapper;
+                                    wrapper.setNestedModel(model);
+                                }
+                            }
                         } else {
                             if (dot > -1 && !base.getModelAliasIndexes().contains(column, 0, dot)) {
                                 throw SqlException.invalidColumn(orderBy.position, column);
@@ -3682,6 +3748,9 @@ class SqlOptimiser {
     private QueryModel rewriteSelectClause0(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         assert model.getNestedModel() != null;
 
+        groupByAliases.clear();
+        groupByNodes.clear();
+
         final QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
         final QueryModel distinctModel = queryModelPool.next();
@@ -3717,7 +3786,7 @@ class SqlOptimiser {
 
         if (baseModel.getGroupBy().size() > 0) {
             groupByModel.moveGroupByFrom(baseModel);
-            useGroupByModel = true;//group by should be implemented even if there are no aggregate functions 
+            useGroupByModel = true; // group by should be implemented even if there are no aggregate functions
         }
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
@@ -3777,13 +3846,13 @@ class SqlOptimiser {
         }
 
         boolean outerVirtualIsSelectChoose = true;
-        //if there are explicit group by columns then nothing else should go to group by model
-        //select columns should either match group by columns exactly or go to outer virtual model
+        // if there are explicit group by columns then nothing else should go to group by model
+        // select columns should either match group by columns exactly or go to outer virtual model
         ObjList<ExpressionNode> groupBy = groupByModel.getGroupBy();
         boolean explicitGroupBy = groupBy.size() > 0;
 
         if (explicitGroupBy) {
-            // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls   
+            // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 ExpressionNode node = groupBy.getQuick(i);
                 CharSequence alias = null;
@@ -3803,10 +3872,10 @@ class SqlOptimiser {
                         node = qc.getAst();
                         alias = qc.getAlias();
                     }
-                } else if (node.type == CONSTANT) {//group by column index
+                } else if (node.type == CONSTANT) { // group by column index
                     try {
                         int columnIdx = Numbers.parseInt(node.token);
-                        //group by column index is 1-based
+                        // group by column index is 1-based
                         if (columnIdx < 1 || columnIdx > columns.size()) {
                             throw SqlException.$(node.position, "GROUP BY position ").put(columnIdx).put(" is not in select list");
                         }
@@ -3818,7 +3887,7 @@ class SqlOptimiser {
                         node = qc.getAst();
                         alias = qc.getAlias();
                     } catch (NumericException e) {
-                        //ignore
+                        // ignore
                     }
                 }
 
@@ -3827,7 +3896,7 @@ class SqlOptimiser {
                 }
 
                 addMissingTablePrefixes(node, baseModel);
-                //ignore duplicates in group by 
+                // ignore duplicates in group by
                 if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
                     continue;
                 }
@@ -3919,14 +3988,13 @@ class SqlOptimiser {
                             throw SqlException.$(qc.getAst().position, "column must appear in GROUP BY clause or aggregate function");
                         }
 
-                        boolean sameAlias =
-                                createSelectColumn(
-                                        qc.getAlias(),
-                                        groupByAliases.get(matchingColIdx),
-                                        groupByModel,
-                                        outerVirtualModel,
-                                        distinctModel
-                                );
+                        boolean sameAlias = createSelectColumn(
+                                qc.getAlias(),
+                                groupByAliases.get(matchingColIdx),
+                                groupByModel,
+                                outerVirtualModel,
+                                distinctModel
+                        );
                         if (sameAlias && i == matchingColIdx) {
                             groupByUsed.set(matchingColIdx, true);
                         } else {
@@ -3995,7 +4063,7 @@ class SqlOptimiser {
 
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:
-                        // select sum(a)+sum(b) ....
+                        // select sum(a)+sum(b) ...
                         QueryColumn ref = nextColumn(qc.getAlias());
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
@@ -4436,7 +4504,7 @@ class SqlOptimiser {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
                         checkIsNotAggregateOrWindowFunction(node.rhs, model);
-                        this.sqlNodeStack.push(node.rhs);
+                        sqlNodeStack.push(node.rhs);
                     }
 
                     if (node.lhs != null) {
@@ -4444,7 +4512,7 @@ class SqlOptimiser {
                         node = node.lhs;
                     } else {
                         if (!sqlNodeStack.isEmpty()) {
-                            node = this.sqlNodeStack.poll();
+                            node = sqlNodeStack.poll();
                         } else {
                             node = null;
                         }
@@ -4453,7 +4521,7 @@ class SqlOptimiser {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
                         checkIsNotAggregateOrWindowFunction(e, model);
-                        this.sqlNodeStack.push(e);
+                        sqlNodeStack.push(e);
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
@@ -4491,6 +4559,8 @@ class SqlOptimiser {
         groupByAliases.clear();
         groupByNodes.clear();
         groupByUsed.clear();
+        tempColumnAlias = null;
+        tempQueryModel = null;
     }
 
     QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {

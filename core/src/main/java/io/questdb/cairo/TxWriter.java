@@ -139,9 +139,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-
         if (prevRecordStructureVersion == recordStructureVersion && prevRecordBaseOffset > 0) {
-
             // Optimisation for the case where commit appends rows to the last partition only
             // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
             writeBaseOffset = prevRecordBaseOffset;
@@ -158,7 +156,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
             super.switchRecord(writeBaseOffset, writeAreaSize); // writeAreaSize should be between records
-            this.readBaseOffset = writeBaseOffset;
+            readBaseOffset = writeBaseOffset;
 
             prevTransientRowCount = transientRowCount;
             prevMinTimestamp = minTimestamp;
@@ -296,10 +294,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.extensionListener = extensionListener;
     }
 
-    public void setMaxTimestamp(long timestamp) {
-        this.maxTimestamp = timestamp;
-    }
-
     public void setLagMaxTimestamp(long timestamp) {
         lagMaxTimestamp = timestamp;
     }
@@ -318,6 +312,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setLagTxnCount(int txnCount) {
         lagTxnCount = txnCount;
+    }
+
+    public void setMaxTimestamp(long timestamp) {
+        this.maxTimestamp = timestamp;
     }
 
     public void setMinTimestamp(long timestamp) {
@@ -369,7 +367,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void truncate(long columnVersion) {
+    public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
@@ -390,6 +388,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 columnVersion,
                 truncateVersion
         );
+        storeSymbolCounts(symbolCountProviders);
         finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, 0, CommitMode.NOSYNC);
     }
 

@@ -24,6 +24,8 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
@@ -135,6 +137,10 @@ public interface CharSink extends CharSinkBase {
         return this;
     }
 
+    default CharSink putEOL() {
+        return put(Misc.EOL);
+    }
+
     default CharSink putISODate(long value) {
         TimestampFormatUtils.appendDateTimeUSec(this, value);
         return this;
@@ -160,6 +166,11 @@ public interface CharSink extends CharSinkBase {
         } else {
             put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
         }
+        return this;
+    }
+
+    default CharSink putUtf8(long lo, long hi) {
+        Chars.utf8toUtf16(lo, hi, this);
         return this;
     }
 

@@ -213,11 +213,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 this.pageAddress = TableUtils.mremap(
                         ff,
                         fd,
-                        this.pageAddress,
-                        this.size,
+                        pageAddress,
+                        size,
                         sz,
                         Files.MAP_RW,
-                        memoryTag);
+                        memoryTag
+                );
             } catch (Throwable e) {
                 appendAddress = pageAddress;
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
@@ -276,7 +277,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.pageAddress = TableUtils.mremap(
                     ff,
                     fd,
-                    this.pageAddress,
+                    pageAddress,
                     previousSize,
                     newSize,
                     Files.MAP_RW,

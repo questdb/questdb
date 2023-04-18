@@ -79,6 +79,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private double collAddProb;
     private double collRemoveProb;
     private double dataAddProb;
+    private double equalTsRowsProb;
     private int fuzzRowCount;
     private int initialRowCount;
     private boolean isO3;
@@ -108,24 +109,24 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01);
+        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01);
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1);
-        runFuzz(TestUtils.generateRandom(LOG));
+        runFuzz(rnd);
     }
 
     @Test
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.01);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05);
-        setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01);
+        setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd);
     }
@@ -140,11 +141,30 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01);
-        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01);
+        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalWriteEqualTimestamp() throws Exception {
+        configOverrideO3QuickSortEnabled(true);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.5);
+        setFuzzCounts(
+                true,
+                5000,
+                800,
+                10,
+                10,
+                10,
+                50,
+                1
+        );
+        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        runFuzz(rnd, testName.getMethodName(), 1, false, false);
     }
 
     @Test
@@ -167,7 +187,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteManySmallTransactions() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01);
         setFuzzCounts(
                 true,
                 1000,
@@ -191,7 +211,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         long s1 = rnd.getSeed1();
         int tableCount = 3;
         try {
-            setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001);
+            setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01);
             setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
             String tableNameBase = testName.getMethodName();
             runFuzz(rnd, tableNameBase, tableCount, false, false);
@@ -202,26 +222,37 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd1 = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01);
-        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd1);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
     }
 
     @Test
     public void testWalWriteRollbackHeavyToFix() throws Exception {
-        Rnd rnd1 = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01);
-        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd1);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
     }
 
     @Test
     public void testWalWriteRollbackTruncateHeavy() throws Exception {
-        Rnd rnd1 = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15);
-        setFuzzCounts(rnd1.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd1);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15, 0.01);
+        setFuzzCounts(rnd.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalWriteTinyO3Memory() throws Exception {
+        final int o3MemorySize = 256;
+        configOverrideO3ColumnMemorySize(o3MemorySize);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01);
+        setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
+        runFuzz(rnd, testName.getMethodName(), 1, false, false);
+        Assert.assertEquals(o3MemorySize, node1.getConfigurationOverrides().getO3ColumnMemorySize());
     }
 
     @Test
@@ -229,7 +260,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(5));
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01);
         setFuzzCounts(
                 true,
                 1000,
@@ -246,9 +277,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWriteO3DataOnlyBig() throws Exception {
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01);
-        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         Rnd rnd = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01);
+        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         runFuzz(rnd);
     }
@@ -505,6 +536,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                     colRenameProb,
                     dataAddProb,
                     truncateProb,
+                    equalTsRowsProb,
                     strLen,
                     generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableNameNoWal)
             );
@@ -537,7 +569,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.1 * rnd.nextDouble()
+                0.1 * rnd.nextDouble(), 0.01
         );
 
         setFuzzCounts(
@@ -619,7 +651,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
         assertMemoryLeak(() -> {
-
             String tableNameBase = testName.getMethodName();
             String tableNameWal = tableNameBase + "_wal";
             String tableNameWal2 = tableNameBase + "_wal_parallel";
@@ -652,6 +683,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         colRenameProb,
                         dataAddProb,
                         truncateProb,
+                        equalTsRowsProb,
                         strLen,
                         generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableNameNoWal)
                 );
@@ -703,7 +735,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                             rnd.nextDouble(),
                             rnd.nextDouble(),
                             rnd.nextDouble(),
-                            0.1 * rnd.nextDouble()
+                            0.1 * rnd.nextDouble(), 0.01
                     );
                 }
                 if (randomiseCounts) {
@@ -770,7 +802,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.partitionCount = partitionCount;
     }
 
-    private void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb) {
+    private void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -780,6 +812,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.colRenameProb = colRenameProb;
         this.dataAddProb = dataAddProb;
         this.truncateProb = truncateProb;
+        this.equalTsRowsProb = equalTsRowsProb;
     }
 
     private void setFuzzProperties(long maxApplyTimePerTable) {

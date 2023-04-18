@@ -139,6 +139,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
+        if (frameIndex == -1) {
+            return -1;
+        }
         return rowCount;
     }
 
