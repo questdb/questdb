@@ -111,7 +111,7 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     default int getStatus(Path path, TableToken tableName) {
-        return getCairoEngine().getStatus(path, tableName);
+        return getCairoEngine().getTableStatus(path, tableName);
     }
 
     default TableToken getTableToken(CharSequence tableName) {

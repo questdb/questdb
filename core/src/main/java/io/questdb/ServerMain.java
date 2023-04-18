@@ -233,7 +233,7 @@ public class ServerMain implements Closeable {
         }
     }
 
-    public CairoEngine getCairoEngine() {
+    public CairoEngine getEngine() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");
         }

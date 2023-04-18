@@ -55,7 +55,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start(); // <== no effect
                 serverMain.close();
                 try {
-                    serverMain.getCairoEngine();
+                    serverMain.getEngine();
                 } catch (IllegalStateException ex) {
                     TestUtils.assertContains("close was called", ex.getMessage());
                 }
@@ -95,7 +95,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 Assert.assertNotNull(serverMain.getConfiguration());
-                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getEngine());
                 Assert.assertNotNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());
                 Assert.assertFalse(serverMain.hasBeenClosed());

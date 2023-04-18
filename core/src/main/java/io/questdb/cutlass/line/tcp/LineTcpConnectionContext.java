@@ -26,13 +26,14 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.CommitFailedException;
-import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -46,6 +47,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final long checkIdleInterval;
     private final long commitInterval;
+    private final LineTcpReceiverConfiguration configuration;
     private final boolean disconnectOnError;
     private final long idleTimeout;
     private final Metrics metrics;
@@ -58,12 +60,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected long recvBufPos;
     protected long recvBufStart;
     protected long recvBufStartOfMeasurement;
+    protected SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+        this.configuration = configuration;
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
@@ -94,6 +98,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public void clear() {
+        securityContext = DenyAllSecurityContext.INSTANCE;
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
@@ -171,6 +176,16 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         } finally {
             netIoJob.releaseWalTableDetails();
         }
+    }
+
+    @Override
+    public LineTcpConnectionContext of(int fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
+        // when security context has not been set by anything else (subclass) we assume
+        // this is an authenticated, anonymous user
+        if (securityContext == DenyAllSecurityContext.INSTANCE) {
+            securityContext = configuration.getSecurityContextFactory().getInstance(null, false);
+        }
+        return super.of(fd, dispatcher);
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -255,7 +270,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected SecurityContext getSecurityContext() {
-        return AllowAllSecurityContext.INSTANCE;
+        return securityContext;
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {

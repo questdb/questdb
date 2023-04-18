@@ -115,11 +115,11 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
@@ -135,8 +135,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 List<SqlCompiler> compilers = new ArrayList<>(numThreads);
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine());
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine());
                     compilers.add(compiler);
                     contexts.add(context);
                     new Thread(() -> {

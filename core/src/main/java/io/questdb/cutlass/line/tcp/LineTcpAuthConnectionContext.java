@@ -62,7 +62,6 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private AuthState authState;
     private boolean authenticated;
     private PublicKey pubKey;
-    private SecurityContext securityContext;
 
     public LineTcpAuthConnectionContext(
             LineTcpReceiverConfiguration configuration,

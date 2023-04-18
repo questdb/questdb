@@ -179,11 +179,11 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
 
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();

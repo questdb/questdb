@@ -296,7 +296,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public boolean scheduleEvent(
-                    SecurityContext securityContext, NetworkIOJob netIoJob,
+                    SecurityContext securityContext,
+                    NetworkIOJob netIoJob,
                     LineTcpConnectionContext context,
                     LineTcpParser parser
             ) {

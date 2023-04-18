@@ -443,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public int getStatus(Path path, TableToken tableToken) {
+    public int getTableStatus(Path path, TableToken tableToken) {
         if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
             return TableUtils.TABLE_RESERVED;
         }
@@ -451,6 +451,14 @@ public class CairoEngine implements Closeable, WriterSource {
             return TableUtils.TABLE_DOES_NOT_EXIST;
         }
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
+    }
+
+    public int getTableStatus(CharSequence tableName) {
+        TableToken tableToken = getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            return TableUtils.TABLE_DOES_NOT_EXIST;
+        }
+        return getTableStatus(Path.getThreadLocal(configuration.getRoot()), tableToken);
     }
 
     public IDGenerator getTableIdGenerator() {

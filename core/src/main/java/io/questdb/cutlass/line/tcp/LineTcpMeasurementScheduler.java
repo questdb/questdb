@@ -270,13 +270,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (tud == null) {
                 tud = netIoJob.getLocalTableDetails(measurementName);
                 if (tud == null) {
-                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
+                    tud = getTableUpdateDetailsFromSharedArea(securityContext, netIoJob, ctx, parser);
                 }
             } else if (tud.isWriterInError()) {
                 TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
                 assert tud == removed;
                 removed.close();
-                tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser, securityContext);
+                tud = getTableUpdateDetailsFromSharedArea(securityContext, netIoJob, ctx, parser);
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
@@ -300,7 +300,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                appendToWal(netIoJob, parser, tud);
+                appendToWal(securityContext, netIoJob, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -316,7 +316,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             return false;
         }
-        return dispatchEvent(netIoJob, parser, tud);
+        return dispatchEvent(securityContext, netIoJob, parser, tud);
     }
 
     private static long getEventSlotSize(int maxMeasurementSize) {
@@ -332,7 +332,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
     }
 
-    private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+    private void appendToWal(SecurityContext securityContext, NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
@@ -358,10 +358,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (columnIndex == COLUMN_NOT_FOUND) {
                 final String columnNameUtf16 = ld.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
-                    if (metadata.getColumnIndexQuiet(columnNameUtf16) < 0) {
+                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                    if (columnIndex < 0) {
+                        securityContext.authorizeAlterTableAddColumn(ww.getTableToken());
                         tud.commit(false);
                         try {
                             ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
+                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         } catch (CairoException e) {
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             if (columnIndex < 0) {
@@ -371,7 +374,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             // all good, someone added the column concurrently
                         }
                     }
-                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                     columnType = metadata.getColumnType(columnIndex);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(tud, columnNameUtf16);
@@ -647,6 +649,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private boolean dispatchEvent(
+            SecurityContext securityContext,
             NetworkIOJob netIoJob,
             LineTcpParser parser,
             TableUpdateDetails tud
@@ -658,7 +661,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (tud.isWriterInError()) {
                     throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
                 }
-                queue[writerThreadId].get(seq).createMeasurementEvent(tud, parser, netIoJob.getWorkerId());
+                queue[writerThreadId].get(seq).createMeasurementEvent(securityContext, tud, parser, netIoJob.getWorkerId());
             } finally {
                 pubSeq[writerThreadId].done(seq);
             }
@@ -669,10 +672,10 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private TableUpdateDetails getTableUpdateDetailsFromSharedArea(
+            SecurityContext securityContext,
             @NotNull NetworkIOJob netIoJob,
             @NotNull LineTcpConnectionContext ctx,
-            @NotNull LineTcpParser parser,
-            SecurityContext securityContext
+            @NotNull LineTcpParser parser
     ) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
@@ -690,7 +693,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
                 TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
-                int status = engine.getStatus(path, tableToken);
+                int status = engine.getTableStatus(path, tableToken);
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
                         throw CairoException.nonCritical()
@@ -709,8 +712,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
-                    LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
                     tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+                    LOG.info().$("created table [tableName=").$(tableNameUtf16).I$();
                 }
 
                 // by the time we get here, definitely exists on disk

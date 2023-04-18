@@ -80,13 +80,13 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine())
             ) {
-                CairoEngine engine1 = qdb.getCairoEngine();
+                CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
                 ) {
                     qdb.start();
-                    CairoEngine engine = qdb.getCairoEngine();
+                    CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
                     Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getWorkerPoolConfiguration().getWorkerCount());
@@ -105,13 +105,13 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine())
             ) {
-                CairoEngine engine1 = qdb.getCairoEngine();
+                CairoEngine engine1 = qdb.getEngine();
                 try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine1)
                 ) {
                     qdb.start();
-                    CairoEngine engine = qdb.getCairoEngine();
+                    CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
                     Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getWorkerPoolConfiguration().getWorkerCount());

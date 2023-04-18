@@ -189,7 +189,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(path, engine.getTableTokenIfExists(tableName)));
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
         }
     }
 

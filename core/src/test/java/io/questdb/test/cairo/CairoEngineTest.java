@@ -241,7 +241,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertReader(engine, x);
                 assertWriter(engine, x);
                 engine.drop(path, x);
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, x));
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
 
                 try {
                     engine.getReader(x);
@@ -263,7 +263,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             TableToken x = createX(engine);
             engine.drop(path, x);
-            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, x));
+            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
         }
     }
 

@@ -82,7 +82,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 questdb.start();
                 createTable(tableName, "WAL");
 
-                final CairoEngine engine = questdb.getCairoEngine();
+                final CairoEngine engine = questdb.getEngine();
                 final TableToken token = engine.verifyTableName(tableName);
 
                 try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
@@ -121,7 +121,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
             try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
 
-                final CairoEngine engine = questdb.getCairoEngine();
+                final CairoEngine engine = questdb.getEngine();
                 final TableToken token = engine.verifyTableName(tableName);
                 assertFalse(engine.isWalTable(token));
 

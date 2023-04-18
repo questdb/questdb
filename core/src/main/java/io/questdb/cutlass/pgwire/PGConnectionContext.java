@@ -2578,7 +2578,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TableToken tableToken = engine.getTableTokenIfExists(textLoader.getTableName());
         if (
-                TableUtils.TABLE_EXISTS == engine.getStatus(
+                TableUtils.TABLE_EXISTS == engine.getTableStatus(
                         path,
                         tableToken
                 )

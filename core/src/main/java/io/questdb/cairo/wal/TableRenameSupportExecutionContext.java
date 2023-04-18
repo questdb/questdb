@@ -62,7 +62,7 @@ class TableRenameSupportExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public int getStatus(Path path, TableToken tableName) {
-        return getCairoEngine().getStatus(path, this.tableToken);
+        return getCairoEngine().getTableStatus(path, this.tableToken);
     }
 
     @Override

@@ -125,6 +125,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
+        public CairoSecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
+        }
+
+        @Override
         public boolean isEnabled() {
             return enableLineTcp;
         }

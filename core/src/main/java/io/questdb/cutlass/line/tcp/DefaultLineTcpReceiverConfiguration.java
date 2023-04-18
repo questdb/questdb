@@ -92,7 +92,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public int getConnectionPoolInitialCapacity() {
-        return 64;
+        return 4;
     }
 
     @Override

@@ -108,11 +108,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
 
                 // create non wal table in volume, and drop it
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
@@ -142,11 +142,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                final CairoEngine engine = qdb.getCairoEngine();
+                final CairoEngine engine = qdb.getEngine();
 
                 // create normal table in standard dir, then drop it
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, false, false);
@@ -181,11 +181,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // create table with some data
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, false, true, false);
                 assertSql(
                         compiler,
@@ -225,8 +225,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // check content of table after sym-linking it
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
                 assertSql(
@@ -235,7 +235,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         new StringSink(),
                         TABLE_START_CONTENT);
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 assertTableExists(tableToken, false, true);
                 dropTable(compiler, context, tableToken);
@@ -250,17 +250,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
+                    SqlCompiler compiler0 = new SqlCompiler(qdb.getEngine());
+                    SqlCompiler compiler1 = new SqlCompiler(qdb.getEngine())
             ) {
-                CairoEngine engine2 = qdb.getCairoEngine();
+                CairoEngine engine2 = qdb.getEngine();
                 try (SqlExecutionContext context0 = createSqlExecutionCtx(engine2)
                 ) {
-                    CairoEngine engine1 = qdb.getCairoEngine();
+                    CairoEngine engine1 = qdb.getEngine();
                     try (SqlExecutionContext context1 = createSqlExecutionCtx(engine1)
                     ) {
                         qdb.start();
-                        CairoEngine engine = qdb.getCairoEngine();
+                        CairoEngine engine = qdb.getEngine();
 
                         CyclicBarrier startBarrier = new CyclicBarrier(3);
                         SOCountDownLatch haltLatch = new SOCountDownLatch();
@@ -318,11 +318,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
 
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
@@ -343,11 +343,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
                 long t = System.currentTimeMillis();
@@ -379,11 +379,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, false, false);
                 try {
                     createPopulateTable(engine, compiler, context, tableName, true, true, false);
@@ -414,11 +414,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getCairoEngine())
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 try {
                     createPopulateTable(engine, compiler, context, tableName, true, false, false);
@@ -449,17 +449,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler0 = new SqlCompiler(qdb.getCairoEngine());
-                    SqlCompiler compiler1 = new SqlCompiler(qdb.getCairoEngine())
+                    SqlCompiler compiler0 = new SqlCompiler(qdb.getEngine());
+                    SqlCompiler compiler1 = new SqlCompiler(qdb.getEngine())
             ) {
-                CairoEngine engine2 = qdb.getCairoEngine();
+                CairoEngine engine2 = qdb.getEngine();
                 try (SqlExecutionContext context0 = createSqlExecutionCtx(engine2)
                 ) {
-                    CairoEngine engine1 = qdb.getCairoEngine();
+                    CairoEngine engine1 = qdb.getEngine();
                     try (SqlExecutionContext context1 = createSqlExecutionCtx(engine1)
                     ) {
                         qdb.start();
-                        CairoEngine engine = qdb.getCairoEngine();
+                        CairoEngine engine = qdb.getEngine();
 
                         CyclicBarrier startBarrier = new CyclicBarrier(3);
                         SOCountDownLatch haltLatch = new SOCountDownLatch(2);
