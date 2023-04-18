@@ -1,11 +1,11 @@
-# Release steps
+## Release steps
 
 This is a short guide to outline steps involved making QuestDB release.
 
 ## Compile release notes
 
 Collect commit messages from git log and compile new `draft` release notes.
-Please make sure not to publish it before `git` repo is ready.
+Please make sure not to publish it before `git` repository is ready.
 
 When crafting new release note, please take previous release notes as style
 guidelines. Releases should not look too dissimilar.
@@ -27,11 +27,11 @@ mvn release:clean
 ## Perform release
 
 This step will do the following:
-- create tag in `git` repo
+- create tag in `git` repository
 - roll the versions on your branch from one snapshot to the next, e.g. from 7.1.1-SNAPSHOT to 7.1.2-SNAPSHOT
 - publish `jar` to maven central
 
-Note: you will need write access to git repo and maven central.
+Note: you will need write access to git repository and maven central.
 
 ```bash
 mvn -B release:prepare release:perform
