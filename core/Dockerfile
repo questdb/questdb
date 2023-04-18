@@ -4,7 +4,9 @@ ARG tag_name
 RUN apt-get update \
   && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
 
-RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
+# RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
+RUN wget -O- https://apt.corretto.aws/gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/corretto.gpg >/dev/null && \ 
+
     add-apt-repository 'deb https://apt.corretto.aws stable main' && \
     apt-get update && \
     apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:17.0.3.6-1
