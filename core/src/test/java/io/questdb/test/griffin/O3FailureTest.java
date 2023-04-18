@@ -408,7 +408,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithoutPool(
                 O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
-                failOnOpeRW("v.d.1", 2)
+                failOnOpenRW("v.d.1", 2)
         );
     }
 
@@ -418,7 +418,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
-                failOnOpeRW("v.d.1", 2)
+                failOnOpenRW("v.d.1", 2)
         );
     }
 
@@ -439,13 +439,13 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
         counter.set(13);
-        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
+        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpenRW("v2.d.3", 3));
     }
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
         counter.set(13);
-        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
+        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpenRW("v2.d.3", 3));
     }
 
     @Test
@@ -797,7 +797,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testOutOfFileHandles() throws Exception {
-        counter.set(1536);
+        counter.set(1195); // 995 files are opened when provisioning tables
         executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
@@ -1281,7 +1281,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
     }
 
-    private static FilesFacade failOnOpeRW(String fileName, int count) {
+    private static FilesFacade failOnOpenRW(String fileName, int count) {
         AtomicInteger counter = new AtomicInteger(count);
         return new TestFilesFacadeImpl() {
             @Override
@@ -3310,21 +3310,16 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("create table y1 as (y)", executionContext);
-
-        // create expected result sets
-        compiler.compile("create table z as (x union all y)", executionContext);
+        compiler.compile("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
 
         // create another compiler to be used by second pool
         try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
-
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
             WorkerPool pool1 = new WorkerPool(() -> 1);
-
             pool1.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3347,7 +3342,6 @@ public class O3FailureTest extends AbstractO3Test {
             });
 
             final WorkerPool pool2 = new TestWorkerPool(1);
-
             pool2.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3376,6 +3370,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             pool1.halt();
             pool2.halt();
+
             Assert.assertTrue(errorCount.get() > 0);
         }
     }
