@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
-
+import json;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -47,9 +47,12 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+
 
 public final class TableUtils {
     public static final int ANY_TABLE_ID = -1;
@@ -203,6 +206,8 @@ public final class TableUtils {
         }
         return path.$();
     }
+
+
 
     public static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
@@ -870,6 +875,35 @@ public final class TableUtils {
         }
         return path.$();
     }
+    
+    public class JsonEscaper {
+        
+        private static final Pattern SPECIAL_CHARS_PATTERN = Pattern.compile("[\"\\\\\u0000-\u001F]");
+        
+        public static String escape(String input) {
+            Matcher matcher = SPECIAL_CHARS_PATTERN.matcher(input);
+            StringBuffer sb = new StringBuffer();
+            while (matcher.find()) {
+                String replacement;
+                char ch = matcher.group().charAt(0);
+                switch (ch) {
+                    case '\"': replacement = "\\\""; break;
+                    case '\\': replacement = "\\\\"; break;
+                    case '\b': replacement = "\\b"; break;
+                    case '\f': replacement = "\\f"; break;
+                    case '\n': replacement = "\\n"; break;
+                    case '\r': replacement = "\\r"; break;
+                    case '\t': replacement = "\\t"; break;
+                    default: replacement = String.format("\\u%04x", (int)ch);
+                }
+                matcher.appendReplacement(sb, replacement);
+            }
+            matcher.appendTail(sb);
+            return sb.toString();
+        }
+        
+    }
+    
 
     public static void oldPartitionName(Path path, long txn) {
         path.put("-x-").put(txn);
