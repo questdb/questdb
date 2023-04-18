@@ -47,7 +47,7 @@ public class CmdUtils {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), true, log, buildInformation);
+        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) throws IOException, ServerConfigurationException, JsonException {

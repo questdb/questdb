@@ -456,12 +456,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
-            boolean writerMixedIOEnabled,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
 
-        this.writerMixedIOEnabled = writerMixedIOEnabled;
         this.log = log;
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
@@ -515,6 +513,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else if (cpuAvailable > 8) {
             cpuSpare = 1;
         }
+
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
             volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_VOLUMES), path, root);
@@ -875,6 +874,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
             this.writerFileOpenOpts = lopts;
+
+            this.writerMixedIOEnabled = ff.allowMixedIO(this.root);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),

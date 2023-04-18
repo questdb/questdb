@@ -114,7 +114,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 fos.close();
             }
             properties.load(is);
-            serverConf = new PropServerConfiguration(root.toString(), properties, null, true, LOG, null);
+            serverConf = new PropServerConfiguration(root.toString(), properties, null, LOG, null);
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }

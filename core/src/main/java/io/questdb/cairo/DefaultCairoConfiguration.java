@@ -50,6 +50,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final boolean writerMixedIOEnabled;
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
@@ -59,6 +60,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
     }
 
     @Override
@@ -955,7 +957,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWriterMixedIOEnabled() {
-        return true;
+        return writerMixedIOEnabled;
     }
 
     @Override

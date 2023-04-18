@@ -155,7 +155,6 @@ public class Bootstrap {
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
-                            bootstrapConfiguration.isWriterMixedIOEnabled(),
                             log,
                             buildInformation
                     );
@@ -164,7 +163,6 @@ public class Bootstrap {
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
-                            bootstrapConfiguration.isWriterMixedIOEnabled(),
                             log,
                             buildInformation
                     ) {

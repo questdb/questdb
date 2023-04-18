@@ -37,7 +37,5 @@ public interface BootstrapConfiguration {
 
     ServerConfiguration getServerConfiguration();
 
-    boolean isWriterMixedIOEnabled();
-
     boolean useSite();
 }

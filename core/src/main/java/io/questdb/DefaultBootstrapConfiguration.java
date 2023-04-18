@@ -57,11 +57,6 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public boolean isWriterMixedIOEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean useSite() {
         return true;
     }
