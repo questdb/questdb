@@ -46,7 +46,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allowMixedIO(CharSequence root) {
-        return true;
+        return !Os.isWindows();
     }
 
     @Override

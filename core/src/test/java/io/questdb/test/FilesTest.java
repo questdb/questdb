@@ -538,11 +538,13 @@ public class FilesTest {
 
     @Test
     public void testMixedIOConcurrent() throws Exception {
-        // This test aims to follow write pattern possible when handling O3 tasks.
-        // Concurrent mmap-based writes and pwrite may break read-your-write
-        // guarantee on certain file systems.
-
         final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+        // This test aims to follow write pattern possible when handling O3 tasks.
+        // Concurrent mmap-based writes and pwrite() may break read-your-write
+        // guarantee on certain file systems.
+        Assume.assumeTrue(ff.allowMixedIO(temporaryFolder.getRoot().getAbsolutePath()));
+
         File file = temporaryFolder.newFile();
         final int fileSize = 2 * 1024 * 1024; // in MB
         final long valueInMem = 42;
