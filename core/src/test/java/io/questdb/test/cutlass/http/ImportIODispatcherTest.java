@@ -702,6 +702,82 @@ public class ImportIODispatcherTest {
     }
 
     @Test
+    public void testImportWithSchemaUsesSchemaColumnsAndTypesWhenHeaderIsNotDetected() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    setupSql(engine);
+                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("users", name.getTableName())) {
+                            waitForData.countDown();
+                        }
+                    });
+                    new SendAndReceiveRequestBuilder().execute(
+                            "POST /upload?name=users HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "User-Agent: curl/7.64.0\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Content-Length: 437760673\r\n" +
+                                    "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                                    "Expect: 100-continue\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "[{\"name\":\"name\", \"type\": \"STRING\"},{\"name\":\"email\",\"type\":\"SYMBOL\"}]\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"data\"; filename=\"users.csv\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "Name,Email\r\n" +
+                                    "John Smith,john.smith@gmail.com\r\n" +
+                                    "Jane Doe,jane.doe@gmail.com\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d--",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "0507\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|      Location:  |                                             users  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                    "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                    "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|              0  |                                              name  |                   STRING  |           0  |\r\n" +
+                                    "|              1  |                                             email  |                   SYMBOL  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+
+                    if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
+                        Assert.fail();
+                    }
+
+                    TableToken tableToken = new TableToken("users", "users", 0, false);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
+                        TableReaderMetadata meta = reader.getMetadata();
+                        Assert.assertEquals(2, meta.getColumnCount());
+                        Assert.assertEquals(ColumnType.STRING, meta.getColumnType("Name"));
+                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("Email"));
+                    }
+                    compiler.close();
+                });
+    }
+
+    @Test
     public void testImportWithWrongPartitionBy() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
