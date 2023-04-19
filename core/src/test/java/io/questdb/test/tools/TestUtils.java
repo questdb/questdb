@@ -1346,20 +1346,6 @@ public final class TestUtils {
         }
     }
 
-    private static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map) {
-        sink.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            printColumn(record, metadata, i, sink, true);
-        }
-        String printed = sink.toString();
-        map.compute(printed, (s, i) -> {
-            if (i == null) {
-                return 0;
-            }
-            return i + 1;
-        });
-    }
-
     private static void assertColumnValues(
             RecordMetadata metadataExpected,
             RecordMetadata metadataActual,
@@ -1517,6 +1503,28 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong1()) + " " +
                 Long.toHexString(expected.getLong2()) + " " +
                 Long.toHexString(expected.getLong3());
+    }
+
+    static void addAllRecordsToMap(RecordCursor cursor, RecordMetadata metadata, Map<String, Integer> map) {
+        cursor.toTop();
+        Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            addRecordToMap(record, metadata, map);
+        }
+    }
+
+    static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, true);
+        }
+        String printed = sink.toString();
+        map.compute(printed, (s, i) -> {
+            if (i == null) {
+                return 1;
+            }
+            return i + 1;
+        });
     }
 
     @FunctionalInterface
