@@ -130,43 +130,58 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testSplitMidPartitionCheckIndex() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile(
+        assertMemoryLeak(() -> {
+            compile(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
                             " -x j," +
-                            " rnd_str(5,16,2) as str," +
+                            " rnd_symbol(null,'5','16','2') as sym," +
                             " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                             " from long_sequence(60*24*2)" +
-                            ") timestamp (ts) partition by DAY",
+                            "), index(sym) timestamp (ts) partition by DAY",
                     sqlExecutionContext
             );
 
-            compiler.compile(
+            compile(
                     "create table z as (" +
                             "select" +
                             " cast(x as int) * 1000000 i," +
                             " -x - 1000000L as j," +
-                            " rnd_str(5,16,2) as str," +
+                            " rnd_symbol(null,'5','16','2') as sym," +
                             " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
                             " from long_sequence(50))",
                     sqlExecutionContext
             );
 
-            compiler.compile(
-                    "create table y as (select * from x union all select * from z)",
+            compile(
+                    "create table y (" +
+                            "i int," +
+                            "j long," +
+                            "sym symbol," +
+                            "ts timestamp)",
                     sqlExecutionContext
             );
+            compile("insert into y select * from x", sqlExecutionContext);
+            compile("insert into y select * from z", sqlExecutionContext);
 
-            compiler.compile("insert into x select * from z", sqlExecutionContext);
-
+            compile("insert into x select * from z", sqlExecutionContext);
+            TestUtils.assertSqlCursors(
+                    compiler,
+                    sqlExecutionContext,
+                    "y order by ts",
+                    "x",
+                    LOG,
+                    true
+            );
             TestUtils.assertEquals(
                     compiler,
                     sqlExecutionContext,
                     "y order by ts",
                     "x"
             );
+            TestUtils.assertEquals(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'");
+            TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
         });
     }
 }

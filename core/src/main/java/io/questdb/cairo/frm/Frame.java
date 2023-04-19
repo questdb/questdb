@@ -37,6 +37,8 @@ public interface Frame extends Closeable {
 
     long getSize();
 
+    void rebuildIndexes(long offset);
+
     void saveChanges(FrameColumn column);
 
     void setOffset(long offset);

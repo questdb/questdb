@@ -6733,8 +6733,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         assert partitionSize > 0;
                         LOG.info().$("squashing partitions [table=").$(tableToken)
-                                .$(", source=").$ts(sourcePartition).$(", sourceSize=").$(partitionSize)
-                                .$(", target=").$ts(targetPartition).$(", targetSize=").$(targetFrame.getSize()).I$();
+                                .$(", target=").$ts(targetPartition).$(", targetSize=").$(targetFrame.getSize())
+                                .$(", source=").$ts(sourcePartition).$(", sourceSize=").$(partitionSize).I$();
                         try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
                             FrameAlgebra.append(targetFrame, sourceFrame);
                         }
