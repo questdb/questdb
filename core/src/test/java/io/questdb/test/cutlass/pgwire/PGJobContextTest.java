@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -40,7 +39,6 @@ import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFacto
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -50,6 +48,8 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.NetUtils;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -1274,21 +1274,20 @@ if __name__ == "__main__":
         }
      */
     public void testSyncAfterLoginSendsRNQ() throws Exception {
-        skipOnWalRun();
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 ">0000000804d2162f\n" +
                         "<4e\n" +
                         ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300330000\n" +
                         "<520000000800000003\n" +
                         ">700000000a717565737400\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
                         ">5300000004\n" +
                         "<5a0000000549\n" +
                         ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
                         "<3100000004740000000a000100000017540000001b000124310000000000000100000413ffffffffffff00005a0000000549\n" +
                         ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
                         "<3200000004440000000b00010000000131440000000b00010000000131430000000d53454c45435420320033000000045a0000000549\n" +
-                        ">5800000004", new Port0PGWireConfiguration());
+                        ">5800000004\n", new Port0PGWireConfiguration());
     }
 
     @Test
@@ -8799,7 +8798,7 @@ create table tab as (
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {
                     if (isBindParam[p]) {
-                        ps.setString(bindIdx++, "null" .equals(bindValues[p]) ? null : bindValues[p]);
+                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
                     }
                 }
                 try (ResultSet result = ps.executeQuery()) {
