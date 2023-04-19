@@ -669,7 +669,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendDateColumnBin(Record record, int columnIndex) {
-        final long longValue = record.getLong(columnIndex);
+        final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
             responseAsciiSink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
@@ -957,7 +957,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendTimestampColumnBin(Record record, int columnIndex) {
-        final long longValue = record.getLong(columnIndex);
+        final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
             responseAsciiSink.setNullValue();
         } else {
@@ -2286,7 +2286,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=" .length(), valueHi));
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
                                 if (this.statementTimeout > 0) {
                                     circuitBreaker.setTimeout(statementTimeout);
                                 }

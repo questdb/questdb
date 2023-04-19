@@ -377,11 +377,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 if (Column.DISK_SIZE.is(col)) {
                     return partitionSize;
                 }
-                if (Column.PARTITION_INDEX.is(col)) {
-                    return dynamicPartitionIndex;
-                }
 
-                return getTimestamp(col);
+                throw new UnsupportedOperationException();
             }
 
             @Override
