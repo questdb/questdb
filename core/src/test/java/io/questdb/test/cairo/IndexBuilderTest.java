@@ -34,11 +34,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -59,8 +59,9 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         compiler.close();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After
@@ -357,7 +358,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> tempWriter = TestUtils.getWriter(engine,"xxx"),
+                        tablePath -> tempWriter = TestUtils.getWriter(engine, "xxx"),
                         indexBuilder -> {
                             try {
                                 indexBuilder.reindexColumn("sym2");

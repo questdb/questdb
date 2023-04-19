@@ -274,9 +274,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        AbstractCairoTest.tearDownStatic();
         forEachNode(QuestDBTestNode::closeGriffin);
-        circuitBreaker = null;
+        circuitBreaker = Misc.free(circuitBreaker);
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override
@@ -289,7 +289,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     @Override
     @After
-    public void tearDown() throws Exception{
+    public void tearDown() throws Exception {
         super.tearDown();
         forEachNode(QuestDBTestNode::tearDownGriffin);
     }

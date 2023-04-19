@@ -60,8 +60,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
-    public static void tearDownClass() {
+    public static void tearDownClass() throws Exception {
         jsonLexer.close();
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @After

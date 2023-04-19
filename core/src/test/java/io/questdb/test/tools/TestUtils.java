@@ -1413,7 +1413,6 @@ public final class TestUtils {
         }
     }
 
-    // used in tests
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));

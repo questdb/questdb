@@ -65,7 +65,6 @@ import java.util.concurrent.atomic.AtomicLong;
 // There are already measures to prevent invalid data generation, but it still can happen.
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
-
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     private final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;

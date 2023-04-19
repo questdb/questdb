@@ -125,11 +125,9 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
             for (int i = 0; i < breakTestLimit; i++) {
                 breakConnection = i;
                 try {
-
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     }
-
                     Assert.fail();
                 } catch (CairoException ex) {
                     Assert.assertTrue(ex.isInterruption());

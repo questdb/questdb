@@ -184,7 +184,6 @@ public class Bootstrap {
                         }
                     };
                 }
-
             } else {
                 config = bootstrapConfiguration.getServerConfiguration();
             }

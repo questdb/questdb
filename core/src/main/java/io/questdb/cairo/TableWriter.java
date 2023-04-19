@@ -105,7 +105,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int defaultCommitMode;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
-    private final boolean directIOFlag;
     private final FilesFacade ff;
     private final StringSink fileNameSink = new StringSink();
     private final int fileOperationRetryCount;
@@ -123,6 +122,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
+    private final boolean mixedIOFlag;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
@@ -244,7 +244,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
+        this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
         this.messageBus = ownMessageBus != null ? ownMessageBus : messageBus;
@@ -6949,6 +6949,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    boolean allowMixedIO() {
+        return mixedIOFlag;
+    }
+
     void closeActivePartition(long size) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
@@ -7036,10 +7040,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.set(offset + 7, srcDataMax);
 
         o3ClockDownPartitionUpdateCount();
-    }
-
-    boolean preferDirectIO() {
-        return directIOFlag;
     }
 
     void purgeUnusedPartitions() {

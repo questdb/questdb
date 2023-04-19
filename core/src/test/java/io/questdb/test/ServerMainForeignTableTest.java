@@ -75,7 +75,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private static String mainVolume;
     private static String otherVolume;
 
-
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();

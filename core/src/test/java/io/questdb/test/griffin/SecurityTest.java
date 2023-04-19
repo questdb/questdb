@@ -184,14 +184,14 @@ public class SecurityTest extends AbstractGriffinTest {
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
+        memoryRestrictedCompiler = Misc.free(memoryRestrictedCompiler);
+        memoryRestrictedEngine = Misc.free(memoryRestrictedEngine);
         AbstractGriffinTest.tearDownStatic();
-        Misc.free(memoryRestrictedCompiler);
-        Misc.free(memoryRestrictedEngine);
     }
 
     @After
     public void tearDown() throws Exception {
-        //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
+        // we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows
         memoryRestrictedEngine.getTableIdGenerator().close();
         memoryRestrictedEngine.clear();
         memoryRestrictedEngine.getTableSequencerAPI().releaseInactive();
@@ -234,13 +234,13 @@ public class SecurityTest extends AbstractGriffinTest {
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
                         @Override
-                        public CharSequence getBackupRoot() {
-                            return backupDir.getAbsolutePath();
+                        public DateFormat getBackupDirTimestampFormat() {
+                            return backupSubDirFormat;
                         }
 
                         @Override
-                        public DateFormat getBackupDirTimestampFormat() {
-                            return backupSubDirFormat;
+                        public CharSequence getBackupRoot() {
+                            return backupDir.getAbsolutePath();
                         }
                     });
                     SqlCompiler compiler = new SqlCompiler(engine);

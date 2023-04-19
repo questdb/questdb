@@ -29,7 +29,12 @@ import io.questdb.std.FilesFacade;
 import java.util.Map;
 
 public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
-    private static final String BANNER = "     ___                  _   ____  ____\n" + "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" + "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" + "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" + "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
+    private static final String BANNER =
+            "     ___                  _   ____  ____\n" +
+                    "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
+                    "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
+                    "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
+                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
 
     @Override
     public String getBanner() {

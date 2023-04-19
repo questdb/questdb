@@ -483,6 +483,8 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
+    boolean isWriterMixedIOEnabled();
+
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
      * When it is enabled directory name of table TRADE becomes TRADE~, so that ~ sign is added at the end.

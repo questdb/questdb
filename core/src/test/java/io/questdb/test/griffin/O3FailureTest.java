@@ -134,7 +134,6 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
     private static final FilesFacade ffIndexAllocateFailure = new TestFilesFacadeImpl() {
-
         boolean failNextAlloc = false;
         int theFd = 0;
 

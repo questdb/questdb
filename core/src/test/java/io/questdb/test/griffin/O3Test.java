@@ -1013,7 +1013,7 @@ public class O3Test extends AbstractO3Test {
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     String strColVal =
-                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, directIoFlag=true]";
+                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, mixedIOFlag=true]";
                     int len = getStorageLength(strColVal);
                     int records = Integer.MAX_VALUE / len + 5;
 
@@ -1040,11 +1040,11 @@ public class O3Test extends AbstractO3Test {
                     Assert.assertTrue(max > (2L << 30));
 
                     TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
-                            strColVal + "\t2022-02-24T00:51:34.357000Z\n" +
-                            strColVal + "\t2022-02-24T00:51:34.358000Z\n" +
-                            strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
-                            "abcd\t2022-02-24T00:51:34.359000Z\n" +
-                            strColVal + "\t2022-02-24T00:51:34.360000Z\n");
+                            strColVal + "\t2022-02-24T00:51:43.301000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:43.302000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:43.303000Z\n" +
+                            "abcd\t2022-02-24T00:51:43.303000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:43.304000Z\n");
                 }, new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {

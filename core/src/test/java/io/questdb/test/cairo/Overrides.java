@@ -92,6 +92,7 @@ public class Overrides implements ConfigurationOverrides {
     private long writerAsyncCommandMaxTimeout = -1;
     private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
+    private Boolean writerMixedIOEnabled = null;
 
     @Override
     public String getAttachableDirSuffix() {
@@ -374,6 +375,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public Boolean isWriterMixedIOEnabled() {
+        return writerMixedIOEnabled;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
     }
@@ -398,6 +404,7 @@ public class Overrides implements ConfigurationOverrides {
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         parallelFilterEnabled = null;
+        writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;
@@ -708,5 +715,10 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
         this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
+    }
+
+    @Override
+    public void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled) {
+        this.writerMixedIOEnabled = writerMixedIOEnabled;
     }
 }

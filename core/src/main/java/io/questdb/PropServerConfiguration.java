@@ -309,6 +309,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
+    private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
     private int connectionPoolInitialCapacity;
@@ -513,6 +514,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
+
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
@@ -528,6 +530,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else if (cpuAvailable > 8) {
             cpuSpare = 1;
         }
+
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
             volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_VOLUMES), path, root);
@@ -887,7 +890,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lopts |= WRITE_FO_OPTS.valueAt(index);
                 }
             }
-            writerFileOpenOpts = lopts;
+            this.writerFileOpenOpts = lopts;
+
+            this.writerMixedIOEnabled = ff.allowMixedIO(this.root);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -2424,6 +2429,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public boolean isWalSupported() {
             return walSupported;
+        }
+
+        @Override
+        public boolean isWriterMixedIOEnabled() {
+            return writerMixedIOEnabled;
         }
 
         @Override

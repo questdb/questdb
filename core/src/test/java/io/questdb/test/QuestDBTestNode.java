@@ -138,6 +138,15 @@ public class QuestDBTestNode {
         griffin.tearDown();
     }
 
+    @Override
+    public String toString() {
+        return "QuestDBTestNode{" +
+                "nodeId=" + nodeId +
+                ", cairo=" + cairo +
+                ", griffin=" + griffin +
+                '}';
+    }
+
     private static class Cairo {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
