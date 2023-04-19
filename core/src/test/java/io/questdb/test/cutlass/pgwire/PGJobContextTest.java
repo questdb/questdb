@@ -1888,14 +1888,18 @@ if __name__ == "__main__":
         String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
                 "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
-                "update dest set l = 1 from tab t1 where " +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = " +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA100000' "
+                "update dest \n" +
+                        "set l = t1.x \n" +
+                        "from tab t1 \n" +
+                        "where \n" +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = \n" +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
-            compiler.compile("create table if not exists dest as (select 1::long l)", sqlExecutionContext);
+            compiler.compile("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            compiler.compile("create table if not exists dest as (select x l from long_sequence(10000))", sqlExecutionContext);
             mayDrainWalQueue();
 
             for (String query : queries) {
