@@ -141,8 +141,6 @@ public final class TestUtils {
         final int timestampIndex = metadataActual.getTimestampIndex();
 
         long timestampValue = -1;
-        EntityColumnFilter entityColumnFilter;
-        RecordSink recordSink;
         HashMap<String, Integer> mapL = null;
         HashMap<String, Integer> mapR = null;
         AssertionError deferred = null;
