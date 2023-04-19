@@ -30,11 +30,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
+
+    private static final Log LOG = LogFactory.getLog(RuntimeIntervalModel.class);
     private final ObjList<Function> dynamicRangeList;
     // These 2 are incoming model
     private final LongList intervals;
@@ -85,10 +89,34 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     @Override
     public void toPlan(PlanSink sink) {
         if (intervals != null && intervals.size() > 0) {
-            sink.val("[static=").val(intervals);
+            sink.val('[');
+            try {
+                LongList intervals = calculateIntervals(sink.getExecutionContext());
+                for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                    if (i > 0) {
+                        sink.val(',');
+                    }
+                    sink.val("(\"");
+                    valTs(sink, intervals.getQuick(i));
+                    sink.val("\",\"");
+                    valTs(sink, intervals.getQuick(i + 1));
+                    sink.val("\")");
+                }
+
+            } catch (SqlException e) {
+                LOG.error().$("Can't calculate intervals: ").$(e.getMessage()).$();
+            }
+            sink.val(']');
         }
-        if (dynamicRangeList != null && dynamicRangeList.size() > 0) {
-            sink.val(" dynamic=").val(dynamicRangeList).val("]");
+    }
+
+    private static void valTs(PlanSink sink, long l) {
+        if (l == Numbers.LONG_NaN) {
+            sink.val("MIN");
+        } else if (l == Long.MAX_VALUE) {
+            sink.val("MAX");
+        } else {
+            sink.valISODate(l);
         }
     }
 

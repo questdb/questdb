@@ -75,6 +75,7 @@ public class O3FailureTest extends AbstractO3Test {
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffAllocateFailure = new TestFilesFacadeImpl() {
         private boolean failNextAlloc = false;
+        private final AtomicInteger increment = new AtomicInteger();
 
         @Override
         public boolean allocate(int fd, long size) {
@@ -88,12 +89,19 @@ public class O3FailureTest extends AbstractO3Test {
 
         @Override
         public long length(int fd) {
-            final long remaining = counter.decrementAndGet();
-            if (!fixFailure.get() || remaining == 0) {
-                failNextAlloc = true;
-                return 0;
+            if (fd > 0) {
+                final long remaining = counter.decrementAndGet();
+                if (!fixFailure.get() || remaining == 0) {
+                    failNextAlloc = true;
+                    return 0;
+                }
+            } else {
+                // For debugging, if new call with ff.length(fd) is added, change it
+                // to ff.length(-fd) and adjust counter set by the test by the number
+                // in increment when 0 is returned
+                increment.incrementAndGet();
             }
-            return super.length(fd);
+            return super.length(Math.abs(fd));
         }
     };
     private static final FilesFacade ffFailToAllocateIndex = new TestFilesFacadeImpl() {
@@ -400,7 +408,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithoutPool(
                 O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
-                failOnOpeRW("v.d.1", 2)
+                failOnOpenRW("v.d.1", 2)
         );
     }
 
@@ -410,7 +418,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
-                failOnOpeRW("v.d.1", 2)
+                failOnOpenRW("v.d.1", 2)
         );
     }
 
@@ -431,13 +439,13 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
         counter.set(13);
-        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
+        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpenRW("v2.d.3", 3));
     }
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
         counter.set(13);
-        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
+        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpenRW("v2.d.3", 3));
     }
 
     @Test
@@ -623,7 +631,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(152 + 12);
+        counter.set(152 + 12 + 20 + 19);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -789,7 +797,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testOutOfFileHandles() throws Exception {
-        counter.set(1536);
+        counter.set(1195); // 995 files are opened when provisioning tables
         executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
@@ -933,13 +941,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(174 + 12);
+        counter.set(174 + 12 + 19);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(174 + 12);
+        counter.set(174 + 12 + 19);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -957,25 +965,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174 + 45 + 12);
+        counter.set(174 + 45 + 12 + 27);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165 + 45 + 12);
+        counter.set(165 + 45 + 12 + 21);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165 + 45 + 12);
+        counter.set(165 + 45 + 12 + 18);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165 + 45 + 12);
+        counter.set(165 + 45 + 12 + 21);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -1035,13 +1043,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193 + 45 + 18);
+        counter.set(193 + 45 + 18 + 27);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(176 + 45 + 18);
+        counter.set(176 + 45 + 18 + 26);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1116,7 +1124,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testSetAppendPositionFails() throws Exception {
-        counter.set(169 + 12);
+        counter.set(169 + 12 + 20 + 19);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1273,7 +1281,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
     }
 
-    private static FilesFacade failOnOpeRW(String fileName, int count) {
+    private static FilesFacade failOnOpenRW(String fileName, int count) {
         AtomicInteger counter = new AtomicInteger(count);
         return new TestFilesFacadeImpl() {
             @Override
@@ -3302,21 +3310,16 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("create table y1 as (y)", executionContext);
-
-        // create expected result sets
-        compiler.compile("create table z as (x union all y)", executionContext);
+        compiler.compile("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
 
         // create another compiler to be used by second pool
         try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
-
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
             WorkerPool pool1 = new WorkerPool(() -> 1);
-
             pool1.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3339,7 +3342,6 @@ public class O3FailureTest extends AbstractO3Test {
             });
 
             final WorkerPool pool2 = new TestWorkerPool(1);
-
             pool2.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3368,6 +3370,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             pool1.halt();
             pool2.halt();
+
             Assert.assertTrue(errorCount.get() > 0);
         }
     }
