@@ -69,8 +69,6 @@ public class FuzzTransactionGenerator {
 
         // To prevent long loops of cancelling rows, limit max probability of cancelling rows
         probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
-        // Comparison of the rows with same timestamp is expensive, limit the probability to 7%
-        probabilityOfSameTimestamp = Math.min(probabilityOfSameTimestamp, 0.07);
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
         transactionCount = Math.min(transactionCount, 1_500_000 / rowCount);
