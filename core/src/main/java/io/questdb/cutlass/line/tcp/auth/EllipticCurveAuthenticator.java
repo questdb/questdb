@@ -158,6 +158,10 @@ public class EllipticCurveAuthenticator implements Authenticator {
             n++;
         }
 
+        if (lineEnd != -1) {
+            return lineEnd;
+        }
+
         if (recvBufPos == recvBufEnd) {
             LOG.info().$('[').$(fd).$("] authentication token is too long").$();
             throw AuthenticatorException.INSTANCE;
