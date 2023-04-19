@@ -35,6 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -3705,6 +3706,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertFromStringToLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
+            compile("create table l256(v long256)", sqlExecutionContext);
+            compile("insert into l256 select * from t", sqlExecutionContext);
+            if (configuration.getWalEnabledDefault()) {
+                drainWalQueue();
+            }
+            String expected = "v\n" +
+                    "0xd29b84cdf070d2247559d6d5f9ed17242a1c9ad2bbc87e8041738668eaea02fa\n" +
+                    "0xc3fd21defa26f6555ab5573037d8a34872a8be1517a17fd4e43cb3b6894fc88c\n" +
+                    "0xc78d67954cb7866695b5e08df69df8819fc909a43f149089c143a3bb982af031\n" +
+                    "0x6ddedcf7415306f799ce31489578cac77b0ec57771d6e9f27c517f53d504487d\n" +
+                    "0xa38b2ad7fbc79d366f9b5d1b162ba472613f1eb5f98a2df86a7f0ebbd1d28a95\n";
+            printSqlResult(expected, "t limit -5", null, true, false);
+            printSqlResult(expected, "l256 limit -5", null, true, false);
+        });
+    }
+
+    @Test
     public void testInsertGeoHashBitsLiteralNotBits() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(
@@ -4726,6 +4747,17 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     }
                 }
         );
+    }
+
+    private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select * from " + tableName,
+                sink
+        );
+
     }
 
     private void testGeoHashWithBits(String columnSize, String geoHash, String expected) throws Exception {
