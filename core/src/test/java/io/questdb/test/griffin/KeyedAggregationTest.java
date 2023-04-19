@@ -198,7 +198,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             "            Index forward scan on: account_uuid\n" +
                             "              symbolOrder: asc\n" +
                             "            Interval forward scan on: records\n" +
-                            "              intervals: [static=[1675209600000001,1675295999999999]\n");
+                            "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n");
 
             assertQuery("account_uuid\trequest_count\n" +
                     "s0\t0\n" +

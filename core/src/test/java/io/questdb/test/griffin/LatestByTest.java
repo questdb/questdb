@@ -136,7 +136,7 @@ public class LatestByTest extends AbstractGriffinTest {
                             "    Index backward scan on: device_id parallel: true\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
-                            "      intervals: [static=[1630540800000000,1630627199999999]\n");
+                            "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n");
 
             //prefix filter is applied AFTER latest on 
             assertQuery("ts\tdevice_id\tg8c\n" +
