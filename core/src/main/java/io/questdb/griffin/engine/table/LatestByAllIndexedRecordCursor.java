@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -113,6 +110,25 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     public void toPlan(PlanSink sink) {
         sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
         sink.meta("parallel").val(true);
+
+        if (prefixes.size() > 2) {
+            int hashColumnIndex = (int) prefixes.get(0);
+            int hashColumnType = (int) prefixes.get(1);
+            int geoHashBits = ColumnType.getGeoHashBits(hashColumnType);
+
+            if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
+                sink.attr("filter")
+                        .putColumnName(hashColumnIndex).val(" within(");
+
+                for (long i = 2, n = prefixes.size(); i < n; i += 2) {
+                    if (i > 2) {
+                        sink.val(',');
+                    }
+                    sink.val(prefixes.get(i), geoHashBits);
+                }
+                sink.val(')');
+            }
+        }
     }
 
     @Override

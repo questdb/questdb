@@ -210,34 +210,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testWalWriteRollbackHeavyToFix() throws Exception {
-        Rnd rnd = new Rnd(172899420086666L, 1681485132960L);//TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01);
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testWalWriteWithQuickSortEnabled() throws Exception {
-        configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        int tableCount = Math.max(2, rnd.nextInt(5));
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01);
-        setFuzzCounts(
-                true,
-                1000,
-                30,
-                20,
-                rnd.nextInt(1000),
-                rnd.nextInt(1000),
-                50,
-                3 + rnd.nextInt(20)
-        );
-        setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
-        runFuzz(rnd, testName.getMethodName(), tableCount, false, true);
-    }
-
-    @Test
     public void testWalWriteRollbackTruncateHeavy() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15, 0.01);

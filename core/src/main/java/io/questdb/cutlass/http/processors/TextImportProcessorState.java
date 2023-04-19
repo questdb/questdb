@@ -32,8 +32,6 @@ import io.questdb.std.Mutable;
 import java.io.Closeable;
 
 class TextImportProcessorState implements Mutable, Closeable {
-    //    public static final int STATE_INVALID_FORMAT = 1;
-    public static final int STATE_DATA_ERROR = 2;
     public static final int STATE_OK = 0;
     public int columnIndex = 0;
     public TextLoaderCompletedState completeState;

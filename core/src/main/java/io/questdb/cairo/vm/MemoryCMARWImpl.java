@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -73,9 +74,23 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             if (truncate) {
                 long appendOffset = getAppendOffset();
                 truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
+
                 long sz = Math.min(size, truncateSize);
                 if (appendOffset < sz) {
-                    Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+                    try {
+                        // If this is a lazy close of unused memory the underlying file can already be truncated
+                        //  using another fd and memset can lead to SIGBUS on Linux.
+                        // Check the physical file length before trying to memset to the mapped memory.
+                        sz = Math.min(sz, ff.length(fd));
+                        if (appendOffset < sz) {
+                            Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+                        }
+                    } catch (CairoException e) {
+                        LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
+                                .$(", errno=").$(e.getErrno())
+                                .$(", error=").$(e.getFlyweightMessage())
+                                .I$();
+                    }
                 }
             } else {
                 truncateSize = -1L;

@@ -1758,7 +1758,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.critical(0).put("cannot remove partitions from non-partitioned table");
         }
 
-        // Remove all partition from txn file, column version file.
+        // Remove all partitions from txn file, column version file.
         txWriter.beginPartitionSizeUpdate();
 
         closeActivePartition(false);
@@ -1768,7 +1768,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionRemoveCandidates.add(timestamp, partitionTxn);
         }
 
-        columnVersionWriter.truncate(true);
+        columnVersionWriter.truncate();
+        columnTops.zero(0);
         txWriter.removeAllPartitions();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -1795,7 +1796,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // check if we are moving timestamp from a partitioned table
         final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-        boolean timestamp = index == timestampIndex;
+        boolean timestamp = (index == timestampIndex);
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
             throw CairoException.nonCritical().put("Cannot remove timestamp from partitioned table");
@@ -1948,6 +1949,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables();
                 columnVersionWriter.readUnsafe();
+                closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -2064,59 +2066,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
-     * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
-     * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
+     * Truncates table including symbol tables. When operation is unsuccessful it throws CairoException.
+     * With that truncate can be retried or alternatively table can be closed. Outcome of any other operation
+     * with the table is undefined and likely to cause segmentation fault. When table re-opens any partial
+     * truncate will be retried.
      */
     @Override
     public final void truncate() {
-        rollback();
+        truncate(false);
+    }
 
-        // we do this before size check so that "old" corrupt symbol tables are brought back in line
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-            denseSymbolMapWriters.getQuick(i).truncate();
-        }
-
-        if (size() == 0) {
-            return;
-        }
-
-        // this is a crude block to test things for now
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.getUnsafe().storeFence();
-        todoMem.putLong(24, todoTxn);
-        todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_TRUNCATE);
-        // ensure file is closed with correct length
-        todoMem.jumpTo(48);
-
-        if (partitionBy != PartitionBy.NONE) {
-            freeColumns(false);
-            if (indexers != null) {
-                for (int i = 0, n = indexers.size(); i < n; i++) {
-                    Misc.free(indexers.getQuick(i));
-                }
-            }
-            removePartitionDirectories();
-            rowAction = ROW_ACTION_OPEN_PARTITION;
-        } else {
-            // truncate columns, we cannot remove them
-            truncateColumns();
-        }
-
-        txWriter.resetTimestamp();
-        columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
-        txWriter.truncate(columnVersionWriter.getVersion());
-        try {
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
+    /**
+     * Truncates table, but keeps symbol tables. When operation is unsuccessful it throws CairoException.
+     * With that truncate can be retried or alternatively table can be closed. Outcome of any other operation
+     * with the table is undefined and likely to cause segmentation fault. When table re-opens any partial
+     * truncate will be retried.
+     */
+    @Override
+    public final void truncateSoft() {
+        truncate(true);
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -2987,7 +2955,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void configureColumnMemory() {
-        this.symbolMapWriters.setPos(columnCount);
+        symbolMapWriters.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
@@ -3218,7 +3186,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void doClose(boolean truncate) {
-        // destroy() may already closed everything
+        // destroy() may have already closed everything
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
@@ -3350,7 +3318,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void finishMetaSwapUpdate() {
-
         // rename _meta to _meta.prev
         this.metaPrevIndex = rename(fileOperationRetryCount);
         writeRestoreMetaTodo();
@@ -3988,7 +3955,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionMutates,
                         isLastWrittenPartition
                 );
-
             }
         }
     }
@@ -5380,7 +5346,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                     } else {
                         srcDataMax = 0;
-                        // A version needed to housekeep dropped partitions
+                        // A version needed to housekeep dropped partitions.
                         // When partition created without O3 merge, use `txn-1` as partition version.
                         // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
                         // be written within the same commit when new partition initially written in order
@@ -6473,7 +6439,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             removePartitionDirectories();
         }
-        txWriter.truncate(columnVersionWriter.getVersion());
+        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         clearTodoLog();
     }
 
@@ -6873,6 +6839,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
         distressed = true;
         throw new CairoError(cause);
+    }
+
+    private void truncate(boolean keepSymbolTables) {
+        rollback();
+
+        if (!keepSymbolTables) {
+            // we do this before size check so that "old" corrupt symbol tables are brought back in line
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                denseSymbolMapWriters.getQuick(i).truncate();
+            }
+        }
+
+        if (size() == 0) {
+            return;
+        }
+
+        // this is a crude block to test things for now
+        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getDatabaseIdHi());
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(24, todoTxn);
+        todoMem.putLong(32, 1);
+        todoMem.putLong(40, TODO_TRUNCATE);
+        // ensure file is closed with correct length
+        todoMem.jumpTo(48);
+
+        if (partitionBy != PartitionBy.NONE) {
+            freeColumns(false);
+            if (indexers != null) {
+                for (int i = 0, n = indexers.size(); i < n; i++) {
+                    Misc.free(indexers.getQuick(i));
+                }
+            }
+            removePartitionDirectories();
+            rowAction = ROW_ACTION_OPEN_PARTITION;
+        } else {
+            // truncate columns, we cannot remove them
+            truncateColumns();
+        }
+
+        txWriter.resetTimestamp();
+        columnVersionWriter.truncate();
+        columnTops.zero(0);
+        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        try {
+            clearTodoLog();
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+
+        LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
     }
 
     private void truncateColumns() {

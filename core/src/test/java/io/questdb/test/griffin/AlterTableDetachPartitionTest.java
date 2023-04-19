@@ -255,6 +255,92 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
+                        3,
+                        "2020-01-01",
+                        1
+                );
+
+                executeInsert("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
+
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n" +
+                                "2020-01-02T23:59:59.000000Z\tfoobar\n"
+                );
+
+                compile("alter table " + tableName + " detach partition list '2020-01-01'");
+
+                compile("truncate table " + tableName);
+
+                renameDetachedToAttachable(tableName, "2020-01-01");
+                compile("alter table " + tableName + " attach partition list '2020-01-01'");
+
+                // No symbols are present.
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\t\n" +
+                                "2020-01-01T15:59:59.333332Z\t\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionAfterTruncateKeepSymbolTables() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                // It's important to have a symbol column here to make sure
+                // that we don't wipe symbol tables on TRUNCATE.
+                createPopulateTable(
+                        src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
+                        3,
+                        "2020-01-01",
+                        1
+                );
+
+                executeInsert("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
+
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n" +
+                                "2020-01-02T23:59:59.000000Z\tfoobar\n"
+                );
+
+                compile("alter table " + tableName + " detach partition list '2020-01-01'");
+
+                compile("truncate table " + tableName + " keep symbol maps");
+
+                renameDetachedToAttachable(tableName, "2020-01-01");
+                compile("alter table " + tableName + " attach partition list '2020-01-01'");
+
+                // All symbols are kept.
+                assertSql(
+                        "select first(ts), sym from " + tableName + " sample by 1d",
+                        "first\tsym\n" +
+                                "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                "2020-01-01T23:59:58.999998Z\t\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAttachPartitionCommits() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

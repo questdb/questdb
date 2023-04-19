@@ -448,11 +448,32 @@ public final class TableUtils {
         return pTransitionIndex;
     }
 
-    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+    public static void createTxn(
+            MemoryMW txMem,
+            int symbolMapCount,
+            long txn,
+            long seqTxn,
+            long dataVersion,
+            long partitionTableVersion,
+            long structureVersion,
+            long columnVersion,
+            long truncateVersion
+    ) {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
-        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, seqTxn, dataVersion, partitionTableVersion, structureVersion, columnVersion, truncateVersion);
+        resetTxn(
+                txMem,
+                TX_BASE_HEADER_SIZE,
+                symbolMapCount,
+                txn,
+                seqTxn,
+                dataVersion,
+                partitionTableVersion,
+                structureVersion,
+                columnVersion,
+                truncateVersion
+        );
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
@@ -528,7 +549,7 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;
+        return TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + (long) index * Long.BYTES;
     }
 
     public static long getSymbolWriterTransientIndexOffset(int index) {

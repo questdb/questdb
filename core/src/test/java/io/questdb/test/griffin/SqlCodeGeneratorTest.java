@@ -7624,6 +7624,85 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testWithinClauseWithFilterFails() throws Exception {
+        assertFailure(
+                "select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym",
+                "create table tab as " +
+                        "(" +
+                        " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym) timestamp(ts)",
+                28,
+                "WITHIN clause doesn't work with filters"
+        );
+    }
+
+    @Test
+    public void testWithinClauseWithLatestByNonSymbolOrNonIndexedSymbolColumnFails() throws Exception {
+        assertFailure(
+                "select * from tab where geo within(#zz) latest on ts partition by x",
+                "create table tab as " +
+                        "(" +
+                        " select  x, " +
+                        "         rnd_symbol('a', 'b') sym_idx, " +
+                        "         rnd_symbol('c') sym_noidx, " +
+                        "         rnd_geohash(10) geo, " +
+                        "         x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym_idx) timestamp(ts)",
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns"
+        );
+
+        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, x",
+                null,
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+
+        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_noidx",
+                null,
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+
+        assertFailure("select * from tab where geo within(#zz) latest on ts partition by sym_idx, sym_noidx",
+                null,
+                28,
+                "WITHIN clause requires LATEST BY using only indexed symbol columns");
+    }
+
+    @Test
+    public void testWithinClauseWithTsFilter() throws Exception {
+        assertQuery("x\tsym\tgeo\tts\n" +
+                        "17\ta\tzz\t1970-01-01T00:00:00.000017Z\n" +
+                        "18\tb\tzz\t1970-01-01T00:00:00.000018Z\n",
+                "select * " +
+                        "from t1 " +
+                        "where geo within(#zz) " +
+                        "and ts < '1970-01-01T00:00:00.000019Z' " +
+                        "latest on ts " +
+                        "partition by sym",
+                "create table t1 as " +
+                        "(" +
+                        " select  x, rnd_symbol('a', 'b') sym, #zz as geo, x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym) timestamp(ts) ", "ts", true, true);
+    }
+
+    @Test
+    public void testWithinClauseWithoutLatestByFails() throws Exception {
+        assertFailure(
+                "select * from tab where geo within(#zz)",
+                "create table tab as " +
+                        "(" +
+                        " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
+                        " from long_sequence(20) " +
+                        "), index(sym) timestamp(ts)",
+                28,
+                "WITHIN clause requires LATEST BY clause"
+        );
+    }
+
     private void createGeoHashTable(int chars) throws SqlException {
         compiler.compile(
                 String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
