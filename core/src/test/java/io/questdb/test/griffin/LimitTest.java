@@ -456,7 +456,7 @@ public class LimitTest extends AbstractGriffinTest {
                     "    DataFrame\n" +
                     "        Row backward scan\n" +
                     "        Interval backward scan on: intervaltest\n" +
-                    "          intervals: [static=[1680739799000001,9223372036854775807]\n");
+                    "          intervals: [(\"2023-04-06T00:09:59.000001Z\",\"MAX\")]\n");
 
             assertQuery("id\tts\n" +
                             "600000\t2023-04-06T00:10:00.000000Z\n" +
