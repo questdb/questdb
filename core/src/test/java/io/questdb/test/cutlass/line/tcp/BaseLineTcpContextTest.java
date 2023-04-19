@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.CairoSecurityContextFactory;
@@ -255,7 +255,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void runInAuthContext(Runnable r) throws Exception {
         assertMemoryLeak(() -> {
-            setupContext(new AuthDb(lineTcpConfiguration), null);
+            setupContext(null);
             try {
                 r.run();
             } finally {
@@ -269,12 +269,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
-        runInContext(null, r, null, onCommitNewEvent);
+        runInContext(null, r, onCommitNewEvent);
     }
 
-    protected void runInContext(FilesFacade ff, Runnable r, AuthDb authDb, Runnable onCommitNewEvent) throws Exception {
+    protected void runInContext(FilesFacade ff, Runnable r, Runnable onCommitNewEvent) throws Exception {
         assertMemoryLeak(ff, () -> {
-            setupContext(authDb, onCommitNewEvent);
+            setupContext(onCommitNewEvent);
             try {
                 r.run();
             } finally {
@@ -283,7 +283,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void setupContext(AuthDb authDb, Runnable onCommitNewEvent) {
+    protected void setupContext(Runnable onCommitNewEvent) {
         disconnected = false;
         recvBuffer = null;
         scheduler = new LineTcpMeasurementScheduler(
@@ -314,11 +314,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
         };
         noNetworkIOJob.setScheduler(scheduler);
-        if (authDb == null) {
-            context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        } else {
-            context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler, metrics);
-        }
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         Assert.assertNull(context.getDispatcher());
         context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
             @Override

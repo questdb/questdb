@@ -78,7 +78,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
-import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
+import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
 
 @RunWith(Parameterized.class)
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {

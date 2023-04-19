@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -493,7 +496,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                             "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
                     assertTable(expected, table);
-                }, null, null);
+                }, null);
     }
 
     @Test
@@ -533,7 +536,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     String expected = "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t1970-01-01T00:00:00.000099Z\n";
                     assertTable(expected, table);
-                }, null, null);
+                },
+                null
+        );
     }
 
     @Test
@@ -565,7 +570,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     closeContext();
                     String expected = "location\ttemperature\tbroken\ttimestamp\n";
                     assertTable(expected, table);
-                }, null, null);
+                },
+                null
+        );
     }
 
     @Test

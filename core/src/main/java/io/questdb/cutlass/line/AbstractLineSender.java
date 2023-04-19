@@ -26,7 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -415,7 +415,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         // protected for testing
         byte[] rawSignature;
         try {
-            Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+            Signature sig = Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
             sig.initSign(privateKey);
             sig.update(challengeBytes);
             rawSignature = sig.sign();

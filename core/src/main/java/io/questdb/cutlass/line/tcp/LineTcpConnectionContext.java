@@ -29,6 +29,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cutlass.auth.AnonymousAuthenticator;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,6 +69,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
+    private final Authenticator authenticator;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         this.configuration = configuration;
@@ -83,6 +88,16 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
+        if (configuration.getAuthDbPath() != null) {
+            this.authenticator = new EllipticCurveAuthenticator(
+                    new StaticAuthDb(configuration.getAuthDbPath()),
+                    configuration,
+                    recvBufStart,
+                    recvBufEnd
+            );
+        } else {
+            this.authenticator = AnonymousAuthenticator.INSTANCE;
+        }
     }
 
     public void checkIdle(long millis) {
@@ -168,13 +183,27 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     public IOContextResult handleIO(NetworkIOJob netIoJob) {
-        read();
-        try {
-            IOContextResult parasResult = parseMeasurements(netIoJob);
-            doMaintenance(milliClock.getTicks());
-            return parasResult;
-        } finally {
-            netIoJob.releaseWalTableDetails();
+        if (authenticator.isAuthenticated()) {
+            read();
+            try {
+                IOContextResult parasResult = parseMeasurements(netIoJob);
+                doMaintenance(milliClock.getTicks());
+                return parasResult;
+            } finally {
+                netIoJob.releaseWalTableDetails();
+            }
+        } else {
+            try {
+                IOContextResult result = authenticator.handleIO(netIoJob);
+                if (authenticator.isAuthenticated()) {
+                    recvBufPos = authenticator.getRecvBufPos();
+                    resetParser(authenticator.getRecvBufPseudoStart());
+                    return parseMeasurements(netIoJob);
+                }
+                return result;
+            } catch (AuthenticatorException e) {
+                return IOContextResult.NEEDS_DISCONNECT;
+            }
         }
     }
 
@@ -185,6 +214,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             securityContext = configuration.getSecurityContextFactory().getInstance(null, false);
         }
+        authenticator.init(fd);
         return super.of(fd, dispatcher);
     }
 
@@ -371,9 +401,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected void resetParser() {
-        parser.of(recvBufStart);
+        resetParser(recvBufStart);
+    }
+
+    protected void resetParser(long pos) {
+        parser.of(pos);
         goodMeasurement = true;
-        recvBufStartOfMeasurement = recvBufStart;
+        recvBufStartOfMeasurement = pos;
     }
 
     public enum IOContextResult {
