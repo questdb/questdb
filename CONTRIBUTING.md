@@ -24,7 +24,7 @@ If you find any **security bug**, kindly refer to [SECURITY.md](https://github.c
 We aim to respond to your issues and questions soonest. If you wish to receive a
 faster response, we recommend you always describe your steps and provide
 information about your environment in the bug reports. And if you're proposing a
-new feature, it'll help us to evaluate the priority if you explain why you need
+the new feature, it'll help us to evaluate the priority if you explain why you need
 it.
 
 # Navigation
@@ -151,7 +151,7 @@ core/src/main/c -> core/src/main/resources/io/questdb/bin
 The frontend code (i.e. web console) is located in a [separate repository](https://github.com/questdb/ui/tree/main/packages/web-console).
 To set it up you should follow instructions provided in that repository.
 
-The development environment for frontend can run on it's own, but will require QuestDB instance running in the background. You can achieve this in multiple ways:
+The development environment for the front end can run on its own but will require QuestDB instance running in the background. You can achieve this in multiple ways:
 
 1. Run development version of QuestDB from this repository. Consult
    [environment setup](#environment-setup) section of this document
@@ -162,17 +162,17 @@ The development environment for frontend can run on it's own, but will require Q
 
 ## Testing
 
-We have a lot of tests, most of which are of "integration" type, e.g. test
-starts a server, interacts with it and asserts the outcome. We expect all
+We have a lot of tests, most of which are of the "integration" type, e.g. test
+starts a server, interacts with it, and asserts the outcome. We expect all
 contributors to submit PRs with tests. Please reach out to us via Slack if
-you're uncertain on how to test, or you think an existing test can be improved.
+you're uncertain about how to test, or if you think an existing test can be improved.
 
 ## Dependencies
 
 QuestDB does not have Java dependencies. This may sound unorthodox but in
 reality we try not to reinvent the wheel but rather than using libraries we
-implement algorithms on first principles to ensure perfect fit with existing
-code. With that in mind we expect contributions that do not add third-party
+implement algorithms on first principles to ensure a perfect fit with existing
+code. With that in mind, we expect contributions that do not add third-party
 dependencies.
 
 ## Allocations, "new" operator and garbage collection
@@ -184,7 +184,7 @@ not hesitate to reach out!
 ## Committing
 
 We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to
-auto-generate release notes. We require all commit comments to conform. To that
+auto-generate release notes. We require all committed comments to confirm. To that
 end, commits have to be granular enough to be successfully described using this
 method.
 
