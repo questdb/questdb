@@ -28,7 +28,7 @@ import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.SqlParserFactory;
@@ -107,7 +107,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+    public SecurityContextFactory getCairoSecurityContextFactory() {
         return conf.getCairoSecurityContextFactory();
     }
 

@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.*;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -125,7 +125,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+    public SecurityContextFactory getCairoSecurityContextFactory() {
         return AllowAllSecurityContextFactory.INSTANCE;
     }
 

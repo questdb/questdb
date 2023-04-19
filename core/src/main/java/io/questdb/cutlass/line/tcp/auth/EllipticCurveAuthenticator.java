@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.tcp.auth;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.auth.AuthDb;
+import io.questdb.cutlass.auth.PublicKeyRepo;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -59,7 +59,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
         }
     });
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
-    private final AuthDb authDb;
+    private final PublicKeyRepo publicKeyRepo;
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private final NetworkFacade nf;
     private final long recvBufEnd;
@@ -71,11 +71,11 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private PublicKey pubKey;
     private long recvBufPos;
 
-    public EllipticCurveAuthenticator(AuthDb authDb, LineTcpReceiverConfiguration configuration, long recvBufStart, long recvBufEnd) {
+    public EllipticCurveAuthenticator(PublicKeyRepo publicKeyRepo, LineTcpReceiverConfiguration configuration, long recvBufStart, long recvBufEnd) {
         if (recvBufEnd - recvBufStart < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
-        this.authDb = authDb;
+        this.publicKeyRepo = publicKeyRepo;
         this.recvBufStart = recvBufPos = recvBufStart;
         this.recvBufEnd = recvBufEnd;
         this.nf = configuration.getNetworkFacade();
@@ -171,7 +171,7 @@ public class EllipticCurveAuthenticator implements Authenticator {
         if (lineEnd != -1) {
             userName.of(recvBufStart, recvBufStart + lineEnd);
             LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(userName).$(']').$();
-            pubKey = authDb.getPublicKey(userName);
+            pubKey = publicKeyRepo.getPublicKey(userName);
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;

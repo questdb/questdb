@@ -24,7 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -83,7 +84,9 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    CairoSecurityContextFactory getSecurityContextFactory();
+    PublicKeyRepoFactory getPublicKeyRepoFactory();
+
+    SecurityContextFactory getSecurityContextFactory();
 
     long getSymbolCacheWaitUsBeforeReload();
 

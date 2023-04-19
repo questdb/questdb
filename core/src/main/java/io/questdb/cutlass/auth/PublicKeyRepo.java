@@ -22,18 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.SecurityContext;
+import java.security.PublicKey;
 
-public interface CairoSecurityContextFactory {
-    SecurityContext getInstance(CharSequence principal, boolean readOnlyContext);
-
-    default SecurityContext getInstance(CharSequence principal) {
-        return getInstance(principal, false);
-    }
-
-    default SecurityContext getRootContext() {
-        return AllowAllSecurityContext.INSTANCE;
-    }
+public interface PublicKeyRepo {
+    PublicKey getPublicKey(CharSequence keyId);
 }

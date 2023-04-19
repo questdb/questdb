@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -199,7 +199,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public CairoSecurityContextFactory getSecurityContextFactory() {
+            public SecurityContextFactory getSecurityContextFactory() {
                 return AllowAllSecurityContextFactory.INSTANCE;
             }
 

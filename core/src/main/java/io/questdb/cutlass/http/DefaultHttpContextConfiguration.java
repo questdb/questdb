@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -104,7 +104,7 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
-    public CairoSecurityContextFactory getSecurityContextFactory() {
+    public SecurityContextFactory getSecurityContextFactory() {
         return AllowAllSecurityContextFactory.INSTANCE;
     }
 }

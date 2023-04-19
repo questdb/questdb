@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.auth.AuthDb;
+import io.questdb.cutlass.auth.PublicKeyRepo;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 
@@ -36,11 +36,11 @@ import java.security.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class StaticAuthDb implements AuthDb {
+public class StaticPublicKeyRepo implements PublicKeyRepo {
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
     private final CharSequenceObjHashMap<PublicKey> publicKeyByKeyId = new CharSequenceObjHashMap<>();
 
-    public StaticAuthDb(String authDbPath) {
+    public StaticPublicKeyRepo(String authDbPath) {
         int nLine = 0;
         String[] tokens = new String[4];
         try (BufferedReader r = new BufferedReader(new InputStreamReader(new BufferedInputStream(new FileInputStream(authDbPath))))) {

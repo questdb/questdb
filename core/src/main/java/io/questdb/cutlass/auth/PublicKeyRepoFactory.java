@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.auth;
 
-import java.security.PublicKey;
-
-public interface AuthDb {
-    PublicKey getPublicKey(CharSequence keyId);
+public interface PublicKeyRepoFactory {
+    PublicKeyRepo getInstance();
 }

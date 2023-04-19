@@ -24,7 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.griffin.SqlParserFactory;
 
@@ -34,7 +34,7 @@ public interface FactoriesFactory {
     // todo: this interface is not great - it assumes a single username / password
     PGAuthenticatorFactory getPGAuthenticatorFactory();
 
-    CairoSecurityContextFactory getSecurityContextFactory();
+    SecurityContextFactory getSecurityContextFactory();
 
     SqlParserFactory getSqlParserFactory();
 }

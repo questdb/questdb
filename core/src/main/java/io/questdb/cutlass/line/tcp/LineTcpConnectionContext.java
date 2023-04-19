@@ -90,7 +90,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.idleTimeout = configuration.getWriterIdleTimeout();
         if (configuration.getAuthDbPath() != null) {
             this.authenticator = new EllipticCurveAuthenticator(
-                    new StaticAuthDb(configuration.getAuthDbPath()),
+                    configuration.getPublicKeyRepoFactory().getInstance(),
                     configuration,
                     recvBufStart,
                     recvBufEnd

@@ -25,15 +25,15 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 
 public final class EmptyPGAuthenticator implements PGAuthenticator {
     private final boolean readOnly;
-    private final CairoSecurityContextFactory securityContextFactory;
+    private final SecurityContextFactory securityContextFactory;
 
     // todo: this is not meant to be used in production
     // it's for testing authorization only
-    public EmptyPGAuthenticator(CairoSecurityContextFactory securityContextFactory, boolean readOnly) {
+    public EmptyPGAuthenticator(SecurityContextFactory securityContextFactory, boolean readOnly) {
         this.securityContextFactory = securityContextFactory;
         this.readOnly = readOnly;
     }

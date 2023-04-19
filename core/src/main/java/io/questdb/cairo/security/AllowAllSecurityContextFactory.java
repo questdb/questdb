@@ -26,7 +26,7 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
 
-public class AllowAllSecurityContextFactory implements CairoSecurityContextFactory {
+public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
 
     private AllowAllSecurityContextFactory() {

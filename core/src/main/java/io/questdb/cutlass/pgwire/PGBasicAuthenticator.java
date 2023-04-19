@@ -25,7 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -35,7 +35,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
     private final SecurityContext securityContext;
     private final String username;
 
-    public PGBasicAuthenticator(CairoSecurityContextFactory securityContextFactory, String username, String password, boolean readOnly) {
+    public PGBasicAuthenticator(SecurityContextFactory securityContextFactory, String username, String password, boolean readOnly) {
         this.username = username;
         this.password = password;
         this.securityContext = securityContextFactory.getInstance(username, readOnly);

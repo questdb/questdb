@@ -25,8 +25,10 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.auth.DefaultPublicKeyRepoFactory;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -190,7 +192,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final String root;
     private final int sampleByIndexSearchPageSize;
-    private final CairoSecurityContextFactory securityContextFactory;
+    private final SecurityContextFactory securityContextFactory;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -1604,7 +1606,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getCairoSecurityContextFactory() {
+        public SecurityContextFactory getCairoSecurityContextFactory() {
             return securityContextFactory;
         }
 
@@ -2500,7 +2502,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getSecurityContextFactory() {
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
 
@@ -2912,6 +2914,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
 
+        private PublicKeyRepoFactory publicKeyRepoFactory;
+
         @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;
@@ -3021,7 +3025,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getSecurityContextFactory() {
+        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
+            if (publicKeyRepoFactory == null) {
+                if (getAuthDbPath() != null) {
+                    publicKeyRepoFactory = new DefaultPublicKeyRepoFactory(getAuthDbPath());
+                }
+            }
+            return publicKeyRepoFactory;
+        }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
 
@@ -3417,7 +3431,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getSecurityContextFactory() {
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
 

@@ -25,7 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
@@ -60,7 +60,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final boolean enableLineTcp;
     private final boolean enablePgWire;
     private final PGAuthenticatorFactory pgAuthenticatorFactory;
-    private final CairoSecurityContextFactory securityContextFactory;
+    private final SecurityContextFactory securityContextFactory;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
         @Override
         public PGAuthenticatorFactory getAuthenticatorFactory() {
@@ -68,7 +68,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getSecurityContextFactory() {
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
 
@@ -85,7 +85,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getSecurityContextFactory() {
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
     }) {
@@ -125,7 +125,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getSecurityContextFactory() {
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
 
@@ -146,7 +146,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             int workerCountHttp,
             int workerCountLineTcpIO,
             int workerCountLineTcpWriter,
-            CairoSecurityContextFactory securityContextFactory,
+            SecurityContextFactory securityContextFactory,
             PGAuthenticatorFactory pgAuthenticatorFactory
     ) {
         super(root);

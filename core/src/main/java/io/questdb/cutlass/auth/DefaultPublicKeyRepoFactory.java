@@ -22,30 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
 
-public class DefaultFactoriesFactory implements FactoriesFactory {
-    public static final DefaultFactoriesFactory INSTANCE = new DefaultFactoriesFactory();
+public class DefaultPublicKeyRepoFactory implements PublicKeyRepoFactory {
+    private final PublicKeyRepo publicKeyRepo;
 
-    @Override
-    public PGAuthenticatorFactory getPGAuthenticatorFactory() {
-        return PGBasicAuthenticatorFactory.INSTANCE;
+    public DefaultPublicKeyRepoFactory(String authDbPath) {
+        this.publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
-    }
-
-    @Override
-    public SqlParserFactory getSqlParserFactory() {
-        return SqlParserFactoryImpl.INSTANCE;
+    public PublicKeyRepo getInstance() {
+        return publicKeyRepo;
     }
 }
