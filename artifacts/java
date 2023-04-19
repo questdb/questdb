@@ -1,0 +1,14 @@
+open module io.questdb.test {
+    requires transitive io.questdb;
+    requires static junit;
+    requires transitive jdk.unsupported;
+    requires static org.jetbrains.annotations;
+    requires static java.sql;
+    requires static org.postgresql.jdbc;
+    requires static java.management;
+
+    uses io.questdb.griffin.FunctionFactory;
+
+    exports io.questdb.test;
+    exports io.questdb.test.cairo;
+}
