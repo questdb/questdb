@@ -2003,6 +2003,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables();
                 columnVersionWriter.readUnsafe();
+                closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
