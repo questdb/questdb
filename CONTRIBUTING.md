@@ -21,7 +21,7 @@ there.
 
 If you find any **security bug**, kindly refer to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) file for more info.
 
-We aim to respond to your issues and questions soonest. If you wish to receive a
+We aim to respond to your issues and questions as soon as possible. If you wish to receive a
 faster response, we recommend you always describe your steps and provide
 information about your environment in the bug reports. And if you're proposing a
 new feature, it'll help us to evaluate the priority if you explain why you need
