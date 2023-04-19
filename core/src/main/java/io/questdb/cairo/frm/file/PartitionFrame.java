@@ -96,6 +96,11 @@ public class PartitionFrame implements Frame {
         return size;
     }
 
+    @Override
+    public void rebuildIndexes(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long size) {
         this.metadata = metadata;
         this.crv = cvr;
