@@ -1101,17 +1101,27 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 2
                         );
 
-                        // Split partition by committing O3 to "2022-06-01"
-                        compile("insert into " + tableName + "(ts) select ts + 12 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
-                        //noinspection resource
-                        Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T120252-799000.1").concat("ts.d");
-                        FilesFacade ff = configuration.getFilesFacade();
-                        Assert.assertTrue(ff.exists(path.$()));
+                        try (TableReader ignore = getReader(token)) {
+                            // Split partition by committing O3 to "2022-06-01"
+                            compile("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
+
+                            //noinspection resource
+                            Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200252-799000.1").concat("ts.d");
+                            FilesFacade ff = configuration.getFilesFacade();
+                            Assert.assertTrue(ff.exists(path.$()));
+
+                            try {
+                                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                            } catch (CairoException e) {
+                                TestUtils.assertEquals("could not detach partition [table=testDetachAttachSplitPartition, " +
+                                        "detachStatus=DETACH_ERR_CANNOT_SQUASH, partitionTimestamp=2022-06-01T00:00:00.000Z, partitionBy=DAY]", e.getFlyweightMessage());
+                            }
+                        }
 
                         // Detach partition "2022-06-01", should squash partition into 1 piece and detach it
                         compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                         assertSql("select min(ts) from " + tableName, "min\n" +
-                                "2022-06-02T00:02:52.299000Z\n");
+                                "2022-06-02T00:01:55.116000Z\n");
 
                         renameDetachedToAttachable(tableName, "2022-06-01");
                         compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);

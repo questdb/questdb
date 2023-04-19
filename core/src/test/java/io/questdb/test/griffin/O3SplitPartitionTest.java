@@ -557,6 +557,4 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 "select count() from x"
         );
     }
-
-
 }

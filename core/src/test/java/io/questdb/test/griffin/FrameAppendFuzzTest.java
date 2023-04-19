@@ -113,7 +113,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     private void mergeAllPartitions(TableToken merged) {
         var ff = configuration.getFilesFacade();
         try (TableWriter writer = getWriter(merged)) {
-            writer.mergeAllPartitions();
+            writer.squashAllPartitions();
         }
 
         engine.releaseInactive();
