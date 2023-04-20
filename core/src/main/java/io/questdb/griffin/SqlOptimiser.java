@@ -2439,7 +2439,7 @@ public class SqlOptimiser {
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
-        int status = executionContext.getStatus(path, tableToken);
+        int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
@@ -2447,7 +2447,7 @@ public class SqlOptimiser {
                 parseFunctionAndEnumerateColumns(model, executionContext);
                 return;
             } catch (SqlException e) {
-                throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
+                throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
             }
         }
 
