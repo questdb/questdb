@@ -24,11 +24,12 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.tcp.*;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -39,6 +40,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -197,6 +199,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public SecurityContextFactory getSecurityContextFactory() {
+                return AllowAllSecurityContextFactory.INSTANCE;
+            }
+
+            @Override
             public long getWriterIdleTimeout() {
                 return 150;
             }
@@ -214,6 +221,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean isSymbolAsFieldSupported() {
                 return symbolAsFieldSupported;
+            }
+
+            @Override
+            public boolean readOnlySecurityContext() {
+                return false;
             }
         };
     }
@@ -243,7 +255,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void runInAuthContext(Runnable r) throws Exception {
         assertMemoryLeak(() -> {
-            setupContext(new AuthDb(lineTcpConfiguration), null);
+            setupContext(null);
             try {
                 r.run();
             } finally {
@@ -257,12 +269,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
-        runInContext(null, r, null, onCommitNewEvent);
+        runInContext(null, r, onCommitNewEvent);
     }
 
-    protected void runInContext(FilesFacade ff, Runnable r, AuthDb authDb, Runnable onCommitNewEvent) throws Exception {
+    protected void runInContext(FilesFacade ff, Runnable r, Runnable onCommitNewEvent) throws Exception {
         assertMemoryLeak(ff, () -> {
-            setupContext(authDb, onCommitNewEvent);
+            setupContext(onCommitNewEvent);
             try {
                 r.run();
             } finally {
@@ -271,7 +283,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void setupContext(AuthDb authDb, Runnable onCommitNewEvent) {
+    protected void setupContext(Runnable onCommitNewEvent) {
         disconnected = false;
         recvBuffer = null;
         scheduler = new LineTcpMeasurementScheduler(
@@ -283,14 +295,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         ) {
 
             @Override
-            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
-                Assert.assertEquals(0, workerId);
-                return noNetworkIOJob;
-            }
-
-            @Override
             public boolean scheduleEvent(
-                    CairoSecurityContext securityContext, NetworkIOJob netIoJob,
+                    SecurityContext securityContext,
+                    NetworkIOJob netIoJob,
                     LineTcpConnectionContext context,
                     LineTcpParser parser
             ) {
@@ -299,13 +306,15 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 }
                 return super.scheduleEvent(securityContext, netIoJob, context, parser);
             }
+
+            @Override
+            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+                Assert.assertEquals(0, workerId);
+                return noNetworkIOJob;
+            }
         };
         noNetworkIOJob.setScheduler(scheduler);
-        if (authDb == null) {
-            context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
-        } else {
-            context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler, metrics);
-        }
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         Assert.assertNull(context.getDispatcher());
         context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
             @Override

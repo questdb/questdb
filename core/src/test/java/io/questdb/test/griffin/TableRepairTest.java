@@ -52,7 +52,7 @@ public class TableRepairTest extends AbstractGriffinTest {
 
                 // last and "active" partition is "1970-01-12"
                 try (Path path = new Path()) {
-                    TableToken tableToken = engine.getTableToken("tst");
+                    TableToken tableToken = engine.verifyTableName("tst");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-12").$();
                     Assert.assertEquals(0, Files.rmdir(path));
                 }
@@ -92,7 +92,7 @@ public class TableRepairTest extends AbstractGriffinTest {
                 Assert.assertEquals(100000, reader.size());
 
                 try (Path path = new Path()) {
-                    TableToken tableToken = engine.getTableToken("tst");
+                    TableToken tableToken = engine.verifyTableName("tst");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-09").$();
                     Assert.assertEquals(0, Files.rmdir(path));
                 }

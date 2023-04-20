@@ -59,7 +59,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CreateTableTestUtils.create(model);
         }
-        uTableToken = engine.getTableToken("u");
+        uTableToken = engine.verifyTableName("u");
     }
 
     @Test
@@ -125,12 +125,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
         }
         sink.clear();
         sink.put("x");
-        TableToken xTableToken = engine.getTableToken(sink);
+        TableToken xTableToken = engine.verifyTableName(sink);
         assertWithPool(pool -> {
             sink.clear();
             sink.put("x");
 
-            TableReader reader1 = pool.get(engine.getTableToken(sink));
+            TableReader reader1 = pool.get(engine.verifyTableName(sink));
             Assert.assertNotNull(reader1);
             reader1.close();
 
@@ -151,7 +151,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-            try (TableReader reader = pool.get(engine.getTableToken("x"))) {
+            try (TableReader reader = pool.get(engine.verifyTableName("x"))) {
                 Assert.assertNotNull(reader);
                 try {
                     pool.close();
@@ -223,7 +223,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE).col("ts", ColumnType.DATE)) {
                 CreateTableTestUtils.create(model);
             }
-            names[i] = engine.getTableToken(name);
+            names[i] = engine.verifyTableName(name);
         }
 
         assertWithPool(pool -> {
@@ -292,7 +292,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
             expectedRows[i] = sink.toString();
             expectedRowsMap.put(name, expectedRows[i]);
-            names[i] = engine.getTableToken(name);
+            names[i] = engine.verifyTableName(name);
         }
 
         assertWithPool((ReaderPool pool) -> {
@@ -380,7 +380,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CreateTableTestUtils.create(model);
         }
-        TableToken xyzTableToken = engine.getTableToken("xyz");
+        TableToken xyzTableToken = engine.verifyTableName("xyz");
 
         assertWithPool(pool -> {
             Assert.assertTrue(pool.lock(xyzTableToken));
@@ -405,7 +405,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CreateTableTestUtils.create(model);
         }
-        TableToken xyzTableToken = engine.getTableToken("xyz");
+        TableToken xyzTableToken = engine.verifyTableName("xyz");
 
         for (int i = 0; i < 100; i++) {
             assertWithPool(pool -> {
@@ -574,7 +574,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
                     CreateTableTestUtils.create(model);
                 }
-                final TableToken nameX = engine.getTableToken("x");
+                final TableToken nameX = engine.verifyTableName("x");
 
                 final int N = 10_000;
                 for (int i = 0; i < N; i++) {
@@ -701,7 +701,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model);
             }
 
-            TableToken xTableToken = engine.getTableToken("x");
+            TableToken xTableToken = engine.verifyTableName("x");
             for (int k = 0; k < 10; k++) {
                 // allocate 32 readers to get to the start race at edge of next entry
                 int n = 64;
@@ -758,7 +758,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
         assertWithPool(pool -> {
             TableReader x, y;
-            TableToken xTableToken = engine.getTableToken("x");
+            TableToken xTableToken = engine.verifyTableName("x");
             x = pool.get(xTableToken);
             Assert.assertNotNull(x);
 

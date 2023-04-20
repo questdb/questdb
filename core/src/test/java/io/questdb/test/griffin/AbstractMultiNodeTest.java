@@ -31,7 +31,7 @@ import org.junit.BeforeClass;
 public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
         final QuestDBTestNode node2 = newNode(2);
         node2.initGriffin();

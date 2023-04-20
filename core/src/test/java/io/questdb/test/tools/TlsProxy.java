@@ -35,8 +35,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.security.*;
-import java.security.cert.CertificateException;
+import java.security.KeyStore;
+import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,7 +60,7 @@ public final class TlsProxy {
     }
 
     public int start() {
-        try {
+        return TestUtils.unchecked(() -> {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             tmf.init(KeyStore.getInstance(KeyStore.getDefaultType()));
@@ -78,26 +78,14 @@ public final class TlsProxy {
             acceptorThread = new Thread(() -> acceptorLoop(serverSocket));
             acceptorThread.start();
             return serverSocket.getLocalPort();
-        } catch (NoSuchAlgorithmException | IOException | KeyManagementException | CertificateException |
-                 KeyStoreException | UnrecoverableKeyException e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     public synchronized void stop() {
         shutdownRequested = true;
-        try {
-            serverSocket.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> serverSocket.close());
         acceptorThread.interrupt();
-        try {
-            acceptorThread.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> acceptorThread.join());
         for (Link link : links) {
             link.shutDown();
         }
@@ -146,12 +134,8 @@ public final class TlsProxy {
 
         private Link(Socket frontend, Socket backend) {
             AtomicInteger race = new AtomicInteger(2);
-            try {
-                frontendToBackend = new Pump(frontend.getInputStream(), backend.getOutputStream(), race, "front->backend");
-                backendToFrontend = new Pump(backend.getInputStream(), frontend.getOutputStream(), race, "backend->frontend");
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            frontendToBackend = TestUtils.unchecked(() -> new Pump(frontend.getInputStream(), backend.getOutputStream(), race, "front->backend"));
+            backendToFrontend = TestUtils.unchecked(() -> new Pump(backend.getInputStream(), frontend.getOutputStream(), race, "backend->frontend"));
         }
 
         private void shutDown() {
@@ -229,11 +213,7 @@ public final class TlsProxy {
         private void shutdown() {
             shutdownRequested = true;
             owningThread.interrupt();
-            try {
-                owningThread.join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+            TestUtils.unchecked(() -> owningThread.join());
         }
     }
 }

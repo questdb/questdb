@@ -104,7 +104,7 @@ public class Table2IlpTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                        engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                        engine.getConfiguration().getSecurityContextFactory().getRootContext(),
                         bindVariableService,
                         null,
                         -1,

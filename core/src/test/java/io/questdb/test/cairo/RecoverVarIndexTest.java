@@ -34,34 +34,34 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecoverVarIndexTest extends AbstractCairoTest {
-    protected static CharSequence root;
     private static SqlCompiler compiler;
     private static SqlExecutionContext sqlExecutionContext;
     private final RecoverVarIndex rebuildVarColumn = new RecoverVarIndex();
     TableWriter tempWriter;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(configuration));
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         compiler.close();
         LogFactory.configureAsync();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After
@@ -285,7 +285,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRecoverVarIndex(createTableSql,
-                        tablePath -> tempWriter = getWriter(engine,"xxx"),
+                        tablePath -> tempWriter = getWriter(engine, "xxx"),
                         rebuildIndex -> {
                             try {
                                 rebuildIndex.reindexColumn("str1");
@@ -367,7 +367,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            TableToken xxx = engine.getTableToken("xxx");
+            TableToken xxx = engine.verifyTableName("xxx");
             String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 

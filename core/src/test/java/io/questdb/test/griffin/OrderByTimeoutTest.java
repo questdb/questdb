@@ -41,7 +41,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     public static int breakConnection = -1;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public boolean checkConnection() {
@@ -70,13 +70,13 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         AbstractGriffinTest.tearDownStatic();
         circuitBreaker = Misc.free(circuitBreaker);
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         breakConnection = -1;
     }
@@ -125,11 +125,9 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
             for (int i = 0; i < breakTestLimit; i++) {
                 breakConnection = i;
                 try {
-
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     }
-
                     Assert.fail();
                 } catch (CairoException ex) {
                     Assert.assertTrue(ex.isInterruption());

@@ -26,8 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
@@ -39,7 +37,6 @@ import java.io.Closeable;
 
 
 public class LineTcpReceiver implements Closeable {
-    private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final Metrics metrics;
     private LineTcpMeasurementScheduler scheduler;
@@ -53,14 +50,7 @@ public class LineTcpReceiver implements Closeable {
         this.scheduler = null;
         this.metrics = engine.getMetrics();
         ObjectFactory<LineTcpConnectionContext> factory;
-        if (null == configuration.getAuthDbPath()) {
-            LOG.info().$("using default context").$();
-            factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
-        } else {
-            LOG.info().$("using authenticating context").$();
-            AuthDb authDb = new AuthDb(configuration);
-            factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
-        }
+        factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
 
         IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
                 factory,

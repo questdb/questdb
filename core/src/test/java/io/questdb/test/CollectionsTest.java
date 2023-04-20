@@ -27,14 +27,9 @@ package io.questdb.test;
 import io.questdb.cairo.BinarySearch;
 import io.questdb.std.*;
 import org.junit.Assert;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
 public class CollectionsTest {
-
-    @Rule
-    public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testIntHash() {

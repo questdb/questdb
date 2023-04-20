@@ -22,15 +22,47 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.std.FilesFacade;
 
-public class AllowAllCairoSecurityContext implements CairoSecurityContext {
-    public static final AllowAllCairoSecurityContext INSTANCE = new AllowAllCairoSecurityContext();
+import java.util.Map;
+
+public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
+    private static final String BANNER =
+            "     ___                  _   ____  ____\n" +
+                    "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
+                    "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
+                    "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
+                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
 
     @Override
-    public boolean canWrite() {
+    public String getBanner() {
+        return BANNER;
+    }
+
+    @Override
+    public Map<String, String> getEnv() {
+        return System.getenv();
+    }
+
+    @Override
+    public FactoryProvider getFactoriesFactory() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return null;
+    }
+
+    @Override
+    public ServerConfiguration getServerConfiguration() {
+        return null;
+    }
+
+    @Override
+    public boolean useSite() {
         return true;
     }
 }

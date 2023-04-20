@@ -84,7 +84,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(
-                configuration.getCairoSecurityContextFactory().getRootContext(),
+                configuration.getSecurityContextFactory().getRootContext(),
                 null,
                 null
         );
@@ -105,8 +105,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         ") timestamp(ts) partition by MONTH BYPASS WAL",
                 sqlExecutionContext
         );
-        this.tableToken = engine.getTableToken(tableName);
-        this.writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, "QuestDB system");
+        this.tableToken = engine.verifyTableName(tableName);
+        this.writer = engine.getWriter(tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
         processTableRecords(engine);
     }

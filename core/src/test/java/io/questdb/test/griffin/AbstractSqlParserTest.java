@@ -67,7 +67,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.getTableToken(tableModel.getName());
+                TableToken tableToken = engine.verifyTableName(tableModel.getName());
                 Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                 configuration.getFilesFacade().rmdir(path);
                 tableModel.close();
@@ -139,7 +139,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
             FilesFacade filesFacade = configuration.getFilesFacade();
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.getTableToken(tableModel.getName());
+                TableToken tableToken = engine.verifyTableName(tableModel.getName());
                 Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                 Assert.assertEquals(0, filesFacade.rmdir(path));
                 tableModel.close();

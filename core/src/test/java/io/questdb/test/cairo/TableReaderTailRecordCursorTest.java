@@ -26,9 +26,9 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -155,7 +155,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
-            TableToken tableToken = engine.getTableToken("xyz");
+            TableToken tableToken = engine.verifyTableName("xyz");
             new Thread(() -> {
                 try (TableWriter writer = getWriter(tableToken)) {
                     barrier.await();
@@ -191,7 +191,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             }).start();
 
             new Thread(() -> {
-                try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+                try (TableReader reader = engine.getReader(tableToken)) {
                     Rnd rnd = new Rnd();
                     int count = 0;
                     final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
@@ -244,7 +244,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            TableToken tableToken = engine.getTableToken("xyz");
+            TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
                 long ts = 0;
                 long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
@@ -254,13 +254,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()) {
-                        cursor.of(
-                                engine.getReader(
-                                        securityContext,
-                                        tableToken,
-                                        TableUtils.ANY_TABLE_VERSION
-                                )
-                        );
+                        cursor.of(engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION));
                         cursor.toBottom();
 
                         Assert.assertFalse(cursor.reload());
@@ -307,7 +301,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            TableToken tableToken = engine.getTableToken("xyz");
+            TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
                 long ts = 0;
                 long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
@@ -317,13 +311,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()) {
-                        cursor.of(
-                                engine.getReader(
-                                        securityContext,
-                                        tableToken,
-                                        TableUtils.ANY_TABLE_VERSION
-                                )
-                        );
+                        cursor.of(engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION));
                         Assert.assertTrue(cursor.reload());
                         int count = 0;
                         Record record = cursor.getRecord();

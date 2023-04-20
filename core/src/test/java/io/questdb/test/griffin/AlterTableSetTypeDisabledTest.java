@@ -24,14 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.*;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.AlterTableSetTypeTest.WAL;
@@ -39,30 +39,27 @@ import static org.junit.Assert.assertFalse;
 
 public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRestartTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(
-                    PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",            // WAL enabled
-                    PropertyKey.TABLE_TYPE_CONVERSION_ENABLED.getPropertyPath() + "=false"  // table type conversion is disabled
-            );
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",            // WAL enabled
+                PropertyKey.TABLE_TYPE_CONVERSION_ENABLED.getPropertyPath() + "=false"  // table type conversion is disabled
+        ));
     }
 
     @Test
     public void testSetTypeDisabled() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
 
-                final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final CairoEngine engine = questdb.getEngine();
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
@@ -81,11 +78,11 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
 
-                final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final CairoEngine engine = questdb.getEngine();
+                final TableToken token = engine.verifyTableName(tableName);
 
                 // conversion is disabled so table is not converted, it is still non-WAL
                 assertFalse(engine.isWalTable(token));

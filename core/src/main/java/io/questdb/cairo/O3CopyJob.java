@@ -99,7 +99,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
-        final boolean directIoFlag = tableWriter.preferDirectIO();
+        final boolean mixedIOFlag = tableWriter.allowMixedIO();
         LOG.debug().$("o3 copy [blockType=").$(blockType)
                 .$(", columnType=").$(columnType)
                 .$(", dstFixFd=").$(dstFixFd)
@@ -116,7 +116,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", srcOooMax=").$(srcOooMax)
                 .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
                 .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
-                .$(", directIoFlag=").$(directIoFlag)
+                .$(", mixedIOFlag=").$(mixedIOFlag)
                 .I$();
 
         try {
@@ -159,7 +159,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             dstVarOffset,
                             dstVarAdjust,
                             dstVarSize,
-                            directIoFlag
+                            mixedIOFlag
                     );
                     break;
                 case O3_BLOCK_DATA:
@@ -178,7 +178,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             dstVarOffset,
                             dstVarAdjust,
                             dstVarSize,
-                            directIoFlag
+                            mixedIOFlag
                     );
                     break;
                 default:
@@ -364,7 +364,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
@@ -383,7 +383,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarOffset,
                         dstVarAdjust,
                         dstVarSize,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             default:
@@ -396,7 +396,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         ColumnType.pow2SizeOf(Math.abs(columnType)),
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
         }
@@ -411,11 +411,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixFileOffset,
             int dstFd,
             final int shl,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         final long len = (srcHi - srcLo + 1) << shl;
         final long fromAddress = src + (srcLo << shl);
-        if (directIoFlag) {
+        if (mixedIOFlag) {
             if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
                 throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
                         .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
@@ -539,7 +539,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo);
         assert lo >= 0;
@@ -549,7 +549,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long len = hi - lo;
         assert len <= Math.abs(dstVarSize) - dstVarOffset;
         final long offset = dstVarOffset + dstVarAdjust;
-        if (directIoFlag) {
+        if (mixedIOFlag) {
             if (ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset) != len) {
                 throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstVarFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
             }
@@ -566,7 +566,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstFixFileOffset,
                     dstFixFd,
                     3,
-                    directIoFlag
+                    mixedIOFlag
             );
         } else {
             O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);
@@ -947,7 +947,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
-            boolean directIoFlag
+            boolean mixedIOFlag
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
@@ -969,7 +969,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarOffset,
                         dstVarAdjust,
                         dstVarSize,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.BOOLEAN:
@@ -984,7 +984,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         0,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.CHAR:
@@ -999,7 +999,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         1,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.INT:
@@ -1015,7 +1015,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         2,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.LONG:
@@ -1031,7 +1031,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         3,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.TIMESTAMP:
@@ -1048,7 +1048,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             dstFixFileOffset,
                             dstFixFd,
                             3,
-                            directIoFlag
+                            mixedIOFlag
                     );
                 }
                 break;
@@ -1063,7 +1063,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         4,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             case ColumnType.LONG256:
@@ -1076,7 +1076,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFileOffset,
                         dstFixFd,
                         5,
-                        directIoFlag
+                        mixedIOFlag
                 );
                 break;
             default:

@@ -24,7 +24,6 @@
 
 package io.questdb.test;
 
-import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
@@ -42,7 +41,9 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -57,11 +58,9 @@ import static io.questdb.test.AbstractCairoTest.sink;
 import static io.questdb.test.AbstractGriffinTest.assertCursor;
 import static io.questdb.test.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
 import static io.questdb.test.griffin.ShowPartitionsTest.testTableName;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
-import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
+import static io.questdb.test.tools.TestUtils.*;
 
 @RunWith(Parameterized.class)
-@Ignore
 public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
     private static final String EXPECTED = "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
@@ -98,24 +97,16 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         });
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(
-                    HTTP_PORT + pgPortDelta,
-                    HTTP_MIN_PORT + pgPortDelta,
-                    pgPort,
-                    ILP_PORT + pgPortDelta,
-                    PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        AbstractBootstrapTest.tearDownStatic();
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                HTTP_PORT + pgPortDelta,
+                HTTP_MIN_PORT + pgPortDelta,
+                pgPort,
+                ILP_PORT + pgPortDelta,
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true"));
     }
 
     @Test
@@ -123,12 +114,12 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         String tableName = testTableName(testName.getMethodName(), tableNameSuffix);
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext defaultContext = executionContext(qdb.getCairoEngine())
+                    ServerMain qdb = new ServerMain(getServerMainArgs());
+                    SqlCompiler defaultCompiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext defaultContext = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
-                CairoEngine engine = qdb.getCairoEngine();
+                CairoEngine engine = qdb.getEngine();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
@@ -144,8 +135,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 List<SqlCompiler> compilers = new ArrayList<>(numThreads);
                 List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine());
+                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine());
                     compilers.add(compiler);
                     contexts.add(context);
                     new Thread(() -> {
@@ -161,7 +152,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
                     TestListener.dumpThreadStacks();
                 }
-                dropTable(defaultCompiler, defaultContext, tableToken, isWal);
+                dropTable(defaultCompiler, defaultContext, tableToken);
                 for (int i = 0; i < numThreads; i++) {
                     compilers.get(i).close();
                     contexts.get(i).close();
@@ -175,21 +166,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
-        long time = System.currentTimeMillis();
-        while (true) {
-            try {
-                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
-                        "1000000\n");
-                break;
-            } catch (AssertionError e) {
-                if (System.currentTimeMillis() - time > 5000) {
-                    throw e;
-                }
-            }
-        }
     }
 
     private static void assertShowPartitions(
@@ -212,6 +188,21 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 cursor0.toTop();
                 assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
                 cursor1.toTop();
+            }
+        }
+    }
+
+    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
+        long time = System.currentTimeMillis();
+        while (true) {
+            try {
+                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
+                        "1000000\n");
+                break;
+            } catch (AssertionError e) {
+                if (System.currentTimeMillis() - time > 5000) {
+                    throw e;
+                }
             }
         }
     }
@@ -243,7 +234,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
             compiler.compile(insert, context);
         }
-        return engine.getTableToken(tableName);
+        return engine.verifyTableName(tableName);
     }
 
     static {

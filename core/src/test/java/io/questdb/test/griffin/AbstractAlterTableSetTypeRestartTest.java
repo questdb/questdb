@@ -24,20 +24,21 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.postgresql.util.PSQLException;
@@ -48,8 +49,6 @@ import java.sql.*;
 import static org.junit.Assert.*;
 
 abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTest {
-    private static final Log LOG = LogFactory.getLog(AbstractAlterTableSetTypeRestartTest.class);
-
     static void assertConvertFileContent(Path convertFilePath, byte expected) throws IOException {
         final byte[] fileContent = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(convertFilePath.toString()));
         assertEquals(1, fileContent.length);
@@ -80,21 +79,21 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         }
     }
 
-    static void setSeqTxn(CairoEngine engine, TableToken token, long seqTxn) {
+    static void setSeqTxn(CairoEngine engine, TableToken token) {
         try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
-            writer.commitSeqTxn(seqTxn);
+            writer.commitSeqTxn(12345);
         }
     }
 
     static void assertSeqTxn(CairoEngine engine, TableToken token, long expectedSeqTxn) {
-        try (final TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
+        try (final TableReader reader = engine.getReader(token)) {
             assertEquals(expectedSeqTxn, reader.getTxFile().getSeqTxn());
         }
     }
 
     static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
         return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
+                AllowAllSecurityContext.INSTANCE,
                 null,
                 null,
                 -1,

@@ -274,7 +274,7 @@ public class TableWriterTest extends AbstractCairoTest {
                                 .ofAddColumn(0, tableToken, tableId)
                                 .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(securityContext, tableToken, alterOp)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, alterOp)) {
                             if (writer != null) {
                                 writer.publishAsyncWriterCommand(alterOp);
                             }
@@ -1816,7 +1816,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             String all = "all";
-            TableToken tableToken = engine.getTableToken(all);
+            TableToken tableToken = engine.verifyTableName(all);
             try (
                     MemoryCMARW mem = Vm.getCMARWInstance();
                     Path path = new Path().of(root).concat(tableToken).concat(TableUtils.TODO_FILE_NAME).$()
@@ -2134,7 +2134,7 @@ public class TableWriterTest extends AbstractCairoTest {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
             try (Path path = new Path()) {
                 String all = "all";
-                TableToken tableToken = engine.getTableToken(all);
+                TableToken tableToken = engine.verifyTableName(all);
                 Assert.assertTrue(FF.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
                     newTableWriter(configuration, all, metrics).close();
@@ -3997,7 +3997,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.renameColumn("supplier", "sup");
 
                 try (Path path = new Path()) {
-                    TableToken tableToken = engine.getTableToken(model.getName());
+                    TableToken tableToken = engine.verifyTableName(model.getName());
                     path.of(root).concat(tableToken);
                     final int plen = path.length();
                     if (columnTypeTag == ColumnType.SYMBOL) {

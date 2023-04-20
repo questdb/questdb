@@ -59,7 +59,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     private static final int QUEUE_CAPACITY = 4;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         // Having a single shard is important for many tests in this suite. See resetTaskCapacities
         // method for more detail.
         pageFrameReduceShardCount = 1;
@@ -831,8 +831,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return sqlExecutionContext.getCairoSecurityContext();
+        public SecurityContext getSecurityContext() {
+            return sqlExecutionContext.getSecurityContext();
         }
 
         @Override

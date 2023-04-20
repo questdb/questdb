@@ -30,26 +30,19 @@ import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-import org.junit.rules.TestName;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class ContinuousOffsetMappedMemoryTest {
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
-    private static String root;
+public class ContinuousOffsetMappedMemoryTest extends AbstractTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-    @Rule
-    public TestName testName = new TestName();
-
-    @BeforeClass
-    public static void setUpClass() throws Exception {
-        root = temp.newFolder("dbRoot").getAbsolutePath();
-    }
 
     @Test
     public void testExtendAfterZeroSizeOpen() throws Exception {

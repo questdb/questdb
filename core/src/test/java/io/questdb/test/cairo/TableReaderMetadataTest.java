@@ -76,7 +76,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         AtomicInteger columnsAdded = new AtomicInteger();
         AtomicInteger reloadCount = new AtomicInteger();
         int totalColAddCount = 1000;
-        TableToken tableToken = engine.getTableToken("all");
+        TableToken tableToken = engine.verifyTableName("all");
 
         Thread writerThread = new Thread(() -> {
             try (TableWriter writer = getWriter(tableToken)) {
@@ -94,7 +94,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         });
 
         Thread readerThread = new Thread(() -> {
-            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 start.await();
                 int colAdded = -1, newColsAdded;
                 while (colAdded < totalColAddCount) {
@@ -391,7 +391,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
     }
 
@@ -399,7 +399,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.drop(securityContext, path, engine.getTableToken("all"));
+            engine.drop(path, engine.verifyTableName("all"));
         }
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
 
@@ -415,7 +415,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.load();
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
@@ -450,7 +450,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             }
 
             // Check that table has same tableId.
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.load();
                 Assert.assertEquals(tableId, metadata.getTableId());
             }
