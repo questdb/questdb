@@ -30,10 +30,12 @@ import io.questdb.griffin.SqlParserFactory;
 import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.str.Path;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
@@ -115,20 +117,23 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         this(httpContextConfiguration, new DefaultIODispatcherConfiguration());
     }
 
-    public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration, IODispatcherConfiguration ioDispatcherConfiguration) {
-        this(Files.getResourcePath(DefaultHttpServerConfiguration.class.getResource("/io/questdb/site/conf/mime.types")), ioDispatcherConfiguration, httpContextConfiguration);
+    public DefaultHttpServerConfiguration(
+            HttpContextConfiguration httpContextConfiguration,
+            IODispatcherConfiguration ioDispatcherConfiguration
+    ) {
+        this(
+                Files.getResourcePath(DefaultHttpServerConfiguration.class.getResource("/io/questdb/site/conf/mime.types")),
+                ioDispatcherConfiguration,
+                httpContextConfiguration
+        );
     }
 
-    public DefaultHttpServerConfiguration(String mimeTypesFilePath, IODispatcherConfiguration dispatcherConfiguration, HttpContextConfiguration httpContextConfiguration) {
-        String defaultFilePath = mimeTypesFilePath;
-        if (Os.isWindows()) {
-            // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
-            // with OS file open methods.
-            defaultFilePath = defaultFilePath.substring(1);
-        }
-        try (Path path = new Path().of(defaultFilePath).$()) {
-            this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
-        }
+    public DefaultHttpServerConfiguration(
+            String mimeTypesFilePath,
+            IODispatcherConfiguration dispatcherConfiguration,
+            HttpContextConfiguration httpContextConfiguration
+    ) {
+        this.mimeTypesCache = new MimeTypesCache(mimeTypesFilePath);
         this.httpContextConfiguration = httpContextConfiguration;
         this.dispatcherConfiguration = dispatcherConfiguration;
     }

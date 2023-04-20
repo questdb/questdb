@@ -30,9 +30,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -146,6 +146,29 @@ public class MimeTypesCacheTest {
                     TestUtils.assertEquals("application/mp21", mimeTypes.get("mp21"));
                     TestUtils.assertEquals("application/mp4", mimeTypes.get("mp4s"));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleResource() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() {
+                String filePath;
+                if (Os.isWindows()) {
+                    filePath = Files.getResourcePath(getClass().getResource("/mime.types")).substring(1);
+                } else {
+                    filePath = Files.getResourcePath(getClass().getResource("/mime.types"));
+                }
+                MimeTypesCache mimeTypes = new MimeTypesCache(filePath);
+//                Assert.assertEquals(980, mimeTypes.size());
+                TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
+                TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
+                TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("inkml"));
+                TestUtils.assertEquals("application/mp21", mimeTypes.get("m21"));
+                TestUtils.assertEquals("application/mp21", mimeTypes.get("mp21"));
+                TestUtils.assertEquals("application/mp4", mimeTypes.get("mp4s"));
             }
         });
     }
