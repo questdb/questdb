@@ -56,7 +56,7 @@ abstract class AbstractAlterTableAttachPartitionTest extends AbstractGriffinTest
 
     @Override
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         path = Misc.free(path);
         other = Misc.free(other);

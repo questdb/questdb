@@ -50,6 +50,7 @@ import org.junit.Test;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 
@@ -67,7 +68,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 1024;
         AbstractGriffinTest.setUpStatic();
     }
@@ -166,7 +167,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         throw new IllegalStateException();
     }
 
-    private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
+    private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone, AtomicInteger failureCounter) {
         // use different random
         System.out.println("thread random");
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -194,7 +195,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 }
             } catch (Exception e) {
                 Assert.fail("Update failed [e=" + e + ", sql=" + sql + "]");
-                throw new RuntimeException(e);
+                failureCounter.incrementAndGet();
             } finally {
                 Path.clearThreadLocals();
                 updatesDone.countDown();
@@ -213,15 +214,15 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     @Override
-    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
-        super.startThread(threadId, socket, threadPushFinished);
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
+        super.startThread(threadId, socket, threadPushFinished, failureCounter);
         while (numOfUpdateThreads-- > 0) {
-            startUpdateThread(numOfUpdateThreads, updatesDone);
+            startUpdateThread(numOfUpdateThreads, updatesDone, failureCounter);
         }
     }
 
     @Override
-    protected void waitDone(ObjList<Socket> sockets) {
+    protected void waitDone(ObjList<Socket> sockets) throws SqlException {
         // wait for update threads to finish
         updatesDone.await();
 

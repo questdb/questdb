@@ -39,7 +39,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.

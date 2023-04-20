@@ -66,7 +66,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
     private static final ObjList<TestCase> testCases = new ObjList<>();
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         BasePGTest.setUpStatic();
 
         addTestCase("select * from x");

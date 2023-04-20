@@ -135,7 +135,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
@@ -146,11 +146,6 @@ public class PGJobContextTest extends BasePGTest {
         datesArr = dates.collect(Collectors.toList());
     }
 
-    @AfterClass
-    public static void tearDownStatic() {
-        BasePGTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
@@ -158,7 +153,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
     }
@@ -1868,7 +1863,7 @@ if __name__ == "__main__":
                     }
                 }
 
-                //first run query and complete  
+                //first run query and complete
                 try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
                     ResultSet result = stmt.executeQuery();
                     sink.clear();
@@ -8955,13 +8950,11 @@ create table tab as (
 
     @SuppressWarnings("unchecked")
     private List<Tuple> getRows(ResultSet rs) {
-        try {
+        return TestUtils.unchecked(() -> {
             Field field = PgResultSet.class.getDeclaredField("rows");
             field.setAccessible(true);
             return (List<Tuple>) field.get(rs);
-        } catch (IllegalAccessException | NoSuchFieldException e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {

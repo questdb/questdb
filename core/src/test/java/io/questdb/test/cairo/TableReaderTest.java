@@ -3755,7 +3755,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private static Path getPath(String tableName) {
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         return new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
     }
 

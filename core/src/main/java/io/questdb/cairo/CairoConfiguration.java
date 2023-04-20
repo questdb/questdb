@@ -27,9 +27,10 @@ package io.questdb.cairo;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -82,7 +83,7 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
-    CairoSecurityContextFactory getCairoSecurityContextFactory();
+    SecurityContextFactory getSecurityContextFactory();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -385,6 +386,8 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    SqlParserFactory getSqlParserFactory();
+
     int getSqlSmallMapKeyCapacity();
 
     int getSqlSmallMapPageSize();
@@ -479,6 +482,8 @@ public interface CairoConfiguration {
     boolean isWalApplyEnabled();
 
     boolean isWalSupported();
+
+    boolean isWriterMixedIOEnabled();
 
     /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.

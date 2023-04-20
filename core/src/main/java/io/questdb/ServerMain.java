@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ServerMain implements Closeable {
     private final String banner;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final PropServerConfiguration config;
+    private final ServerConfiguration config;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
     private final ObjList<Closeable> freeOnExitList = new ObjList<>();
@@ -70,7 +70,7 @@ public class ServerMain implements Closeable {
         this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner());
     }
 
-    public ServerMain(final PropServerConfiguration config, final Metrics metrics, final Log log, String banner) {
+    public ServerMain(final ServerConfiguration config, final Metrics metrics, final Log log, String banner) {
         this.config = config;
         this.log = log;
         this.banner = banner;
@@ -208,7 +208,7 @@ public class ServerMain implements Closeable {
         }
 
         System.gc(); // GC 1
-        log.advisoryW().$("bootstrap complete").$();
+        log.advisoryW().$("server is ready to be started").$();
     }
 
     public static void main(String[] args) {
@@ -233,15 +233,19 @@ public class ServerMain implements Closeable {
         }
     }
 
-    public CairoEngine getCairoEngine() {
+    public CairoEngine getEngine() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");
         }
         return engine;
     }
 
-    public PropServerConfiguration getConfiguration() {
+    public ServerConfiguration getConfiguration() {
         return config;
+    }
+
+    public FunctionFactoryCache getFfCache() {
+        return ffCache;
     }
 
     public WorkerPoolManager getWorkerPoolManager() {

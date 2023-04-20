@@ -109,7 +109,6 @@ public class TelemetryConfigLogger implements Closeable {
             TableToken tableToken
     ) throws SqlException {
         final TableWriter configWriter = compiler.getEngine().getWriter(
-                sqlExecutionContext.getCairoSecurityContext(),
                 tableToken,
                 "telemetryConfig"
         );
@@ -156,7 +155,7 @@ public class TelemetryConfigLogger implements Closeable {
         // TODO: close configWriter, we currently keep it open to prevent users from modifying the table.
         // Once we have a permission system, we can use that instead.
         try {
-            final TableToken configTableToken = engine.getTableToken(TELEMETRY_CONFIG_TABLE_NAME);
+            final TableToken configTableToken = engine.verifyTableName(TELEMETRY_CONFIG_TABLE_NAME);
             configWriter = updateTelemetryConfig(compiler, sqlExecutionContext, configTableToken);
         } catch (CairoException ex) {
             LOG.error()

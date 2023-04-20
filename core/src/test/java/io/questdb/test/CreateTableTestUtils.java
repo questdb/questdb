@@ -40,7 +40,7 @@ public class CreateTableTestUtils {
 
     public static TableToken create(CairoEngine engine, TableModel model) {
         return engine.createTable(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                engine.getConfiguration().getSecurityContextFactory().getRootContext(),
                 model.getMem(),
                 model.getPath(),
                 false,
@@ -109,7 +109,7 @@ public class CreateTableTestUtils {
             }
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
-                try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("x"), Metrics.disabled())) {
+                try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("x"), Metrics.disabled())) {
                     writer.truncate();
                 }
             } else {
@@ -117,7 +117,7 @@ public class CreateTableTestUtils {
             }
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("x"), Metrics.disabled())) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("x"), Metrics.disabled())) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

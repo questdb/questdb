@@ -26,38 +26,24 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.PropServerConfiguration;
-import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-import org.junit.rules.TestName;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.PrintWriter;
-import java.net.URL;
-import java.util.Objects;
 import java.util.Properties;
-import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
-public abstract class AbstractBootstrapTest {
-
-    @ClassRule
-    public static final TemporaryFolder temp = new TemporaryFolder();
+public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
     protected static final int HTTP_MIN_PORT = 9011;
     protected static final int HTTP_PORT = 9010;
@@ -66,53 +52,25 @@ public abstract class AbstractBootstrapTest {
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
     protected static final int PG_PORT = 8822;
     protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
-    private static final File siteDir = new File(Objects.requireNonNull(ServerMain.class.getResource("/io/questdb/site/")).getFile());
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
-    protected static String rootDir;
-    private static boolean publicZipStubCreated = false;
-    @Rule
-    public TestName testName = new TestName();
-
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        // fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests
-        URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
-        if (resource == null) {
-            File publicZip = new File(siteDir, "public.zip");
-            try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(publicZip))) {
-                ZipEntry entry = new ZipEntry("test.txt");
-                zip.putNextEntry(entry);
-                zip.write("test".getBytes());
-                zip.closeEntry();
-            }
-            publicZipStubCreated = true;
-        }
-        try {
-            rootDir = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
-            dbPath = new Path().of(rootDir).concat(PropServerConfiguration.DB_DIRECTORY).$();
+        AbstractTest.setUpStatic();
+        TestUtils.unchecked(() -> {
+            dbPath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).$();
             dbPathLen = dbPath.length();
             auxPath = new Path();
-            Files.remove(dbPath.concat("sys.column_versions_purge_log.lock").$());
-            Files.remove(dbPath.trimTo(dbPathLen).concat("telemetry_config.lock").$());
             dbPath.trimTo(dbPathLen).$();
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
+        });
     }
 
     @AfterClass
     public static void tearDownStatic() throws Exception {
-        if (publicZipStubCreated) {
-            File publicZip = new File(siteDir, "public.zip");
-            if (publicZip.exists()) {
-                publicZip.delete();
-            }
-        }
-        Misc.free(dbPath);
-        Misc.free(auxPath);
-        temp.delete();
+        dbPath = Misc.free(dbPath);
+        auxPath = Misc.free(auxPath);
+        AbstractTest.tearDownStatic();
     }
 
     protected static void createDummyConfiguration(
@@ -121,7 +79,7 @@ public abstract class AbstractBootstrapTest {
             int pgPort,
             int ilpPort,
             String... extra) throws Exception {
-        final String confPath = rootDir + Files.SEPARATOR + "conf";
+        final String confPath = root + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, CHARSET)) {
@@ -195,15 +153,6 @@ public abstract class AbstractBootstrapTest {
         }
     }
 
-    static SqlExecutionContext executionContext(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllCairoSecurityContext.INSTANCE,
-                null,
-                null,
-                -1,
-                null);
-    }
-
     static String[] extendArgsWith(String[] args, String... moreArgs) {
         int argsLen = args.length;
         int extLen = moreArgs.length;
@@ -233,8 +182,7 @@ public abstract class AbstractBootstrapTest {
     static void dropTable(
             SqlCompiler compiler,
             SqlExecutionContext context,
-            TableToken tableToken,
-            boolean isWal
+            TableToken tableToken
     ) throws Exception {
         compiler.compile("DROP TABLE " + tableToken.getTableName(), context);
     }

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
@@ -51,11 +52,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> createDummyConfiguration(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true"));
     }
 
     @Test
@@ -74,13 +71,19 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 }
             };
 
-            final Bootstrap bootstrap = new Bootstrap(null, System.getenv(), filesFacade, "-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+            }, TestUtils.getServerMainArgs(root));
+
             try (final ServerMain questdb = new TestServerMain(bootstrap)) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
-                final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final CairoEngine engine = questdb.getEngine();
+                final TableToken token = engine.verifyTableName(tableName);
 
                 try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
                     insertInto(tableName);
@@ -115,11 +118,11 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new TestServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain(getServerMainArgs())) {
                 questdb.start();
 
-                final CairoEngine engine = questdb.getCairoEngine();
-                final TableToken token = engine.getTableToken(tableName);
+                final CairoEngine engine = questdb.getEngine();
+                final TableToken token = engine.verifyTableName(tableName);
                 assertFalse(engine.isWalTable(token));
 
                 // insert works now

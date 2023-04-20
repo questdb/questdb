@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -82,6 +84,10 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
+    PublicKeyRepoFactory getPublicKeyRepoFactory();
+
+    SecurityContextFactory getSecurityContextFactory();
+
     long getSymbolCacheWaitUsBeforeReload();
 
     LineProtoTimestampAdapter getTimestampAdapter();
@@ -99,4 +105,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isSymbolAsFieldSupported();
+
+    boolean readOnlySecurityContext();
 }
