@@ -75,9 +75,10 @@ import java.util.Base64;
 import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
-import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
+import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
 
 @RunWith(Parameterized.class)
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
@@ -135,7 +136,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @After
     @Override
-    public void tearDown() {
+    public void tearDown() throws Exception {
         path.close();
         super.tearDown();
     }
@@ -186,13 +187,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             CreateTableTestUtils.create(m);
         }
 
-        final SOCountDownLatch finished = new SOCountDownLatch(1);
+        final SOCountDownLatch dataSent = new SOCountDownLatch(1);
+        final SOCountDownLatch dataConsumed = new SOCountDownLatch(1);
+        final AtomicInteger sendFailureCounter = new AtomicInteger();
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.getTableToken(tableName))) {
-                        finished.countDown();
+                            && name.equals(engine.verifyTableName(tableName))) {
+                        dataConsumed.countDown();
                     }
                 }
             });
@@ -204,13 +207,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         sendToSocket(socket, tableName + ",abcdef=x col=" + value + "\n");
                     }
                 } catch (Exception e) {
-                    Assert.fail("Data sending failed [e=" + e + "]");
-                    throw new RuntimeException(e);
+                    e.printStackTrace();
+                    sendFailureCounter.incrementAndGet();
+                } finally {
+                    dataSent.countDown();
                 }
             }).start();
 
             // this will wait until the writer is returned into the pool
-            finished.await();
+            dataSent.await();
+            Assert.assertEquals(0, sendFailureCounter.get());
+
+            dataConsumed.await();
             mayDrainWalQueue();
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             });
@@ -227,7 +235,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertEquals(expectedNumOfRows, reader.getTransientRowCount());
             } catch (Exception e) {
                 Assert.fail("Reader failed [e=" + e + "]");
-                throw new RuntimeException(e);
             }
         }, false, 250);
     }
@@ -559,7 +566,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.getTableToken(tableName))) {
+                            && name.equals(engine.verifyTableName(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -1611,7 +1618,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.drop(securityContext, path, engine.getTableToken("weather"));
+        engine.drop(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {

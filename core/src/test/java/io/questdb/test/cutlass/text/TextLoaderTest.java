@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
@@ -60,8 +60,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
-    public static void tearDownClass() {
+    public static void tearDownClass() throws Exception {
         jsonLexer.close();
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @After
@@ -3060,12 +3061,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
         );
     }
 
-    private static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
         try (OperationFuture future = cc.execute(null)) {
             future.await();
         }
-        return cc;
     }
 
     private static String extractLast(Path path) {
@@ -3124,15 +3124,15 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
 
             if (firstBufSize < len) {
-                textLoader.parse(buf, buf + firstBufSize, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + firstBufSize, AllowAllSecurityContext.INSTANCE);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
                     Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                    textLoader.parse(smallBuf, smallBuf + 1, AllowAllCairoSecurityContext.INSTANCE);
+                    textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
                 }
             } else {
-                textLoader.parse(buf, buf + len, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + len, AllowAllSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {
@@ -3443,7 +3443,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                textLoader.parse(smallBuf, smallBuf + 1, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {

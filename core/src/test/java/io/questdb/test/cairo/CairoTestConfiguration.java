@@ -107,7 +107,8 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
 
     @Override
     public FilesFacade getFilesFacade() {
-        return overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
+        // This method gets called in super constructor, hence the extra null check.
+        return overrides != null && overrides.getFilesFacade() != null ? overrides.getFilesFacade() : super.getFilesFacade();
     }
 
     @Override
@@ -354,6 +355,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return true;
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return overrides.isWriterMixedIOEnabled() != null ? overrides.isWriterMixedIOEnabled() : super.isWriterMixedIOEnabled();
     }
 
     @Override

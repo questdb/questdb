@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -43,7 +43,7 @@ import java.util.Base64;
 import static io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest.*;
 import static org.junit.Assert.assertEquals;
 
-public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
+public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTest {
 
     private final Rnd rnd = new Rnd();
     private int maxSendBytes = 1024;
@@ -171,7 +171,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testGoodAuthenticationFragmented1() throws Exception {
         runInAuthContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false, false, null);
+            boolean authSequenceCompleted = authenticate(true, false, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -188,7 +188,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testGoodAuthenticationFragmented2() throws Exception {
         runInAuthContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, false, false, null);
+            boolean authSequenceCompleted = authenticate(false, true, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -205,7 +205,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testGoodAuthenticationFragmented3() throws Exception {
         runInAuthContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, false, false, null);
+            boolean authSequenceCompleted = authenticate(true, true, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -222,7 +222,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testGoodAuthenticationFragmented4() throws Exception {
         runInAuthContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true, false, null);
+            boolean authSequenceCompleted = authenticate(true, false, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
@@ -239,7 +239,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testGoodAuthenticationFragmented5() throws Exception {
         runInAuthContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true, false, null);
+            boolean authSequenceCompleted = authenticate(false, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
@@ -256,7 +256,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testGoodAuthenticationFragmented6() throws Exception {
         runInAuthContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, false, null);
+            boolean authSequenceCompleted = authenticate(true, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
@@ -274,7 +274,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     public void testGoodAuthenticationFragmented7() throws Exception {
         runInAuthContext(() -> {
             try {
-                boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, true, null);
+                boolean authSequenceCompleted = authenticate(true, true, true, true, null);
                 Assert.assertTrue(authSequenceCompleted);
             } catch (RuntimeException ex) {
                 // Expected that Java 8 does not have SHA256withECDSAinP1363
@@ -301,8 +301,6 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         runInAuthContext(() -> {
             try {
                 boolean authSequenceCompleted = authenticate(
-                        AUTH_KEY_ID1,
-                        AUTH_PRIVATE_KEY1,
                         false,
                         false,
                         false,
@@ -389,7 +387,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             for (int n = 0; n < junkSignatureInt.length; n++) {
                 junkSignature[n] = (byte) junkSignatureInt[n];
             }
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, false, junkSignature);
+            boolean authSequenceCompleted = authenticate(false, false, false, false, junkSignature);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
@@ -426,14 +424,12 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
                 extraData);
     }
 
-    private boolean authenticate(String authKeyId,
-                                 PrivateKey authPrivateKey,
-                                 boolean fragmentKeyId,
+    private boolean authenticate(boolean fragmentKeyId,
                                  boolean fragmentChallenge,
                                  boolean fragmentSignature,
                                  boolean useP1363Encoding,
                                  byte[] junkSignature) {
-        return authenticate(authKeyId, authPrivateKey, fragmentKeyId, fragmentChallenge, fragmentSignature, useP1363Encoding, junkSignature, "");
+        return authenticate(AbstractLineTcpReceiverTest.AUTH_KEY_ID1, AbstractLineTcpReceiverTest.AUTH_PRIVATE_KEY1, fragmentKeyId, fragmentChallenge, fragmentSignature, useP1363Encoding, junkSignature, "");
     }
 
     private boolean authenticate(String authKeyId,
@@ -453,7 +449,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             byte[] rawSignature;
             if (null == junkSignature) {
                 Signature sig = useP1363Encoding ?
-                        Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+                        Signature.getInstance(AuthUtils.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
                 sig.initSign(authPrivateKey);
                 sig.update(challengeBytes, 0, challengeBytes.length - 1);
                 rawSignature = sig.sign();

@@ -52,6 +52,18 @@ public class RecordToRowCopierUtils {
         int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
+        // Character        Type        Interpretation
+        // B                byte        signed byte
+        // C                char        Unicode character code point in the Basic Multilingual Plane, encoded with UTF-16
+        // D                double      double-precision floating-point value
+        // F                float       single-precision floating-point value
+        // I                int         integer
+        // J                long        long integer
+        // L ClassName ;    reference   an instance of class ClassName
+        // S                short       signed short
+        // Z                boolean     true or false
+        // [                reference   one array dimension
+
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
@@ -101,6 +113,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsChar = asm.poolMethod(SqlUtil.class, "implicitCastStrAsChar", "(Ljava/lang/CharSequence;)C");
         int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
+        int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolMethod(SqlUtil.class, "implicitCastStrAsTimestamp", "(Ljava/lang/CharSequence;)J");
         int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
@@ -629,6 +642,10 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.UUID:
                             asm.invokeInterface(wPutUuidStr, 2);
+                            break;
+                        case ColumnType.LONG256:
+                            asm.invokeStatic(implicitCastStrAsLong256);
+                            asm.invokeInterface(wPutLong256, 2);
                             break;
                         default:
                             assert false;

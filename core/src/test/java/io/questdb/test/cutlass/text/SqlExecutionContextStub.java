@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.BindVariableService;
@@ -70,8 +70,8 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return engine.getConfiguration().getCairoSecurityContextFactory().getRootContext();
+    public SecurityContext getSecurityContext() {
+        return engine.getConfiguration().getSecurityContextFactory().getRootContext();
     }
 
     @Override

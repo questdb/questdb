@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,7 +55,7 @@ public class CompareTableTest {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
+                            AllowAllSecurityContext.INSTANCE,
                             new BindVariableServiceImpl(configuration),
                             null,
                             -1,

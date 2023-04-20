@@ -40,7 +40,7 @@ import static io.questdb.test.tools.TestUtils.assertEventually;
 public class PGFlushQueryCacheTest extends BasePGTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         queryCacheEventQueueCapacity = 1;
         BasePGTest.setUpStatic();
         Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());

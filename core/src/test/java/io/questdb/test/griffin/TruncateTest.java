@@ -593,14 +593,14 @@ public class TruncateTest extends AbstractGriffinTest {
                             "), index(symbol1 capacity 512) timestamp (timestamp) partition By DAY",
                     sqlExecutionContext
             );
-            TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "symbol1");
+            TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
 
             compiler.compile("truncate table x", sqlExecutionContext);
             compiler.compile("insert into x\n" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
                     " rnd_symbol('a','b',null) symbol1 " +
                     " from long_sequence(10)", sqlExecutionContext);
-            TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "symbol1");
+            TestUtils.assertIndexBlockCapacity(engine, "x", "symbol1");
         });
     }
 

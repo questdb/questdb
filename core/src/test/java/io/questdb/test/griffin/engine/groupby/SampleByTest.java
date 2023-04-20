@@ -3561,7 +3561,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tab\n" +
-                            "              intervals: [static=[1669852800000001,9223372036854775807]\n");
+                            "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n");
 
             assertQuery("ts\ts\tfirst\n" +
                             "2022-12-01T01:33:00.000000Z\tB\t3\n" +

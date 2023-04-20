@@ -225,7 +225,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Interval forward scan on: spot_trades\n" +
-                            "                      intervals: [static=[1640995200000000,9223372036854775807]\n");
+                            "                      intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n");
         });
     }
 

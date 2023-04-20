@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.*;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -39,8 +40,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.util.concurrent.CountDownLatch;
-
 public class SnapshotTest extends AbstractGriffinTest {
 
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
@@ -48,7 +47,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     private int rootLen;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         path = new Path();
         ff = testFilesFacade;
 
@@ -78,7 +77,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
         AbstractGriffinTest.tearDownStatic();
     }
@@ -96,16 +95,12 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
-        try {
-            // reset activePrepareFlag for all tests
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
-        }
+        // reset activePrepareFlag for all tests
+        compiler.compile("snapshot complete", sqlExecutionContext);
     }
 
     @Test
@@ -218,8 +213,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             SimpleWaitingLock lock = new SimpleWaitingLock();
-            CountDownLatch latch1 = new CountDownLatch(1);
-            CountDownLatch latch2 = new CountDownLatch(1);
+            SOCountDownLatch latch1 = new SOCountDownLatch(1);
+            SOCountDownLatch latch2 = new SOCountDownLatch(1);
 
             snapshotAgent.setWalPurgeJobRunLock(lock);
 
@@ -228,8 +223,6 @@ public class SnapshotTest extends AbstractGriffinTest {
                 latch2.countDown();
                 try {
                     latch1.await();
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
                 } finally {
                     lock.unlock();
                 }
@@ -438,7 +431,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
 
             engine.releaseInactive();
             Assert.assertTrue(ff.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
@@ -872,7 +865,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
                 int tableNameLen = path.length();
                 FilesFacade ff = configuration.getFilesFacade();
@@ -962,7 +955,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
                 int tableNameLen = path.length();
                 copyPath.concat(tableToken);
