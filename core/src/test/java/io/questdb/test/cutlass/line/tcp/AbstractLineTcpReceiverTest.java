@@ -28,7 +28,12 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -185,6 +190,15 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
+            if (authKeyId == null) {
+                return super.getPublicKeyRepoFactory();
+            }
+
+            return new StaticPublicKeyRepoFactory(getAuthDbPath());
         }
     };
 

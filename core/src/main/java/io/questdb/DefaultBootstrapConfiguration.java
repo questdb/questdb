@@ -47,7 +47,7 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public FactoryProvider getFactoriesFactory() {
+    public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
 

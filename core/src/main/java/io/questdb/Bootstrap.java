@@ -156,7 +156,7 @@ public class Bootstrap {
                             bootstrapConfiguration.getEnv(),
                             log,
                             buildInformation,
-                            bootstrapConfiguration.getFactoriesFactory()
+                            bootstrapConfiguration.getFactoryProvider()
                     );
                 } else {
                     config = new PropServerConfiguration(
@@ -165,7 +165,7 @@ public class Bootstrap {
                             bootstrapConfiguration.getEnv(),
                             log,
                             buildInformation,
-                            bootstrapConfiguration.getFactoriesFactory()
+                            bootstrapConfiguration.getFactoryProvider()
                     ) {
                         private CairoConfiguration cairoConf;
 
