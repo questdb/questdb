@@ -40,6 +40,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.io.InputStream;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -148,8 +149,10 @@ public class MimeTypesCacheTest extends AbstractTest {
     public void testSimpleResource() throws Exception {
         TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
             @Override
-            public void run() {
-                assertMimeTypes(new MimeTypesCache(Files.getResourcePath(getClass().getResource("/mime.types"))));
+            public void run() throws Exception {
+                try (InputStream inputStream = getClass().getResourceAsStream("/mime.types")) {
+                    assertMimeTypes(new MimeTypesCache(inputStream));
+                }
             }
         });
     }

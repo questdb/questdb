@@ -29,19 +29,15 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
+import java.io.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
 
     @TestOnly
-    public MimeTypesCache(String resource) {
-        File file = new File(resource);
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+    public MimeTypesCache(InputStream inputStream) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
             String line = reader.readLine().trim();
             String regex = "\\t+";
             Pattern pattern = Pattern.compile(regex);

@@ -30,12 +30,14 @@ import io.questdb.griffin.SqlParserFactory;
 import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+
+import java.io.IOException;
+import java.io.InputStream;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
@@ -119,21 +121,13 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     public DefaultHttpServerConfiguration(
             HttpContextConfiguration httpContextConfiguration,
-            IODispatcherConfiguration ioDispatcherConfiguration
+            IODispatcherConfiguration dispatcherConfiguration
     ) {
-        this(
-                Files.getResourcePath(DefaultHttpServerConfiguration.class.getResource("/io/questdb/site/conf/mime.types")),
-                ioDispatcherConfiguration,
-                httpContextConfiguration
-        );
-    }
-
-    public DefaultHttpServerConfiguration(
-            String mimeTypesFilePath,
-            IODispatcherConfiguration dispatcherConfiguration,
-            HttpContextConfiguration httpContextConfiguration
-    ) {
-        this.mimeTypesCache = new MimeTypesCache(mimeTypesFilePath);
+        try (InputStream inputStream = DefaultHttpServerConfiguration.class.getResourceAsStream("/io/questdb/site/conf/mime.types")) {
+            this.mimeTypesCache = new MimeTypesCache(inputStream);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         this.httpContextConfiguration = httpContextConfiguration;
         this.dispatcherConfiguration = dispatcherConfiguration;
     }
