@@ -94,14 +94,9 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                     .$(", forceHeader=").$(forceHeader)
                     .$(']').$();
         }
-        // header detection blows up
+
         for (int i = 0; i < fieldCount; i++) {
             if (!header || columnNames.getQuick(i).length() == 0) {
-                if (schemaColumns.size() > i) {
-                    columnNames.setQuick(i, schemaColumns.keys().getQuick(i));
-                    continue;
-                }
-
                 tempSink.clear();
                 tempSink.put('f').put(i);
 
