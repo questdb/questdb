@@ -264,6 +264,9 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert fixedFd == -1;
+        // Negative col top means column does not exist in the partition.
+        // Create it.
+        columnTop = Math.abs(columnTop);
         this.columnType = columnType;
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;

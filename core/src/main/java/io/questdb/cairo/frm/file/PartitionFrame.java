@@ -68,23 +68,18 @@ public class PartitionFrame implements Frame {
             return DeletedFrameColumn.INSTANCE;
         }
         boolean isIndexed = metadata.isColumnIndexed(columnIndex);
+        int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(columnIndex) : 0;
         int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
         long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, size);
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
         FrameColumnTypePool columnTypePool = canWrite ? columnPool.getPoolRW(columnType) : columnPool.getPoolRO(columnType);
         if (columnTop >= size) {
-            if (!canWrite) {
-                // This column does not exist at the partition.
-                columnTop = -size;
-            } else {
-                // Sometimes after partition split column top can be greater than partition size.
-                // Trim it back to the partition size.
-                columnTop = size;
-            }
+            // This column does not exist at the partition.
+            columnTop = -size;
         }
 
-        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, isIndexed, columnTop, columnIndex);
+        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
     }
 
     @Override
@@ -95,11 +90,6 @@ public class PartitionFrame implements Frame {
     @Override
     public long getSize() {
         return size;
-    }
-
-    @Override
-    public void rebuildIndexes(long offset) {
-        throw new UnsupportedOperationException();
     }
 
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long size) {
@@ -118,6 +108,11 @@ public class PartitionFrame implements Frame {
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
         canWrite = true;
+    }
+
+    @Override
+    public void rebuildIndexes(long offset) {
+        throw new UnsupportedOperationException();
     }
 
     public void saveChanges(FrameColumn frameColumn) {

@@ -56,7 +56,7 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
             }
             indexWriter.setMaxValue(offset + count - 1);
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);
+            TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, count << shl, MEMORY_TAG);
         }
     }
 
@@ -85,7 +85,19 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
             long columnTop,
             int columnIndex
     ) {
+        throw new UnsupportedOperationException();
+    }
+
+    public void ofRW(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            long columnTop,
+            int columnIndex
+    ) {
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-        indexWriter.of(partitionPath, columnName, columnTxn);
+        indexWriter.of(partitionPath, columnName, columnTxn, columnTop < 0 ? indexBlockCapacity : 0);
     }
 }

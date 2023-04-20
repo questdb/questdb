@@ -74,12 +74,13 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
     private class ColumnTypePool implements FrameColumnTypePool {
 
         @Override
-        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, boolean isIndexed, long columnTop, int columnIndex) {
+        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex) {
+            boolean isIndexed = indexBlockCapacity > 0;
             switch (columnType) {
                 case ColumnType.SYMBOL:
                     if (canWrite && isIndexed) {
                         var indexedColumn = getIndexedColumn();
-                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
                         return indexedColumn;
                     }
 

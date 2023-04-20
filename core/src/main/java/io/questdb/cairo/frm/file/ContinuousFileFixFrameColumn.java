@@ -176,6 +176,9 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
 
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert fd == -1;
+        // Negative col top means column does not exist in the partition.
+        // Create it.
+        columnTop = Math.abs(columnTop);
         of(columnType, columnTop, columnIndex);
 
         int plen = partitionPath.length();

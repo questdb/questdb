@@ -266,14 +266,25 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     public final void of(Path path, CharSequence name, long columnNameTxn) {
+        of(path, name, columnNameTxn, 0);
+    }
+
+    public final void of(Path path, CharSequence name, long columnNameTxn, int indexBlockCapacity) {
         close();
         final int plen = path.length();
         try {
-            boolean exists = ff.exists(BitmapIndexUtils.keyFileName(path, name, columnNameTxn));
-            this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
-            if (!exists) {
-                LOG.error().$(path).$(" not found").$();
-                throw CairoException.critical(0).put("Index does not exist: ").put(path);
+            boolean init = indexBlockCapacity > 0;
+            BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
+            if (init) {
+                this.keyMem.of(ff, path, keyAppendPageSize, 0L, MemoryTag.MMAP_INDEX_WRITER);
+                initKeyMemory(this.keyMem, indexBlockCapacity);
+            } else {
+                boolean exists = ff.exists(path);
+                if (!exists) {
+                    LOG.error().$(path).$(" not found").$();
+                    throw CairoException.critical(0).put("Index does not exist: ").put(path);
+                }
+                this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
