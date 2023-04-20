@@ -62,10 +62,9 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriterAPI writer;
-            writer = writerSource.getTableWriterAPI(tableToken, "insert");
-            if (writer.getStructureVersion() != structureVersion ||
-                    !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
+            if (writer.getStructureVersion() != structureVersion
+                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }

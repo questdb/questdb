@@ -82,6 +82,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
     }
 
+    @AfterClass
+    public static void tearDownStatic() throws Exception {
+        Assert.assertEquals(0, Files.rmdir(auxPath.of(otherVolume).$()));
+        AbstractBootstrapTest.tearDownStatic();
+    }
+
     @Override
     public void setUp() {
         super.setUp();
@@ -92,12 +98,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 ILP_PORT + pgPortDelta,
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
                 PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume));
-    }
-
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        Assert.assertEquals(0, Files.rmdir(auxPath.of(otherVolume).$()));
-        AbstractBootstrapTest.tearDownStatic();
     }
 
     @Test
@@ -253,11 +253,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlCompiler compiler1 = new SqlCompiler(qdb.getEngine())
             ) {
                 CairoEngine engine2 = qdb.getEngine();
-                try (SqlExecutionContext context0 = createSqlExecutionCtx(engine2)
-                ) {
+                try (SqlExecutionContext context0 = createSqlExecutionCtx(engine2)) {
                     CairoEngine engine1 = qdb.getEngine();
-                    try (SqlExecutionContext context1 = createSqlExecutionCtx(engine1)
-                    ) {
+                    try (SqlExecutionContext context1 = createSqlExecutionCtx(engine1)) {
                         qdb.start();
                         CairoEngine engine = qdb.getEngine();
 
@@ -272,33 +270,28 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             concurrentTableCreator(
                                     "createTable",
                                     engine,
-
                                     compiler0,
                                     context0,
                                     startBarrier,
                                     haltLatch,
                                     tableName,
                                     false,
-
                                     isInVolume
                             ).start();
                             concurrentTableCreator(
                                     "createTableInVolume",
                                     engine,
-
                                     compiler1,
                                     context1,
                                     startBarrier,
                                     haltLatch,
                                     tableName,
-
                                     true,
                                     isInVolume
                             ).start();
                             startBarrier.await();
                             haltLatch.await();
                             dropTable(
-
                                     compiler0,
                                     context0,
                                     engine.verifyTableName(tableName)
@@ -470,33 +463,28 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             concurrentTableCreator(
                                     "createWalTable",
                                     engine,
-
                                     compiler0,
                                     context0,
                                     startBarrier,
                                     haltLatch,
                                     tableName,
-
                                     false,
                                     isInVolume
                             ).start();
                             concurrentTableCreator(
                                     "createWalTableInVolume",
                                     engine,
-
                                     compiler1,
                                     context1,
                                     startBarrier,
                                     haltLatch,
                                     tableName,
-
                                     true,
                                     isInVolume
                             ).start();
                             startBarrier.await();
                             haltLatch.await();
                             dropTable(
-
                                     compiler0,
                                     context0,
                                     engine.verifyTableName(tableName)
