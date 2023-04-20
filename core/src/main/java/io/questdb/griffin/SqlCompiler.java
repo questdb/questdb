@@ -2485,7 +2485,6 @@ public class SqlCompiler implements Closeable {
                     return compiledQuery.of(factory);
                 }
                 Misc.free(factory);
-                // TODO: pass to parseUnexpected() instead
                 throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [tok=").put(tok).put(']');
             }
         }
