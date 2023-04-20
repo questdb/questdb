@@ -63,7 +63,7 @@ public class InsertOperationImpl implements InsertOperation {
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer;
-            writer = writerSource.getTableWriterAPIAsRoot(tableToken, "insert");
+            writer = writerSource.getTableWriterAPI(tableToken, "insert");
             if (writer.getStructureVersion() != structureVersion ||
                     !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();

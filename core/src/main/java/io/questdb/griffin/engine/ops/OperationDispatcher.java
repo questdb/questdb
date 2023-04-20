@@ -60,7 +60,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
         assert tableToken != null;
-        try (TableWriterAPI writer = engine.getTableWriterAPIAsRoot(tableToken, lockReason)) {
+        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, lockReason)) {
             final long result = apply(operation, writer);
             isDone = true;
             return doneFuture.of(result);

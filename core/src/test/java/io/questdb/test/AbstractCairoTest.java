@@ -450,11 +450,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
-        return engine.getTableWriterAPI(
-                engine.getConfiguration().getSecurityContextFactory().getRootContext(),
-                engine.verifyTableName(tableName),
-                "test"
-        );
+        return engine.getTableWriterAPI(tableName, "test");
     }
 
     @NotNull

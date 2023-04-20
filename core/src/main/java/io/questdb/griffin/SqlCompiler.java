@@ -170,7 +170,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
-        final KeywordBasedExecutor sqlShow = this::sqlShow;
+        final KeywordBasedExecutor sqlShow = executionContext -> sqlShow();
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
@@ -462,7 +462,7 @@ public class SqlCompiler implements Closeable {
         if (SqlKeywords.isTableKeyword(tok)) {
             final int tableNamePosition = lexer.getPosition();
             tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-            TableToken tableToken = tableExistsOrFail(tableNamePosition, tok, executionContext);
+            TableToken tableToken = tableExistsOrFail(tableNamePosition, tok);
 
             try (TableRecordMetadata tableMetadata = executionContext.getMetadata(tableToken)) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -1582,7 +1582,7 @@ public class SqlCompiler implements Closeable {
                         configuration.getRoot(),
                         engine.getMetrics());
             } else {
-                writerAPI = engine.getTableWriterAPI(securityContext, tableToken, "create as select");
+                writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
             }
 
             RecordMetadata writerMetadata = writerAPI.getMetadata();
@@ -1983,7 +1983,7 @@ public class SqlCompiler implements Closeable {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         ObjList<Function> valueFunctions = null;
-        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token);
 
         try (TableRecordMetadata metadata = engine.getMetadata(token)) {
             final long structureVersion = metadata.getStructureVersion();
@@ -2082,11 +2082,11 @@ public class SqlCompiler implements Closeable {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
 
-        TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+        TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token);
         long insertCount;
 
         try (
-                TableWriterAPI writer = engine.getTableWriterAPI(executionContext.getSecurityContext(), tableToken, "insertAsSelect");
+                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
                 RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
         ) {
             final RecordMetadata cursorMetadata = factory.getMetadata();
@@ -2345,7 +2345,7 @@ public class SqlCompiler implements Closeable {
         if (Chars.isQuoted(tok)) {
             tok = GenericLexer.unquote(tok);
         }
-        TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok);
         rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()), configuration);
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2441,7 +2441,7 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
     }
 
-    private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery sqlShow() throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
             // show tables
@@ -2458,9 +2458,9 @@ public class SqlCompiler implements Closeable {
             if (isTablesKeyword(tok)) {
                 factory = new TableListRecordCursorFactory();
             } else if (isColumnsKeyword(tok)) {
-                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable(executionContext));
+                factory = new ShowColumnsRecordCursorFactory(sqlShowFromTable());
             } else if (isPartitionsKeyword(tok)) {
-                factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable(executionContext));
+                factory = new ShowPartitionsRecordCursorFactory(sqlShowFromTable());
             } else if (isTransactionKeyword(tok)) {
                 factory = sqlShowTransaction();
             } else if (isTransactionIsolation(tok)) {
@@ -2496,7 +2496,7 @@ public class SqlCompiler implements Closeable {
                 .put("'search_path', 'datestyle', or 'time zone'");
     }
 
-    private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
+    private TableToken sqlShowFromTable() throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (null == tok || !isFromKeyword(tok)) {
@@ -2507,7 +2507,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        return tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+        return tableExistsOrFail(lexer.lastTokenPosition(), tableName);
     }
 
     private RecordCursorFactory sqlShowTransaction() throws SqlException {
@@ -2522,9 +2522,9 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'isolation'");
     }
 
-    private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
-        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-        if (executionContext.getStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+    private TableToken tableExistsOrFail(int position, CharSequence tableName) throws SqlException {
+        TableToken tableToken = engine.getTableTokenIfExists(tableName);
+        if (engine.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
             throw SqlException.$(position, "table does not exist [table=").put(tableName).put(']');
         }
         return tableToken;
@@ -2561,10 +2561,10 @@ public class SqlCompiler implements Closeable {
                 if (Chars.isQuoted(tok)) {
                     tok = GenericLexer.unquote(tok);
                 }
-                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
-                    tableWriters.add(engine.getTableWriterAPIAsRoot(tableToken, "truncateTables"));
+                    tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
                 } catch (CairoException e) {
                     LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
                     throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
@@ -2646,7 +2646,7 @@ public class SqlCompiler implements Closeable {
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
-                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
@@ -3101,7 +3101,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition()).put("expected a table name");
                     }
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-                    TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                    TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName);
                     tableTokens.add(tableToken);
 
                     tok = SqlUtil.fetchNext(lexer);

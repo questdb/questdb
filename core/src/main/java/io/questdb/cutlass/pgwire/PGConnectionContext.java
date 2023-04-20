@@ -361,21 +361,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(SecurityContext context, TableToken tableToken, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getTableWriterAPI(context, tableToken, lockReason);
+        return engine.getTableWriterAPI(tableToken, lockReason);
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason) {
-        final int index = pendingWriters.keyIndex(tableToken);
-        if (index < 0) {
-            return pendingWriters.valueAt(index);
-        }
-        return engine.getTableWriterAPIAsRoot(tableToken, lockReason);
+    public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
+        return getTableWriterAPI(engine.verifyTableName(tableName) ,lockReason);
     }
 
     public void handleClientOperation(

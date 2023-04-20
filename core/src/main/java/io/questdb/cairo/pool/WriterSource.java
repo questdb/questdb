@@ -24,12 +24,11 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 
 public interface WriterSource {
-    TableWriterAPI getTableWriterAPI(SecurityContext context, TableToken tableToken, String lockReason);
+    TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason);
 
-    TableWriterAPI getTableWriterAPIAsRoot(TableToken tableToken, String lockReason);
+    TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason);
 }

@@ -728,7 +728,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // Use actual table name from the "details" to avoid case mismatches in the
                         // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
                         // to identify the cause
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8(), securityContext);
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
@@ -753,7 +753,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         ctx.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
                         return tud;
                     } else {
-                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8), securityContext);
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));
                     }
                 }
             }
@@ -775,8 +775,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private TableUpdateDetails unsafeAssignTableToWriterThread(
             int tudKeyIndex,
             CharSequence tableNameUtf16,
-            ByteCharSequence tableNameUtf8,
-            SecurityContext securityContext
+            ByteCharSequence tableNameUtf8
     ) {
         unsafeCalcThreadLoad();
         long leastLoad = Long.MAX_VALUE;
@@ -788,21 +787,20 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 threadId = i;
             }
         }
-        TableToken tableToken = engine.verifyTableName(tableNameUtf16);
         final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails
-                engine.getTableWriterAPI(securityContext, tableToken, "tcpIlp"),
+                engine.getTableWriterAPI(tableNameUtf16, "tcpIlp"),
                 threadId,
                 netIoJobs,
                 defaultColumnTypes,
                 tableNameUtf8
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-        LOG.info().$("assigned ").$(tableToken).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
         return tud;
     }
 
