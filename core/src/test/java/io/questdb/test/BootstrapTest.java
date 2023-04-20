@@ -53,9 +53,9 @@ public class BootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testExtractSite() throws Exception {
         createDummyConfiguration();
-        auxPath.of(rootDir).$();
+        auxPath.of(root).$();
         int plen = auxPath.length();
-        Bootstrap bootstrap = new Bootstrap("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+        Bootstrap bootstrap = new Bootstrap(getServerMainArgs());
         Assert.assertNotNull(bootstrap.getLog());
         Assert.assertNotNull(bootstrap.getConfiguration());
         Assert.assertNotNull(bootstrap.getMetrics());

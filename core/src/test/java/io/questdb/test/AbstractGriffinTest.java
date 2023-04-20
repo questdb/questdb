@@ -204,7 +204,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     public static void assertReader(String expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName))) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             TestUtils.assertReader(expected, reader, sink);
         }
     }
@@ -264,7 +264,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         node1.initGriffin(circuitBreaker);
         compiler = node1.getSqlCompiler();
@@ -273,10 +273,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
+    public static void tearDownStatic() throws Exception {
         forEachNode(QuestDBTestNode::closeGriffin);
-        circuitBreaker = null;
+        circuitBreaker = Misc.free(circuitBreaker);
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override
@@ -289,7 +289,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
     @Override
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         forEachNode(QuestDBTestNode::tearDownGriffin);
     }
@@ -1002,10 +1002,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertSegmentLockExistence(boolean expectExists, String tableName, int walId, int segmentId) {
+    protected void assertSegmentLockExistence(boolean expectExists, String tableName, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(1).slash().put(segmentId).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1025,20 +1025,20 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertSqlWithTypes(compiler, sqlExecutionContext, sql, sink, expected);
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, String tableName, int walId) {
+    protected void assertWalLockEngagement(boolean expectLocked, String tableName) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).put(".lock").$();
+            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(1).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
     }
 
-    protected void assertWalLockExistence(boolean expectExists, String tableName, int walId) {
+    protected void assertWalLockExistence(boolean expectExists, String tableName) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            TableToken tableToken = engine.getTableToken(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(root).concat(tableToken).concat("wal").put(1).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }

@@ -62,13 +62,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractAlterTableAttachPartitionTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         purgeJob = Misc.free(purgeJob);
         AbstractAlterTableAttachPartitionTest.tearDownStatic();
     }
@@ -90,7 +90,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
                 "could not detach partition [table=tab143, detachStatus=DETACH_ERR_ALREADY_DETACHED",
                 () -> {
-                    TableToken tableToken = engine.getTableToken("tab143");
+                    TableToken tableToken = engine.verifyTableName("tab143");
                     path.of(configuration.getRoot())
                             .concat(tableToken)
                             .concat("2022-06-03")
@@ -888,8 +888,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 compile("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 engine.clear();
-                TableToken tableToken = engine.getTableToken(brokenTableName);
-                TableToken tableToken1 = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(brokenTableName);
+                TableToken tableToken1 = engine.verifyTableName(tableName);
 
                 path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
                 other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
@@ -990,7 +990,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
 
                 // remove _meta.detached simply prevents metadata checking, all else is the same
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(configuration.getRoot())
                         .concat(tableToken)
                         .concat("2022-06-02")
@@ -1041,6 +1041,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             CyclicBarrier start = new CyclicBarrier(2);
             CountDownLatch end = new CountDownLatch(2);
             AtomicBoolean isLive = new AtomicBoolean(true);
+            AtomicInteger failureCounter = new AtomicInteger();
             Set<Long> detachedPartitionTimestamps = new ConcurrentSkipListSet<>();
             AtomicInteger detachedCount = new AtomicInteger();
             AtomicInteger attachedCount = new AtomicInteger();
@@ -1048,23 +1049,23 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             Thread detThread = new Thread(() -> {
                 try {
-                    start.await();
-                    while (isLive.get()) {
-                        try (TableWriter writer = getWriter(tableName)) {
-                            long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
-                            if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
-                                writer.detachPartition(partitionTimestamp);
-                                detachedCount.incrementAndGet();
-                                detachedPartitionTimestamps.add(partitionTimestamp);
+                    TestUtils.unchecked(() -> {
+                        start.await();
+                        while (isLive.get()) {
+                            try (TableWriter writer = getWriter(tableName)) {
+                                long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
+                                if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
+                                    writer.detachPartition(partitionTimestamp);
+                                    detachedCount.incrementAndGet();
+                                    detachedPartitionTimestamps.add(partitionTimestamp);
+                                }
+                            } catch (Throwable e) {
+                                exceptions.add(e);
+                                LOG.error().$(e).$();
                             }
-                        } catch (Throwable e) {
-                            exceptions.add(e);
-                            LOG.error().$(e).$();
+                            TimeUnit.MILLISECONDS.sleep(rnd.nextLong(15L));
                         }
-                        TimeUnit.MILLISECONDS.sleep(rnd.nextLong(15L));
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    }, failureCounter);
                 } finally {
                     Path.clearThreadLocals();
                     end.countDown();
@@ -1074,40 +1075,34 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             Thread attThread = new Thread(() -> {
                 try {
-                    start.await();
-                    while (isLive.get() || !detachedPartitionTimestamps.isEmpty()) {
-                        if (!detachedPartitionTimestamps.isEmpty()) {
-                            Iterator<Long> timestamps = detachedPartitionTimestamps.iterator();
-                            if (timestamps.hasNext()) {
-                                long partitionTimestamp = timestamps.next();
-                                try (TableWriter writer = getWriter(tableName)) {
-                                    renameDetachedToAttachable(tableName, partitionTimestamp);
-                                    writer.attachPartition(partitionTimestamp);
-                                    timestamps.remove();
-                                    attachedCount.incrementAndGet();
-                                } catch (Throwable e) {
-                                    exceptions.add(e);
-                                    TimeUnit.MILLISECONDS.sleep(rnd.nextLong(11L));
-                                    LOG.error().$(e).$();
+                    TestUtils.unchecked(() -> {
+                        start.await();
+                        while (isLive.get() || !detachedPartitionTimestamps.isEmpty()) {
+                            if (!detachedPartitionTimestamps.isEmpty()) {
+                                Iterator<Long> timestamps = detachedPartitionTimestamps.iterator();
+                                if (timestamps.hasNext()) {
+                                    long partitionTimestamp = timestamps.next();
+                                    try (TableWriter writer = getWriter(tableName)) {
+                                        renameDetachedToAttachable(tableName, partitionTimestamp);
+                                        writer.attachPartition(partitionTimestamp);
+                                        timestamps.remove();
+                                        attachedCount.incrementAndGet();
+                                    } catch (Throwable e) {
+                                        exceptions.add(e);
+                                        TimeUnit.MILLISECONDS.sleep(rnd.nextLong(11L));
+                                        LOG.error().$(e).$();
+                                    }
                                 }
                             }
+                            TimeUnit.MILLISECONDS.sleep(rnd.nextLong(10L));
                         }
-                        TimeUnit.MILLISECONDS.sleep(rnd.nextLong(10L));
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    }, failureCounter);
                 } finally {
                     Path.clearThreadLocals();
                     end.countDown();
                 }
             });
             attThread.start();
-
-            // give it 2 seconds
-            long deadline = System.currentTimeMillis() + 2000;
-            while (System.currentTimeMillis() < deadline) {
-                TimeUnit.MILLISECONDS.sleep(300L);
-            }
             isLive.set(false);
             end.await();
             for (int i = 0, limit = exceptions.size(); i < limit; i++) {
@@ -1283,8 +1278,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 try (TableWriter writer = getWriter(tableName)) {
                     writer.detachPartition(timestamp);
                 }
-                TableToken tableToken = engine.getTableToken(brokenTableName);
-                TableToken tableToken1 = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(brokenTableName);
+                TableToken tableToken1 = engine.verifyTableName(tableName);
 
                 path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
                 other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
@@ -1362,8 +1357,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     writer.detachPartition(timestamp);
                 }
 
-                TableToken tableToken = engine.getTableToken(brokenTableName);
-                TableToken tableToken1 = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(brokenTableName);
+                TableToken tableToken1 = engine.verifyTableName(tableName);
 
                 path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
                 other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
@@ -1460,8 +1455,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     writer.detachPartition(timestamp);
                 }
 
-                TableToken tableToken = engine.getTableToken(tableName);
-                TableToken brokenTableToken = engine.getTableToken(brokenTableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
+                TableToken brokenTableToken = engine.verifyTableName(brokenTableName);
 
                 path.of(configuration.getRoot()).concat(brokenTableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
                 other.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
@@ -1969,7 +1964,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                 dFile(src.$(), "ts", -1);
@@ -2011,7 +2006,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 String timestampWrongDay = "2021-06-01";
 
                 // Partition does not exist in copied _dtxn
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 Path dst = Path.PATH2.get().of(configuration.getRoot()).concat(tableToken).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
 
@@ -2185,7 +2180,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 assertContent(expected, tableName);
 
                 // check no metadata files were left behind
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(configuration.getRoot())
                         .concat(tableToken)
                         .concat("2022-06-01").concat(META_FILE_NAME)
@@ -2244,7 +2239,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         sqlExecutionContext
                 );
                 engine.clear();
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(configuration.getRoot())
                         .concat(tableToken)
                         .concat("2022-06-02")
@@ -2253,7 +2248,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         .$();
                 Assert.assertTrue(Files.remove(path));
                 other.of(configuration.getRoot())
-                        .concat(engine.getTableToken(brokenTableName))
+                        .concat(engine.verifyTableName(brokenTableName))
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
@@ -2329,7 +2324,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void dropCurrentVersionOfPartition(String tableName, String partitionName) throws SqlException {
         engine.clear();
         // hide the detached partition
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         path.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached").$();
         other.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached.hide").$();
 
@@ -2341,7 +2336,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private void renameDetachedToAttachable(String tableName, long... partitions) {
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
             PartitionBy.setSinkForPartition(
                     path.of(configuration.getRoot()).concat(tableToken),
@@ -2362,7 +2357,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private void renameDetachedToAttachable(String tableName, String... partitions) {
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         for (String partition : partitions) {
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
             other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();

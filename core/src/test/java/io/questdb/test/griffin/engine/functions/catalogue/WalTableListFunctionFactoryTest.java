@@ -68,9 +68,9 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.getTableToken("B")));
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.getTableToken("C")));
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.getTableToken("D")));
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
             assertSql("wal_tables() order by name", "name\tsuspended\twriterTxn\tsequencerTxn\n" +
                     "B\ttrue\t1\t3\n" +

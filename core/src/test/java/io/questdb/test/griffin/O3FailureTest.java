@@ -31,8 +31,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -61,7 +59,6 @@ import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3FailureTest extends AbstractO3Test {
 
-    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
@@ -145,7 +142,6 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
     private static final FilesFacade ffIndexAllocateFailure = new TestFilesFacadeImpl() {
-
         boolean failNextAlloc = false;
         int theFd = 0;
 
@@ -2825,9 +2821,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
 
@@ -2835,9 +2829,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
 
         drainWalQueue(engine);
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -2879,9 +2871,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
 
@@ -2889,9 +2879,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
 
         drainWalQueue(engine);
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -2996,9 +2984,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
         o3MemMaxPages = Integer.MAX_VALUE;
@@ -3006,9 +2992,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
         drainWalQueue(engine);
 
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,

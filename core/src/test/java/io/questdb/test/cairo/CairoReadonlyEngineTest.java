@@ -25,7 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -108,7 +108,6 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 roEngine.reloadTableNames();
                 try {
                     roEngine.drop(
-                            AllowAllCairoSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
                             token
                     );
@@ -130,7 +129,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 roEngine.reloadTableNames();
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
                     roEngine.rename(
-                            AllowAllCairoSecurityContext.INSTANCE,
+                            AllowAllSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
                             mem,
                             tableName,
@@ -153,8 +152,8 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
                 roEngine.reloadTableNames();
                 Assert.assertEquals(
-                        engine.getTableToken(tableName),
-                        roEngine.getTableToken(tableName)
+                        engine.verifyTableName(tableName),
+                        roEngine.verifyTableName(tableName)
                 );
             }
         });
@@ -168,7 +167,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
 
                 try {
-                    roEngine.getTableToken(tableName);
+                    roEngine.verifyTableName(tableName);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertEquals(
@@ -179,8 +178,8 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
                 currentMicros += 1_100_000L;
                 Assert.assertEquals(
-                        engine.getTableToken(tableName),
-                        roEngine.getTableToken(tableName)
+                        engine.verifyTableName(tableName),
+                        roEngine.verifyTableName(tableName)
                 );
             }
         });

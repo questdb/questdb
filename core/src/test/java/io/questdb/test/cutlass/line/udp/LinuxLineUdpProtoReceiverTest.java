@@ -265,7 +265,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(configuration, engine.getTableToken(tableName))) {
+                    try (TableReader reader = new TableReader(configuration, engine.verifyTableName(tableName))) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {

@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -59,13 +58,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     private static Path path;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractGriffinTest.setUpStatic();
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
         AbstractGriffinTest.tearDownStatic();
     }
@@ -1715,7 +1714,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertFailure(27, "new column name contains invalid characters",
+        assertFailure(29, "new column name contains invalid characters",
                 "create table x (" +
                         "t TIMESTAMP, " +
                         "`bool.flag` BOOLEAN) " +
@@ -2321,12 +2320,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             @Override
             public int softLink(LPSZ src, LPSZ softLink) {
                 Assert.assertEquals(target, src.toString());
-                Assert.assertEquals(root.toString() + Files.SEPARATOR + dirName, softLink.toString());
+                Assert.assertEquals(root + Files.SEPARATOR + dirName, softLink.toString());
                 return -1;
             }
         };
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             assertQuery13(
                     "geohash\n",
                     "select geohash from " + tableName,
@@ -2369,7 +2368,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String volumeAlias = "manzana";
         String volumePath = volume.getAbsolutePath();
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             Assert.assertTrue(volume.delete());
             assertQuery13(
                     "geohash\n",
@@ -3632,9 +3631,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(CairoSecurityContext cairoSecurityContext, TableToken tableName, long version) {
+                public TableReader getReader(TableToken tableToken, long version) {
                     fiddler.run(this);
-                    return super.getReader(cairoSecurityContext, tableName, version);
+                    return super.getReader(tableToken, version);
                 }
             }) {
                 try (
@@ -4123,7 +4122,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
+                engine.drop(path, tt);
             }
         }
     }
@@ -4665,9 +4664,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(CairoSecurityContext cairoSecurityContext, TableToken tableName, long tableVersion) {
+            public TableReader getReader(TableToken tableToken, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(cairoSecurityContext, tableName, tableVersion);
+                return super.getReader(tableToken, tableVersion);
             }
         }) {
 
@@ -4677,7 +4676,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             ) {
                 compiler.compile(sql, sqlExecutionContext);
                 Assert.assertTrue(fiddler.isHappy());
-                try (TableReader reader = getReader(engine, "Y")) {
+                try (TableReader reader = engine.getReader("Y")) {
                     sink.clear();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedMetadata, sink);

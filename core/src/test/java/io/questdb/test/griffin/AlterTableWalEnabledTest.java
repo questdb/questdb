@@ -179,7 +179,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     }
 
     private void assertWalEnabled(String tableName, boolean enabled) {
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName))) {
+        try (TableReader rdr = engine.getReader(tableName)) {
             Assert.assertEquals(enabled, rdr.getMetadata().isWalEnabled());
         }
     }

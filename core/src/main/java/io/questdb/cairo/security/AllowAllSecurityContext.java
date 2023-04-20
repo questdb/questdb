@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.security;
 
-public interface CairoSecurityContext {
+import io.questdb.cairo.SecurityContext;
 
-    boolean canWrite();
-
-    default void checkWritePermission() {
-        if (!canWrite()) {
-            throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
-        }
-    }
+public class AllowAllSecurityContext implements SecurityContext {
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
 }

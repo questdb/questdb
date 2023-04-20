@@ -45,6 +45,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean allowMixedIO(CharSequence root) {
+        return !Os.isWindows();
+    }
+
+    @Override
     public long append(int fd, long buf, int len) {
         return Files.append(fd, buf, len);
     }
@@ -60,11 +65,6 @@ public class FilesFacadeImpl implements FilesFacade {
             Files.close(fd);
         }
         return remove(path);
-    }
-
-    @Override
-    public boolean readLink(Path softLink, Path readTo) {
-        return Files.readLink(softLink, readTo);
     }
 
     @Override
@@ -320,6 +320,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long read(int fd, long buf, long len, long offset) {
         return Files.read(fd, buf, len, offset);
+    }
+
+    @Override
+    public boolean readLink(Path softLink, Path readTo) {
+        return Files.readLink(softLink, readTo);
     }
 
     @Override
