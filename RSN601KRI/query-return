@@ -1,0 +1,25 @@
+Describe the bug
+WITH all_rows AS (
+    SELECT CAST(1676837104 * 1000000L AS TIMESTAMP) as ts, 'foobar' as address, 0 as value
+    union all
+    SELECT CAST(1679429108 * 1000000L AS TIMESTAMP) as ts, 'foobar' as address, 1 as value
+), just_foobar as (
+    select * from all_rows where address in ('foobar')
+), ordered as (
+    select * from just_foobar order by ts asc
+), timed as (
+    select * from ordered timestamp(ts)
+), sampled as (
+    SELECT ts, sum(value) as value
+    FROM timed
+    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR 
+)
+select * from sampled;
+returns ASC order over TIMESTAMP column is required but not provided.
+
+The bug seems to have something to do with the just_foobar CTE since without it the query runs fine.
+
+Environment
+- **QuestDB version**:
+- **QB**:
+- **Browser**:
