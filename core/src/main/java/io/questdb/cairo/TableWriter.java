@@ -242,7 +242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        this.partitionFrameFactory = new PartitionFrameFactory(configuration.getFilesFacade(), configuration.getWriterFileOpenOpts());
+        this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
@@ -6664,6 +6664,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (partitionIndexHi > partitionIndexLo + 1) {
             long targetPartition = Long.MIN_VALUE;
 
+            // Move partitionIndexLo to the first unlocked partition in the range
             for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
                 if (!hasReaderLocks(txWriter.getPartitionTimestamp(targetPartitionIndex))) {
                     targetPartition = txWriter.getPartitionTimestamp(partitionIndexLo);
@@ -6679,8 +6680,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (squashCount > 0) {
                 TableUtils.setPathForPartition(path, partitionBy, targetPartition, txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition));
+                long originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
                 try (
-                        Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, txWriter.getPartitionSizeByPartitionTimestamp(targetPartition))
+                        Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, originalSize)
                 ) {
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestamp(partitionIndexLo + 1);
@@ -6713,6 +6715,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
 
+//                    updateIndexesParallel(originalSize, targetFrame.getSize());
                     txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getSize());
                     if (lastPartitionSquashed) {
                         // last partition is squashed, adjust fixed/transient row sizes

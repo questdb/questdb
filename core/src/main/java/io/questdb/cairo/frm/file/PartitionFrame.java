@@ -67,6 +67,7 @@ public class PartitionFrame implements Frame {
         if (columnType < 0) {
             return DeletedFrameColumn.INSTANCE;
         }
+        boolean isIndexed = metadata.isColumnIndexed(columnIndex);
         int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
         long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, size);
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -83,7 +84,7 @@ public class PartitionFrame implements Frame {
             }
         }
 
-        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, columnTop, columnIndex);
+        return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, isIndexed, columnTop, columnIndex);
     }
 
     @Override

@@ -24,12 +24,12 @@
 
 package io.questdb.cairo.frm.file;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -41,8 +41,13 @@ public class PartitionFrameFactory implements Pool<PartitionFrame>, Closeable {
     private final ObjList<PartitionFrame> framePool = new ObjList<>();
     private boolean closed;
 
-    public PartitionFrameFactory(FilesFacade ff, long fileOpts) {
-        this.columnPool = new ContinuousFileColumnPool(ff, fileOpts);
+    public PartitionFrameFactory(CairoConfiguration configuration) {
+        this.columnPool = new ContinuousFileColumnPool(
+                configuration.getFilesFacade(),
+                configuration.getWriterFileOpenOpts(),
+                configuration.getDataIndexKeyAppendPageSize(),
+                configuration.getDataIndexValueAppendPageSize()
+        );
     }
 
     @Override

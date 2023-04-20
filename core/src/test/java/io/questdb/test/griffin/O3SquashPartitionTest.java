@@ -35,97 +35,100 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     @Before
     public void setUp() {
         node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 << 10);
+        super.setUp();
     }
 
     @Test
     public void testSplitLastPartition() throws Exception {
-        // 4kb prefix split threshold
-        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (2 << 10));
-        node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+        assertMemoryLeak(() -> {
+            // 4kb prefix split threshold
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (2 << 10));
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
 
-        compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " -x j," +
-                        " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
-                        " from long_sequence(60*(23*2-24))" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
+            compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
+                            " from long_sequence(60*(23*2-24))" +
+                            ") timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
 
-        String sqlPrefix = "insert into x " +
-                "select" +
-                " cast(x as int) * 1000000 i," +
-                " -x - 1000000L as j," +
-                " rnd_str(5,16,2) as str,";
-        compile(
-                sqlPrefix +
-                        " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
-                        " from long_sequence(700)",
-                sqlExecutionContext
-        );
+            String sqlPrefix = "insert into x " +
+                    "select" +
+                    " cast(x as int) * 1000000 i," +
+                    " -x - 1000000L as j," +
+                    " rnd_str(5,16,2) as str,";
+            compile(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
+                            " from long_sequence(700)",
+                    sqlExecutionContext
+            );
 
-        String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-        assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                "2020-02-04T00:00:00.000000Z\t1202\t2020-02-04\n" +
-                "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
+            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1202\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
 
-        // Partition "2020-02-04" squashed the new update
+            // Partition "2020-02-04" squashed the new update
 
-        compile(sqlPrefix +
-                        " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
-                        " from long_sequence(50)",
-                sqlExecutionContext
-        );
-
-        assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                "2020-02-04T00:00:00.000000Z\t1252\t2020-02-04\n" +
-                "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
-
-        try (TableReader ignore = getReader("x")) {
-            // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
             compile(sqlPrefix +
-                            " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
+                            " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
                             " from long_sequence(50)",
                     sqlExecutionContext
             );
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1083\t2020-02-04\n" +
-                    "2020-02-04T18:01:00.000000Z\t219\t2020-02-04T180100\n" +
+                    "2020-02-04T00:00:00.000000Z\t1252\t2020-02-04\n" +
                     "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
-        }
 
-        // commit in order, should squash partitions
-        compile(sqlPrefix +
-                        " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
-                        " from long_sequence(50)",
-                sqlExecutionContext
-        );
+            try (TableReader ignore = getReader("x")) {
+                // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
+                compile(sqlPrefix +
+                                " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
+                                " from long_sequence(50)",
+                        sqlExecutionContext
+                );
 
-        assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                "2020-02-04T00:00:00.000000Z\t1302\t2020-02-04\n" +
-                "2020-02-04T20:01:00.000000Z\t868\t2020-02-04T200100\n");
+                assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T00:00:00.000000Z\t1083\t2020-02-04\n" +
+                        "2020-02-04T18:01:00.000000Z\t219\t2020-02-04T180100\n" +
+                        "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
+            }
 
-        // commit in order, rolls to next partition, should squash "2020-02-04" to single part
-        compile(sqlPrefix +
-                        " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
-                        " from long_sequence(50)",
-                sqlExecutionContext
-        );
+            // commit in order, should squash partitions
+            compile(sqlPrefix +
+                            " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
+                            " from long_sequence(50)",
+                    sqlExecutionContext
+            );
 
-        // commit in order rolls to the next partition, should squash partition "2020-02-04" to single part
-        compile(sqlPrefix +
-                        " timestamp_sequence('2020-02-05T01:01:15', 10*60*1000000L) ts" +
-                        " from long_sequence(50)",
-                sqlExecutionContext
-        );
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1302\t2020-02-04\n" +
+                    "2020-02-04T20:01:00.000000Z\t868\t2020-02-04T200100\n");
 
-        assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                "2020-02-04T00:00:00.000000Z\t2220\t2020-02-04\n" +
-                "2020-02-05T01:01:15.000000Z\t50\t2020-02-05\n");
+            // commit in order, rolls to next partition, should squash "2020-02-04" to single part
+            compile(sqlPrefix +
+                            " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
+                            " from long_sequence(50)",
+                    sqlExecutionContext
+            );
+
+            // commit in order rolls to the next partition, should squash partition "2020-02-04" to single part
+            compile(sqlPrefix +
+                            " timestamp_sequence('2020-02-05T01:01:15', 10*60*1000000L) ts" +
+                            " from long_sequence(50)",
+                    sqlExecutionContext
+            );
+
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t2220\t2020-02-04\n" +
+                    "2020-02-05T01:01:15.000000Z\t50\t2020-02-05\n");
+        });
     }
 
     @Test
@@ -174,13 +177,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     LOG,
                     true
             );
-            TestUtils.assertEquals(
-                    compiler,
-                    sqlExecutionContext,
-                    "y order by ts",
-                    "x"
-            );
-            TestUtils.assertEquals(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'");
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
             TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
         });
     }

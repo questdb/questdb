@@ -39,15 +39,19 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
     private final FilesFacade ff;
     private final long fileOpts;
+    private final IntPool<ContinuousFileFixFrameColumn> indexedColumnPool = new IntPool<>();
+    private final long keyAppendPageSize;
     private final IntPool<ContinuousFileFixFrameColumn> fixColumnPool = new IntPool<>();
+    private final long valueAppendPageSize;
     private final IntPool<ContinuousFileVarFrameColumn> varColumnPool = new IntPool<>();
     private boolean canWrite;
     private boolean isClosed;
 
-
-    public ContinuousFileColumnPool(FilesFacade ff, long fileOpts) {
+    public ContinuousFileColumnPool(FilesFacade ff, long fileOpts, long keyAppendPageSize, long valueAppendPageSize) {
         this.ff = ff;
         this.fileOpts = fileOpts;
+        this.keyAppendPageSize = keyAppendPageSize;
+        this.valueAppendPageSize = valueAppendPageSize;
     }
 
     @Override
@@ -70,8 +74,15 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
     private class ColumnTypePool implements FrameColumnTypePool {
 
         @Override
-        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
+        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, boolean isIndexed, long columnTop, int columnIndex) {
             switch (columnType) {
+                case ColumnType.SYMBOL:
+                    if (canWrite && isIndexed) {
+                        var indexedColumn = getIndexedColumn();
+                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                        return indexedColumn;
+                    }
+
                 default: {
                     var column = getFixColumn();
                     if (canWrite) {
@@ -103,6 +114,17 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
             }
             var col = new ContinuousFileFixFrameColumn(ff, fileOpts);
             col.setPool(fixColumnPool);
+            return col;
+        }
+
+        private ContinuousFileIndexedFrameColumn getIndexedColumn() {
+            if (indexedColumnPool.size() > 0) {
+                var col = indexedColumnPool.getLast();
+                indexedColumnPool.setPos(indexedColumnPool.size() - 1);
+                return (ContinuousFileIndexedFrameColumn) col;
+            }
+            var col = new ContinuousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
+            col.setPool(indexedColumnPool);
             return col;
         }
 

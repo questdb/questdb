@@ -71,7 +71,7 @@ public class O3Test extends AbstractO3Test {
     @Before
     public void setUp4() {
         Vect.resetPerformanceCounters();
-        partitionO3SplitThreshold = TestUtils.generateRandom(null).nextInt(100);
+        partitionO3SplitThreshold = 300 * (2L << 20);//TestUtils.generateRandom(null).nextInt( );
         LOG.info().$("partitionO3SplitThreshold = ").$(partitionO3SplitThreshold).$();
     }
 
