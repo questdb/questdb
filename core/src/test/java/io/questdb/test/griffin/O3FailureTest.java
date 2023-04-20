@@ -158,6 +158,14 @@ public class O3FailureTest extends AbstractO3Test {
         }
 
         @Override
+        public boolean close(int fd) {
+            if (fd > 0 && fd == theFd) {
+                theFd = 0;
+            }
+            return super.close(fd);
+        }
+
+        @Override
         public long length(int fd) {
             if (!fixFailure.get() || fd == theFd) {
                 failNextAlloc = true;
@@ -178,6 +186,14 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
         private int theFd = 0;
+
+        @Override
+        public boolean close(int fd) {
+            if (fd > 0 && fd == theFd) {
+                theFd = 0;
+            }
+            return super.close(fd);
+        }
 
         @Override
         public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -252,6 +268,14 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long length(int fd) {
                 long len = super.length(fd);
                 if (fd == theFd) {
@@ -288,6 +312,14 @@ public class O3FailureTest extends AbstractO3Test {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
             }
 
             @Override
@@ -340,6 +372,14 @@ public class O3FailureTest extends AbstractO3Test {
             long theFd = 0;
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == theFd && flags == Files.MAP_RO) {
                     theFd = 0;
@@ -364,6 +404,14 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new TestFilesFacadeImpl() {
             int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -489,6 +537,14 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -859,6 +915,14 @@ public class O3FailureTest extends AbstractO3Test {
             private int theFd = 0;
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (!fixFailure.get() || (theFd == fd && mapCounter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
@@ -885,6 +949,14 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataFailRetry0, new TestFilesFacadeImpl() {
             private final AtomicInteger mapCounter = new AtomicInteger(2);
             private int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -990,6 +1062,14 @@ public class O3FailureTest extends AbstractO3Test {
             private int theFd = 0;
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (!fixFailure.get() || theFd == fd) {
                     fixFailure.set(false);
@@ -1015,6 +1095,14 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
             private int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
