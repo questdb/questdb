@@ -51,9 +51,10 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
                     Matcher matcher = pattern.matcher(line);
                     String l = matcher.replaceAll("\t");
                     String[] tuple = l.split("\t");
+                    final String type = tuple[0].trim();
                     String[] suffixTuple = tuple[1].split(" ");
                     for (int i = 0, n = suffixTuple.length; i < n; i++) {
-                        this.put(suffixTuple[i].trim(), tuple[0].trim());
+                        this.put(suffixTuple[i].trim(), type);
                     }
                 }
                 line = reader.readLine();
@@ -139,6 +140,13 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
                         break;
                 }
             }
+
+            // if there is no new line after last entry we may have this
+            if (contentType != null && _lo < p) {
+                String s = Chars.toString(dbcs.of(_lo, p));
+                this.put(s, contentType);
+            }
+
         } finally {
             Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_HTTP_CONN);
         }
