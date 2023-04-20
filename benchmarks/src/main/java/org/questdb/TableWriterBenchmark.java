@@ -164,7 +164,7 @@ public class TableWriterBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            configuration.getCairoSecurityContextFactory().getRootContext(),
+                            configuration.getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,

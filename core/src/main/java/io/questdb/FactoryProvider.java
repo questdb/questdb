@@ -28,8 +28,7 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.griffin.SqlParserFactory;
 
-// TODO: rename to FactoryProvider?
-public interface FactoriesFactory {
+public interface FactoryProvider {
 
     // todo: this interface is not great - it assumes a single username / password
     PGAuthenticatorFactory getPGAuthenticatorFactory();

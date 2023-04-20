@@ -107,8 +107,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public SecurityContextFactory getCairoSecurityContextFactory() {
-        return conf.getCairoSecurityContextFactory();
+    public SecurityContextFactory getSecurityContextFactory() {
+        return conf.getSecurityContextFactory();
     }
 
     @Override

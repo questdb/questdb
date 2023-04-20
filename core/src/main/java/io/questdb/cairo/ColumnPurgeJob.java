@@ -84,7 +84,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(
-                configuration.getCairoSecurityContextFactory().getRootContext(),
+                configuration.getSecurityContextFactory().getRootContext(),
                 null,
                 null
         );

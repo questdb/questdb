@@ -41,7 +41,7 @@ public class AbstractTest {
     public TestName testName = new TestName();
 
     @SuppressWarnings("unused")
-    public static ServerMain newServer(boolean enableHttp, boolean enableLineTcp, boolean enablePgWire, int workerCountShared, FactoriesFactory factoriesFactory) {
+    public static ServerMain newServer(boolean enableHttp, boolean enableLineTcp, boolean enablePgWire, int workerCountShared, FactoryProvider factoryProvider) {
         return new ServerMain(new Bootstrap(new DefaultBootstrapConfiguration() {
 
             // although `root` is supplied to the server main, it is ultimately ignored in favour of that provided by the configuration
@@ -57,8 +57,8 @@ public class AbstractTest {
                         0,
                         0,
                         0,
-                        factoriesFactory.getSecurityContextFactory(),
-                        factoriesFactory.getPGAuthenticatorFactory()
+                        factoryProvider.getSecurityContextFactory(),
+                        factoryProvider.getPGAuthenticatorFactory()
                 );
             }
         }, TestUtils.getServerMainArgs(root)));

@@ -31,8 +31,8 @@ import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
 import io.questdb.griffin.SqlParserFactory;
 import io.questdb.griffin.SqlParserFactoryImpl;
 
-public class DefaultFactoriesFactory implements FactoriesFactory {
-    public static final DefaultFactoriesFactory INSTANCE = new DefaultFactoriesFactory();
+public class DefaultFactoryProvider implements FactoryProvider {
+    public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
 
     @Override
     public PGAuthenticatorFactory getPGAuthenticatorFactory() {

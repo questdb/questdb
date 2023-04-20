@@ -192,7 +192,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         nodes.clear();
         node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides());
         configuration = node1.getConfiguration();
-        securityContext = configuration.getCairoSecurityContextFactory().getRootContext();
+        securityContext = configuration.getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();
@@ -451,7 +451,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
         return engine.getTableWriterAPI(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                engine.getConfiguration().getSecurityContextFactory().getRootContext(),
                 engine.verifyTableName(tableName),
                 "test"
         );

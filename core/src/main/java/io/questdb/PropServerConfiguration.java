@@ -464,7 +464,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws JsonException, ServerConfigurationException {
-        this(root, properties, env, log, buildInformation, DefaultFactoriesFactory.INSTANCE);
+        this(root, properties, env, log, buildInformation, DefaultFactoryProvider.INSTANCE);
     }
 
     public PropServerConfiguration(
@@ -473,13 +473,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation,
-            FactoriesFactory factoriesFactory
+            FactoryProvider factoryProvider
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
-        this.securityContextFactory = factoriesFactory.getSecurityContextFactory();
-        this.sqlParserFactory = factoriesFactory.getSqlParserFactory();
-        this.pgAuthenticatorFactory = factoriesFactory.getPGAuthenticatorFactory();
+        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        this.sqlParserFactory = factoryProvider.getSqlParserFactory();
+        this.pgAuthenticatorFactory = factoryProvider.getPGAuthenticatorFactory();
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -1606,7 +1606,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SecurityContextFactory getCairoSecurityContextFactory() {
+        public SecurityContextFactory getSecurityContextFactory() {
             return securityContextFactory;
         }
 

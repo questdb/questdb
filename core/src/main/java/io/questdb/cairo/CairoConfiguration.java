@@ -83,7 +83,7 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
-    SecurityContextFactory getCairoSecurityContextFactory();
+    SecurityContextFactory getSecurityContextFactory();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 

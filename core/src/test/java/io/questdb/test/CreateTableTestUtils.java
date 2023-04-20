@@ -40,7 +40,7 @@ public class CreateTableTestUtils {
 
     public static TableToken create(CairoEngine engine, TableModel model) {
         return engine.createTable(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
+                engine.getConfiguration().getSecurityContextFactory().getRootContext(),
                 model.getMem(),
                 model.getPath(),
                 false,

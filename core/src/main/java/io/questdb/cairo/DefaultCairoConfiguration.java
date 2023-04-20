@@ -125,7 +125,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public SecurityContextFactory getCairoSecurityContextFactory() {
+    public SecurityContextFactory getSecurityContextFactory() {
         return AllowAllSecurityContextFactory.INSTANCE;
     }
 

@@ -856,7 +856,7 @@ public final class TestUtils {
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), bindVariableService);
+        ctx.with(engine.getConfiguration().getSecurityContextFactory().getRootContext(), bindVariableService);
         return ctx;
     }
 

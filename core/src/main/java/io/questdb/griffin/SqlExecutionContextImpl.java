@@ -71,7 +71,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
         cairoConfiguration = cairoEngine.getConfiguration();
         clock = cairoConfiguration.getMicrosecondClock();
-        securityContext = cairoEngine.getConfiguration().getCairoSecurityContextFactory().getRootContext();
+        securityContext = cairoEngine.getConfiguration().getSecurityContextFactory().getRootContext();
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();

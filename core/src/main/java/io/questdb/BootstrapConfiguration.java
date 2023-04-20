@@ -33,7 +33,7 @@ public interface BootstrapConfiguration {
 
     Map<String, String> getEnv();
 
-    FactoriesFactory getFactoriesFactory();
+    FactoryProvider getFactoriesFactory();
 
     FilesFacade getFilesFacade();
 
