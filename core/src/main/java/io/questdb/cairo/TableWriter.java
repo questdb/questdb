@@ -3271,7 +3271,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastOpenPartitionTs = -1L;
         lastOpenPartitionIsReadOnly = false;
         freeColumns(truncate & !distressed);
-        Misc.free(commitListener);
+        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
