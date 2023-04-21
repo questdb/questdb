@@ -29,6 +29,8 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
 import io.questdb.cutlass.line.tcp.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -206,6 +208,14 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public long getWriterIdleTimeout() {
                 return 150;
+            }
+
+            @Override
+            public PublicKeyRepoFactory getPublicKeyRepoFactory() {
+                if (withAuth) {
+                    return new StaticPublicKeyRepoFactory(getAuthDbPath());
+                }
+                return super.getPublicKeyRepoFactory();
             }
 
             @Override

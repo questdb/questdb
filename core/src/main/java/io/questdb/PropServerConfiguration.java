@@ -27,8 +27,8 @@ package io.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.auth.DefaultPublicKeyRepoFactory;
 import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -443,6 +443,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
     private String publicDirectory;
+    private PublicKeyRepoFactory publicKeyRepoFactory;
     private int recvBufferSize;
     private int requestHeaderBufferSize;
     private int rollBufferLimit;
@@ -1065,6 +1066,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 if (null != lineTcpAuthDbPath) {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
+                    this.publicKeyRepoFactory = new StaticPublicKeyRepoFactory(lineTcpAuthDbPath);
+                } else {
+                    this.publicKeyRepoFactory = factoryProvider.getPublicKeyRepoFactory();
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR, true);
@@ -1606,11 +1610,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
-        }
-
-        @Override
         public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
@@ -1963,6 +1962,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
         }
 
         @Override
@@ -2914,8 +2918,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
 
-        private PublicKeyRepoFactory publicKeyRepoFactory;
-
         @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;
@@ -3026,11 +3028,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-            if (publicKeyRepoFactory == null) {
-                if (getAuthDbPath() != null) {
-                    publicKeyRepoFactory = new DefaultPublicKeyRepoFactory(getAuthDbPath());
-                }
-            }
             return publicKeyRepoFactory;
         }
 
@@ -3452,7 +3449,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getServerVersion() {
-            return "15.2";
+            return "11.3";
         }
 
         @Override

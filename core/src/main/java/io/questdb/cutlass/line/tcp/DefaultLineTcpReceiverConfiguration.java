@@ -57,8 +57,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         }
     };
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
-    private PublicKeyRepoFactory publicKeyRepoFactory;
-
     @Override
     public String getAuthDbPath() {
         return null;
@@ -170,12 +168,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-        if (publicKeyRepoFactory == null) {
-            if (getAuthDbPath() != null) {
-                publicKeyRepoFactory = new DefaultPublicKeyRepoFactory(getAuthDbPath());
-            }
-        }
-        return publicKeyRepoFactory;
+        return DefaultPublicKeyRepoFactory.INSTANCE;
     }
 
     @Override

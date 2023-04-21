@@ -24,11 +24,17 @@
 
 package io.questdb.cutlass.auth;
 
-public class DefaultPublicKeyRepoFactory implements PublicKeyRepoFactory {
-    public static final PublicKeyRepoFactory INSTANCE = new DefaultPublicKeyRepoFactory();
+import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
+
+public class StaticPublicKeyRepoFactory implements PublicKeyRepoFactory {
+    private final StaticPublicKeyRepo publicKeyRepo;
+
+    public StaticPublicKeyRepoFactory(String authDbPath) {
+        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
+    }
 
     @Override
     public PublicKeyRepo getInstance() {
-        return null;
+        return publicKeyRepo;
     }
 }
