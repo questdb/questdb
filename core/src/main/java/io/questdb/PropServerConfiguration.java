@@ -28,9 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.auth.DefaultPublicKeyRepoFactory;
-import io.questdb.cutlass.auth.PublicKeyRepoFactory;
-import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
+import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
+import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -188,7 +188,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
-    private final PublicKeyRepoFactory publicKeyRepoFactory;
+    private final AuthenticatorFactory authenticatorFactory;
     private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -366,7 +366,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryDoubleScale;
     private int jsonQueryFloatScale;
     private String keepAliveHeader;
-    private String lineTcpAuthDbPath;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
     private int lineTcpConnectionPoolInitialCapacity;
@@ -898,7 +897,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-                inputFormatConfiguration.parseConfiguration(getClass(), lexer, confRoot, sqlCopyFormatsFile);
+                inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
@@ -1048,7 +1047,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default commit interval ").$(lineTcpCommitIntervalDefault).$("), will use ").$(COMMIT_INTERVAL_DEFAULT).$();
                     this.lineTcpCommitIntervalDefault = COMMIT_INTERVAL_DEFAULT;
                 }
-                this.lineTcpAuthDbPath = getString(properties, env, PropertyKey.LINE_TCP_AUTH_DB_PATH, null);
+                String lineTcpAuthDbPath = getString(properties, env, PropertyKey.LINE_TCP_AUTH_DB_PATH, null);
                 // deprecated
                 String defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY, "DAY");
                 defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, defaultTcpPartitionByProperty);
@@ -1058,10 +1057,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpDefaultPartitionBy = PartitionBy.DAY;
                 }
                 if (null != lineTcpAuthDbPath) {
-                    this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
-                    this.publicKeyRepoFactory = new StaticPublicKeyRepoFactory(lineTcpAuthDbPath);
+                    lineTcpAuthDbPath = new File(root, lineTcpAuthDbPath).getAbsolutePath();
+                    this.authenticatorFactory = new EllipticCurveAuthenticatorFactory(NetworkFacadeImpl.INSTANCE, lineTcpAuthDbPath);
                 } else {
-                    this.publicKeyRepoFactory = DefaultPublicKeyRepoFactory.INSTANCE;
+                    this.authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR, true);
@@ -1087,7 +1086,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 );
                 this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, heartbeatInterval);
             } else {
-                publicKeyRepoFactory = DefaultPublicKeyRepoFactory.INSTANCE;
+                authenticatorFactory = DefaultAuthenticatorFactory.INSTANCE;
             }
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
@@ -2456,8 +2455,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-            return publicKeyRepoFactory;
+        public AuthenticatorFactory getAuthenticatorFactory() {
+            return authenticatorFactory;
         }
 
         @Override
@@ -2940,10 +2939,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
-
         @Override
-        public String getAuthDbPath() {
-            return lineTcpAuthDbPath;
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
@@ -3047,16 +3045,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-            return getFactoryProvider().getPublicKeyRepoFactory();
-        }
-
-        @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return getFactoryProvider().getSecurityContextFactory();
         }
 
         @Override
@@ -3202,6 +3190,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public String getPoolName() {
             return "ilpwriter";
         }
+
 
         @Override
         public long getSleepThreshold() {

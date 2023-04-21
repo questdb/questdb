@@ -125,8 +125,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return factoryProvider.getSecurityContextFactory();
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
