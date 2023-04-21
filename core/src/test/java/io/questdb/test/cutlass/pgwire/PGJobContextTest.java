@@ -8661,6 +8661,13 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testMetadata() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close();
+        });
+    }
+
     private void assertHexScript(
             NetworkFacade clientNf,
             String script,
