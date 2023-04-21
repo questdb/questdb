@@ -5293,6 +5293,51 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectOrderByTsWithNegativeLimit1() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan("select ts, count(*)  from a sample by 1s limit -5",
+                "Limit lo: -5\n" +
+                        "    SampleBy\n" +
+                        "      values: [count(*)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+
+        assertPlan("select i, count(*)  from a group by i limit -5",
+                "Limit lo: -5\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+
+        assertPlan("select i, count(*)  from a limit -5",
+                "Limit lo: -5\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+
+        assertPlan("select distinct(i) from a limit -5",
+                "Limit lo: -5\n" +
+                        "    DistinctKey\n" +
+                        "        GroupBy vectorized: true\n" +
+                        "          keys: [i]\n" +
+                        "          values: [count(*)]\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n");
+    }
+
+    @Test
     public void testSelectOrderedAsc() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i asc",
