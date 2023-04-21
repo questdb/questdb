@@ -52,4 +52,6 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
+
+    FactoryProvider getFactoryProvider();
 }

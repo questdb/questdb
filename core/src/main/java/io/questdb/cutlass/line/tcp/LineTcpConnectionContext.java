@@ -29,10 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cutlass.auth.AnonymousAuthenticator;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
-import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -88,16 +86,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
-        if (configuration.getAuthDbPath() != null) {
-            this.authenticator = new EllipticCurveAuthenticator(
-                    configuration.getPublicKeyRepoFactory().getInstance(),
-                    configuration,
-                    recvBufStart,
-                    recvBufEnd
-            );
-        } else {
-            this.authenticator = AnonymousAuthenticator.INSTANCE;
-        }
+        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator(recvBufStart, recvBufEnd);
     }
 
     public void checkIdle(long millis) {
@@ -196,6 +185,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             try {
                 IOContextResult result = authenticator.handleIO(netIoJob);
                 if (authenticator.isAuthenticated()) {
+                    assert securityContext == DenyAllSecurityContext.INSTANCE;
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), false);
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
@@ -209,12 +200,12 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public LineTcpConnectionContext of(int fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        // when security context has not been set by anything else (subclass) we assume
-        // this is an authenticated, anonymous user
-        if (securityContext == DenyAllSecurityContext.INSTANCE) {
-            securityContext = configuration.getSecurityContextFactory().getInstance(null, false);
-        }
         authenticator.init(fd);
+        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+            // when security context has not been set by anything else (subclass) we assume
+            // this is an authenticated, anonymous user
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, false);
+        }
         return super.of(fd, dispatcher);
     }
 

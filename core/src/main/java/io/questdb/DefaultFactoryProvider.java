@@ -26,8 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.DefaultPublicKeyRepoFactory;
-import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
+import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
 import io.questdb.griffin.SqlParserFactory;
@@ -52,7 +52,7 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-        return DefaultPublicKeyRepoFactory.INSTANCE;
+    public AuthenticatorFactory getAuthenticatorFactory() {
+        return DefaultAuthenticatorFactory.INSTANCE;
     }
 }

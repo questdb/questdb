@@ -24,17 +24,6 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
-
-public class StaticPublicKeyRepoFactory implements PublicKeyRepoFactory {
-    private final StaticPublicKeyRepo publicKeyRepo;
-
-    public StaticPublicKeyRepoFactory(String authDbPath) {
-        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
-    }
-
-    @Override
-    public PublicKeyRepo getInstance() {
-        return publicKeyRepo;
-    }
+public interface AuthenticatorFactory {
+    Authenticator getLineTCPAuthenticator(long recvBufStart, long recvBufEnd);
 }

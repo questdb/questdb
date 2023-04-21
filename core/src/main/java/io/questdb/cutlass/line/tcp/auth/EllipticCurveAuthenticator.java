@@ -25,14 +25,16 @@
 package io.questdb.cutlass.line.tcp.auth;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.auth.PublicKeyRepo;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.auth.PublicKeyRepo;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.NetworkIOJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.Chars;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -59,26 +61,37 @@ public class EllipticCurveAuthenticator implements Authenticator {
         }
     });
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
-    private final PublicKeyRepo publicKeyRepo;
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private final NetworkFacade nf;
+    private final PublicKeyRepo publicKeyRepo;
     private final long recvBufEnd;
     private final long recvBufStart;
-    private final DirectByteCharSequence userName = new DirectByteCharSequence();
+    private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
     protected long recvBufPseudoStart;
     private AuthState authState;
     private int fd;
+    private String principal;
     private PublicKey pubKey;
     private long recvBufPos;
 
-    public EllipticCurveAuthenticator(PublicKeyRepo publicKeyRepo, LineTcpReceiverConfiguration configuration, long recvBufStart, long recvBufEnd) {
+    public EllipticCurveAuthenticator(
+            NetworkFacade networkFacade,
+            PublicKeyRepo publicKeyRepo,
+            long recvBufStart,
+            long recvBufEnd
+    ) {
         if (recvBufEnd - recvBufStart < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
         this.publicKeyRepo = publicKeyRepo;
         this.recvBufStart = recvBufPos = recvBufStart;
         this.recvBufEnd = recvBufEnd;
-        this.nf = configuration.getNetworkFacade();
+        this.nf = networkFacade;
+    }
+
+    @Override
+    public CharSequence getPrincipal() {
+        return principal;
     }
 
     @Override
@@ -173,9 +186,10 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private void readKeyId() throws AuthenticatorException {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
-            userName.of(recvBufStart, recvBufStart + lineEnd);
-            LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(userName).$(']').$();
-            pubKey = publicKeyRepo.getPublicKey(userName);
+            userNameFlyweight.of(recvBufStart, recvBufStart + lineEnd);
+            principal = Chars.toString(userNameFlyweight);
+            LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(userNameFlyweight).$(']').$();
+            pubKey = publicKeyRepo.getPublicKey(userNameFlyweight);
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;

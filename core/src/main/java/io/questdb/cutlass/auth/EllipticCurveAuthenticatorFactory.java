@@ -24,6 +24,26 @@
 
 package io.questdb.cutlass.auth;
 
-public interface PublicKeyRepoFactory {
-    PublicKeyRepo getInstance();
+import io.questdb.cutlass.line.tcp.StaticPublicKeyRepo;
+import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
+import io.questdb.network.NetworkFacade;
+
+public class EllipticCurveAuthenticatorFactory implements AuthenticatorFactory {
+    private final NetworkFacade networkFacade;
+    private final StaticPublicKeyRepo publicKeyRepo;
+
+    public EllipticCurveAuthenticatorFactory(NetworkFacade networkFacade, String authDbPath) {
+        this.networkFacade = networkFacade;
+        publicKeyRepo = new StaticPublicKeyRepo(authDbPath);
+    }
+
+    @Override
+    public Authenticator getLineTCPAuthenticator(long recvBufStart, long recvBufEnd) {
+        return new EllipticCurveAuthenticator(
+                networkFacade,
+                publicKeyRepo,
+                recvBufStart,
+                recvBufEnd
+        );
+    }
 }
