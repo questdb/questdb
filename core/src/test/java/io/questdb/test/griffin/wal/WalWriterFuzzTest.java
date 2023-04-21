@@ -114,7 +114,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG, 304516434374708L, 1682066686104L);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
@@ -122,7 +122,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom(LOG, 304372698664583L, 1682066542373L);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
@@ -520,6 +520,38 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
+        try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
+            if (reader.size() > 0) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = rnd.nextInt(metadata.getColumnCount());
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    columnIndex += i;
+                    columnIndex = columnIndex % metadata.getColumnCount();
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                            && metadata.isColumnIndexed(columnIndex)) {
+                        break;
+                    }
+
+                    if (i == metadata.getColumnCount() - 1) {
+                        // No indexed symbols
+                        return;
+                    }
+                }
+
+                String columnName = metadata.getColumnName(columnIndex);
+                long randomRow = rnd.nextLong(reader.size());
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + tableNameNoWal + " limit " + randomRow + ", 1", sink);
+                String prefix = "a\n";
+                String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
+                String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+                LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + indexedWhereClause, tableNameWal + indexedWhereClause, LOG);
+            }
+        }
+    }
+
     private void runFuzz(Rnd rnd) throws Exception {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 
@@ -558,6 +590,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
                 String limit = "";
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
 
                 startMicro = System.nanoTime() / 1000;
                 applyWalParallel(transactions, tableNameWal2, rnd);
@@ -565,6 +598,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 long totalWalParallel = endWalMicro - startMicro;
 
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
 
                 LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
             } finally {
@@ -624,6 +658,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
                 LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
             }
         });
     }

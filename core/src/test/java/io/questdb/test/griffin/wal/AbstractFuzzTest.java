@@ -148,7 +148,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
                 " rnd_boolean() bool1 " +
                 " from long_sequence(" + rowCount + ")" +
-                ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
         return engine.getTableToken(tableName1);
     }
 
