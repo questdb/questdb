@@ -174,7 +174,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
-    private boolean sendRNQ = true;/* send ReadyForQuery message */
+    private boolean extendedQuery = false; // extended query protocol
+    private boolean inErrorState = false; // error state, relevant only for extended query protocol
+    private boolean processingSyncRequest = false; // processing SYNC request
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
     private SuspendEvent suspendEvent;
@@ -408,18 +410,34 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
                 if (keepReceiving) {
                     do {
-                        // Parse will update the value of recvBufferOffset upon completion of
+                        // Parse will update the value of recvBufferReadOffset upon completion of
                         // logical block. We cannot count on return value because 'parse' may try to
                         // respond to client and fail with exception. When it does fail we would have
                         // to retry 'send' but not parse the same input again
 
                         long readOffsetBeforeParse = recvBufferReadOffset;
                         totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                        parse(
-                                recvBuffer + recvBufferReadOffset,
-                                (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                                compiler
-                        );
+                        try {
+                            parseMessage(
+                                    recvBuffer + recvBufferReadOffset,
+                                    (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                                    compiler
+                            );
+                        } catch (SqlException e) {
+                            inErrorState = true;
+                            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
+                        } catch (ImplicitCastException e) {
+                            inErrorState = true;
+                            reportNonCriticalError(-1, e.getFlyweightMessage());
+                        } catch (CairoException e) {
+                            inErrorState = true;
+                            clearCursorAndFactory();
+                            if (e.isInterruption()) {
+                                reportQueryCancelled(e.getFlyweightMessage());
+                            } else {
+                                reportError(e);
+                            }
+                        }
 
                         // nothing changed?
                         if (readOffsetBeforeParse == recvBufferReadOffset) {
@@ -430,14 +448,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             continue OUTER;
                         }
                     } while (recvBufferReadOffset < recvBufferWriteOffset);
+                    // at this point we have parsed all available data
+                    // -> we can clear the receive buffer
                     clearRecvBuffer();
                 }
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
+            inErrorState = true;
             reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
         } catch (ImplicitCastException e) {
+            inErrorState = true;
             reportNonCriticalError(-1, e.getFlyweightMessage());
         } catch (CairoException e) {
+            inErrorState = true;
             clearCursorAndFactory();
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
@@ -1565,14 +1588,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
      * in the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
-    private void parse(
+    private void parseMessage(
             long address,
             int len,
             @Transient SqlCompiler compiler
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, QueryPausedException, AuthenticationException, SqlException {
+        processingSyncRequest = false;
 
         if (requireInitialMessage) {
-            sendRNQ = true;
             processInitialMessage(address, len);
             return;
         }
@@ -1621,72 +1644,83 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
         if (authenticationRequired) {
-            sendRNQ = true;
             doAuthentication(msgLo, msgLimit);
             return;
         }
-        switch (type) {
-            case 'P': // parse
-                sendRNQ = true;
-                processParse(
-                        address,
-                        msgLo,
-                        msgLimit,
-                        compiler
-                );
-                break;
-            case 'X': // 'Terminate'
-                throw PeerDisconnectedException.INSTANCE;
-            case 'C':
-                // close
-                processClose(msgLo, msgLimit);
-                sendRNQ = true;
-                break;
-            case 'B': // bind
-                sendRNQ = true;
-                processBind(msgLo, msgLimit, compiler);
-                break;
-            case 'E': // execute
-                sendRNQ = true;
-                processExec(msgLo, msgLimit, compiler);
-                break;
-            case 'S': // sync
-                // At completion of each series of extended-query messages, the frontend should issue a Sync message. 
-                // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block 
-                // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued. 
-                // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message, 
-                // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing. 
-                // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.) 
-                processSyncActions();
-                prepareReadyForQuery();
-                prepareForNewQuery();
-                sendRNQ = true;
-                // fall thru
-            case 'H': // flush
-                // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers. 
-                //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands. 
-                //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
-                // some clients (asyncpg) chose not to send 'S' (sync) message
-                // but instead fire 'H'. Can't wrap my head around as to why
-                // query execution is so ambiguous
-                if (syncActions.size() > 0) {
-                    processSyncActions();
-                }
-                sendAndReset();
-                break;
-            case 'D': // describe
-                sendRNQ = true;
-                processDescribe(msgLo, msgLimit, compiler);
-                break;
-            case 'Q': // simple query
-                sendRNQ = true;
-                processQuery(msgLo, msgLimit, compiler);
-                break;
-            case 'd': // COPY data 
-                break;
-            default:
-                LOG.error().$("unknown message [type=").$(type).$(']').$();
-                throw BadProtocolException.INSTANCE;
+
+        // after an error we only accept sync messages. everything else is ignored. from the postgres protocol documentation:
+        // "[...] The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected
+        // while processing any extended-query message, the backend issues ErrorResponse, then reads and discards
+        // messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing. [...]"
+        if (!inErrorState || type == 'S') {
+            switch (type) {
+                case 'P': // parse
+                    extendedQuery = true;
+                    processParse(
+                            address,
+                            msgLo,
+                            msgLimit,
+                            compiler
+                    );
+                    break;
+                case 'X': // 'Terminate'
+                    throw PeerDisconnectedException.INSTANCE;
+                case 'C':
+                    // close
+                    extendedQuery = true;
+                    processClose(msgLo, msgLimit);
+                    break;
+                case 'B': // bind
+                    extendedQuery = true;
+                    processBind(msgLo, msgLimit, compiler);
+                    break;
+                case 'E': // execute
+                    extendedQuery = true;
+                    processExec(msgLo, msgLimit, compiler);
+                    break;
+                case 'S': // sync
+                    processingSyncRequest = true;
+                    // At completion of each series of extended-query messages, the frontend should issue a Sync message.
+                    // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block
+                    // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued.
+                    // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message,
+                    // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing.
+                    // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.)
+                    if (!inErrorState) {
+                        // sync actions send responses to client
+                        // we only want to do this if we are not in error state
+                        processSyncActions();
+                    }
+                    inErrorState = false;
+                    prepareReadyForQuery();
+                    prepareForNewQuery();
+                    // fall thru
+                case 'H': // flush
+                    // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
+                    //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
+                    //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
+                    // some clients (asyncpg) chose not to send 'S' (sync) message
+                    // but instead fire 'H'. Can't wrap my head around as to why
+                    // query execution is so ambiguous
+                    if (syncActions.size() > 0 && !inErrorState) {
+                        processSyncActions();
+                    }
+                    sendAndReset();
+                    break;
+                case 'D': // describe
+                    extendedQuery = true;
+                    processDescribe(msgLo, msgLimit, compiler);
+                    break;
+                case 'Q': // simple query
+                    extendedQuery = false;
+                    processQuery(msgLo, msgLimit, compiler);
+                    break;
+                case 'd': // COPY data
+                    break;
+                default:
+                    LOG.error().$("unknown message [type=").$(type).$(']').$();
+                    throw BadProtocolException.INSTANCE;
+            }
         }
     }
 
@@ -1821,7 +1855,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareParams(responseAsciiSink, "client_encoding", "UTF8");
         prepareBackendKeyData(responseAsciiSink);
         prepareReadyForQuery();
-        sendRNQ = true;
     }
 
     private void prepareLoginResponse() {
@@ -2287,7 +2320,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=" .length(), valueHi));
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
                                 if (this.statementTimeout > 0) {
                                     circuitBreaker.setTimeout(statementTimeout);
                                 }
@@ -2504,22 +2537,35 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(ex);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
+        if (!extendedQuery) {
+            sendReadyForNewQuery();
+            clearRecvBuffer();
+        } else if (processingSyncRequest) {
+            sendReadyForNewQuery();
+        }
     }
 
     private void reportNonCriticalError(int position, CharSequence flyweightMessage)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareNonCriticalError(position, flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
+        if (!extendedQuery) {
+            clearRecvBuffer();
+            sendReadyForNewQuery();
+        } else if (processingSyncRequest) {
+            sendReadyForNewQuery();
+        }
+        sendAndReset();
     }
 
     private void reportQueryCancelled(CharSequence flyweightMessage)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareQueryCanceled(flyweightMessage);
-        sendReadyForNewQuery();
-        clearRecvBuffer();
+        if (!extendedQuery) {
+            sendReadyForNewQuery();
+            clearRecvBuffer();
+        } else if (processingSyncRequest) {
+            sendReadyForNewQuery();
+        }
     }
 
     private void resumeCommandComplete(boolean queryWasPaused) {
@@ -2540,6 +2586,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void resumeCursorQuery(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         resumeCursorQuery0(queryWasPaused);
+        // todo: this should be guarded by "if (!extendedQuery)" ?
         sendReadyForNewQuery();
     }
 
@@ -2557,6 +2604,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void resumeQueryComplete(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareCommandComplete(true);
+        // todo: this should be guarded by "if (!extendedQuery)" ?
         sendReadyForNewQuery();
     }
 
@@ -2815,22 +2863,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     void prepareReadyForQuery() {
-        if (sendRNQ) {
-            LOG.debug().$("RNQ sent").$();
-            responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-            responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    responseAsciiSink.put(STATUS_IN_TRANSACTION);
-                    break;
-                case ERROR_TRANSACTION:
-                    responseAsciiSink.put(STATUS_IN_ERROR);
-                    break;
-                default:
-                    responseAsciiSink.put(STATUS_IDLE);
-                    break;
-            }
-            sendRNQ = false;
+        LOG.debug().$("RNQ sent").$();
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        switch (transactionState) {
+            case IN_TRANSACTION:
+                responseAsciiSink.put(STATUS_IN_TRANSACTION);
+                break;
+            case ERROR_TRANSACTION:
+                responseAsciiSink.put(STATUS_IN_ERROR);
+                break;
+            default:
+                responseAsciiSink.put(STATUS_IDLE);
+                break;
         }
     }
 
@@ -2936,7 +2981,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void preCompile(SqlCompiler compiler) {
-            sendRNQ = true;
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
             PGConnectionContext.this.typesAndUpdate = null;

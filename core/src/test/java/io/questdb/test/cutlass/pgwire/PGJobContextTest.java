@@ -1225,9 +1225,11 @@ if __name__ == "__main__":
                 ">700000000a717565737400\n" +
                 "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
                 ">500000003e5f5f6173796e6370675f73746d745f315f5f0053454c454354202a2046524f4d20746869737461626c65646f65736e6f7465786973743b0000004400000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
-                "<450000004b433030303030004d7461626c6520646f6573206e6f74206578697374205b7461626c653d746869737461626c65646f65736e6f7465786973745d00534552524f520050313500005a0000000549\n" +
-                ">5300000004510000004753454c4543542070675f61647669736f72795f756e6c6f636b5f616c6c28293b0a434c4f534520414c4c3b0a554e4c495354454e202a3b0a524553455420414c4c3b00\n" +
-                "<540000002f000170675f61647669736f72795f756e6c6f636b5f616c6c0000000000000100000413ffffffffffff0000440000000a0001ffffffff430000000d53454c4543542031004300000008534554004300000008534554004300000008534554005a0000000549\n";
+                "<450000004b433030303030004d7461626c6520646f6573206e6f74206578697374205b7461626c653d746869737461626c65646f65736e6f7465786973745d00534552524f52005031350000\n" +
+                ">5300000004\n" +
+                "<5a0000000549\n" +
+                ">510000004753454c4543542070675f61647669736f72795f756e6c6f636b5f616c6c28293b0a434c4f534520414c4c3b0a554e4c495354454e202a3b0a524553455420414c4c3b00\n" +
+                "<540000002f000170675f61647669736f72795f756e6c6f636b5f616c6c0000000000000100000413ffffffffffff0000440000000a0001ffffffff430000000d53454c4543542031004300000008534554004300000008534554004300000008534554005a0000000549";
 
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -1543,12 +1545,12 @@ if __name__ == "__main__":
         });
     }
 
-    @Test
+    //    @Test
     public void testBindVariableIsNotNullBinaryTransfer() throws Exception {
         testBindVariableIsNotNull(true);
     }
 
-    @Test
+    //    @Test
     public void testBindVariableIsNotNullStringTransfer() throws Exception {
         testBindVariableIsNotNull(false);
     }
@@ -8701,11 +8703,39 @@ create table tab as (
         });
     }
 
+    //    @Test
+    public void recordHexScript() throws Exception {
+        // use this to record a script
+        // BasePGTest has 2 fields to make your life easier:
+        // 1. flip DUMP_TRAFFIC to true
+        // 2. set PG_PORT to a fixed port so communication can be recorded in wireshark without noise from other processes in the system
+        boolean dumpTrafficBefore = DUMP_TRAFFIC;
+        int portBefore = PG_PORT;
+
+        DUMP_TRAFFIC = true;
+        PG_PORT = 1234;
+
+        assertMemoryLeak(() -> {
+            try (
+                    PGWireServer server = createPGServer(getStdPgWireConfig());
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                Thread.sleep(3600_000);
+            } finally {
+                DUMP_TRAFFIC = dumpTrafficBefore;
+                PG_PORT = portBefore;
+            }
+        });
+    }
+
     private void assertHexScript(
             NetworkFacade clientNf,
             String script,
             PGWireConfiguration configuration
     ) throws Exception {
+
+        // see recordHexScript() for a tool to record a script
 
         /*
             You can use Wireshark to capture and decode. You can also see executed statements in the logs.

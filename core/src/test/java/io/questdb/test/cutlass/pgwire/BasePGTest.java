@@ -31,8 +31,10 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.*;
-import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -44,6 +46,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,6 +59,9 @@ import java.util.TimeZone;
 import static io.questdb.std.Numbers.hexDigits;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
+
+    protected static boolean DUMP_TRAFFIC = false;
+    protected static int PG_PORT = 0; // ephemeral port
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
@@ -295,7 +301,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 0;  // Bind to ANY port.
+                        return PG_PORT;  // Bind to ANY port.
                     }
                 };
             }
@@ -303,6 +309,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             @Override
             public Rnd getRandom() {
                 return new Rnd();
+            }
+
+            @Override
+            public boolean getDumpNetworkTraffic() {
+                return DUMP_TRAFFIC;
             }
         };
     }
@@ -315,7 +326,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 0;  // Bind to ANY port.
+                        return PG_PORT;  // Bind to ANY port.
                     }
                 };
             }
@@ -323,6 +334,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             @Override
             public Rnd getRandom() {
                 return new Rnd();
+            }
+
+            @Override
+            public boolean getDumpNetworkTraffic() {
+                return DUMP_TRAFFIC;
             }
         };
     }
