@@ -1545,12 +1545,12 @@ if __name__ == "__main__":
         });
     }
 
-    //    @Test
+    @Test
     public void testBindVariableIsNotNullBinaryTransfer() throws Exception {
         testBindVariableIsNotNull(true);
     }
 
-    //    @Test
+    @Test
     public void testBindVariableIsNotNullStringTransfer() throws Exception {
         testBindVariableIsNotNull(false);
     }
@@ -8705,10 +8705,7 @@ create table tab as (
 
     //    @Test
     public void recordHexScript() throws Exception {
-        // use this to record a script
-        // BasePGTest has 2 fields to make your life easier:
-        // 1. flip DUMP_TRAFFIC to true
-        // 2. set PG_PORT to a fixed port so communication can be recorded in wireshark without noise from other processes in the system
+        // use this to record a script for replaying in tests
         boolean dumpTrafficBefore = DUMP_TRAFFIC;
         int portBefore = PG_PORT;
 
