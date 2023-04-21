@@ -71,7 +71,12 @@ public class EllipticCurveAuthenticator implements Authenticator {
     private PublicKey pubKey;
     private long recvBufPos;
 
-    public EllipticCurveAuthenticator(PublicKeyRepo publicKeyRepo, LineTcpReceiverConfiguration configuration, long recvBufStart, long recvBufEnd) {
+    public EllipticCurveAuthenticator(
+            PublicKeyRepo publicKeyRepo,
+            LineTcpReceiverConfiguration configuration,
+            long recvBufStart,
+            long recvBufEnd
+    ) {
         if (recvBufEnd - recvBufStart < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }

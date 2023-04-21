@@ -82,6 +82,7 @@ public class Bootstrap {
         if (!rootPath.exists()) {
             throw new BootstrapException("Root directory does not exist: " + rootDirectory);
         }
+
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
             Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
         }
@@ -145,9 +146,10 @@ public class Bootstrap {
                 extractSite();
             }
 
-            if (bootstrapConfiguration.getServerConfiguration() == null) {
+            ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
+            if (configuration == null) {
                 // /server.conf properties
-                final Properties properties = loadProperties(rootPath);
+                final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
                 if (ffOverride == null) {
                     config = new PropServerConfiguration(
@@ -155,8 +157,7 @@ public class Bootstrap {
                             properties,
                             bootstrapConfiguration.getEnv(),
                             log,
-                            buildInformation,
-                            bootstrapConfiguration.getFactoryProvider()
+                            buildInformation
                     );
                 } else {
                     config = new PropServerConfiguration(
@@ -164,8 +165,7 @@ public class Bootstrap {
                             properties,
                             bootstrapConfiguration.getEnv(),
                             log,
-                            buildInformation,
-                            bootstrapConfiguration.getFactoryProvider()
+                            buildInformation
                     ) {
                         private CairoConfiguration cairoConf;
 
@@ -184,7 +184,7 @@ public class Bootstrap {
                     };
                 }
             } else {
-                config = bootstrapConfiguration.getServerConfiguration();
+                config = configuration;
             }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
@@ -317,6 +317,10 @@ public class Bootstrap {
         return banner;
     }
 
+    public BuildInformation getBuildInformation() {
+        return buildInformation;
+    }
+
     public ServerConfiguration getConfiguration() {
         return config;
     }
@@ -327,6 +331,22 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public String getRootDirectory() {
+        return rootDirectory;
+    }
+
+    @NotNull
+    public Properties loadProperties() throws IOException {
+        final Properties properties = new Properties();
+        java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+        log.advisoryW().$("Server config: ").$(configFile).$();
+
+        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
+            properties.load(is);
+        }
+        return properties;
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -438,18 +458,6 @@ public class Bootstrap {
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
         copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
-    }
-
-    @NotNull
-    private Properties loadProperties(File rootPath) throws IOException {
-        final Properties properties = new Properties();
-        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
-        log.advisoryW().$("Server config: ").$(configFile).$();
-
-        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
-            properties.load(is);
-        }
-        return properties;
     }
 
     private void reportValidateConfig() {

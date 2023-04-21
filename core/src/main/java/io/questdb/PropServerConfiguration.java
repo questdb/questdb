@@ -25,8 +25,10 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.auth.DefaultPublicKeyRepoFactory;
 import io.questdb.cutlass.auth.PublicKeyRepoFactory;
 import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
 import io.questdb.cutlass.http.*;
@@ -39,11 +41,13 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -67,6 +71,7 @@ import java.io.IOException;
 import java.util.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
+
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
@@ -112,6 +117,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CharSequence defaultMapType;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
+    private final FactoryProvider factoryProvider = new PropFactoryProvider();
     private final int fileOperationRetryCount;
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
@@ -182,6 +188,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
+    private final PublicKeyRepoFactory publicKeyRepoFactory;
     private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -192,7 +199,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final String root;
     private final int sampleByIndexSearchPageSize;
-    private final SecurityContextFactory securityContextFactory;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -443,7 +449,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
     private String publicDirectory;
-    private PublicKeyRepoFactory publicKeyRepoFactory;
     private int recvBufferSize;
     private int requestHeaderBufferSize;
     private int rollBufferLimit;
@@ -464,21 +469,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
-    ) throws JsonException, ServerConfigurationException {
-        this(root, properties, env, log, buildInformation, DefaultFactoryProvider.INSTANCE);
-    }
-
-    public PropServerConfiguration(
-            String root,
-            Properties properties,
-            @Nullable Map<String, String> env,
-            Log log,
-            final BuildInformation buildInformation,
-            FactoryProvider factoryProvider
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
-        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
         this.sqlParserFactory = factoryProvider.getSqlParserFactory();
         this.pgAuthenticatorFactory = factoryProvider.getPGAuthenticatorFactory();
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
@@ -1068,7 +1061,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                     this.publicKeyRepoFactory = new StaticPublicKeyRepoFactory(lineTcpAuthDbPath);
                 } else {
-                    this.publicKeyRepoFactory = factoryProvider.getPublicKeyRepoFactory();
+                    this.publicKeyRepoFactory = DefaultPublicKeyRepoFactory.INSTANCE;
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR, true);
@@ -1093,6 +1086,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                         this.lineTcpCommitIntervalDefault
                 );
                 this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, heartbeatInterval);
+            } else {
+                publicKeyRepoFactory = DefaultPublicKeyRepoFactory.INSTANCE;
             }
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
@@ -1217,6 +1212,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return factoryProvider;
     }
 
     @Override
@@ -1966,7 +1966,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return getFactoryProvider().getSecurityContextFactory();
         }
 
         @Override
@@ -2448,6 +2448,29 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private class PropFactoryProvider implements FactoryProvider {
+
+        @Override
+        public PGAuthenticatorFactory getPGAuthenticatorFactory() {
+            return PGBasicAuthenticatorFactory.INSTANCE;
+        }
+
+        @Override
+        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
+            return publicKeyRepoFactory;
+        }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return AllowAllSecurityContextFactory.INSTANCE;
+        }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return SqlParserFactoryImpl.INSTANCE;
+        }
+    }
+
     private class PropHttpContextConfiguration implements HttpContextConfiguration {
 
         @Override
@@ -2507,7 +2530,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return getFactoryProvider().getSecurityContextFactory();
         }
 
         @Override
@@ -3028,12 +3051,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-            return publicKeyRepoFactory;
+            return getFactoryProvider().getPublicKeyRepoFactory();
         }
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return getFactoryProvider().getSecurityContextFactory();
         }
 
         @Override
@@ -3429,7 +3452,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return getFactoryProvider().getSecurityContextFactory();
         }
 
         @Override
