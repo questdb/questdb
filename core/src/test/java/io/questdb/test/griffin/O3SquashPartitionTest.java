@@ -178,7 +178,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                     true
             );
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
-            TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
+            TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
         });
     }
 }

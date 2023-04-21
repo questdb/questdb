@@ -149,7 +149,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 " rnd_boolean() bool1 " +
                 " from long_sequence(" + rowCount + ")" +
                 "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
-        return engine.getTableToken(tableName1);
+        return engine.verifyTableName(tableName1);
     }
 
     protected void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
