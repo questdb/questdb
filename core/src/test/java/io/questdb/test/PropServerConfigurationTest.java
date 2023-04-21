@@ -28,6 +28,7 @@ import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -1124,6 +1125,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
+            Assert.assertEquals(new DefaultPGWireConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
 
             Assert.assertEquals(255, configuration.getCairoConfiguration().getMaxFileNameLength());
             Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
