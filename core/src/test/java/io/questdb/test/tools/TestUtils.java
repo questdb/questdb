@@ -1524,20 +1524,6 @@ public final class TestUtils {
         }
     }
 
-    private static RecordMetadata copySymAstStr(RecordMetadata src) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
-            metadata.add(
-                    new TableColumnMetadata(
-                            src.getColumnName(i),
-                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
-                    )
-            );
-        }
-        metadata.setTimestampIndex(src.getTimestampIndex());
-        return metadata;
-    }
-
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
         if (PartitionBy.isPartitioned(partitionBy)) {

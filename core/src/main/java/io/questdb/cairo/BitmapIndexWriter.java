@@ -351,7 +351,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     public void rollbackConditionally(long row) {
         final long currentMaxRow;
-        if (row > 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
+        if (row >= 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
             rollbackValues(row - 1);
         }
     }

@@ -190,7 +190,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
-    private long minSplitPartitionTimestamp = Long.MAX_VALUE;
+    private long minSplitPartitionTimestamp;
     private long noOpRowCount;
     private PagedDirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
@@ -1962,10 +1962,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void setCommitListener(CommitListener commitListener) {
-        this.commitListener = commitListener;
-    }
-
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
     }
@@ -2355,6 +2351,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
         txWriter.setMinTimestamp(Math.min(txWriter.getMinTimestamp(), txWriter.getLagMinTimestamp()));
@@ -2364,6 +2361,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         txWriter.setLagRowCount(txWriter.getLagRowCount() - lagRowCount);
         txWriter.setMaxTimestamp(maxTimestamp);
+        if (indexCount > 0) {
+            updateIndexesParallel(initialTransientRowCount, txWriter.getTransientRowCount());
+        }
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(
@@ -2959,7 +2959,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         configureNullSetters(o3NullSetters2, type, oooPrimary2, oooSecondary2);
 
-        if (indexFlag) {
+        if (indexFlag && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer());
         }
         rowValueIsNotNull.add(0);
