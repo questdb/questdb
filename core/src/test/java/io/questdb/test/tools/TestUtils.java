@@ -1407,10 +1407,10 @@ public final class TestUtils {
                         }
                         break;
                     case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-6);
                         break;
                     case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
@@ -1497,20 +1497,6 @@ public final class TestUtils {
                 || expected.getLong3() != actual.getLong3()) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
-    }
-
-    private static RecordMetadata copySymAstStr(RecordMetadata src) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
-            metadata.add(
-                    new TableColumnMetadata(
-                            src.getColumnName(i),
-                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
-                    )
-            );
-        }
-        metadata.setTimestampIndex(src.getTimestampIndex());
-        return metadata;
     }
 
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {

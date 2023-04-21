@@ -466,6 +466,39 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false);
     }
 
+    private void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
+        try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
+            if (reader.size() > 0) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = rnd.nextInt(metadata.getColumnCount());
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    columnIndex += i;
+                    columnIndex = columnIndex % metadata.getColumnCount();
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                            && metadata.isColumnIndexed(columnIndex)) {
+                        break;
+                    }
+
+                    if (i == metadata.getColumnCount() - 1) {
+                        // No indexed symbols
+                        return;
+                    }
+                }
+
+                String columnName = metadata.getColumnName(columnIndex);
+                long randomRow = rnd.nextLong(reader.size());
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + tableNameNoWal + " limit " + randomRow + ", 1", sink);
+                String prefix = "a\n";
+                String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
+                String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+                LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+                String limit = " limit 8970, 9100";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + indexedWhereClause + limit, tableNameWal + indexedWhereClause + limit, LOG);
+            }
+        }
+    }
+
     private void checkNoSuspendedTables(ObjHashSet<TableToken> tableTokenBucket) {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
@@ -483,7 +516,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
                 " rnd_boolean() bool1 " +
                 " from long_sequence(" + rowCount + ")" +
-                ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
     }
 
     @NotNull
@@ -686,6 +719,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
                 String limit = "";
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
 
                 startMicro = System.nanoTime() / 1000;
                 applyWalParallel(transactions, tableNameWal2, rnd);
@@ -693,6 +727,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 long totalWalParallel = endWalMicro - startMicro;
 
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
 
                 LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
             } finally {
@@ -753,6 +788,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);
                 LOG.infoW().$("comparing tables ").$(tableNameNoWal).$(" and ").$(tableNameWal).$();
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
             }
         });
     }
