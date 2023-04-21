@@ -59,6 +59,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
+    }
+
+    @Override
     public HttpMinServerConfiguration getHttpMinServerConfiguration() {
         return null;
     }

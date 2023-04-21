@@ -47,7 +47,7 @@ public class AbstractTest {
             // although `root` is supplied to the server main, it is ultimately ignored in favour of that provided by the configuration
             // We only supply it for server main to pass argument validation
             @Override
-            public ServerConfiguration getServerConfiguration() {
+            public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) {
                 return new TestServerConfiguration(
                         root,
                         enableHttp,

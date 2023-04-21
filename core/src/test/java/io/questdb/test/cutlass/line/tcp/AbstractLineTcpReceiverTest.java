@@ -24,12 +24,14 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.PublicKeyRepoFactory;
-import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
+import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -100,19 +102,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-    protected int partitionByDefault = PartitionBy.DAY;
-    protected boolean symbolAsFieldSupported;
-    protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
+    private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
         @Override
-        public String getAuthDbPath() {
-            if (null == authKeyId) {
-                return null;
+        public AuthenticatorFactory getAuthenticatorFactory() {
+            if (authKeyId == null) {
+                return super.getAuthenticatorFactory();
             }
             URL u = getClass().getResource("authDb.txt");
             assert u != null;
-            return u.getFile();
+            return new EllipticCurveAuthenticatorFactory(nf, u.getFile());
         }
-
+    };
+    protected int partitionByDefault = PartitionBy.DAY;
+    protected boolean symbolAsFieldSupported;
+    protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getAutoCreateNewColumns() {
             return autoCreateNewColumns;
@@ -153,6 +156,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
         public long getMaintenanceInterval() {
             return maintenanceInterval;
         }
@@ -190,15 +198,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
-        }
-
-        @Override
-        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
-            if (authKeyId == null) {
-                return super.getPublicKeyRepoFactory();
-            }
-
-            return new StaticPublicKeyRepoFactory(getAuthDbPath());
         }
     };
 

@@ -24,11 +24,11 @@
 
 package io.questdb.cutlass.auth;
 
-public class DefaultPublicKeyRepoFactory implements PublicKeyRepoFactory {
-    public static final PublicKeyRepoFactory INSTANCE = new DefaultPublicKeyRepoFactory();
+public class DefaultAuthenticatorFactory implements AuthenticatorFactory {
+    public static final AuthenticatorFactory INSTANCE = new DefaultAuthenticatorFactory();
 
     @Override
-    public PublicKeyRepo getInstance() {
-        return null;
+    public Authenticator getLineTCPAuthenticator(long recvBufStart, long recvBufEnd) {
+        return AnonymousAuthenticator.INSTANCE;
     }
 }
