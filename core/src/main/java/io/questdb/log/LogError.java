@@ -24,12 +24,21 @@
 
 package io.questdb.log;
 
-public class LogError extends Error {
-    public LogError(String message) {
+public class LoggingException extends RuntimeException {
+    private int errorCode;
+
+    public LoggingException(String message, int errorCode) {
         super(message);
+        this.errorCode = errorCode;
     }
 
-    public LogError(String message, Throwable cause) {
+    public LoggingException(String message, Throwable cause, int errorCode) {
         super(message, cause);
+        this.errorCode = errorCode;
+    }
+
+    public int getErrorCode() {
+        return errorCode;
     }
 }
+
