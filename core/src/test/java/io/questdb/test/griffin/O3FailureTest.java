@@ -31,8 +31,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -61,7 +59,6 @@ import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3FailureTest extends AbstractO3Test {
 
-    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
@@ -75,6 +72,7 @@ public class O3FailureTest extends AbstractO3Test {
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffAllocateFailure = new TestFilesFacadeImpl() {
         private boolean failNextAlloc = false;
+        private final AtomicInteger increment = new AtomicInteger();
 
         @Override
         public boolean allocate(int fd, long size) {
@@ -88,12 +86,19 @@ public class O3FailureTest extends AbstractO3Test {
 
         @Override
         public long length(int fd) {
-            final long remaining = counter.decrementAndGet();
-            if (!fixFailure.get() || remaining == 0) {
-                failNextAlloc = true;
-                return 0;
+            if (fd > 0) {
+                final long remaining = counter.decrementAndGet();
+                if (!fixFailure.get() || remaining == 0) {
+                    failNextAlloc = true;
+                    return 0;
+                }
+            } else {
+                // For debugging, if new call with ff.length(fd) is added, change it
+                // to ff.length(-fd) and adjust counter set by the test by the number
+                // in increment when 0 is returned
+                increment.incrementAndGet();
             }
-            return super.length(fd);
+            return super.length(Math.abs(fd));
         }
     };
     private static final FilesFacade ffFailToAllocateIndex = new TestFilesFacadeImpl() {
@@ -137,7 +142,6 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
     private static final FilesFacade ffIndexAllocateFailure = new TestFilesFacadeImpl() {
-
         boolean failNextAlloc = false;
         int theFd = 0;
 
@@ -151,6 +155,14 @@ public class O3FailureTest extends AbstractO3Test {
                 return false;
             }
             return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean close(int fd) {
+            if (fd > 0 && fd == theFd) {
+                theFd = 0;
+            }
+            return super.close(fd);
         }
 
         @Override
@@ -174,6 +186,14 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
         private int theFd = 0;
+
+        @Override
+        public boolean close(int fd) {
+            if (fd > 0 && fd == theFd) {
+                theFd = 0;
+            }
+            return super.close(fd);
+        }
 
         @Override
         public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -248,6 +268,14 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long length(int fd) {
                 long len = super.length(fd);
                 if (fd == theFd) {
@@ -284,6 +312,14 @@ public class O3FailureTest extends AbstractO3Test {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
             }
 
             @Override
@@ -336,6 +372,14 @@ public class O3FailureTest extends AbstractO3Test {
             long theFd = 0;
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == theFd && flags == Files.MAP_RO) {
                     theFd = 0;
@@ -360,6 +404,14 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new TestFilesFacadeImpl() {
             int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -400,7 +452,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithoutPool(
                 O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
-                failOnOpeRW("v.d.1", 2)
+                failOnOpenRW("v.d.1", 2)
         );
     }
 
@@ -410,7 +462,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
-                failOnOpeRW("v.d.1", 2)
+                failOnOpenRW("v.d.1", 2)
         );
     }
 
@@ -431,13 +483,13 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
         counter.set(13);
-        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
+        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpenRW("v2.d.3", 3));
     }
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
         counter.set(13);
-        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
+        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpenRW("v2.d.3", 3));
     }
 
     @Test
@@ -485,6 +537,14 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -623,7 +683,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(152 + 12);
+        counter.set(152 + 12 + 20 + 19);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -789,7 +849,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testOutOfFileHandles() throws Exception {
-        counter.set(1536);
+        counter.set(1195); // 995 files are opened when provisioning tables
         executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
@@ -855,6 +915,14 @@ public class O3FailureTest extends AbstractO3Test {
             private int theFd = 0;
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (!fixFailure.get() || (theFd == fd && mapCounter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
@@ -881,6 +949,14 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataFailRetry0, new TestFilesFacadeImpl() {
             private final AtomicInteger mapCounter = new AtomicInteger(2);
             private int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -933,13 +1009,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(174 + 12);
+        counter.set(174 + 12 + 19);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(174 + 12);
+        counter.set(174 + 12 + 19);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -957,25 +1033,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174 + 45 + 12);
+        counter.set(174 + 45 + 12 + 27);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165 + 45 + 12);
+        counter.set(165 + 45 + 12 + 21);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165 + 45 + 12);
+        counter.set(165 + 45 + 12 + 18);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165 + 45 + 12);
+        counter.set(165 + 45 + 12 + 21);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -984,6 +1060,14 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
             private int theFd = 0;
+
+            @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
@@ -1013,6 +1097,14 @@ public class O3FailureTest extends AbstractO3Test {
             private int theFd = 0;
 
             @Override
+            public boolean close(int fd) {
+                if (fd > 0 && fd == theFd) {
+                    theFd = 0;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (!fixFailure.get() || theFd == fd) {
                     fixFailure.set(false);
@@ -1035,13 +1127,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193 + 45 + 18);
+        counter.set(193 + 45 + 18 + 27);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(176 + 45 + 18);
+        counter.set(176 + 45 + 18 + 26);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1116,7 +1208,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testSetAppendPositionFails() throws Exception {
-        counter.set(169 + 12);
+        counter.set(169 + 12 + 20 + 19);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1273,7 +1365,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
     }
 
-    private static FilesFacade failOnOpeRW(String fileName, int count) {
+    private static FilesFacade failOnOpenRW(String fileName, int count) {
         AtomicInteger counter = new AtomicInteger(count);
         return new TestFilesFacadeImpl() {
             @Override
@@ -2817,9 +2909,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
 
@@ -2827,9 +2917,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
 
         drainWalQueue(engine);
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -2871,9 +2959,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
 
@@ -2881,9 +2967,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
 
         drainWalQueue(engine);
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -2988,9 +3072,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
         drainWalQueue(engine);
-        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         engine.releaseInactive();
         o3MemMaxPages = Integer.MAX_VALUE;
@@ -2998,9 +3080,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
         drainWalQueue(engine);
 
-        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(
-                engine.getTableToken("x")
-        ));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
                 compiler,
@@ -3302,21 +3382,16 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("create table y1 as (y)", executionContext);
-
-        // create expected result sets
-        compiler.compile("create table z as (x union all y)", executionContext);
+        compiler.compile("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
 
         // create another compiler to be used by second pool
         try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
-
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
             WorkerPool pool1 = new WorkerPool(() -> 1);
-
             pool1.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3339,7 +3414,6 @@ public class O3FailureTest extends AbstractO3Test {
             });
 
             final WorkerPool pool2 = new TestWorkerPool(1);
-
             pool2.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3368,6 +3442,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             pool1.halt();
             pool2.halt();
+
             Assert.assertTrue(errorCount.get() > 0);
         }
     }

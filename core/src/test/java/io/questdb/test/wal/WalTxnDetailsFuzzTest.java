@@ -25,7 +25,7 @@
 package io.questdb.test.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -235,7 +235,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
     private static void commitWalRows(TableToken tableToken, int rowCount, long from, long to) {
         long step = (to - from) / (rowCount - 1);
 
-        try (WalWriter ww = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+        try (WalWriter ww = engine.getWalWriter(tableToken)) {
             for (int i = 0; i < rowCount - 1; i++) {
                 TableWriter.Row row = ww.newRow(from + i * step);
                 row.append();
@@ -269,7 +269,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
     }
 
     private void commitWalPartitionDrop(TableToken tableToken, String partition) {
-        try (WalWriter ww = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+        try (WalWriter ww = engine.getWalWriter(tableToken)) {
             AlterOperationBuilder builder = new AlterOperationBuilder();
             builder.ofDropPartition(0, tableToken, tableToken.getTableId())
                     .addPartitionToList(parseFloorPartialTimestamp(partition), 0);
@@ -291,7 +291,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
     static TableToken createTable(String tableName) {
         try (TableModel model = defaultModel(tableName)) {
             return engine.createTable(
-                    AllowAllCairoSecurityContext.INSTANCE,
+                    AllowAllSecurityContext.INSTANCE,
                     model.getMem(),
                     model.getPath(),
                     false,

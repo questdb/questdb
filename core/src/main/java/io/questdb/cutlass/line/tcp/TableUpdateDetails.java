@@ -82,24 +82,18 @@ public class TableUpdateDetails implements Closeable {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
         this.defaultColumnTypes = defaultColumnTypes;
-        final int n = netIoJobs.length;
-        CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        final CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
-        TableRecordMetadata tableMetadata = writer.getMetadata();
-        this.timestampIndex = tableMetadata.getTimestampIndex();
+        this.timestampIndex = writer.getMetadata().getTimestampIndex();
         this.tableToken = writer.getTableToken();
-        if (writer.supportsMultipleWriters()) {
-            metadataService = null;
-        } else {
-            metadataService = (MetadataService) writer;
-        }
-
+        this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = configuration.getCommitInterval();
         this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
+        final int n = netIoJobs.length;
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
@@ -402,8 +396,8 @@ public class TableUpdateDetails implements Closeable {
             latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex, CairoSecurityContext securityContext) {
-            try (TableReader reader = engine.getReader(securityContext, tableToken)) {
+        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and
@@ -648,18 +642,18 @@ public class TableUpdateDetails implements Closeable {
             return ANY_TABLE_VERSION;
         }
 
-        DirectByteSymbolLookup getSymbolLookup(int columnIndex, CairoSecurityContext securityContext) {
+        DirectByteSymbolLookup getSymbolLookup(int columnIndex) {
             if (columnIndex > -1) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);
                 if (symCache != null) {
                     return symCache;
                 }
-                return addSymbolCache(columnIndex, securityContext);
+                return addSymbolCache(columnIndex);
             }
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetStateIfNecessary(CairoSecurityContext securityContext) {
+        void resetStateIfNecessary() {
             // First, reset processed column tracking.
             clearProcessedColumns();
             // Second, check if writer's structure version has changed
@@ -674,7 +668,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    latestKnownMetadata = engine.getMetadata(securityContext, tableToken);
+                    latestKnownMetadata = engine.getMetadata(tableToken);
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
                         setWriterInError();

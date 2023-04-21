@@ -28,9 +28,10 @@ import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -106,8 +107,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-        return conf.getCairoSecurityContextFactory();
+    public SecurityContextFactory getSecurityContextFactory() {
+        return conf.getSecurityContextFactory();
     }
 
     @Override
@@ -716,6 +717,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public SqlParserFactory getSqlParserFactory() {
+        return conf.getSqlParserFactory();
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return conf.getSqlSmallMapKeyCapacity();
     }
@@ -938,6 +944,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return conf.isWalSupported();
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return conf.isWriterMixedIOEnabled();
     }
 
     @Override

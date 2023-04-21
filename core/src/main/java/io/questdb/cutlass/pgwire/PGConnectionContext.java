@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -43,8 +43,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.Iterator;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
@@ -216,12 +214,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
-        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
+
+        PGAuthenticatorFactory authenticatorFactory = configuration.getAuthenticatorFactory();
+        this.authenticator = authenticatorFactory.getInstance(configuration);
         this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
-                ? new PGBasicAuthenticator(configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true)
+                ? authenticatorFactory.getInstanceReadOnly(configuration)
                 : null;
         this.sqlExecutionContext = sqlExecutionContext;
-        this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
+        this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
@@ -347,7 +347,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndUpdateIsCached = false;
         clear();
         this.fd = -1;
-        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+        sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
         Misc.free(utf8Sink);
         registry.remove(circuitBreakerId);
@@ -361,12 +361,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, TableToken tableToken, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getTableWriterAPI(context, tableToken, lockReason);
+        return engine.getTableWriterAPI(tableToken, lockReason);
+    }
+
+    @Override
+    public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
+        return getTableWriterAPI(engine.verifyTableName(tableName) ,lockReason);
     }
 
     public void handleClientOperation(
@@ -1140,9 +1145,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void closePendingWriters(boolean commit) {
-        Iterator<ObjObjHashMap.Entry<TableToken, TableWriterAPI>> iterator = pendingWriters.iterator();
-        while (iterator.hasNext()) {
-            final TableWriterAPI m = iterator.next().value;
+        for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+            final TableWriterAPI m = pendingWriter.value;
             if (commit) {
                 m.commit();
             } else {
@@ -1260,21 +1264,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long msgLimit
     ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException {
 
-        CairoSecurityContext cairoSecurityContext = null;
+        SecurityContext securityContext = null;
         // First, try to authenticate as the read-only user if it's configured.
         if (roUserAuthenticator != null) {
             try {
-                cairoSecurityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
+                securityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
             } catch (AuthenticationException ignore) {
                 // Wrong user, never mind.
             }
         }
         // Next, authenticate as the primary user if we failed to recognize the read-only user.
-        if (cairoSecurityContext == null) {
-            cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+        if (securityContext == null) {
+            securityContext = authenticator.authenticate(username, msgLo, msgLimit);
         }
-        if (cairoSecurityContext != null) {
-            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
+        if (securityContext != null) {
+            sqlExecutionContext.with(securityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
             authenticationRequired = false;
             prepareLoginOk();
             sendAndReset();
@@ -1334,7 +1338,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void executeInsert(SqlCompiler compiler) throws SqlException {
         TableWriterAPI writer;
         boolean recompileStale = true;
-        for (int retries = 0; recompileStale; retries++) {
+        for (int retries = 0; true; retries++) {
             try {
                 switch (transactionState) {
                     case IN_TRANSACTION:
@@ -1521,7 +1525,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sqlExecutionContext.getSharedWorkerCount()
         );
         newSqlExecutionContext.with(
-                sqlExecutionContext.getCairoSecurityContext(),
+                sqlExecutionContext.getSecurityContext(),
                 bindVariableService,
                 sqlExecutionContext.getRandom(),
                 sqlExecutionContext.getRequestFd(),
@@ -2286,7 +2290,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=" .length(), valueHi));
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
                                 if (this.statementTimeout > 0) {
                                     circuitBreaker.setTimeout(statementTimeout);
                                 }
@@ -2570,8 +2574,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TableToken tableToken = engine.getTableTokenIfExists(textLoader.getTableName());
         if (
-                TableUtils.TABLE_EXISTS == engine.getStatus(
-                        sqlExecutionContext.getCairoSecurityContext(),
+                TableUtils.TABLE_EXISTS == engine.getTableStatus(
                         path,
                         tableToken
                 )
@@ -2580,7 +2583,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
 
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, WRITER_LOCK_REASON)) {
+            try (TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -2589,7 +2592,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             responseAsciiSink.putLen(addr);
         } else {
-            final SqlException e = SqlException.$(0, "table does not exist [table=").put(textLoader.getTableName()).put(']');
+            final SqlException e = SqlException.tableDoesNotExist(0, textLoader.getTableName());
             prepareNonCriticalError(e.getPosition(), e.getFlyweightMessage());
             prepareReadyForQuery();
         }

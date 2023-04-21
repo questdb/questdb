@@ -117,11 +117,9 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
                         if (Files.strcmp(lpszName, "..") || Files.strcmp(lpszName, ".")) {
                             continue;
                         }
-
                         if ((errno = rmdir(path)) == 0) {
                             continue;
                         }
-
                     } else {
                         if (remove(path)) {
                             continue;
@@ -138,7 +136,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
             }
             return Os.errno();
         }
-
         return errno;
     }
 

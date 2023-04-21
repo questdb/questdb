@@ -116,11 +116,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
-                try {
-                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
-                } catch (NumericException e) {
-                    throw new RuntimeException(e);
-                }
+                return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
 
@@ -319,11 +315,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
-                try {
-                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
-                } catch (NumericException e) {
-                    throw new RuntimeException(e);
-                }
+                return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
 
@@ -405,11 +397,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
             @Override
             public MicrosecondClock getMicrosecondClock() {
-                try {
-                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
-                } catch (NumericException e) {
-                    throw new RuntimeException(e);
-                }
+                return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
 
@@ -777,11 +765,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
-                try {
-                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
-                } catch (NumericException e) {
-                    throw new RuntimeException(e);
-                }
+                return TestUtils.unchecked(() -> new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10));
             }
         };
 

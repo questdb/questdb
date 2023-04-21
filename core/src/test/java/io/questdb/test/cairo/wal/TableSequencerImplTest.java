@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class TableSequencerImplTest extends AbstractCairoTest {
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         recreateDistressedSequencerAttempts = Integer.MAX_VALUE;
         AbstractCairoTest.setUpStatic();
     }
@@ -61,7 +61,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata()) {
                         TestUtils.await(barrier);
 
-                        TableToken tableToken = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.verifyTableName(tableName);
                         do {
                             engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                             Assert.assertEquals(metadata.getColumnCount() - initialColumnCount, metadata.getStructureVersion());
@@ -91,7 +91,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         TestUtils.await(barrier);
                         int threadIdValue = threadId.getAndIncrement();
                         long sv = 0;
-                        TableToken tableToken = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.verifyTableName(tableName);
                         do {
                             long sv2 = engine.getTableSequencerAPI().lastTxn(tableToken);
                             if (threadIdValue != 0) {
@@ -130,7 +130,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 () -> {
                     try {
                         TestUtils.await(barrier);
-                        TableToken tableToken = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.verifyTableName(tableName);
                         do {
                             engine.getTableSequencerAPI().lastTxn(tableToken);
                         } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
@@ -155,7 +155,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 () -> {
                     try {
                         TestUtils.await(barrier);
-                        TableToken tableToken = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.verifyTableName(tableName);
                         long lastTxn = 0;
                         do {
                             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, lastTxn)) {
@@ -200,7 +200,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
-        try (WalWriter ww = engine.getWalWriter(securityContext, engine.getTableToken(tableName))) {
+        try (WalWriter ww = engine.getWalWriter(engine.verifyTableName(tableName))) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {

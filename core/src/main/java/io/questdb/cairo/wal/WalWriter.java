@@ -1472,7 +1472,7 @@ public class WalWriter implements TableWriterAPI {
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
@@ -1480,7 +1480,7 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
                     // TODO: this should be some kind of warning probably that different wals adding the same column concurrently
-                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
@@ -1528,7 +1528,7 @@ public class WalWriter implements TableWriterAPI {
                             removeSymbolMapReader(index);
                         }
                         markColumnRemoved(index);
-                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
@@ -1571,7 +1571,7 @@ public class WalWriter implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
+                        LOG.info().$("renamed column in WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");

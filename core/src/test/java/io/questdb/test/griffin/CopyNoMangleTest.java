@@ -30,19 +30,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.io.IOException;
-
 // Runs some tests from CopyTest, but without mangling private table names
 public class CopyNoMangleTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
-        try {
-            inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
         configOverrideMangleTableDirNames(false);
 

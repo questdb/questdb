@@ -27,17 +27,23 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -55,9 +61,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     public static final String AUTH_KEY_ID1 = "testUser1";
     public static final String AUTH_KEY_ID2 = "testUser2";
     public static final String AUTH_TOKEN_KEY1 = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
-    public static final PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY1);
+    public static final PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(AUTH_TOKEN_KEY1);
     public static final String AUTH_TOKEN_KEY2 = "AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g";
-    public static final PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY2);
+    public static final PrivateKey AUTH_PRIVATE_KEY2 = AuthUtils.toPrivateKey(AUTH_TOKEN_KEY2);
     public static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
     public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
     protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
@@ -185,18 +191,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
         }
+
+        @Override
+        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
+            if (authKeyId == null) {
+                return super.getPublicKeyRepoFactory();
+            }
+
+            return new StaticPublicKeyRepoFactory(getAuthDbPath());
+        }
     };
 
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
-            TableToken tt = engine.getTableTokenIfExists(tableName);
-            assertEquals(
-                    TableUtils.TABLE_EXISTS,
-                    engine.getStatus(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                            path,
-                            tt
-                    )
-            );
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
         }
     }
 

@@ -25,9 +25,10 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.auth.PublicKeyRepoFactory;
+import io.questdb.cutlass.auth.StaticPublicKeyRepoFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -37,10 +38,12 @@ import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -87,7 +90,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoPageFrameReduceTaskPoolCapacity;
-    private final CairoSecurityContextFactory cairoSecurityContextFactory = new AllowAllSecurityContextFactory();
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -176,6 +178,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final PGAuthenticatorFactory pgAuthenticatorFactory;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
@@ -189,6 +192,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final String root;
     private final int sampleByIndexSearchPageSize;
+    private final SecurityContextFactory securityContextFactory;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -255,6 +259,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final SqlParserFactory sqlParserFactory;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -306,6 +311,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
+    private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
     private long cairoSqlCopyMaxIndexChunkSize;
     private int connectionPoolInitialCapacity;
@@ -437,6 +443,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
     private String publicDirectory;
+    private PublicKeyRepoFactory publicKeyRepoFactory;
     private int recvBufferSize;
     private int requestHeaderBufferSize;
     private int rollBufferLimit;
@@ -457,9 +464,23 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
+    ) throws JsonException, ServerConfigurationException {
+        this(root, properties, env, log, buildInformation, DefaultFactoryProvider.INSTANCE);
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            FactoryProvider factoryProvider
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
+        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        this.sqlParserFactory = factoryProvider.getSqlParserFactory();
+        this.pgAuthenticatorFactory = factoryProvider.getPGAuthenticatorFactory();
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -496,6 +517,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
+
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
@@ -511,6 +533,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else if (cpuAvailable > 8) {
             cpuSpare = 1;
         }
+
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
             volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_VOLUMES), path, root);
@@ -870,7 +893,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lopts |= WRITE_FO_OPTS.valueAt(index);
                 }
             }
-            writerFileOpenOpts = lopts;
+            this.writerFileOpenOpts = lopts;
+
+            this.writerMixedIOEnabled = ff.allowMixedIO(this.root);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -1041,6 +1066,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 if (null != lineTcpAuthDbPath) {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
+                    this.publicKeyRepoFactory = new StaticPublicKeyRepoFactory(lineTcpAuthDbPath);
+                } else {
+                    this.publicKeyRepoFactory = factoryProvider.getPublicKeyRepoFactory();
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, PropertyKey.LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE, 500);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR, true);
@@ -1582,11 +1610,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-            return cairoSecurityContextFactory;
-        }
-
-        @Override
         public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
@@ -1942,6 +1965,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
+        }
+
+        @Override
         public boolean getSimulateCrashEnabled() {
             return simulateCrashEnabled;
         }
@@ -2182,6 +2210,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return sqlParserFactory;
+        }
+
+        @Override
         public int getSqlSmallMapKeyCapacity() {
             return sqlSmallMapKeyCapacity;
         }
@@ -2405,6 +2438,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isWriterMixedIOEnabled() {
+            return writerMixedIOEnabled;
+        }
+
+        @Override
         public boolean mangleTableDirNames() {
             return false;
         }
@@ -2465,6 +2503,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRequestHeaderBufferSize() {
             return requestHeaderBufferSize;
+        }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
         }
 
         @Override
@@ -2834,6 +2877,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
         }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return sqlParserFactory;
+        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
@@ -2979,6 +3027,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public PublicKeyRepoFactory getPublicKeyRepoFactory() {
+            return publicKeyRepoFactory;
+        }
+
+        @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
+        }
+
+        @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitUsBeforeReload;
         }
@@ -3021,6 +3079,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean readOnlySecurityContext() {
+            return httpReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -3255,6 +3318,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
         @Override
+        public PGAuthenticatorFactory getAuthenticatorFactory() {
+            return pgAuthenticatorFactory;
+        }
+
+        @Override
         public int getBinParamCountCapacity() {
             return pgBinaryParamsCapacity;
         }
@@ -3360,6 +3428,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public SecurityContextFactory getSecurityContextFactory() {
+            return securityContextFactory;
+        }
+
+        @Override
         public int getSelectCacheBlockCount() {
             return pgSelectCacheBlockCount;
         }
@@ -3382,6 +3455,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return pgWorkerSleepThreshold;
+        }
+
+        @Override
+        public SqlParserFactory getSqlParserFactory() {
+            return sqlParserFactory;
         }
 
         @Override

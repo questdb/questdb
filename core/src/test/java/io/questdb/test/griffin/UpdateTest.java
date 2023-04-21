@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,12 +37,12 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -389,7 +389,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 }
 
                 try (TxReader txReader = new TxReader(ff)) {
-                    TableToken tableToken = engine.getTableToken("up");
+                    TableToken tableToken = engine.verifyTableName("up");
                     txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
@@ -1232,14 +1232,17 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
-            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+                    ReadOnlySecurityContext.INSTANCE,
+                    bindVariableService,
+                    null,
+                    -1
+                    , null
+            );
 
             try {
-                CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                try (OperationFuture fut = cq.execute(null)) {
-                    fut.await();
-                    Assert.fail();
-                }
+                compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }

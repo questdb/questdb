@@ -28,22 +28,21 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.*;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import org.junit.rules.TemporaryFolder;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.std.TestFilesFacadeImpl;
 
 import java.util.concurrent.BrokenBarrierException;
 
@@ -64,7 +63,7 @@ public class HttpQueryTestBuilder {
     private SqlExecutionContextImpl sqlExecutionContext;
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
-    private TemporaryFolder temp;
+    private String temp;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
@@ -82,7 +81,7 @@ public class HttpQueryTestBuilder {
 
     public void run(CairoConfiguration configuration, HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
+            final String baseDir = temp;
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
                     .build();
@@ -324,7 +323,7 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
+    public HttpQueryTestBuilder withTempFolder(String temp) {
         this.temp = temp;
         return this;
     }

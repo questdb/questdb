@@ -82,7 +82,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
+        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent, configuration.getSqlParserFactory());
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
@@ -108,7 +108,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
-                    context.getCairoSecurityContext(),
+                    context.getSecurityContext(),
                     null,
                     null,
                     context.getFd(),
@@ -283,7 +283,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
+        sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         if (!state.pausedQuery) {

@@ -81,7 +81,7 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
     }

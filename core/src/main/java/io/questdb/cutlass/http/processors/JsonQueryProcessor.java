@@ -81,7 +81,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this(
                 configuration,
                 engine,
-                new SqlCompiler(engine, functionFactoryCache, snapshotAgent),
+                new SqlCompiler(engine, functionFactoryCache, snapshotAgent, configuration.getSqlParserFactory()),
                 new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
         );
     }
@@ -99,7 +99,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
-        this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, this::executeCopy);
@@ -109,8 +108,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
-        this.queryExecutors.extendAndSet(CompiledQuery.LOCK, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.UNLOCK, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.VACUUM, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
@@ -152,7 +149,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             state.startExecutionTimer();
             // do not set random for new request to avoid copying random from previous request into next one
             // the only time we need to copy random from state is when we resume request execution
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
+            sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
             if (state.getStatementTimeout() > 0L) {
                 circuitBreaker.setTimeout(state.getStatementTimeout());
             } else {
@@ -264,7 +261,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
+            sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
             if (!state.isPausedQuery()) {
                 context.resumeResponseSend();
             } else {

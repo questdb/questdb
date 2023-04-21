@@ -674,7 +674,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
-                try (TableReader reader = getReader(engine, "y")) {
+                try (TableReader reader = engine.getReader("y")) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
                 }
             }
@@ -7327,7 +7327,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         false
                 );
                 // verify that the reader doesn't keep all partitions open once it's returned back to the pool
-                try (TableReader reader = engine.getReader(securityContext, engine.getTableToken("x"))) {
+                try (TableReader reader = engine.getReader("x")) {
                     Assert.assertEquals(6, reader.getPartitionCount());
                     Assert.assertEquals(maxOpenPartitions, reader.getOpenPartitionCount());
                 }

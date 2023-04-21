@@ -34,30 +34,18 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
-public class CairoMemoryTest {
+public class CairoMemoryTest extends AbstractTest {
     private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
-    private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
     private static final int N = 1000000;
-    @Rule
-    public final TemporaryFolder temp = new TemporaryFolder();
-
-    @BeforeClass
-    public static void setUp() {
-        LOG.info().$("Begin test").$();
-    }
 
     @Test
     public void testAppendAfterMMapFailure() throws Exception {
