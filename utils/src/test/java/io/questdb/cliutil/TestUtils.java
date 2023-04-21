@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
 import org.junit.Assert;
 
 public class TestUtils {
@@ -98,10 +97,10 @@ public class TestUtils {
                         Assert.assertEquals(rr.getTimestamp(i), lr.getTimestamp(i));
                         break;
                     case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-10);
                         break;
                     case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-6);
                         break;
                     case ColumnType.INT:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));

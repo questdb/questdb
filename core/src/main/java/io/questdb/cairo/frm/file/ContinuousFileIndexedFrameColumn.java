@@ -63,7 +63,7 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
     @Override
     public void appendNulls(long offset, long count) {
         super.appendNulls(offset, count);
-        indexWriter.rollbackConditionally(offset + getColumnTop());
+        indexWriter.rollbackConditionally(offset);
         for (long i = 0; i < count; i++) {
             indexWriter.add(0, offset + i);
         }

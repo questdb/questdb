@@ -1413,10 +1413,10 @@ public final class TestUtils {
                         }
                         break;
                     case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-10);
                         break;
                     case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-6);
                         break;
                     case ColumnType.INT:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
@@ -1474,9 +1474,28 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
+                String expected = recordToString(rr, metadataExpected);
+                String actual = recordToString(lr, metadataActual);
+                Assert.assertEquals(
+                        String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))),
+                        expected,
+                        actual
+                );
+                // If above didn't fail because of types not included or double precision not enough, throw here anyway
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
         }
+    }
+
+    private static String recordToString(Record record, RecordMetadata metadata) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, false);
+            if (i < n - 1) {
+                sink.put('\t');
+            }
+        }
+        return sink.toString();
     }
 
     private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
