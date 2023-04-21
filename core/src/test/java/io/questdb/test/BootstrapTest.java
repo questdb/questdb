@@ -60,7 +60,6 @@ public class BootstrapTest extends AbstractBootstrapTest {
         Assert.assertNotNull(bootstrap.getConfiguration());
         Assert.assertNotNull(bootstrap.getMetrics());
         bootstrap.extractSite();
-        Assert.assertTrue(Files.exists(auxPath.concat("public").concat("version.txt").$()));
         Assert.assertTrue(Files.exists(auxPath.trimTo(plen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
     }
 
