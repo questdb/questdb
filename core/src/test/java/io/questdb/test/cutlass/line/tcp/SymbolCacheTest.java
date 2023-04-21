@@ -110,7 +110,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 try (Path path = new Path();
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
                              path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
@@ -197,7 +197,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CreateTableTestUtils.create(model);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
@@ -263,7 +263,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             FilesFacade ff = new TestFilesFacadeImpl();
 
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-            TableToken tableToken = engine.getTableToken("x");
+            TableToken tableToken = engine.verifyTableName("x");
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path();
@@ -378,7 +378,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CreateTableTestUtils.create(model);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableToken, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
@@ -442,7 +442,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
@@ -601,7 +601,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
@@ -684,7 +684,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CreateTableTestUtils.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectByteCharSequence dbcs = new DirectByteCharSequence();
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();

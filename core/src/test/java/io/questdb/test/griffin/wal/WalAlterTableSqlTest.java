@@ -59,7 +59,7 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             try (Path path = new Path(); Path other = new Path()) {
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
                 other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);

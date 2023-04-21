@@ -124,7 +124,6 @@ public class FuzzTransactionGenerator {
                     size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
-                boolean allRowsSameTimestamp = rnd.nextDouble() <= probabilityOfSameTimestamp;
 
                 generateDataBlock(
                         transactionList,
@@ -141,8 +140,7 @@ public class FuzzTransactionGenerator {
                         probabilityOfTransactionRollback,
                         maxStrLenForStrColumns,
                         symbols,
-                        rnd.nextLong(),
-                        allRowsSameTimestamp
+                        probabilityOfSameTimestamp
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
@@ -295,20 +293,16 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
-            long transactionCount,
-            boolean allRowsSameTimestamp
+            double probabilityOfRowsSameTimestamp
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
         final long delta = stopTs - startTs;
         for (int i = 0; i < rowCount; i++) {
-            if (allRowsSameTimestamp) {
-                if (i == 0) {
-                    timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount;
-                }
-            } else {
+            // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
+            if (rnd.nextDouble() >= probabilityOfRowsSameTimestamp) {
                 if (o3) {
-                    timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount + i;
+                    timestamp = startTs + rnd.nextLong(delta) + i;
                 } else {
                     timestamp = timestamp + delta / rowCount;
                 }

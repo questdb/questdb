@@ -362,7 +362,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
                     runPurgeJob(purgeJob);
                     // Delete failure
-                    TableToken tableToken = engine.getTableToken("up_part");
+                    TableToken tableToken = engine.verifyTableName("up_part");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-02").concat("str.i").$();
                     Assert.assertTrue(Chars.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path));
 
@@ -871,7 +871,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void assertFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
-        TableToken tableToken = engine.getTableToken(up_part);
+        TableToken tableToken = engine.verifyTableName(up_part);
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("x.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 

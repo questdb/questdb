@@ -54,7 +54,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         writerCommandQueueCapacity = 256;
         AbstractGriffinTest.setUpStatic();
     }

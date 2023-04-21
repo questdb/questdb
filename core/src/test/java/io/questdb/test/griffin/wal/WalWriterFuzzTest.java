@@ -42,10 +42,7 @@ import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,7 +63,6 @@ import java.util.concurrent.atomic.AtomicLong;
 // There are already measures to prevent invalid data generation, but it still can happen.
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
-
 public class WalWriterFuzzTest extends AbstractFuzzTest {
 
 
@@ -75,7 +71,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         walTxnNotificationQueueCapacity = 16;
         AbstractGriffinTest.setUpStatic();
     }
@@ -251,8 +247,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             AtomicInteger nextOperation,
             ConcurrentLinkedQueue<Throwable> errors
     ) {
-        TableToken tableToken = engine.getTableToken(tableName);
-        final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "apply trans test");
+        final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test");
         writers.add(walWriter);
 
         return new Thread(() -> {
@@ -360,11 +355,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         applyThreads.add(purgeJobThread);
 
         for (int i = 0; i < threads.size(); i++) {
-            try {
-                threads.get(i).join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+            int k = i;
+            TestUtils.unchecked(() -> threads.get(k).join());
         }
 
         done.incrementAndGet();
@@ -375,19 +367,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
 
         for (int i = 0; i < applyThreads.size(); i++) {
-            try {
-                applyThreads.get(i).join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+            int k = i;
+            TestUtils.unchecked(() -> applyThreads.get(k).join());
         }
     }
 
     private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
-            TableToken token = engine.getTableToken(tableName);
-            writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), token, "apply trans test"));
+            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
         }
 
         Rnd tempRnd = new Rnd();
@@ -417,7 +405,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false);
     }
 
-    private void checkNoSuspendedTables(ObjList<TableToken> tableTokenBucket) {
+    private void checkNoSuspendedTables(ObjHashSet<TableToken> tableTokenBucket) {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
     }
 
@@ -492,7 +480,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
-            ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1, null)) {
@@ -652,7 +640,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 sharedWorkerPool.halt();
             }
 
-            checkNoSuspendedTables(new ObjList<>());
+            checkNoSuspendedTables(new ObjHashSet<>());
+
             for (int i = 0; i < tableCount; i++) {
                 String tableNameNoWal = tableNameBase + "_" + i + "_nonwal";
                 String tableNameWal = getWalParallelApplyTableName(tableNameBase, i);

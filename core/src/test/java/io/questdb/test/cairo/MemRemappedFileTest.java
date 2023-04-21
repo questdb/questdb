@@ -29,26 +29,24 @@ import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.IOException;
 
-public class MemRemappedFileTest {
-    private static final Log LOG = LogFactory.getLog(MemRemappedFileTest.class);
+public class MemRemappedFileTest extends AbstractTest {
     private static final int NCYCLES = 4;
     private static final int NPAGES = 1000;
     private static final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
     private static final long MAPPING_PAGE_SIZE = ff.getPageSize();
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
     private static int nFile = 0;
     private static CharSequence root;
     private final Path path = new Path(1_000_000);

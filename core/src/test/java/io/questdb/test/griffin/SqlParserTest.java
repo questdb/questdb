@@ -26,7 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -119,6 +119,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual cast(a,long) a1, a, b from (select [a, b] from x)",
                 "select a::long as a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnErrorPos() throws Exception {
+        assertFailure(
+                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
+                null,
+                79,
+                "Duplicate column [name=col4]"
         );
     }
 
@@ -1262,7 +1272,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "T BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                122,
+                124,
                 "Duplicate column [name=T]"
         );
     }
@@ -1271,7 +1281,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableDuplicateColumnNonAscii() throws Exception {
         assertSyntaxError(
                 "create table x (侘寂 INT, 侘寂 BOOLEAN)",
-                22,
+                24,
                 "Duplicate column [name=侘寂]"
         );
     }
@@ -7461,7 +7471,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        TableToken tableToken = engine.getTableToken(tableModel.getName());
+                        TableToken tableToken = engine.verifyTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
@@ -7485,7 +7495,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             TableToken tableToken = new TableToken("tab", dirName, 1, false);
-            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing");
+            CharSequence lockedReason = engine.lock(tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
@@ -7503,14 +7513,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        TableToken tableToken1 = engine.getTableToken(tableModel.getName());
+                        TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
                         configuration.getFilesFacade().rmdir(path);
                         tableModel.close();
                     }
                 }
             } finally {
-                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, tableToken, null, false);
+                engine.unlock(AllowAllSecurityContext.INSTANCE, tableToken, null, false);
             }
         });
     }

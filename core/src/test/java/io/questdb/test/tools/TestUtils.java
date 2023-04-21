@@ -24,6 +24,7 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
@@ -478,11 +479,11 @@ public final class TestUtils {
         }
     }
 
-    public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
+    public static void assertIndexBlockCapacity(CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
-        TableToken tt = engine.getTableToken(tableName);
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
+        TableToken tt = engine.verifyTableName(tableName);
+        try (TableReader rdr = engine.getReader(tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
 
@@ -771,7 +772,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
             assert partitionAddMethod != null;
@@ -855,7 +856,7 @@ public final class TestUtils {
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(bindVariableService);
+        ctx.with(engine.getConfiguration().getSecurityContextFactory().getRootContext(), bindVariableService);
         return ctx;
     }
 
@@ -967,10 +968,6 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
-    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
-        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
-    }
-
     @NotNull
     public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
         return new NetworkFacadeImpl() {
@@ -998,12 +995,20 @@ public final class TestUtils {
         };
     }
 
+    public static String[] getServerMainArgs(CharSequence root) {
+        return new String[]{
+                "-d",
+                Chars.toString(root),
+                Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
+        };
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
-        return getWriter(engine, engine.getTableToken(tableName));
+        return getWriter(engine, engine.verifyTableName(tableName));
     }
 
     public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
-        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
+        return engine.getWriter(tableToken, "test");
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
@@ -1023,7 +1028,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
 
         StringBuilder insertFromSelect = new StringBuilder();
         insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
@@ -1339,13 +1344,45 @@ public final class TestUtils {
         return ptr;
     }
 
+    public static void unchecked(CheckedRunnable runnable) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void unchecked(CheckedRunnable runnable, AtomicInteger failureCounter) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            failureCounter.incrementAndGet();
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static <T> T unchecked(CheckedSupplier<T> runnable) {
+        try {
+            return runnable.get();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static int unchecked(CheckedIntFunction runnable) {
+        try {
+            return runnable.get();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public static void txnPartitionConditionally(Path path, int txn) {
         if (txn > -1) {
             path.put('.').put(txn);
         }
     }
 
-    // used in tests
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
@@ -1482,10 +1519,10 @@ public final class TestUtils {
         return metadata;
     }
 
-    private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {
+    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
@@ -1531,6 +1568,19 @@ public final class TestUtils {
             }
             return i + 1;
         });
+    }
+
+    public interface CheckedIntFunction {
+        int get() throws Throwable;
+    }
+
+    @FunctionalInterface
+    public interface CheckedRunnable {
+        void run() throws Throwable;
+    }
+
+    public interface CheckedSupplier<T> {
+        T get() throws Throwable;
     }
 
     @FunctionalInterface

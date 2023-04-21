@@ -22,15 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.CairoSecurityContext;
-
-public class AllowAllCairoSecurityContext implements CairoSecurityContext {
-    public static final AllowAllCairoSecurityContext INSTANCE = new AllowAllCairoSecurityContext();
+public class DefaultPublicKeyRepoFactory implements PublicKeyRepoFactory {
+    public static final PublicKeyRepoFactory INSTANCE = new DefaultPublicKeyRepoFactory();
 
     @Override
-    public boolean canWrite() {
-        return true;
+    public PublicKeyRepo getInstance() {
+        return null;
     }
 }

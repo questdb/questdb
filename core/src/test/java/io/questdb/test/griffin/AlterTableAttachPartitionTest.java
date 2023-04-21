@@ -422,7 +422,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     },
                     s -> {
                         engine.clear();
-                        TableToken tableToken = engine.getTableToken(s.getName());
+                        TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
                         int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 4);
@@ -489,7 +489,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     s -> {
                         // .v file
                         engine.clear();
-                        TableToken tableToken = engine.getTableToken(s.getName());
+                        TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
                         int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 2);
@@ -902,7 +902,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                 // remove .k
                 engine.clear();
-                TableToken tableToken = engine.getTableToken(src.getName());
+                TableToken tableToken = engine.verifyTableName(src.getName());
                 path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
                 Assert.assertTrue(Files.remove(path));
                 try {
@@ -1190,7 +1190,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            TableToken tableToken = engine.getTableToken(dstTableName);
+            TableToken tableToken = engine.verifyTableName(dstTableName);
             Files.rmdir(path.of(root).concat(tableToken).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
         }
     }
@@ -1209,11 +1209,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
         engine.clear();
 
-        TableToken tableToken = engine.getTableToken(src.getName());
+        TableToken tableToken = engine.verifyTableName(src.getName());
         path.of(configuration.getRoot()).concat(tableToken);
         int pathLen = path.length();
 
-        TableToken tableToken0 = engine.getTableToken(dst.getName());
+        TableToken tableToken0 = engine.verifyTableName(dst.getName());
         other.of(configuration.getRoot()).concat(tableToken0);
         int otherLen = other.length();
 
@@ -1326,7 +1326,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     },
                     s -> {
                         engine.clear();
-                        TableToken tableToken = engine.getTableToken(s.getName());
+                        TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("t.d").$();
                         int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
@@ -1393,7 +1393,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         try {
             // .i file
             engine.clear();
-            TableToken tableToken = engine.getTableToken(src.getName());
+            TableToken tableToken = engine.verifyTableName(src.getName());
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);

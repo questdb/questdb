@@ -627,7 +627,7 @@ public class TextImportTask {
         public void run(Path path) {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
 
-            TableToken tableToken = cairoEngine.getTableToken(tableStructure.getTableName());
+            TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
             path.of(root).concat(tableToken.getTableName()).put('_').put(index);
             int plen = path.length();
             TableUtils.setPathForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);

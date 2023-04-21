@@ -24,8 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
@@ -43,6 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -88,21 +87,16 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        TestUtils.unchecked(() -> createDummyConfiguration());
     }
 
     @Test
     public void testServerMainPgWireConcurrentlyWithLineTcpSender() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", rootDir, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
 
-                final CairoEngine engine = serverMain.getCairoEngine();
-                engine.reloadTableNames();
+                final CairoEngine engine = serverMain.getEngine();
 
                 // create table over PGWire
                 try (
@@ -124,7 +118,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                     stmt.execute();
                 }
 
-                TableToken token = engine.getTableToken(tableName);
+                TableToken token = engine.verifyTableName(tableName);
                 // set up a thread that will send ILP/TCP for today
 
                 // today is deterministic
@@ -175,12 +169,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // check table reader size
                 long beforeDropSize;
-                try (
-                        TableReader reader = engine.getReader(
-                                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                                token
-                        )
-                ) {
+                try (TableReader reader = engine.getReader(token)) {
                     beforeDropSize = reader.size();
                     Assert.assertTrue(beforeDropSize > 0L);
                 }
@@ -200,12 +189,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 ilpAgentHalted.await();
 
                 // check size
-                try (
-                        TableReader reader = engine.getReader(
-                                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                                token
-                        )
-                ) {
+                try (TableReader reader = engine.getReader(token)) {
                     Assert.assertTrue(beforeDropSize > reader.size());
                 }
 

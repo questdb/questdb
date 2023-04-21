@@ -40,13 +40,13 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     private int rootLen;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractGriffinTest.setUpStatic();
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
         AbstractGriffinTest.tearDownStatic();
     }
@@ -62,7 +62,7 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());

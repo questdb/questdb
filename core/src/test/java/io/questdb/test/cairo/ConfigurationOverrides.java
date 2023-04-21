@@ -148,6 +148,8 @@ public interface ConfigurationOverrides {
 
     Boolean isParallelFilterEnabled();
 
+    Boolean isWriterMixedIOEnabled();
+
     boolean mangleTableDirNames();
 
     void reset();
@@ -269,4 +271,6 @@ public interface ConfigurationOverrides {
     void setWriterCommandQueueCapacity(int writerCommandQueueCapacity);
 
     void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize);
+
+    void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled);
 }

@@ -1308,7 +1308,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final int srcFixFd = Math.abs(srcDataFixFd);
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
         final FilesFacade ff = tableWriter.getFilesFacade();
-        final boolean directIoFlag = tableWriter.preferDirectIO();
+        final boolean mixedIOFlag = tableWriter.allowMixedIO();
 
         try {
             if (srcDataTop > 0) {
@@ -1357,7 +1357,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-            if (directIoFlag) {
+            if (mixedIOFlag) {
                 ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
             } else {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
@@ -1910,7 +1910,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final int srcFixFd = Math.abs(srcDataFixFd);
         final int srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
-        final boolean directIoFlag = tableWriter.preferDirectIO();
+        final boolean mixedIOFlag = tableWriter.allowMixedIO();
         final long initialScrDataTop = srcDataTop;
 
         try {
@@ -2021,7 +2021,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize -= (prefixHi - srcDataTop + 1) * Long.BYTES;
             }
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-            if (directIoFlag) {
+            if (mixedIOFlag) {
                 ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
             } else {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
@@ -2039,7 +2039,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
-            if (directIoFlag) {
+            if (mixedIOFlag) {
                 ff.fadvise(dstVarFd, 0, dstVarSize, Files.POSIX_FADV_RANDOM);
             } else {
                 ff.madvise(dstVarAddr, dstVarSize, Files.POSIX_MADV_RANDOM);
