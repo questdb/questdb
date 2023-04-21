@@ -57,8 +57,7 @@ public class AbstractTest {
                         0,
                         0,
                         0,
-                        factoryProvider.getSecurityContextFactory(),
-                        factoryProvider.getPGAuthenticatorFactory()
+                        factoryProvider
                 );
             }
         }, TestUtils.getServerMainArgs(root)));

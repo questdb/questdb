@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -59,17 +60,16 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final boolean enableHttp;
     private final boolean enableLineTcp;
     private final boolean enablePgWire;
-    private final PGAuthenticatorFactory pgAuthenticatorFactory;
-    private final SecurityContextFactory securityContextFactory;
+    private final FactoryProvider factoryProvider;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
         @Override
         public PGAuthenticatorFactory getAuthenticatorFactory() {
-            return pgAuthenticatorFactory;
+            return factoryProvider.getPGAuthenticatorFactory();
         }
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return factoryProvider.getSecurityContextFactory();
         }
 
         @Override
@@ -86,7 +86,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return factoryProvider.getSecurityContextFactory();
         }
     }) {
         @Override
@@ -126,7 +126,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return securityContextFactory;
+            return factoryProvider.getSecurityContextFactory();
         }
 
         @Override
@@ -146,8 +146,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             int workerCountHttp,
             int workerCountLineTcpIO,
             int workerCountLineTcpWriter,
-            SecurityContextFactory securityContextFactory,
-            PGAuthenticatorFactory pgAuthenticatorFactory
+            FactoryProvider factoryProvider
     ) {
         super(root);
         this.workerCountHttp = workerCountHttp;
@@ -157,8 +156,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         this.enablePgWire = enablePgWire;
         this.workerCountLineTcpIO = workerCountLineTcpIO;
         this.workerCountLineTcpWriter = workerCountLineTcpWriter;
-        this.securityContextFactory = securityContextFactory;
-        this.pgAuthenticatorFactory = pgAuthenticatorFactory;
+        this.factoryProvider = factoryProvider;
     }
 
     @Override

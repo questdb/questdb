@@ -138,7 +138,7 @@ public class SendAndReceiveRequestBuilder {
             Os.sleep(pauseBetweenSendAndReceive);
         }
         // receive response
-        final int expectedToReceive = expectedResponse.length();
+        final int expectedToReceive = (expectedResponse instanceof String) ? ((String) expectedResponse).getBytes().length : expectedResponse.length();
         int received = 0;
         if (printOnly) {
             System.out.println("expected");
@@ -172,8 +172,9 @@ public class SendAndReceiveRequestBuilder {
             }
         }
 
-        byte[] receivedBytes = new byte[receivedByteList.size()];
-        for (int i = 0; i < receivedByteList.size(); i++) {
+        int lim = Math.min(expectedToReceive, receivedByteList.size());
+        byte[] receivedBytes = new byte[lim];
+        for (int i = 0; i < lim; i++) {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
