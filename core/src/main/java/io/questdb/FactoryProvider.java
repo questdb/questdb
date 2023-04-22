@@ -27,7 +27,7 @@ package io.questdb;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
-import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlCompilerFactory;
 
 public interface FactoryProvider {
 
@@ -36,7 +36,7 @@ public interface FactoryProvider {
 
     SecurityContextFactory getSecurityContextFactory();
 
-    SqlParserFactory getSqlParserFactory();
+    SqlCompilerFactory getSqlCompilerFactory();
 
     AuthenticatorFactory getAuthenticatorFactory();
 }

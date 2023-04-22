@@ -46,8 +46,8 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -184,7 +184,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
-    private final PGAuthenticatorFactory pgAuthenticatorFactory;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
@@ -265,7 +264,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
-    private final SqlParserFactory sqlParserFactory;
+    private final SqlCompilerFactory sqlCompilerFactory;
+    private final SecurityContextFactory securityContextFactory;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
@@ -469,10 +469,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
+        this(root, properties, env, log, buildInformation, SqlCompilerFactoryImpl.INSTANCE, AllowAllSecurityContextFactory.INSTANCE);
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            SqlCompilerFactory sqlCompilerFactory,
+            SecurityContextFactory securityContextFactory
+    ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
-        this.sqlParserFactory = factoryProvider.getSqlParserFactory();
-        this.pgAuthenticatorFactory = factoryProvider.getPGAuthenticatorFactory();
+        this.sqlCompilerFactory = sqlCompilerFactory;
+        this.securityContextFactory = securityContextFactory;
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -1965,7 +1977,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return getFactoryProvider().getSecurityContextFactory();
+            return securityContextFactory;
         }
 
         @Override
@@ -2209,8 +2221,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SqlParserFactory getSqlParserFactory() {
-            return sqlParserFactory;
+        public SqlCompilerFactory getSqlCompilerFactory() {
+            return sqlCompilerFactory;
         }
 
         @Override
@@ -2461,12 +2473,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return AllowAllSecurityContextFactory.INSTANCE;
+            return securityContextFactory;
         }
 
         @Override
-        public SqlParserFactory getSqlParserFactory() {
-            return SqlParserFactoryImpl.INSTANCE;
+        public SqlCompilerFactory getSqlCompilerFactory() {
+            return sqlCompilerFactory;
         }
     }
 
@@ -2529,7 +2541,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return getFactoryProvider().getSecurityContextFactory();
+            return securityContextFactory;
         }
 
         @Override
@@ -2901,8 +2913,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SqlParserFactory getSqlParserFactory() {
-            return sqlParserFactory;
+        public SqlCompilerFactory getSqlCompilerFactory() {
+            return sqlCompilerFactory;
         }
     }
 
@@ -3331,7 +3343,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropPGWireConfiguration implements PGWireConfiguration {
         @Override
         public PGAuthenticatorFactory getAuthenticatorFactory() {
-            return pgAuthenticatorFactory;
+            return factoryProvider.getPGAuthenticatorFactory();
         }
 
         @Override
@@ -3441,7 +3453,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public SecurityContextFactory getSecurityContextFactory() {
-            return getFactoryProvider().getSecurityContextFactory();
+            return securityContextFactory;
         }
 
         @Override
@@ -3470,8 +3482,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SqlParserFactory getSqlParserFactory() {
-            return sqlParserFactory;
+        public SqlCompilerFactory getSqlCompilerFactory() {
+            return sqlCompilerFactory;
         }
 
         @Override

@@ -30,8 +30,8 @@ import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGBasicAuthenticatorFactory;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerFactoryImpl;
 
 public class DefaultFactoryProvider implements FactoryProvider {
     public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
@@ -47,8 +47,8 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public SqlParserFactory getSqlParserFactory() {
-        return SqlParserFactoryImpl.INSTANCE;
+    public SqlCompilerFactory getSqlCompilerFactory() {
+        return SqlCompilerFactoryImpl.INSTANCE;
     }
 
     @Override

@@ -82,7 +82,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent, configuration.getSqlParserFactory());
+        this.compiler = configuration.getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);

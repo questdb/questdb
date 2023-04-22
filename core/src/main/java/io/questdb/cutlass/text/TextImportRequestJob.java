@@ -80,7 +80,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
 
-        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null, configuration.getSqlParserFactory());
+        this.sqlCompiler = configuration.getSqlCompilerFactory().getInstance(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(configuration.getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";

@@ -46,8 +46,6 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
-    protected final ObjectPool<ExpressionNode> expressionNodePool;
-    protected final ObjectPool<InsertModel> insertModelPool;
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
@@ -55,8 +53,10 @@ public class SqlParser {
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
     private final ObjectPool<ExplainModel> explainModelPool;
+    private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
+    private final ObjectPool<InsertModel> insertModelPool;
     private final SqlOptimiser optimiser;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -71,7 +71,7 @@ public class SqlParser {
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private boolean subQueryMode = false;
 
-    protected SqlParser(
+    SqlParser(
             CairoConfiguration configuration,
             SqlOptimiser optimiser,
             CharacterStore characterStore,
@@ -180,6 +180,14 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
+    private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
+        final ExpressionNode n = expr(lexer, (QueryModel) null);
+        if (n != null) {
+            return n;
+        }
+        throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
+    }
+
     private int expectInt(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "integer");
         boolean negative;
@@ -252,6 +260,13 @@ public class SqlParser {
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
         return tok(lexer, "table name or sub-query");
+    }
+
+    private void expectTo(GenericLexer lexer) throws SqlException {
+        if (isToKeyword(tok(lexer, "'to'"))) {
+            return;
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'to' expected");
     }
 
     private void expectTok(GenericLexer lexer, CharSequence tok, CharSequence expected) throws SqlException {
@@ -431,7 +446,6 @@ public class SqlParser {
     }
 
     private ExecutionModel parseCreateStatement(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
-        // TODO: if not 'table' it should pass to parseUnexpected()
         expectTok(lexer, "table");
         return parseCreateTable(lexer, executionContext);
     }
@@ -1537,7 +1551,7 @@ public class SqlParser {
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }
-        return parseUnexpected(lexer, tok);
+        throw errUnexpected(lexer, tok);
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -2090,6 +2104,15 @@ public class SqlParser {
         return type;
     }
 
+    private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
+        final int pos = lexer.getPosition();
+        CharSequence tok = optTok(lexer);
+        if (tok == null) {
+            throw SqlException.position(pos).put(expectedList).put(" expected");
+        }
+        return tok;
+    }
+
     private @NotNull CharSequence tokIncludingLocalBrace(GenericLexer lexer, String expectedList) throws SqlException {
         final int pos = lexer.getPosition();
         final CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -2157,21 +2180,6 @@ public class SqlParser {
         copyModelPool.clear();
         topLevelWithModel.clear();
         explainModelPool.clear();
-    }
-
-    protected ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
-        final ExpressionNode n = expr(lexer, (QueryModel) null);
-        if (n != null) {
-            return n;
-        }
-        throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
-    }
-
-    protected void expectTo(GenericLexer lexer) throws SqlException {
-        if (isToKeyword(tok(lexer, "'to'"))) {
-            return;
-        }
-        throw SqlException.$((lexer.lastTokenPosition()), "'to' expected");
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -2247,19 +2255,6 @@ public class SqlParser {
             this.subQueryMode = false;
         }
         return model;
-    }
-
-    protected ExecutionModel parseUnexpected(GenericLexer lexer, CharSequence token) throws SqlException {
-        throw SqlException.unexpectedToken(lexer.lastTokenPosition(), token);
-    }
-
-    protected @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
-        final int pos = lexer.getPosition();
-        CharSequence tok = optTok(lexer);
-        if (tok == null) {
-            throw SqlException.position(pos).put(expectedList).put(" expected");
-        }
-        return tok;
     }
 
     static {

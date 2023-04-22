@@ -26,8 +26,8 @@ package io.questdb.test.cutlass.http;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.SqlParserFactory;
-import io.questdb.griffin.SqlParserFactoryImpl;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -99,8 +99,8 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public SqlParserFactory getSqlParserFactory() {
-                    return SqlParserFactoryImpl.INSTANCE;
+                public SqlCompilerFactory getSqlCompilerFactory() {
+                    return SqlCompilerFactoryImpl.INSTANCE;
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {

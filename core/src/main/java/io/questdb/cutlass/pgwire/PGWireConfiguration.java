@@ -26,7 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -96,7 +96,7 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     String getServerVersion();
 
-    SqlParserFactory getSqlParserFactory();
+    SqlCompilerFactory getSqlCompilerFactory();
 
     int getUpdateCacheBlockCount();
 

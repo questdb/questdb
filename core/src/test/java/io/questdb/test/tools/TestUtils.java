@@ -359,6 +359,27 @@ public final class TestUtils {
         }
     }
 
+    public static boolean equals(CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return true;
+        }
+
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        if (expected.length() != actual.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (expected.charAt(i) != actual.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
         if (bs == null) {
             Assert.assertNull(actBs);

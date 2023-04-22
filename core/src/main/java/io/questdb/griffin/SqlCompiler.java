@@ -63,7 +63,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompiler implements Closeable {
-    public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
+    static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
@@ -76,19 +76,19 @@ public class SqlCompiler implements Closeable {
     };
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-    protected final CairoEngine engine;
+    private final CairoEngine engine;
     private final AlterOperationBuilder alterOperationBuilder;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
-    private final CompiledQueryImpl compiledQuery;
-    private final CairoConfiguration configuration;
+    protected final CompiledQueryImpl compiledQuery;
+    protected final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
-    private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-    private final GenericLexer lexer;
+    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    protected final GenericLexer lexer;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
@@ -122,14 +122,6 @@ public class SqlCompiler implements Closeable {
     }
 
     public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
-        this(engine, functionFactoryCache, snapshotAgent, SqlParserFactoryImpl.INSTANCE);
-    }
-
-    public SqlCompiler(
-            CairoEngine engine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            SqlParserFactory sqlParserFactory) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -159,6 +151,37 @@ public class SqlCompiler implements Closeable {
         this.backupAgent = new DatabaseBackupAgent();
         this.snapshotAgent = snapshotAgent;
 
+        registerKeywordBasedExecutors();
+
+        configureLexer(lexer);
+
+        final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
+        optimiser = new SqlOptimiser(
+                configuration,
+                characterStore,
+                sqlNodePool,
+                queryColumnPool,
+                queryModelPool,
+                postOrderTreeTraversalAlgo,
+                functionParser,
+                path
+        );
+
+        parser = new SqlParser(
+                configuration,
+                optimiser,
+                characterStore,
+                sqlNodePool,
+                queryColumnPool,
+                queryModelPool,
+                postOrderTreeTraversalAlgo
+        );
+
+        textLoader = new TextLoader(engine);
+        alterOperationBuilder = new AlterOperationBuilder();
+    }
+
+    protected void registerKeywordBasedExecutors() {
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
         final KeywordBasedExecutor compileSet = this::compileSet;
@@ -209,35 +232,9 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
-
-        configureLexer(lexer);
-
-        final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
-        optimiser = new SqlOptimiser(
-                configuration,
-                characterStore,
-                sqlNodePool,
-                queryColumnPool,
-                queryModelPool,
-                postOrderTreeTraversalAlgo,
-                functionParser,
-                path
-        );
-
-        parser = sqlParserFactory.getInstance(
-                configuration,
-                optimiser,
-                characterStore,
-                sqlNodePool,
-                queryColumnPool,
-                queryModelPool,
-                postOrderTreeTraversalAlgo
-        );
-        this.textLoader = new TextLoader(engine);
-        alterOperationBuilder = new AlterOperationBuilder();
     }
 
-    public static void configureLexer(GenericLexer lexer) {
+    private static void configureLexer(GenericLexer lexer) {
         for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
             lexer.defineSymbol(sqlControlSymbols.getQuick(i));
         }
@@ -341,7 +338,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    public UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+    private UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
@@ -387,11 +384,12 @@ public class SqlCompiler implements Closeable {
         return functionParser.getFunctionFactoryCache();
     }
 
-    // used in tests
+    @TestOnly
     public void setEnableJitNullChecks(boolean value) {
         codeGenerator.setEnableJitNullChecks(value);
     }
 
+    @TestOnly
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
     }
@@ -403,7 +401,6 @@ public class SqlCompiler implements Closeable {
         return compileExecutionModel(executionContext);
     }
 
-    // this exposed for testing only
     @TestOnly
     public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
@@ -419,7 +416,7 @@ public class SqlCompiler implements Closeable {
         parser.expr(lexer, listener);
     }
 
-    private static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+    protected static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
@@ -431,7 +428,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
+    protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
@@ -445,7 +442,7 @@ public class SqlCompiler implements Closeable {
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
 
-    private static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
+    protected static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         if (expect && tok == null) {
@@ -644,7 +641,6 @@ public class SqlCompiler implements Closeable {
                 throw e;
             }
         } else {
-            // TODO: pass to parseUnexpected() instead
             throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
         }
     }
@@ -2873,7 +2869,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private class DatabaseBackupAgent implements Closeable {
-        protected final Path srcPath = new Path();
+        private final Path srcPath = new Path();
         private final Path dstPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();

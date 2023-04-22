@@ -30,7 +30,7 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -386,7 +386,7 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
-    SqlParserFactory getSqlParserFactory();
+    SqlCompilerFactory getSqlCompilerFactory();
 
     int getSqlSmallMapKeyCapacity();
 

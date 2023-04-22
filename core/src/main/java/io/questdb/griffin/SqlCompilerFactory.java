@@ -24,20 +24,12 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.ObjectPool;
+import io.questdb.cairo.CairoEngine;
 
-public interface SqlParserFactory {
-    SqlParser getInstance(
-            CairoConfiguration configuration,
-            SqlOptimiser optimiser,
-            CharacterStore characterStore,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo
+public interface SqlCompilerFactory {
+    SqlCompiler getInstance(
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
     );
 }

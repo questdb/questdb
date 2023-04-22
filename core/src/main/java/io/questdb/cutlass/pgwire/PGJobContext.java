@@ -53,7 +53,7 @@ public class PGJobContext implements Closeable {
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent
     ) {
-        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent, configuration.getSqlParserFactory());
+        this.compiler = configuration.getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent);
 
         final Metrics metrics = engine.getMetrics();
 
