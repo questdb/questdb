@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
@@ -65,12 +66,12 @@ public interface TableNameRegistry extends Closeable {
     TableToken getTableToken(String dirName, int tableId);
 
     /**
-     * Sets all table tokens to the bucket provided. Among live table it can return dropped tables which are not fully deleted yet.
+     * Sets all table tokens to the target provided. Among live table it can return dropped tables which are not fully deleted yet.
      *
-     * @param bucket         bucket to set table tokens to
+     * @param target         target to set table tokens to
      * @param includeDropped if true, include dropped tables
      */
-    void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped);
+    void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped);
 
     /**
      * Returns Table Token by directory name.

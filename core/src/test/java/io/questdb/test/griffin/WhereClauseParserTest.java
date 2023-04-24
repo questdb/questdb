@@ -25,17 +25,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.*;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.std.*;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -70,7 +69,7 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
 
         // same as x but with different number of values in symbol maps
@@ -164,16 +163,18 @@ public class WhereClauseParserTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        reader.close();
-        noTimestampReader.close();
-        unindexedReader.close();
-        noDesignatedTimestampNorIdxReader.close();
-        nonEmptyReader.close();
-        compiler.close();
-        sqlExecutionContext.close();
-        TestUtils.removeTestPath(root);
+    public static void tearDownStatic() throws Exception {
+        reader = Misc.free(reader);
+        metadata = null;
+        noTimestampReader = Misc.free(noTimestampReader);
+        noTimestampMetadata = null;
+        unindexedReader = Misc.free(unindexedReader);
+        unindexedMetadata = null;
+        noDesignatedTimestampNorIdxReader = Misc.free(noDesignatedTimestampNorIdxReader);
+        noDesignatedTimestampNorIdxMetadata = null;
+        nonEmptyReader = Misc.free(nonEmptyReader);
+        nonEmptyMetadata = null;
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @Override

@@ -54,7 +54,7 @@ import org.junit.Test;
 public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         SqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public int getCircuitBreakerThrottle() {

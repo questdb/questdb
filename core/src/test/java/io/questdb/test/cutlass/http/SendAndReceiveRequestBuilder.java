@@ -33,7 +33,6 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.concurrent.BrokenBarrierException;
 
@@ -93,10 +92,7 @@ public class SendAndReceiveRequestBuilder {
         return connectAndSendRequest(request + requestHeaders());
     }
 
-    public void execute(
-            String request,
-            CharSequence expectedResponse
-    ) throws InterruptedException {
+    public void execute(String request, CharSequence expectedResponse) {
         final int fd = nf.socketTcp(true);
         try {
             long sockAddrInfo = nf.sockaddr("127.0.0.1", 9001);
@@ -142,7 +138,7 @@ public class SendAndReceiveRequestBuilder {
             Os.sleep(pauseBetweenSendAndReceive);
         }
         // receive response
-        final int expectedToReceive = expectedResponse.length();
+        final int expectedToReceive = (expectedResponse instanceof String) ? ((String) expectedResponse).getBytes().length : expectedResponse.length();
         int received = 0;
         if (printOnly) {
             System.out.println("expected");
@@ -176,12 +172,12 @@ public class SendAndReceiveRequestBuilder {
             }
         }
 
-        byte[] receivedBytes = new byte[receivedByteList.size()];
-        for (int i = 0; i < receivedByteList.size(); i++) {
+        int lim = Math.min(expectedToReceive, receivedByteList.size());
+        byte[] receivedBytes = new byte[lim];
+        for (int i = 0; i < lim; i++) {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
-        String actual = new String(receivedBytes, Files.UTF_8);
         if (!printOnly) {
             if (expectedResponse instanceof ByteSequence) {
                 Assert.assertEquals(expectedResponse.length(), receivedBytes.length);
@@ -189,6 +185,7 @@ public class SendAndReceiveRequestBuilder {
                     Assert.assertEquals(receivedBytes[n], ((ByteSequence) expectedResponse).byteAt(n));
                 }
             } else {
+                String actual = new String(receivedBytes, Files.UTF_8);
                 String expected = expectedResponse.toString();
                 if (compareLength > 0) {
                     expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
@@ -200,11 +197,7 @@ public class SendAndReceiveRequestBuilder {
                 }
             }
         } else {
-            try {
-                java.nio.file.Files.write(Paths.get("actual.txt"), actual.getBytes(Files.UTF_8));
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            TestUtils.unchecked(() -> java.nio.file.Files.write(Paths.get("actual.txt"), receivedBytes));
         }
 
         if (disconnected && !expectReceiveDisconnect && !expectSendDisconnect) {

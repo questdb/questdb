@@ -29,7 +29,12 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
@@ -37,6 +42,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 public class SqlUtilTest {
 
@@ -78,6 +85,34 @@ public class SqlUtilTest {
         StringSink sink = new StringSink();
         GeoHashes.appendBinary(hash, bits, sink);
         TestUtils.assertEquals("0101", sink);
+    }
+
+    @Test
+    public void testImplicitCastStrAsLong256() {
+        Assert.assertEquals(Constants.getNullConstant(ColumnType.LONG256), SqlUtil.implicitCastStrAsLong256(null));
+        Assert.assertEquals(Constants.getNullConstant(ColumnType.LONG256), SqlUtil.implicitCastStrAsLong256(""));
+        int n = 5;
+        SOCountDownLatch completed = new SOCountDownLatch(n);
+        for (int t = 0; t < n; t++) {
+            new Thread(() -> {
+                Rnd rnd = new Rnd();
+                StringSink sink0 = new StringSink();
+                StringSink sink1 = new StringSink();
+                for (int i = 0; i < 1000; i++) {
+                    sink0.clear();
+                    sink1.clear();
+                    Long256Constant expected = new Long256Constant(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                    expected.getLong256(null, sink0);
+                    Long256Function function = SqlUtil.implicitCastStrAsLong256(sink0);
+                    function.getLong256(null, sink1);
+                    Assert.assertEquals(sink0.toString(), sink1.toString());
+                    Assert.assertEquals(expected.getLong256A(null), function.getLong256A(null));
+                    Assert.assertEquals(expected.getLong256B(null), function.getLong256B(null));
+                }
+                completed.countDown();
+            }).start();
+        }
+        Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(2L)));
     }
 
     @Test

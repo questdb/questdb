@@ -29,7 +29,7 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -55,7 +55,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private final static int HOST = Net.parseIPv4("127.0.0.1");
     private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
     private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
-    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(TOKEN);
+    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
 
     @Test
     public void testAuthSuccess() throws Exception {

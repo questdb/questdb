@@ -29,23 +29,24 @@ import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ExtendedOnePageMemoryTest {
+public class ExtendedOnePageMemoryTest extends AbstractTest {
     private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
     private static final int FILE_SIZE = 1024;
     private static final Path path = new Path(4096);
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
     private static FilesFacade ff;
 
     @AfterClass

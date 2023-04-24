@@ -28,7 +28,8 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -40,8 +41,6 @@ import io.questdb.std.Misc;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.ConfigurationOverrides;
 import io.questdb.test.tools.TestUtils;
-
-import java.io.IOException;
 
 public class QuestDBTestNode {
     private final int nodeId;
@@ -105,11 +104,11 @@ public class QuestDBTestNode {
         return griffin.sqlExecutionContext;
     }
 
-    public void initCairo(String dbRootName, ConfigurationOverrides overrides) {
-        if (dbRootName == null || dbRootName.isEmpty()) {
+    public void initCairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
+        if (root == null || root.isEmpty()) {
             throw new IllegalArgumentException("must specify dbRoot");
         }
-        cairo = new Cairo(dbRootName, overrides);
+        cairo = new Cairo(root, ownRoot, overrides);
     }
 
     public void initGriffin() {
@@ -139,22 +138,28 @@ public class QuestDBTestNode {
         griffin.tearDown();
     }
 
+    @Override
+    public String toString() {
+        return "QuestDBTestNode{" +
+                "nodeId=" + nodeId +
+                ", cairo=" + cairo +
+                ", griffin=" + griffin +
+                '}';
+    }
+
     private static class Cairo {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
         private final Metrics metrics;
         private final ConfigurationOverrides overrides;
+        private final boolean ownRoot;
         private final CharSequence root;
         private CairoEngine engine;
         private DatabaseSnapshotAgent snapshotAgent;
 
-        private Cairo(String dbRootName, ConfigurationOverrides overrides) {
-            try {
-                root = AbstractCairoTest.temp.newFolder(dbRootName).getAbsolutePath();
-            } catch (IOException e) {
-                throw new ExceptionInInitializerError();
-            }
-
+        private Cairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
+            this.root = root;
+            this.ownRoot = ownRoot;
             this.overrides = overrides;
             final TelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration() {
                 @Override
@@ -171,7 +176,9 @@ public class QuestDBTestNode {
         }
 
         public void setUp() {
-            TestUtils.createTestPath(root);
+            if (ownRoot) {
+                TestUtils.createTestPath(root);
+            }
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
             engine.resetNameRegistryMemory();
@@ -182,7 +189,7 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().close();
             engine.clear();
             engine.closeNameRegistry();
-            if (removeDir) {
+            if (removeDir && ownRoot) {
                 TestUtils.removeTestPath(root);
             }
             overrides.reset();
@@ -212,7 +219,7 @@ public class QuestDBTestNode {
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(
-                            cairo.configuration.getCairoSecurityContextFactory().getInstance(null),
+                            cairo.configuration.getSecurityContextFactory().getRootContext(),
                             bindVariableService,
                             null,
                             -1,

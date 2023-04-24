@@ -29,20 +29,17 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 
-public class IOURingImplTest {
+public class IOURingImplTest extends AbstractTest {
 
     private static final IOURingFacade rf = new IOURingFacadeImpl();
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
 
     @Test(expected = CairoException.class)
     public void testFailsToInit() {

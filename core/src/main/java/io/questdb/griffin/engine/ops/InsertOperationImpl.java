@@ -47,11 +47,7 @@ public class InsertOperationImpl implements InsertOperation {
     private final long structureVersion;
     private final TableToken tableToken;
 
-    public InsertOperationImpl(
-            CairoEngine engine,
-            TableToken tableToken,
-            long structureVersion
-    ) {
+    public InsertOperationImpl(CairoEngine engine, TableToken tableToken, long structureVersion) {
         this.engine = engine;
         this.tableToken = tableToken;
         this.structureVersion = structureVersion;
@@ -66,9 +62,9 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "insert");
-            if (writer.getStructureVersion() != structureVersion ||
-                    !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
+            if (writer.getStructureVersion() != structureVersion
+                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }

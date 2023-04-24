@@ -22,14 +22,42 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.std.FilesFacade;
 
-public interface CairoSecurityContextFactory {
-    CairoSecurityContext getInstance(CharSequence principal);
+import java.util.Map;
 
-    default CairoSecurityContext getRootContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
+    private static final String BANNER =
+            "     ___                  _   ____  ____\n" +
+                    "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
+                    "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
+                    "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
+                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
+
+    @Override
+    public String getBanner() {
+        return BANNER;
+    }
+
+    @Override
+    public Map<String, String> getEnv() {
+        return System.getenv();
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return null;
+    }
+
+    @Override
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception{
+        return null;
+    }
+
+    @Override
+    public boolean useSite() {
+        return true;
     }
 }

@@ -30,7 +30,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
-import org.junit.rules.TemporaryFolder;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
@@ -58,8 +57,6 @@ public class PGSecurityTest extends BasePGTest {
             return true;
         }
     };
-    @ClassRule
-    public static TemporaryFolder backup = new TemporaryFolder();
 
     @BeforeClass
     public static void init() {
@@ -193,26 +190,6 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             assertQueryDisallowed("vacuum partitions src");
-        });
-    }
-
-    @Test
-    public void testDisallowWriterLock() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            assertQueryDisallowed("alter system lock writer src");
-        });
-    }
-
-    @Test
-    public void testDisallowWriterUnlock() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("alter system lock writer src", sqlExecutionContext);
-            assertQueryDisallowed("alter system unlock writer src");
-
-            // unlock so it's not leaking memory
-            compiler.compile("alter system unlock writer src", sqlExecutionContext);
         });
     }
 

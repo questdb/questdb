@@ -40,6 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class O3MaxLagTest extends AbstractO3Test {
+
     private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
 
     @Test

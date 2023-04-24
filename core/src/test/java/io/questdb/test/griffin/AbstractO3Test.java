@@ -25,46 +25,44 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.rules.Timeout;
 
 import java.io.File;
-import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.concurrent.TimeUnit;
 
-public class AbstractO3Test {
-
+public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
-    private final static Log LOG = LogFactory.getLog(O3Test.class);
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
     protected static int dataAppendPageSize = -1;
     protected static int o3MemMaxPages = -1;
-    protected static CharSequence root;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -72,14 +70,6 @@ public class AbstractO3Test {
             .build();
     private RecordToRowCopier copier;
 
-    @BeforeClass
-    public static void setupStatic() {
-        try {
-            root = temp.newFolder("dbRoot").getAbsolutePath();
-        } catch (IOException e) {
-            throw new RuntimeException();
-        }
-    }
 
     @Before
     public void clearRecordToRowCopier() {
@@ -92,14 +82,14 @@ public class AbstractO3Test {
         // instantiate these paths so that they are not included in memory leak test
         Path.PATH.get();
         Path.PATH2.get();
-        TestUtils.createTestPath(root);
+        super.setUp();
     }
 
     @After
-    public void tearDown() {
-        TestUtils.removeTestPath(root);
+    public void tearDown() throws Exception {
         dataAppendPageSize = -1;
         o3MemMaxPages = -1;
+        super.tearDown();
     }
 
     protected static void assertIndexConsistency(
@@ -109,7 +99,7 @@ public class AbstractO3Test {
             CairoEngine engine
     ) throws SqlException {
         TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
-        TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
+        TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
     }
 
     protected static void assertIndexConsistency(

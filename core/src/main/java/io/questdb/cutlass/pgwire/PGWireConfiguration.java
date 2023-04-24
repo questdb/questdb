@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlParserFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -32,6 +34,8 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends WorkerPoolConfiguration {
+
+    PGAuthenticatorFactory getAuthenticatorFactory();
 
     int getBinParamCountCapacity();
 
@@ -82,6 +86,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     int getRecvBufferSize();
 
+    SecurityContextFactory getSecurityContextFactory();
+
     int getSelectCacheBlockCount();
 
     int getSelectCacheRowCount();
@@ -89,6 +95,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     int getSendBufferSize();
 
     String getServerVersion();
+
+    SqlParserFactory getSqlParserFactory();
 
     int getUpdateCacheBlockCount();
 

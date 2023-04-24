@@ -42,7 +42,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.model.ExpressionNode.*;
 
-class SqlOptimiser {
+public class SqlOptimiser {
 
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
@@ -767,6 +767,51 @@ class SqlOptimiser {
         assert postFilterRemoved.size() == pc;
     }
 
+    private void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
+        if (model != null) {
+            if (model.getTableName() != null) {
+                ExpressionNode tableNameExpr = model.getTableNameExpr();
+                switch (tableNameExpr.type) {
+                    case CONSTANT:
+                    case LITERAL:
+                        // adjust name in case of marker
+                        GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) tableNameExpr.token;
+                        int lo = tab.getLo();
+                        if (Chars.startsWith(tab, QueryModel.NO_ROWID_MARKER)) {
+                            tab.setLo(lo + QueryModel.NO_ROWID_MARKER.length());
+                        }
+                        try {
+                            // copy column names
+                            literalCollectorANames.clear();
+                            final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+                            for (int i = 0, n = topDownColumns.size(); i < n; i++) {
+                                literalCollectorANames.add(topDownColumns.getQuick(i).getName());
+                            }
+
+                            executionContext.getSecurityContext().authorizeSelect(
+                                    executionContext.getTableToken(tab),
+                                    literalCollectorANames
+                            );
+                        } finally {
+                            tab.setLo(lo);
+                        }
+                        break;
+                    default:
+                        // todo: function call
+                        break;
+                }
+            } else {
+                authorizeColumnAccess(executionContext, model.getNestedModel());
+                ObjList<QueryModel> joinModels = model.getJoinModels();
+                for (int i = 1, n = joinModels.size(); i < n; i++) {
+                    // exclude 0 index, it is the same as "model"
+                    authorizeColumnAccess(executionContext, joinModels.getQuick(i));
+                }
+                authorizeColumnAccess(executionContext, model.getUnionModel());
+            }
+        }
+    }
+
     // The model for the following SQL:
     // select * from t1 union all select * from t2 order by x
     // will have "order by" clause on the last model of the union linked list.
@@ -831,7 +876,7 @@ class SqlOptimiser {
     }
 
     //pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
-    //pushing for other fill options or sample by first observation could alter result 
+    //pushing for other fill options or sample by first observation could alter result
     private boolean canPushToSampleBy(final QueryModel model, ObjList<CharSequence> expressionColumns) {
         ObjList<ExpressionNode> fill = model.getSampleByFill();
         int fillCount = fill.size();
@@ -1831,7 +1876,7 @@ class SqlOptimiser {
                     continue;
                 }
                 if (column != null) {
-                    return null;//more than one column match 
+                    return null;//more than one column match
                 }
                 column = qc;
             }
@@ -1861,6 +1906,29 @@ class SqlOptimiser {
         } else {
             return null;
         }
+    }
+
+    private boolean hasAggregateQueryColumn(QueryModel model) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                        return true;
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+
+                if (checkForAggregates(qc.getAst())) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private boolean hasAggregates(ExpressionNode node) {
@@ -2394,7 +2462,7 @@ class SqlOptimiser {
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
-        int status = executionContext.getStatus(path, tableToken);
+        int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
@@ -2402,7 +2470,7 @@ class SqlOptimiser {
                 parseFunctionAndEnumerateColumns(model, executionContext);
                 return;
             } catch (SqlException e) {
-                throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
+                throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
             }
         }
 
@@ -2620,7 +2688,7 @@ class SqlOptimiser {
         if (model.getLimitLo() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         }
-        //if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join 
+        //if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
         if (model.getTimestamp() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
@@ -3200,7 +3268,7 @@ class SqlOptimiser {
                     op.rhs = agg;
                     return op;
                 }
-            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) {//sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10 
+            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) {//sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10
                 if (isIntegerConstant(op.rhs)) {
                     return pushOperationOutsideAgg(agg, op, op.lhs, op.rhs, model);
                 } else if (isIntegerConstant(op.lhs)) {
@@ -3213,7 +3281,7 @@ class SqlOptimiser {
     }
 
     //push aggregate function calls to group by model, replace key column expressions with group by aliases
-    //raise error if raw column usage doesn't match one of expressions on group by list 
+    //raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(final @Transient ExpressionNode topLevelNode,
                                                           QueryModel groupByModel,
                                                           ObjList<ExpressionNode> groupByNodes,
@@ -3305,6 +3373,9 @@ class SqlOptimiser {
                     && current.getLimitHi() == null
                     && current.getUnionModel() == null
                     && current.getJoinModels().size() == 1
+                    && current.getGroupBy().size() == 0
+                    && current.getSampleBy() == null
+                    && !hasAggregateQueryColumn(current)
                     && !current.isDistinct()
                     && nested != null
                     && nested.getTimestamp() != null
@@ -3460,15 +3531,15 @@ class SqlOptimiser {
                             tempQueryModel = null;
                             tempColumnAlias = null;
 
-                            // if necessary, propagate column to limit model that'll receive order by 
+                            // if necessary, propagate column to limit model that'll receive order by
                             if (limitModel != baseParent &&
                                     !hasAnalyticColumn(limitModel) && // analytic model doesn't support aliases
                                     getTranslatedColumnAlias(limitModel, baseParent, orderBy.token) == null) {
-                                //add column ref to the most-nested model that doesn't have it  
+                                //add column ref to the most-nested model that doesn't have it
                                 alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOf(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
                                 tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
 
-                                //and then push to upper models 
+                                //and then push to upper models
                                 QueryModel m = limitModel;
                                 while (m != tempQueryModel) {
                                     m.addBottomUpColumn(nextColumn(alias));
@@ -3479,7 +3550,7 @@ class SqlOptimiser {
                                 tempColumnAlias = null;
                                 orderBy.token = alias;
 
-                                //if necessary, add external model to maintain output  
+                                //if necessary, add external model to maintain output
                                 if (limitModel == model && wrapper == null) {
                                     wrapper = queryModelPool.next();
                                     wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
@@ -3609,8 +3680,8 @@ class SqlOptimiser {
         QueryModel baseOuter = null;
         QueryModel baseDistinct = null;
         // while order by is initially kept in the base model (most inner one)
-        // columns used in order by could be stored in one of many models : inner model, group by model, analytical or outer model 
-        // here we've to descend and keep track of all of those 
+        // columns used in order by could be stored in one of many models : inner model, group by model, analytical or outer model
+        // here we've to descend and keep track of all of those
         while (base.getBottomUpColumns().size() > 0) {
             // Check if the model contains the full list of selected columns and, thus, can be used as the parent.
             if (!base.isSelectTranslation()) {
@@ -3862,10 +3933,10 @@ class SqlOptimiser {
                 if (node.type == LITERAL) {
                     // If literal is select clause alias then use its AST //sym1 -> ccy x -> a
                     // NOTE: this is merely a shortcut and doesn't mean that alias exists at group by stage !
-                    // while 
+                    // while
                     //   select a as d  from t group by d
-                    // works, the following does not 
-                    //  select a as d  from t group by d + d 
+                    // works, the following does not
+                    //  select a as d  from t group by d + d
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
@@ -3922,15 +3993,15 @@ class SqlOptimiser {
                     groupByNodes.add(node);
                     groupByAliases.add(groupByColumn.getAlias());
                 }
-                // If there's at least one other group by column then we can ignore constant expressions, 
+                // If there's at least one other group by column then we can ignore constant expressions,
                 // otherwise we've to include not to affect the outcome, e.g.
-                // if table t is empty then 
-                // select count(*) from t  returns 0  but  
-                // select count(*) from t group by 12+3 returns empty result 
+                // if table t is empty then
+                // select count(*) from t  returns 0  but
+                // select count(*) from t group by 12+3 returns empty result
                 // if we removed 12+3 then we'd affect result
                 else if (!(isEffectivelyConstantExpression(node) && i > 0)) {
                     //add expression
-                    //if group by element is an expression then we've to use inner model to compute it 
+                    //if group by element is an expression then we've to use inner model to compute it
                     useInnerModel = true;
 
                     //expressions in GROUP BY clause should be pushed to inner model
@@ -4095,7 +4166,7 @@ class SqlOptimiser {
 
                     addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in  outer virtual model 
+                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in  outer virtual model
                     ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
                     if (qc.getAst() == en) {
                         useOuterModel = true;
@@ -4273,8 +4344,8 @@ class SqlOptimiser {
             // translating model has limits to ensure clean factory separation
             // during code generation. However, in some cases limit could also
             // be implemented by nested model. Nested model must not implement limit
-            // when parent model is order by or join. 
-            // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .   
+            // when parent model is order by or join.
+            // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .
             if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) &&
                     baseModel.getJoinModels().size() < 2 &&
                     !useDistinctModel) {
@@ -4593,6 +4664,7 @@ class SqlOptimiser {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (SqlException e) {
             // at this point models may have functions than need to be freed
@@ -4615,6 +4687,7 @@ class SqlOptimiser {
 
     void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try {
+            literalCollectorANames.clear();
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());
             int timestampIndex = metadata.getTimestampIndex();
@@ -4645,6 +4718,7 @@ class SqlOptimiser {
                 CharSequence exactColName = metadata.getColumnName(columnIndex);
                 queryColumn.of(exactColName, queryColumn.getAst());
                 tempList.set(columnIndex, 1);
+                literalCollectorANames.add(exactColName);
 
                 ExpressionNode rhs = queryColumn.getAst();
                 if (rhs.type == FUNCTION) {
@@ -4654,7 +4728,11 @@ class SqlOptimiser {
                 }
             }
 
+
             TableToken tableToken = metadata.getTableToken();
+
+            sqlExecutionContext.getSecurityContext().authorizeTableUpdate(tableToken, literalCollectorANames);
+
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
                 // Table renamed
                 throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
@@ -4663,6 +4741,9 @@ class SqlOptimiser {
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {
+            if (e.isAuthorizationError()) {
+                throw e;
+            }
             throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
     }

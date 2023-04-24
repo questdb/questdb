@@ -135,7 +135,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
@@ -146,11 +146,6 @@ public class PGJobContextTest extends BasePGTest {
         datesArr = dates.collect(Collectors.toList());
     }
 
-    @AfterClass
-    public static void tearDownStatic() {
-        BasePGTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
@@ -158,7 +153,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
     }
@@ -1909,7 +1904,7 @@ if __name__ == "__main__":
                     }
                 }
 
-                //first run query and complete  
+                //first run query and complete
                 try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
                     ResultSet result = stmt.executeQuery();
                     sink.clear();
@@ -1929,14 +1924,18 @@ if __name__ == "__main__":
         String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
                 "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
-                "update dest set l = 1 from tab t1 where " +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = " +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA100000' "
+                "update dest \n" +
+                        "set l = t1.x \n" +
+                        "from tab t1 \n" +
+                        "where \n" +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = \n" +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
-            compiler.compile("create table if not exists dest as (select 1::long l)", sqlExecutionContext);
+            compiler.compile("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            compiler.compile("create table if not exists dest as (select x l from long_sequence(10000))", sqlExecutionContext);
             mayDrainWalQueue();
 
             for (String query : queries) {
@@ -4955,7 +4954,7 @@ nodejs code:
                         final Connection connection = getConnection(server.getPort(), false, false)) {
 
                     try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
-                            "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                            "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
                             "where ts between '2022-03-20' " +
                             "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
                             "AND id <> '0x05aba84839b9c7000006765675e630' " +
@@ -4990,7 +4989,7 @@ nodejs code:
                         final Connection connection = getConnection(server.getPort(), false, false)) {
 
                     try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
-                            "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                            "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
                             "where ts between '2022-03-20' " +
                             "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
                             "AND id <> '0x05aba84839b9c7000006765675e630' " +
@@ -8703,6 +8702,13 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testMetadata() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close();
+        });
+    }
+
     //    @Test
     public void recordHexScript() throws Exception {
         // use this to record a script for replaying in tests
@@ -8970,13 +8976,11 @@ create table tab as (
 
     @SuppressWarnings("unchecked")
     private List<Tuple> getRows(ResultSet rs) {
-        try {
+        return TestUtils.unchecked(() -> {
             Field field = PgResultSet.class.getDeclaredField("rows");
             field.setAccessible(true);
             return (List<Tuple>) field.get(rs);
-        } catch (IllegalAccessException | NoSuchFieldException e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {

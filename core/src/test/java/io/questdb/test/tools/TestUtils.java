@@ -24,6 +24,7 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
@@ -59,6 +60,8 @@ import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -139,128 +142,90 @@ public final class TestUtils {
         final int timestampIndex = metadataActual.getTimestampIndex();
 
         long timestampValue = -1;
-        BytecodeAssembler asm = null;
-        EntityColumnFilter entityColumnFilter;
-        RecordSink recordSink;
-        long chainLO = -1;
-        long chainRO = -1;
-        RecordChain chainL = null;
-        RecordChain chainR = null;
+        HashMap<String, Integer> mapL = null;
+        HashMap<String, Integer> mapR = null;
         AssertionError deferred = null;
-        RecordMetadata symAsStrTypes = null;
 
-        try {
-            long rowIndex = 0;
-            while (cursorExpected.hasNext()) {
-                if (!cursorActual.hasNext()) {
-                    Assert.fail("Actual cursor does not have record at " + rowIndex);
+        long rowIndex = 0;
+        while (cursorExpected.hasNext()) {
+            if (!cursorActual.hasNext()) {
+                Assert.fail("Actual cursor does not have record at " + rowIndex);
+            }
+            rowIndex++;
+            if (timestampValue != -1) {
+                // we are or were stashing record with the same timestamp
+                long tsL = l.getTimestamp(timestampIndex);
+                long tsR = r.getTimestamp(timestampIndex);
+
+                if (tsL == timestampValue && tsR == timestampValue) {
+                    // store both records
+                    addRecordToMap(l, metadataExpected, mapL);
+                    addRecordToMap(r, metadataActual, mapR);
+                    continue;
                 }
-                rowIndex++;
-                if (timestampValue != -1) {
-                    // we are or were stashing record with the same timestamp
+
+                // check if we can bail out early because current record timestamps do not match
+                if (tsL != tsR) {
+                    throw new AssertionError(
+                            String.format(
+                                    "Row %d column %s[%s] %s",
+                                    rowIndex,
+                                    metadataActual.getColumnName(timestampIndex),
+                                    ColumnType.TIMESTAMP,
+                                    "timestamp mismatch"
+                            )
+                    );
+                }
+
+                // compare accumulated records
+                try {
+                    Assert.assertEquals(mapL, mapR);
+                } catch (AssertionError ignore) {
+                    throw deferred;
+                }
+
+                // something changed, reset the store
+                timestampValue = -1;
+
+                mapL.clear();
+                mapR.clear();
+            }
+            try {
+                assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
+            } catch (AssertionError e) {
+                // Assertion error could be to do with unstable sort order,
+                // lets try to eliminate this.
+                if (timestampIndex == -1) {
+                    // cannot do anything with tables without timestamp
+                    throw e;
+                } else {
                     long tsL = l.getTimestamp(timestampIndex);
                     long tsR = r.getTimestamp(timestampIndex);
-
-                    if (tsL == timestampValue && tsR == timestampValue) {
-                        // store both records
-                        chainLO = chainL.put(l, chainLO);
-                        chainRO = chainR.put(r, chainRO);
-                        continue;
-                    }
-
-                    // check if we can bail out early because current record timestamps do not match
                     if (tsL != tsR) {
-                        throw new AssertionError(
-                                String.format(
-                                        "Row %d column %s[%s] %s",
-                                        rowIndex,
-                                        metadataActual.getColumnName(timestampIndex),
-                                        ColumnType.TIMESTAMP,
-                                        "timestamp mismatch"
-                                )
-                        );
-                    }
-
-                    // compare chains
-                    chainL.toTop();
-                    Record chainLR = chainL.getRecord();
-                    Record chainRR = chainR.getRecord();
-                    long recordsScanned = 0;
-                    long recordsMatched = 0;
-                    while (chainL.hasNext()) {
-                        recordsScanned++;
-                        chainR.toTop();
-                        while (chainR.hasNext()) {
-                            try {
-                                assertColumnValues(symAsStrTypes, symAsStrTypes, chainLR, chainRR, 0, false);
-                                recordsMatched++;
-                                break;
-                            } catch (AssertionError ignore) {
-                                // ignore
-                            }
-                        }
-                    }
-
-                    if (recordsMatched < recordsScanned) {
-                        throw deferred;
-                    }
-
-                    // something changed, reset the store
-                    timestampValue = -1;
-                    // reset chain offsets
-                    chainLO = -1;
-                    chainRO = -1;
-
-                    chainL.clear();
-                    chainR.clear();
-                }
-                try {
-                    assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
-                } catch (AssertionError e) {
-                    // Assertion error could be to do with unstable sort order,
-                    // lets try to eliminate this.
-                    if (timestampIndex == -1) {
-                        // cannot do anything with tables without timestamp
+                        // timestamps are not matching, bail out
                         throw e;
-                    } else {
-                        long tsL = l.getTimestamp(timestampIndex);
-                        long tsR = r.getTimestamp(timestampIndex);
-                        if (tsL != tsR) {
-                            // timestamps are not matching, bail out
-                            throw e;
-                        }
-
-                        // will throw this later if our reordering doesn't work
-
-                        deferred = e;
-
-                        // this is first time we experienced this error
-                        // do we have chains ?
-
-                        timestampValue = tsL;
-
-                        if (asm == null) {
-                            asm = new BytecodeAssembler();
-                            entityColumnFilter = new EntityColumnFilter();
-                            entityColumnFilter.of(metadataActual.getColumnCount());
-                            recordSink = RecordSinkFactory.getInstance(asm, metadataActual, entityColumnFilter, true);
-                            symAsStrTypes = copySymAstStr(metadataActual);
-                            chainL = new RecordChain(symAsStrTypes, recordSink, 1024 * 1024, Integer.MAX_VALUE);
-                            chainR = new RecordChain(symAsStrTypes, recordSink, 1024 * 1024, Integer.MAX_VALUE);
-                        }
-
-                        // store both records
-                        chainLO = chainL.put(l, chainLO);
-                        chainRO = chainR.put(r, chainRO);
                     }
+
+                    // will throw this later if our reordering doesn't work
+                    deferred = e;
+
+                    // this is first time we experienced this error
+                    // do we have maps?
+                    timestampValue = tsL;
+
+                    if (mapL == null) {
+                        mapL = new HashMap<>();
+                        mapR = new HashMap<>();
+                    }
+
+                    // store both records
+                    addRecordToMap(l, metadataExpected, mapL);
+                    addRecordToMap(r, metadataActual, mapR);
                 }
             }
-
-            Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
-        } finally {
-            Misc.free(chainL);
-            Misc.free(chainR);
         }
+
+        Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
     }
 
     public static void assertEquals(File a, File b) {
@@ -514,11 +479,11 @@ public final class TestUtils {
         }
     }
 
-    public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
+    public static void assertIndexBlockCapacity(CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
-        TableToken tt = engine.getTableToken(tableName);
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
+        TableToken tt = engine.verifyTableName(tableName);
+        try (TableReader rdr = engine.getReader(tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
 
@@ -807,7 +772,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
             assert partitionAddMethod != null;
@@ -891,7 +856,7 @@ public final class TestUtils {
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(bindVariableService);
+        ctx.with(engine.getConfiguration().getSecurityContextFactory().getRootContext(), bindVariableService);
         return ctx;
     }
 
@@ -1003,10 +968,6 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
-    public static TableReader getReader(CairoEngine engine, TableToken tableToken) {
-        return engine.getReader(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken);
-    }
-
     @NotNull
     public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
         return new NetworkFacadeImpl() {
@@ -1034,12 +995,20 @@ public final class TestUtils {
         };
     }
 
+    public static String[] getServerMainArgs(CharSequence root) {
+        return new String[]{
+                "-d",
+                Chars.toString(root),
+                Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
+        };
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
-        return getWriter(engine, engine.getTableToken(tableName));
+        return getWriter(engine, engine.verifyTableName(tableName));
     }
 
     public static TableWriter getWriter(CairoEngine engine, TableToken tableToken) {
-        return engine.getWriter(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), tableToken, "test");
+        return engine.getWriter(tableToken, "test");
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
@@ -1059,7 +1028,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
 
         StringBuilder insertFromSelect = new StringBuilder();
         insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
@@ -1375,7 +1344,39 @@ public final class TestUtils {
         return ptr;
     }
 
-    // used in tests
+    public static void unchecked(CheckedRunnable runnable) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void unchecked(CheckedRunnable runnable, AtomicInteger failureCounter) {
+        try {
+            runnable.run();
+        } catch (Throwable e) {
+            failureCounter.incrementAndGet();
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static <T> T unchecked(CheckedSupplier<T> runnable) {
+        try {
+            return runnable.get();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static int unchecked(CheckedIntFunction runnable) {
+        try {
+            return runnable.get();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
@@ -1472,6 +1473,18 @@ public final class TestUtils {
         }
     }
 
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
+        }
+    }
+
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -1483,18 +1496,6 @@ public final class TestUtils {
                 || expected.getLong2() != actual.getLong2()
                 || expected.getLong3() != actual.getLong3()) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
-        }
-    }
-
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
-        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
-            int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
-            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 
@@ -1512,10 +1513,10 @@ public final class TestUtils {
         return metadata;
     }
 
-    private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {
+    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
             assert partitionAddMethod != null;
             long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
@@ -1539,6 +1540,41 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong1()) + " " +
                 Long.toHexString(expected.getLong2()) + " " +
                 Long.toHexString(expected.getLong3());
+    }
+
+    static void addAllRecordsToMap(RecordCursor cursor, RecordMetadata metadata, Map<String, Integer> map) {
+        cursor.toTop();
+        Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            addRecordToMap(record, metadata, map);
+        }
+    }
+
+    static void addRecordToMap(Record record, RecordMetadata metadata, Map<String, Integer> map) {
+        sink.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            printColumn(record, metadata, i, sink, true);
+        }
+        String printed = sink.toString();
+        map.compute(printed, (s, i) -> {
+            if (i == null) {
+                return 1;
+            }
+            return i + 1;
+        });
+    }
+
+    public interface CheckedIntFunction {
+        int get() throws Throwable;
+    }
+
+    @FunctionalInterface
+    public interface CheckedRunnable {
+        void run() throws Throwable;
+    }
+
+    public interface CheckedSupplier<T> {
+        T get() throws Throwable;
     }
 
     @FunctionalInterface
