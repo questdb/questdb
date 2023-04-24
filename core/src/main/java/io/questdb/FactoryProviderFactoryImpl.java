@@ -22,41 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb;
 
-import io.questdb.FactoryProvider;
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 
-public interface HttpContextConfiguration {
+public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
+    public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
 
-    boolean allowDeflateBeforeSend();
-
-    MillisecondClock getClock();
-
-    int getConnectionPoolInitialCapacity();
-
-    int getConnectionStringPoolCapacity();
-
-    boolean getDumpNetworkTraffic();
-
-    String getHttpVersion();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRecvBufferSize();
-
-    int getRequestHeaderBufferSize();
-
-    int getSendBufferSize();
-
-    boolean getServerKeepAlive();
-
-    boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
+    @Override
+    public FactoryProvider getInstance(
+            ServerConfiguration configuration,
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache
+    ) {
+        return new FactoryProviderImpl(configuration);
+    }
 }

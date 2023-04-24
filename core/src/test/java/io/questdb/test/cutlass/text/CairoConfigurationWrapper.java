@@ -25,13 +25,12 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.BuildInformation;
+import io.questdb.FactoryProvider;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -39,7 +38,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class CairoConfigurationWrapper implements CairoConfiguration {
-
     private final CairoConfiguration conf;
 
     public CairoConfigurationWrapper(CairoConfiguration conf) {
@@ -104,11 +102,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return conf.getBuildInformation();
-    }
-
-    @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return conf.getSecurityContextFactory();
     }
 
     @Override
@@ -234,6 +227,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getExplainPoolCapacity() {
         return conf.getExplainPoolCapacity();
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return conf.getFactoryProvider();
     }
 
     @Override
@@ -467,7 +465,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getRoot() {
+    public String getRoot() {
         return conf.getRoot();
     }
 
@@ -714,11 +712,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return conf.getSqlPageFrameMinRows();
-    }
-
-    @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return conf.getSqlCompilerFactory();
     }
 
     @Override

@@ -872,17 +872,17 @@ public final class TestUtils {
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1);
+        return new SqlExecutionContextImpl(engine, 1).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getSecurityContextFactory().getRootContext(), bindVariableService);
+        ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
         return ctx;
     }
 
-    public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount);
+    public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, int workerCount) {
+        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
     }
 
     public static void createTestPath(CharSequence root) {
@@ -924,7 +924,7 @@ public final class TestUtils {
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, workerCount)
         ) {
             try {
                 if (pool != null) {
@@ -1520,6 +1520,7 @@ public final class TestUtils {
         }
     }
 
+/*
     private static RecordMetadata copySymAstStr(RecordMetadata src) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0, n = src.getColumnCount(); i < n; i++) {
@@ -1533,6 +1534,7 @@ public final class TestUtils {
         metadata.setTimestampIndex(src.getTimestampIndex());
         return metadata;
     }
+*/
 
     private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;

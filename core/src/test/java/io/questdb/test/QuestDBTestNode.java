@@ -219,7 +219,7 @@ public class QuestDBTestNode {
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(
-                            cairo.configuration.getSecurityContextFactory().getRootContext(),
+                            cairo.configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                             bindVariableService,
                             null,
                             -1,

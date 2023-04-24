@@ -29,12 +29,22 @@ public final class PGBasicAuthenticatorFactory implements PGAuthenticatorFactory
 
     @Override
     public PGAuthenticator getInstance(PGWireConfiguration configuration) {
-        return new PGBasicAuthenticator(configuration.getSecurityContextFactory(), configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
+        return new PGBasicAuthenticator(
+                configuration.getFactoryProvider().getSecurityContextFactory(),
+                configuration.getDefaultUsername(),
+                configuration.getDefaultPassword(),
+                configuration.readOnlySecurityContext()
+        );
     }
 
     @Override
     public PGAuthenticator getInstanceReadOnly(PGWireConfiguration configuration) {
         assert configuration.isReadOnlyUserEnabled();
-        return new PGBasicAuthenticator(configuration.getSecurityContextFactory(), configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true);
+        return new PGBasicAuthenticator(
+                configuration.getFactoryProvider().getSecurityContextFactory(),
+                configuration.getReadOnlyUsername(),
+                configuration.getReadOnlyPassword(),
+                true
+        );
     }
 }

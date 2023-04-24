@@ -24,12 +24,10 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlCompilerFactory;
-import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -51,11 +49,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
             return "pg-server";
         }
     };
-
-    @Override
-    public PGAuthenticatorFactory getAuthenticatorFactory() {
-        return PGBasicAuthenticatorFactory.INSTANCE;
-    }
 
     @Override
     public int getBinParamCountCapacity() {
@@ -164,8 +157,8 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override
@@ -186,11 +179,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public String getServerVersion() {
         return "11.3";
-    }
-
-    @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return SqlCompilerFactoryImpl.INSTANCE;
     }
 
     @Override

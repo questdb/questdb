@@ -26,7 +26,6 @@ package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.FactoryProvider;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
@@ -36,7 +35,6 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.StationaryMillisClock;
@@ -63,13 +61,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final FactoryProvider factoryProvider;
     private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
         @Override
-        public PGAuthenticatorFactory getAuthenticatorFactory() {
-            return factoryProvider.getPGAuthenticatorFactory();
-        }
-
-        @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return factoryProvider.getSecurityContextFactory();
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
@@ -85,8 +78,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
 
         @Override
-        public SecurityContextFactory getSecurityContextFactory() {
-            return factoryProvider.getSecurityContextFactory();
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
     }) {
         @Override

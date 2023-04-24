@@ -71,7 +71,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public SecurityContext getSecurityContext() {
-        return engine.getConfiguration().getSecurityContextFactory().getRootContext();
+        return engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext();
     }
 
     @Override

@@ -192,7 +192,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         nodes.clear();
         node1 = newNode(Chars.toString(root), false, 1, new StaticOverrides());
         configuration = node1.getConfiguration();
-        securityContext = configuration.getSecurityContextFactory().getRootContext();
+        securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();

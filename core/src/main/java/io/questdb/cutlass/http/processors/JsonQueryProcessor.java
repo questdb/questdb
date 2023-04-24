@@ -81,7 +81,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this(
                 configuration,
                 engine,
-                configuration.getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent),
+                configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(engine, functionFactoryCache, snapshotAgent),
                 new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
         );
     }

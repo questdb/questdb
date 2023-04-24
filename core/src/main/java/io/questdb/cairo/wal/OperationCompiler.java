@@ -60,7 +60,7 @@ class OperationCompiler implements Closeable {
                 sharedWorkerCount
         );
         renameSupportExecutionContext.with(
-                engine.getConfiguration().getSecurityContextFactory().getRootContext(),
+                engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                 bindVariableService,
                 rnd,
                 -1,

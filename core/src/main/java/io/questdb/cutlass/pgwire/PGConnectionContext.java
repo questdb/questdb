@@ -215,7 +215,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
 
-        PGAuthenticatorFactory authenticatorFactory = configuration.getAuthenticatorFactory();
+        PGAuthenticatorFactory authenticatorFactory = configuration.getFactoryProvider().getPGAuthenticatorFactory();
         this.authenticator = authenticatorFactory.getInstance(configuration);
         this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
                 ? authenticatorFactory.getInstanceReadOnly(configuration)

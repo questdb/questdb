@@ -544,7 +544,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 public Rnd getAsyncRandom() {
                     throw new RuntimeException("test error");
                 }
-            };
+            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
 
             testUpdateAsyncMode(tableWriter -> {
                     }, "[43] test error",
