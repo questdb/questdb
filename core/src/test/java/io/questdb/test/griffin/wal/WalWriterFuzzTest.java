@@ -493,7 +493,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
                 String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
                 LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-                String limit = " limit 8970, 9100";
+                String limit = ""; // For debugging
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + indexedWhereClause + limit, tableNameWal + indexedWhereClause + limit, LOG);
             }
         }
