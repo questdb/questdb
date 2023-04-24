@@ -47,17 +47,12 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public FactoryProvider getFactoryProvider() {
-        return DefaultFactoryProvider.INSTANCE;
-    }
-
-    @Override
     public FilesFacade getFilesFacade() {
         return null;
     }
 
     @Override
-    public ServerConfiguration getServerConfiguration() {
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception{
         return null;
     }
 

@@ -34,6 +34,8 @@ public interface Authenticator {
 
     long getRecvBufPos();
 
+    CharSequence getPrincipal();
+
     long getRecvBufPseudoStart();
 
     void init(int fd);

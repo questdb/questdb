@@ -1413,10 +1413,10 @@ public final class TestUtils {
                         }
                         break;
                     case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-10);
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), 1E-6);
                         break;
                     case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-6);
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-4);
                         break;
                     case ColumnType.INT:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));

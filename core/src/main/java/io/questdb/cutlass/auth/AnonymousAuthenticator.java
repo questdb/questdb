@@ -51,6 +51,11 @@ public class AnonymousAuthenticator implements Authenticator {
     }
 
     @Override
+    public CharSequence getPrincipal() {
+        return null;
+    }
+
+    @Override
     public boolean isAuthenticated() {
         return true;
     }
