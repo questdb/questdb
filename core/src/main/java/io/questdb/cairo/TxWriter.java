@@ -247,12 +247,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void removeAttachedPartitions(long timestamp) {
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        if (indexRaw > -1) {
             final int size = attachedPartitions.size();
             final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
-            if (index < lim) {
-                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
+            if (indexRaw < lim) {
+                attachedPartitions.arrayCopy(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION, indexRaw, lim - indexRaw);
             }
             attachedPartitions.setPos(lim);
             partitionTableVersion++;
@@ -352,14 +352,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
         long partitionTimestampLo = getPartitionTimestampByTimestamp(maxTimestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        updatePartitionSizeByIndex(index, transientRowCount);
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        updatePartitionSizeByRawIndex(indexRaw, transientRowCount);
 
-        index += LONGS_PER_TX_ATTACHED_PARTITION;
+        indexRaw += LONGS_PER_TX_ATTACHED_PARTITION;
 
-        attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
+        attachedPartitions.setPos(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        initPartitionAt(index, newTimestampLo, 0L, txn - 1, -1L);
+        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, -1L);
         transientRowCount = 0L;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -412,8 +412,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         maxTimestamp = timestamp;
     }
 
-    public void updatePartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
-        updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
+    public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+        if (partitionIndex > -1) {
+            updatePartitionSizeByRawIndex(partitionIndex, partitionSize);
+        } else {
+            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
+        }
     }
 
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
@@ -588,20 +592,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
-        if (partitionIndex > -1) {
-            updatePartitionSizeByIndex(partitionIndex, partitionSize);
-        } else {
-            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
-        }
+    public void updatePartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
+        updateAttachedPartitionSizeByRawIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
     }
 
     private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
+        updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
-    private void updatePartitionSizeByIndex(int index, long partitionSize) {
+    private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
         int offset = index + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
@@ -667,13 +667,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     void updatePartitionColumnVersion(long partitionTimestamp) {
-        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+        attachedPartitions.set(indexRaw + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
-    void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
+    void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
-        updatePartitionSizeByIndex(index, partitionSize);
+        updatePartitionSizeByRawIndex(index, partitionSize);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

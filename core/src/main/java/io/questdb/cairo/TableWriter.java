@@ -892,7 +892,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
-        if (partitionIndex == -1) {
+        if (partitionIndex < 0) {
             assert !txWriter.attachedPartitionsContains(timestamp);
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
         }
@@ -1594,7 +1594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     closeActivePartition(false);
                     partitionTimestampHi = Long.MIN_VALUE;
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
-                    long partitionNameTxn = txWriter.getPartitionNameTxnByIndex(0);
+                    long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
                     txWriter.removeAttachedPartitions(partitionTimestamp);
                     safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
                 }
@@ -4702,16 +4702,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isLastWrittenPartition
     ) {
         txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
-        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+        int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
 
         final long newPartitionTimestamp = partitionTimestamp;
-        final int newPartitionIndex = partitionIndex;
-        if (partitionIndex < 0) {
+        final int newPartitionIndex = partitionIndexRaw;
+        if (partitionIndexRaw < 0) {
             // This is partition split. Instead of rewriting partition because of O3 merge
             // the partition is kept, and its tail rewritten.
             // The new partition overlaps in time with the previous one.
             partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestamp);
-            partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+            partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
         }
 
         if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
@@ -4747,7 +4747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
             this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, partitionTimestamp);
             txWriter.bumpPartitionTableVersion();
-            txWriter.updateAttachedPartitionSizeByIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
+            txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
             if (partitionTimestamp == lastPartitionTimestamp) {
                 // Close last partition without truncating it.
                 long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
@@ -4760,19 +4760,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {
-            final long srcDataTxn = txWriter.getPartitionNameTxnByIndex(partitionIndex);
+            final long srcDataTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
             LOG.info()
                     .$("merged partition [table=`").utf8(tableToken.getTableName())
                     .$("`, ts=").$ts(partitionTimestamp)
                     .$(", txn=").$(txWriter.txn).I$();
-            txWriter.updatePartitionSizeAndTxnByIndex(partitionIndex, oldPartitionSize);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, oldPartitionSize);
             partitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
             txWriter.bumpPartitionTableVersion();
         } else {
             if (partitionTimestamp != lastPartitionTimestamp) {
                 txWriter.bumpPartitionTableVersion();
             }
-            txWriter.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, oldPartitionSize);
+            txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, oldPartitionSize);
         }
     }
 
@@ -5364,14 +5364,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final long srcDataMax;
                     final long srcNameTxn;
-                    final int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-                    if (partitionIndex > -1) {
+                    final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                    if (partitionIndexRaw > -1) {
                         if (last) {
                             srcDataMax = transientRowCount;
                         } else {
-                            srcDataMax = getPartitionSizeByIndex(partitionIndex);
+                            srcDataMax = getPartitionSizeByRawIndex(partitionIndexRaw);
                         }
-                        srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
+                        srcNameTxn = getPartitionNameTxnByRawIndex(partitionIndexRaw);
                     } else {
                         srcDataMax = 0;
                         // A version needed to housekeep dropped partitions.
@@ -5409,7 +5409,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", o3Timestamp=").$ts(o3Timestamp)
                             .$(", o3TimestampMax=").$ts(o3TimestampMax)
                             .$(", partitionTimestamp=").$ts(partitionTimestamp)
-                            .$(", partitionIndex=").$(partitionIndex)
+                            .$(", partitionIndex=").$(partitionIndexRaw)
                             .$(", partitionSize=").$(partitionSize)
                             .$(", maxTimestamp=").$ts(maxTimestamp)
                             .$(", last=").$(last)
@@ -7223,12 +7223,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return messageBus.getO3OpenColumnQueue();
     }
 
-    long getPartitionNameTxnByIndex(int index) {
-        return txWriter.getPartitionNameTxnByIndex(index);
+    long getPartitionNameTxnByRawIndex(int index) {
+        return txWriter.getPartitionNameTxnByRawIndex(index);
     }
 
-    long getPartitionSizeByIndex(int index) {
-        return txWriter.getPartitionSizeByIndex(index);
+    long getPartitionSizeByRawIndex(int index) {
+        return txWriter.getPartitionSizeByRawIndex(index);
     }
 
     TxReader getTxReader() {

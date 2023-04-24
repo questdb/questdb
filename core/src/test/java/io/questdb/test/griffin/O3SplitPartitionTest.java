@@ -107,6 +107,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
                     compiler.compile("alter table x add column k int", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column sym symbol index ", executionContext).execute(null).await();
                     compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
 
                     compiler.compile(
@@ -117,6 +118,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
+                                    " rnd_symbol(null,'5','16','2') as sym," +
                                     " rnd_str(5,16,2) as ks" +
                                     " from long_sequence(1000))",
                             executionContext
@@ -130,13 +132,26 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
+                                    " rnd_symbol(null,'5','16','2') as sym," +
                                     " rnd_str(5,16,2) as ks" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
 
                     compiler.compile(
-                            "create table zz as (select * from x union all select * from y union all select * from z)",
+                            "create table zz (" +
+                                    "i int," +
+                                    "j long," +
+                                    "str string," +
+                                    "ts timestamp, " +
+                                    "k int," +
+                                    "sym symbol," +
+                                    "ks string)",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "insert into zz select * from x union all select * from y union all select * from z",
                             executionContext
                     );
 
@@ -144,6 +159,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "zz");
+                    assertIndex(compiler, executionContext, "zz", "x", "sym = '5'");
+                    assertIndex(compiler, executionContext, "zz", "x", "sym is null");
                 });
     }
 
@@ -291,6 +308,84 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     "x"
             );
         });
+    }
+
+    @Test
+    public void testSplitLastPartitionWithColumnTop() throws Exception {
+        executeWithPool(workerCount,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table zz (" +
+                                    "i int," +
+                                    "j long," +
+                                    "str string," +
+                                    "ts timestamp, " +
+                                    "k int," +
+                                    "ks string, " +
+                                    "sym symbol" +
+                                    ")",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T14:01:07', 60*100000L) ts" +
+                                    " from long_sequence(100))",
+                            executionContext
+                    );
+                    compiler.compile("insert into zz(i,j,str,ts) select i,j,str,ts from x", executionContext);
+                    compiler.compile("insert into zz(i,j,str,ts) select i,j,str,ts from z", executionContext);
+                    compiler.compile("insert into x(i,j,str,ts) select i,j,str,ts from z", executionContext);
+
+                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    compiler.compile("alter table x add column sym symbol index ", executionContext).execute(null).await();
+
+                    compiler.compile(
+                            "create table z2 as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " timestamp_sequence('2020-02-05T00:01:07', 60*100000L) ts," +
+                                    " 1 as k," +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_symbol(null,'5','16','2') as sym" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into zz select * from z2", executionContext);
+                    compiler.compile("insert into x select * from z2", executionContext);
+
+                    assertX(compiler, executionContext, "zz");
+                    assertIndex(compiler, executionContext, "zz", "x", "sym = '5'");
+                    assertIndex(compiler, executionContext, "zz", "x", "sym is null");
+
+                    // Squash last partition
+                    compiler.compile("insert into zz(ts) values('2020-02-06')", executionContext).execute(null).await();
+                    compiler.compile("insert into x(ts) values('2020-02-06')", executionContext).execute(null).await();
+
+                    assertX(compiler, executionContext, "zz");
+                    assertIndex(compiler, executionContext, "zz", "x", "sym = '5'");
+                    assertIndex(compiler, executionContext, "zz", "x", "sym is null");
+                });
     }
 
     @Test
@@ -555,6 +650,30 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 executionContext,
                 "select count() from " + expectedTable,
                 "select count() from x"
+        );
+
+        TestUtils.assertEquals(
+                compiler,
+                executionContext,
+                "select min(ts) from " + expectedTable,
+                "select min(ts) from x"
+        );
+
+        TestUtils.assertEquals(
+                compiler,
+                executionContext,
+                "select max(ts) from " + expectedTable,
+                "select max(ts) from x"
+        );
+    }
+
+    private void assertIndex(SqlCompiler compiler, SqlExecutionContext executionContext, String table1, String table2, String filter) throws SqlException {
+        TestUtils.assertSqlCursors(
+                compiler,
+                executionContext,
+                "select * from " + table1 + " where " + filter + " order by ts",
+                "select * from " + table2 + " where " + filter,
+                LOG
         );
     }
 }

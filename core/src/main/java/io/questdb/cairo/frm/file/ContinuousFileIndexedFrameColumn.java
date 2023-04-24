@@ -49,6 +49,7 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
         count -= sourceColumn.getColumnTop();
+        assert count >= 0;
         if (count > 0) {
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, count << shl, false, MEMORY_TAG);
             try {

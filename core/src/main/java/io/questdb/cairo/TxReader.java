@@ -90,7 +90,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean attachedPartitionsContains(long ts) {
-        return findAttachedPartitionIndexByLoTimestamp(ts) > -1L;
+        return findAttachedPartitionRawIndexByLoTimestamp(ts) > -1L;
     }
 
     public long ceilPartitionTimestamp(long timestamp) {
@@ -236,8 +236,17 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
+    public int findAttachedPartitionIndexByLoTimestamp(long ts) {
+        // Start from the end, usually it will be last partition searched / appended
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
+        if (index < 0) {
+            return -((-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION) - 1;
+        }
+        return index / LONGS_PER_TX_ATTACHED_PARTITION;
+    }
+
     public int getPartitionIndex(long ts) {
-        int index = findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampByTimestamp(ts));
+        int index = findAttachedPartitionRawIndexByLoTimestamp(getPartitionTimestampByTimestamp(ts));
         if (index > -1) {
             return index / LONGS_PER_TX_ATTACHED_PARTITION;
         }
@@ -245,11 +254,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionNameTxn(int i) {
-        return getPartitionNameTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
-    }
-
-    public long getPartitionNameTxnByIndex(int index) {
-        return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
+        return getPartitionNameTxnByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public long getPartitionNameTxnByPartitionTimestamp(long ts) {
@@ -264,12 +269,12 @@ public class TxReader implements Closeable, Mutable {
         return defaultValue;
     }
 
-    public long getPartitionSize(int i) {
-        return getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    public long getPartitionNameTxnByRawIndex(int index) {
+        return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
     }
 
-    public long getPartitionSizeByIndex(int index) {
-        return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+    public long getPartitionSize(int i) {
+        return getPartitionSizeByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public long getPartitionSizeByPartitionTimestamp(long ts) {
@@ -542,25 +547,29 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
+    public long getPartitionSizeByRawIndex(int index) {
+        return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+    }
+
     protected int findAttachedPartitionIndex(long ts) {
-        int index = findAttachedPartitionIndexByLoTimestamp(ts);
-        if (index > -1L) {
-            return index;
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1L) {
+            return indexRaw;
         }
 
-        int prevIndex = -index - 1 - LONGS_PER_TX_ATTACHED_PARTITION;
-        if (prevIndex < 0) {
+        int prevIndexRaw = -indexRaw - 1 - LONGS_PER_TX_ATTACHED_PARTITION;
+        if (prevIndexRaw < 0) {
             return -1;
         }
-        long prevPartitionTimestamp = attachedPartitions.getQuick(prevIndex + PARTITION_TS_OFFSET);
+        long prevPartitionTimestamp = attachedPartitions.getQuick(prevIndexRaw + PARTITION_TS_OFFSET);
         if (getPartitionFloor(prevPartitionTimestamp) == getPartitionFloor(ts)) {
-            return prevIndex;
+            return prevIndexRaw;
         }
         // Not found.
         return -1;
     }
 
-    int findAttachedPartitionIndexByLoTimestamp(long ts) {
+    int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
     }

@@ -165,7 +165,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int lo,
             int hi
     ) {
-        boolean partitionInTxnFile = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp) >= 0;
+        boolean partitionInTxnFile = txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp) >= 0;
         if (partitionInTxnFile) {
             processPartition0(
                     ff,
@@ -286,7 +286,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long currentPartitionTs = partitionList.get(i + 1);
                 if (currentPartitionTs != partitionTimestamp) {
                     if (i > lo + 2 ||
-                            (i > 0 && txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp) < 0)) {
+                            (i > 0 && txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp) < 0)) {
                         processPartition(
                                 ff,
                                 path,
