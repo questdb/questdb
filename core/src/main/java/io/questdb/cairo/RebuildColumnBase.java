@@ -215,7 +215,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                                     columnIndex,
                                     partitionIndex,
                                     partitionBy,
-                                    txReader.getPartitionTimestamp(partitionIndex)
+                                    txReader.getPartitionTimestampByIndex(partitionIndex)
                             );
                         }
                     }

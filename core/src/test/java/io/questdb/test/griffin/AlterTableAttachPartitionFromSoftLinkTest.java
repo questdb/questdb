@@ -835,8 +835,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         ) {
                             TxReader txReader = reader.getTxFile();
                             Assert.assertTrue(txReader.unsafeLoadAll());
-                            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
-                            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
+                            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestampByIndex(0)));
+                            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestampByIndex(1)));
                             if (Os.isWindows()) {
                                 engine.releaseInactive();
                             }

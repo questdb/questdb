@@ -200,7 +200,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean isActivePartition(long timestamp) {
-        return getPartitionTimestamp(maxTimestamp) == timestamp;
+        return getPartitionTimestampByTimestamp(maxTimestamp) == timestamp;
     }
 
     @Override
@@ -246,7 +246,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void removeAttachedPartitions(long timestamp) {
         recordStructureVersion++;
-        final long partitionTimestampLo = getPartitionTimestamp(timestamp);
+        final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         if (index > -1) {
             final int size = attachedPartitions.size();
@@ -351,14 +351,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         recordStructureVersion++;
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
-        long partitionTimestampLo = getPartitionTimestamp(maxTimestamp);
+        long partitionTimestampLo = getPartitionTimestampByTimestamp(maxTimestamp);
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         updatePartitionSizeByIndex(index, transientRowCount);
 
         index += LONGS_PER_TX_ATTACHED_PARTITION;
 
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
-        long newTimestampLo = getPartitionTimestamp(timestamp);
+        long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
         initPartitionAt(index, newTimestampLo, 0L, txn - 1, -1L);
         transientRowCount = 0L;
         txPartitionCount++;
@@ -597,7 +597,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
-        final long partitionTimestampLo = getPartitionTimestamp(timestamp);
+        final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
         updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 

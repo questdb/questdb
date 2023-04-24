@@ -64,7 +64,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static int dataAppendPageSize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
-    protected static CharSequence root;
+
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)

@@ -302,7 +302,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(2, txReader.getPartitionCount());
                     for (int p = 0; p < 2; p++) {
-                        long partitionTs = txReader.getPartitionTimestamp(p);
+                        long partitionTs = txReader.getPartitionTimestampByIndex(p);
                         long partitionNameVersion = txReader.getPartitionNameTxn(p);
 
                         for (int v = 0; v < partitionNameVersion + 5; v++) {
@@ -414,14 +414,14 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             try (TableReader rdr = getReader("tbl")) {
 
                 // OOO insert
-                compiler.compile("insert into tbl select 4, '2022-02-24T12'", sqlExecutionContext);
+                compiler.compile("insert into tbl select 4, '2022-02-24T19'", sqlExecutionContext);
 
                 try (TableReader rdr2 = getReader("tbl")) {
                     // in order insert
-                    compiler.compile("insert into tbl select 2, '2022-02-26T12'", sqlExecutionContext);
+                    compiler.compile("insert into tbl select 2, '2022-02-26T19'", sqlExecutionContext);
 
                     // OOO insert
-                    compiler.compile("insert into tbl select 4, '2022-02-24T12'", sqlExecutionContext);
+                    compiler.compile("insert into tbl select 4, '2022-02-24T19'", sqlExecutionContext);
 
                     runPartitionPurgeJobs();
 
@@ -435,10 +435,10 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             }
             runPartitionPurgeJobs();
 
-            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T12.1");
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T19.1");
             Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T12.3");
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T19.3");
             Assert.assertTrue(Chars.toString(path), Files.exists(path));
         });
     }
