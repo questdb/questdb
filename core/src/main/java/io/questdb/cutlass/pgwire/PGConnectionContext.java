@@ -172,8 +172,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
-    private boolean extendedQuery = false; // extended query protocol
-    private boolean inErrorState = false; // error state, relevant only for extended query protocol
+    private boolean extendedQuery = false; // processing extended query protocol
+    private boolean inErrorState = false; // error while processing extended query protocol
     private boolean processingSyncRequest = false; // processing SYNC request
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
@@ -373,7 +373,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
-        return getTableWriterAPI(engine.verifyTableName(tableName) ,lockReason);
+        return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
     public void handleClientOperation(
@@ -2467,7 +2467,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.error().$("invalid UTF8 bytes in parse query").$();
             throw BadProtocolException.INSTANCE;
         }
-        sendReadyForNewQuery();
+        maybePrepareReadyForQuery();
+        sendAndReset();
     }
 
     private void processSyncActions() {
@@ -2541,35 +2542,28 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(ex);
-        if (!extendedQuery) {
-            sendReadyForNewQuery();
-            clearRecvBuffer();
-        } else if (processingSyncRequest) {
-            sendReadyForNewQuery();
+        maybePrepareReadyForQuery();
+        sendAndReset();
+    }
+
+    private void maybePrepareReadyForQuery() {
+        if (!extendedQuery || processingSyncRequest) {
+            prepareReadyForQuery();
         }
     }
 
     private void reportNonCriticalError(int position, CharSequence flyweightMessage)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareNonCriticalError(position, flyweightMessage);
-        if (!extendedQuery) {
-            clearRecvBuffer();
-            sendReadyForNewQuery();
-        } else if (processingSyncRequest) {
-            sendReadyForNewQuery();
-        }
+        maybePrepareReadyForQuery();
         sendAndReset();
     }
 
     private void reportQueryCancelled(CharSequence flyweightMessage)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareQueryCanceled(flyweightMessage);
-        if (!extendedQuery) {
-            sendReadyForNewQuery();
-            clearRecvBuffer();
-        } else if (processingSyncRequest) {
-            sendReadyForNewQuery();
-        }
+        maybePrepareReadyForQuery();
+        sendAndReset();
     }
 
     private void resumeCommandComplete(boolean queryWasPaused) {
@@ -2590,8 +2584,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void resumeCursorQuery(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         resumeCursorQuery0(queryWasPaused);
-        // todo: this should be guarded by "if (!extendedQuery)" ?
-        sendReadyForNewQuery();
+        maybePrepareReadyForQuery();
+        sendAndReset();
     }
 
     private void resumeCursorQuery0(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
@@ -2608,8 +2602,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void resumeQueryComplete(boolean queryWasPaused) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareCommandComplete(true);
-        // todo: this should be guarded by "if (!extendedQuery)" ?
-        sendReadyForNewQuery();
+        maybePrepareReadyForQuery();
+        sendAndReset();
     }
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -2725,11 +2719,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // Prevents re-sending current record row when buffer is sent fully.
             resumeProcessor = null;
         }
-    }
-
-    private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareReadyForQuery();
-        sendAndReset();
     }
 
     private void setUuidBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
