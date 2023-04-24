@@ -8,8 +8,6 @@ RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
 DO_CHOWN=${DO_CHOWN:-"true"}
 QUESTDB_UID="${QUESTDB_UID:-"$(id -u questdb)"}"
 QUESTDB_GID="${QUESTDB_GID:-"$(id -g questdb)"}"
-TEMPFILE="$(mktemp)"
-HELP_TEMPFILE="$(mktemp)"
 
 
 # directories inside QUESTDB_DATA_DIR that we will chown
@@ -24,49 +22,11 @@ then
     DO_CHOWN=$IGNORE_FIND_AND_OWN_DIR
 fi
 
-cat << EOF > $HELP_TEMPFILE
-!!! The following files/directories have been found not to be owned by the questdb user/group, which may cause QuestDB to fail to start. !!!
-
-To allow the questdb container image to change the file ownership for you, please run the container with the -e DO_CHOWN=true option.
-This will only work if you don't use --user argument when running the container image
-For example, you can use the command:
-  docker run -it -v /local-questdb-path:/var/lib/questdb -e DO_CHOWN=true questdb/questdb
-
-
-Alternatively, you can change the file ownership yourself.
-QuestDB usually runs under the questdb user with user id 10001 and group id 10001.
-To change the file ownership to questdb user, you can run the command chown 10001:10001 /local-questdb-path -R
-
-
-If you are running QuestDB on your local machine under a normal user (e.g., user id 1000) and you don't want to change the file permissions, 
-you can run the questdb container image with the --user $(id -u):$(id -g) option. 
-For example, you can use the command:
-  docker run -it -v /local-questdb-path:/var/lib/questdb --user $(id -u):$(id -g) questdb/questdb
-Or use environment variables QUESTDB_UID and QUESTDB_GID that should have the same effect:
-  docker run -it -v /local-questdb-path:/var/lib/questdb -e QUESTDB_UID=$(id -u) -e QUESTDB_GID=$(id -u) questdb/questdb
-
-If you want to run QuestDB as root, you can add the RUN_AS_ROOT environment variable when running questdb. 
-For example, you can use the command:
-  docker run -it -v /local-questdb-path:/var/lib/questdb -e RUN_AS_ROOT=true questdb/questdb
-
-EOF
-
-
-find_files_and_dirs_not_owned_by_user() {
-    local USER=$1
-    local GROUP=$2
-    # check if QUESTDB_DATA_DIR directory is owned by $USER:$GROUP
-    [ $(stat --format '%u:%g' ${QUESTDB_DATA_DIR}) == "$USER:$GROUP" ] || echo ${QUESTDB_DATA_DIR} > $TEMPFILE
-    find ${QUESTDB_DATA_DIR} "${LOCALDIRS[@]}" \( ! -user $USER -o ! -group $GROUP \) >> $TEMPFILE
-    grep . $TEMPFILE > /dev/null 2>&1 && cat $HELP_TEMPFILE && cat $TEMPFILE || echo -n
-    echo
-}
-
 find_and_own_dir() {
     local USER=$1
     local GROUP=$2
-    find_files_and_dirs_not_owned_by_user $USER $GROUP
-    while read -r line; do chown $USER:$GROUP $line; done < $TEMPFILE
+    [ $(stat --format '%u:%g' ${QUESTDB_DATA_DIR}) == "$USER:$GROUP" ] || chown "$USER:$GROUP" ${QUESTDB_DATA_DIR}
+    find ${QUESTDB_DATA_DIR} "${LOCALDIRS[@]}" \( ! -user $USER -o ! -group $GROUP \) -exec chown $USER:$GROUP '{}' \;
 }
 
 
@@ -99,8 +59,5 @@ if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ 
     exec gosu $QUESTDB_UID:$QUESTDB_GID "$@"
 fi
 
-if [ "$(id -u)" != '0' ] ; then
-    find_files_and_dirs_not_owned_by_user $(id -u 2>/dev/null) $(id -g 2>/dev/null)
-fi
 echo "Running as $(id -un 2>/dev/null) user"
 exec "$@"
