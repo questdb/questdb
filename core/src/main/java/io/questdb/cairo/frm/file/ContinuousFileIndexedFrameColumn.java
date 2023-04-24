@@ -48,15 +48,18 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
         int fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
-        long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, count << shl, false, MEMORY_TAG);
-        try {
-            indexWriter.rollbackConditionally(offset);
-            for (long i = 0; i < count; i++) {
-                indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), i + offset);
+        count -= sourceColumn.getColumnTop();
+        if (count > 0) {
+            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, count << shl, false, MEMORY_TAG);
+            try {
+                indexWriter.rollbackConditionally(offset);
+                for (long i = 0; i < count; i++) {
+                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), i + offset);
+                }
+                indexWriter.setMaxValue(offset + count - 1);
+            } finally {
+                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, count << shl, MEMORY_TAG);
             }
-            indexWriter.setMaxValue(offset + count - 1);
-        } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, count << shl, MEMORY_TAG);
         }
     }
 

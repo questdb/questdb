@@ -511,38 +511,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
-        try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
-            if (reader.size() > 0) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                int columnIndex = rnd.nextInt(metadata.getColumnCount());
-                for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    columnIndex += i;
-                    columnIndex = columnIndex % metadata.getColumnCount();
-                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
-                            && metadata.isColumnIndexed(columnIndex)) {
-                        break;
-                    }
-
-                    if (i == metadata.getColumnCount() - 1) {
-                        // No indexed symbols
-                        return;
-                    }
-                }
-
-                String columnName = metadata.getColumnName(columnIndex);
-                long randomRow = rnd.nextLong(reader.size());
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + tableNameNoWal + " limit " + randomRow + ", 1", sink);
-                String prefix = "a\n";
-                String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
-                String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
-                LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + indexedWhereClause, tableNameWal + indexedWhereClause, LOG);
-            }
-        }
-    }
-
     private void runFuzz(Rnd rnd) throws Exception {
         configOverrideO3ColumnMemorySize(rnd.nextInt(16 * 1024 * 1024));
 

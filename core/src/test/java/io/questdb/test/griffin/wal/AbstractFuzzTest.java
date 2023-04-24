@@ -35,6 +35,7 @@ import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.test.tools.TestUtils;
 
 public class AbstractFuzzTest extends AbstractGriffinTest {
     protected final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
@@ -83,6 +84,10 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         );
     }
 
+    protected static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
+        return 1 + rnd.nextInt(2);
+    }
+
     private String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
@@ -104,10 +109,6 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
             symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
         }
         return symbols;
-    }
-
-    protected static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
-        return 1 + rnd.nextInt(2);
     }
 
     protected static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
@@ -133,6 +134,38 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     protected static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
+    }
+
+    protected void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
+        try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
+            if (reader.size() > 0) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = rnd.nextInt(metadata.getColumnCount());
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    columnIndex += i;
+                    columnIndex = columnIndex % metadata.getColumnCount();
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                            && metadata.isColumnIndexed(columnIndex)) {
+                        break;
+                    }
+
+                    if (i == metadata.getColumnCount() - 1) {
+                        // No indexed symbols
+                        return;
+                    }
+                }
+
+                String columnName = metadata.getColumnName(columnIndex);
+                long randomRow = rnd.nextLong(reader.size());
+                sink.clear();
+                TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + tableNameNoWal + " limit " + randomRow + ", 1", sink);
+                String prefix = "a\n";
+                String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
+                String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+                LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + indexedWhereClause, tableNameWal + indexedWhereClause, LOG);
+            }
+        }
     }
 
     protected TableToken createInitialTable(String tableName1, boolean isWal, int rowCount) throws SqlException {

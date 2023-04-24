@@ -157,9 +157,11 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
 
-            String limit = " limit 172440, 172500";
+            String limit = "";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext,
                     tableName + limit, tableNameMerged + limit, LOG);
+            assertRandomIndexes(tableName, tableNameMerged, rnd);
         });
     }
+
 }
