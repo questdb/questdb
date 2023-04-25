@@ -483,7 +483,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             if (reader.size() > 0) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
-                    columnIndex = columnIndex % metadata.getColumnCount();
                     if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
                             && metadata.isColumnIndexed(columnIndex)) {
                         checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
