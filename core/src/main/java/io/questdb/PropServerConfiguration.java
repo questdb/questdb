@@ -28,8 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.AuthenticatorFactory;
+import io.questdb.cutlass.auth.DefaultAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -80,6 +80,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    private final AuthenticatorFactory authenticatorFactory;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -188,7 +189,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
-    private final AuthenticatorFactory authenticatorFactory;
     private final int queryCacheEventQueueCapacity;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -553,8 +553,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
-                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, cpuAvailable > 16 ? 1 : 0);
-                cpuUsed += this.httpMinWorkerCount;
+                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
                 this.httpMinWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_MIN_WORKER_AFFINITY, httpMinWorkerCount);
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
                 this.httpMinWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_THRESHOLD, 100);
@@ -2450,13 +2449,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropFactoryProvider implements FactoryProvider {
 
         @Override
-        public PGAuthenticatorFactory getPGAuthenticatorFactory() {
-            return PGBasicAuthenticatorFactory.INSTANCE;
+        public AuthenticatorFactory getAuthenticatorFactory() {
+            return authenticatorFactory;
         }
 
         @Override
-        public AuthenticatorFactory getAuthenticatorFactory() {
-            return authenticatorFactory;
+        public PGAuthenticatorFactory getPGAuthenticatorFactory() {
+            return PGBasicAuthenticatorFactory.INSTANCE;
         }
 
         @Override
@@ -2940,11 +2939,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
         @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
         public boolean getAutoCreateNewColumns() {
             return ilpAutoCreateNewColumns;
         }
@@ -3000,6 +2994,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return lineTcpReceiverDispatcherConfiguration;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
