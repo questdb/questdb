@@ -1268,7 +1268,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static <KeyT> void registerReplacements(
             Map<KeyT, String> map,
             KeyT old,
-            PropertyKey... replacements) {
+            PropertyKey... replacements
+    ) {
         StringBuilder sb = new StringBuilder("Replaced by ");
         for (int index = 0; index < replacements.length; ++index) {
             if (index > 0) {

@@ -480,7 +480,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testStashUnStash() {
+    public void testStashUnstash() {
         GenericLexer lexer = new GenericLexer(64);
         lexer.of("orange blue yellow green");
         TestUtils.assertEquals("orange", lexer.next());
@@ -528,7 +528,6 @@ public class GenericLexerTest {
         TestUtils.assertEquals("yellow", yellow);
         Assert.assertEquals(12, yellowLast);
         Assert.assertEquals(19, yellowPos);
-
 
         green = SqlUtil.fetchNext(lexer);
         TestUtils.assertEquals("green", green);
