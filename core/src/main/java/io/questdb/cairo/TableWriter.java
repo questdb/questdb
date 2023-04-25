@@ -3513,9 +3513,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean hasReaderLocks(long partitionTimestamp) {
-        long partitionTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-        return !txnScoreboard.isRangeAvailable(partitionTxn, txWriter.getTxn());
+    private boolean canAppendToPartitionPart(int partitionIndex) {
+        long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        if (fromTxn < 0) {
+            fromTxn = 0;
+        }
+        long toTxn = txWriter.getTxn();
+        if (partitionIndex + 1 < txWriter.getPartitionCount()) {
+            // If next partition is a split partition part of same logical partition
+            // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
+            // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
+            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
+                    txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
+                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
+            }
+        }
+
+        return txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
@@ -6672,8 +6686,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (subpartitions > Math.max(1, optimalPartitionCount)) {
                 squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount);
             } else if (subpartitions == 1) {
-                if (partitionIndexLo >= 0 ||
-                        partitionIndexLo == txWriter.getPartitionCount() || minSplitPartitionTimestamp == txWriter.getPartitionTimestampByIndex(partitionIndexLo)) {
+                if (partitionIndexLo >= 0 &&
+                        partitionIndexLo < txWriter.getPartitionCount() && minSplitPartitionTimestamp == txWriter.getPartitionTimestampByIndex(partitionIndexLo)) {
                     minSplitPartitionTimestamp = getPartitionTimestampOrMax(partitionIndexLo + 1);
                 }
             }
@@ -6700,7 +6714,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Move partitionIndexLo to the first unlocked partition in the range
             for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
-                if (!hasReaderLocks(txWriter.getPartitionTimestampByIndex(targetPartitionIndex))) {
+                if (canAppendToPartitionPart(targetPartitionIndex)) {
                     targetPartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo);
                     break;
                 }

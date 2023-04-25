@@ -181,4 +181,74 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
         });
     }
+
+    @Test
+    public void testSplitMidPartitionOpenReader() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_symbol(null,'5','16','2') as sym," +
+                            " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                            " from long_sequence(60*24*2)" +
+                            "), index(sym) timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile(
+                    "create table z as (" +
+                            "select" +
+                            " cast(x as int) * 1000000 i," +
+                            " -x - 1000000L as j," +
+                            " rnd_symbol(null,'5','16','2') as sym," +
+                            " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                            " from long_sequence(50))",
+                    sqlExecutionContext
+            );
+
+            compile(
+                    "create table y (" +
+                            "i int," +
+                            "j long," +
+                            "sym symbol," +
+                            "ts timestamp)",
+                    sqlExecutionContext
+            );
+            compile("insert into y select * from x", sqlExecutionContext);
+            compile("insert into y select * from z", sqlExecutionContext);
+
+            try (TableReader ignore = getReader("x")) {
+                compile("insert into x select * from z", sqlExecutionContext);
+
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        "y order by ts",
+                        "x",
+                        LOG,
+                        true
+                );
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
+                assertSql("select name, minTimestamp from table_partitions('x')", "name\tminTimestamp\n" +
+                        "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
+                        "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
+                        "2020-02-04T230100\t2020-02-04T23:01:00.000000Z\n" +
+                        "2020-02-05\t2020-02-05T00:00:00.000000Z\n");
+            }
+
+            // Another reader, should allow to squash partitions
+            try (TableReader ignore = getReader("x")) {
+                compile("insert into x(ts) values('2020-02-06')", sqlExecutionContext);
+                assertSql("select name, minTimestamp from table_partitions('x')", "name\tminTimestamp\n" +
+                        "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
+                        "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
+                        "2020-02-05\t2020-02-05T00:00:00.000000Z\n" +
+                        "2020-02-06\t2020-02-06T00:00:00.000000Z\n");
+            }
+
+            TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
+        });
+    }
 }
