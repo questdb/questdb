@@ -174,7 +174,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean sendParameterDescription;
     private boolean extendedQuery = false; // processing extended query protocol
     private boolean inErrorState = false; // error while processing extended query protocol
-    private boolean processingSyncRequest = false; // processing SYNC request
+    private boolean processingSyncRequest = false;
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
     private SuspendEvent suspendEvent;
@@ -1652,11 +1652,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
-        // after an error we only accept sync messages. everything else is ignored. from the postgres protocol documentation:
+        // after an error we only accept sync and flush messages. everything else is ignored. from the postgres protocol documentation:
         // "[...] The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected
         // while processing any extended-query message, the backend issues ErrorResponse, then reads and discards
         // messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing. [...]"
-        if (!inErrorState || type == 'S') {
+        if (!inErrorState || type == 'S' || type == 'H') {
             switch (type) {
                 case 'P': // parse
                     extendedQuery = true;
