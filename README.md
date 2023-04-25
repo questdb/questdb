@@ -48,6 +48,8 @@ QuestDB release and sample datasets:
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
 - Trades: live crypto market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
+- Gas Prices: 20 years of gas price fluctuation per galon with 1k+ rows
+- Weather: Climatic data of one decade (2010 - 2020) with 130k+ rows
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
 | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
