@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.RostiAllocFacade;
@@ -59,6 +60,8 @@ public interface ConfigurationOverrides {
     CharSequence getDefaultMapType();
 
     int getDefaultTableWriteMode();
+
+    FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
 
@@ -179,6 +182,8 @@ public interface ConfigurationOverrides {
     void setDefaultMapType(CharSequence defaultMapType);
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
+
+    void setFactoryProvider(FactoryProvider factoryProvider);
 
     void setFilesFacade(FilesFacade ff);
 
