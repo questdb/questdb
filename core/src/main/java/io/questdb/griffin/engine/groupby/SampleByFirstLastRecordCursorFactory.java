@@ -870,7 +870,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 public long getLong(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                        if (col != timestampIndex) {
+                            return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                        }
+                        // Special case - timestamp the sample by runs on
+                        // Take it from timestampOutBuff instead of column
+                        // It's the value of the beginning of the group, not where the first row found
+                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     } else {
                         return Numbers.LONG_NaN;
                     }
@@ -900,12 +906,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                 @Override
                 public long getTimestamp(int col) {
-                    if (col == timestampIndex) {
-                        // Special case - timestamp the sample by runs on
-                        // Take it from timestampOutBuff instead of column
-                        // It's the value of the beginning of the group, not where the first row found
-                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
-                    }
                     return getLong(col);
                 }
 
