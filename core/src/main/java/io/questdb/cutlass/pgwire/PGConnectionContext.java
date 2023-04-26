@@ -1830,7 +1830,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void prepareLoginResponse() {
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
-        responseAsciiSink.putNetworkInt(3);
+        responseAsciiSink.putNetworkInt(3); // clear text password
     }
 
     private void prepareNoDataMessage() {
@@ -2262,7 +2262,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 requireInitialMessage = false;
                 msgLimit = address + msgLen;
                 long lo = address + Long.BYTES;
-                // there is an extra byte at the end and it has to be 0
+                // there is an extra byte at the end, and it has to be 0
                 LOG.info()
                         .$("protocol [major=").$(protocol >> 16)
                         .$(", minor=").$((short) protocol)
