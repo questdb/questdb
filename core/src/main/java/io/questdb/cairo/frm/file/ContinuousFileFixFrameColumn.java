@@ -67,9 +67,7 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
             if (count > 0) {
                 int sourceFd = sourceColumn.getPrimaryFd();
                 long length = count << shl;
-                if (!ff.truncate(fd, (offset + count) << shl)) {
-                    throw CairoException.critical(ff.errno()).put("Cannot set file size [fd=").put(fd).put(", size=").put((offset + count) << shl).put(']');
-                }
+                TableUtils.allocateDiskSpace(ff, fd, (offset + count) << shl);
                 if (ff.copyData(sourceFd, fd, sourceOffset << shl, offset << shl, length) != length) {
                     throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
                             .put(", destOffset=").put(offset << shl)
@@ -93,9 +91,7 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
         assert count >= 0;
 
         if (count > 0) {
-            if (!ff.truncate(fd, (offset + count) << shl)) {
-                throw CairoException.critical(ff.errno()).put("Cannot set file size to pad with nulls [fd=").put(fd).put(", size=").put((offset + count) << shl).put(']');
-            }
+            TableUtils.allocateDiskSpace(ff, fd, (offset + count) << shl);
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, count << shl, true, MEMORY_TAG);
             try {
                 TableUtils.setNull(columnType, mappedAddress, count);

@@ -93,9 +93,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
                 long copySize = Unsafe.getUnsafe().getLong(srcFixAddr + sourceSize * Long.BYTES) - varSrcOffset;
                 assert copySize > 0 && copySize < 1L << 40;
 
-                if (!ff.truncate(varFd, varOffset + copySize)) {
-                    throw CairoException.critical(ff.errno()).put("Cannot set variable file size [fd=").put(varFd).put(", size=").put(varOffset + copySize).put(']');
-                }
+                TableUtils.allocateDiskSpace(ff, varFd, varOffset + copySize);
                 if (ff.copyData(sourceColumn.getPrimaryFd(), varFd, varSrcOffset, varOffset, copySize) != copySize) {
                     throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(varFd)
                             .put(", destOffset=").put(varOffset)
@@ -108,12 +106,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
                 }
 
                 long fixedOffset = offset * Long.BYTES;
-                if (!ff.truncate(fixedFd, fixedOffset + srcFixMapSize)) {
-                    throw CairoException.critical(ff.errno())
-                            .put("Cannot set variable file fixed size to [fd=").put(varFd)
-                            .put(", size=").put(varOffset + copySize).put(']');
-                }
-
+                TableUtils.allocateDiskSpace(ff, fixedFd, fixedOffset + srcFixMapSize);
                 long fixAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, fixedOffset, srcFixMapSize, true, MEMORY_TAG);
                 try {
                     Vect.shiftCopyFixedSizeColumnData(
@@ -146,9 +139,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
             long varOffset = getVarOffset(offset);
             long appendVarSize = count * (ColumnType.isString(columnType) ? Integer.BYTES : Long.BYTES);
 
-            if (!ff.truncate(varFd, varOffset + appendVarSize)) {
-                throw CairoException.critical(ff.errno()).put("Cannot set variable file size [fd=").put(varFd).put(", size=").put(varOffset + appendVarSize).put(']');
-            }
+            TableUtils.allocateDiskSpace(ff, varFd, varOffset + appendVarSize);
 
             // Set nulls in variable file
             long varAddr = TableUtils.mapAppendColumnBuffer(ff, varFd, varOffset, appendVarSize, true, MEMORY_TAG);
@@ -160,9 +151,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
             // Set pointers to nulls
             long fixedSize = count * Long.BYTES;
-            if (!ff.truncate(fixedFd, fixedOffset + fixedSize)) {
-                throw CairoException.critical(ff.errno()).put("Cannot set variable file size [fd=").put(varFd).put(", size=").put(varOffset + appendVarSize).put(']');
-            }
+            TableUtils.allocateDiskSpace(ff, fixedFd, fixedOffset + fixedSize);
             long fixAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, fixedOffset, fixedSize, true, MEMORY_TAG);
             try {
                 if (ColumnType.isString(columnType)) {
