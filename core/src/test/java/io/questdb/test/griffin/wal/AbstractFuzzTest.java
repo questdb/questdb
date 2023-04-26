@@ -84,8 +84,16 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         );
     }
 
-    protected static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
-        return 1 + rnd.nextInt(2);
+    private static void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
+        long randomRow = rnd.nextLong(recordCount);
+        sink.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+        String prefix = "a\n";
+        String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
+        String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+        LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
+        String limit = ""; // For debugging
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
     }
 
     private String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
@@ -136,34 +144,20 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
     }
 
+    protected static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
+        return 1 + rnd.nextInt(2);
+    }
+
     protected void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
         try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
             if (reader.size() > 0) {
                 TableReaderMetadata metadata = reader.getMetadata();
-                int columnIndex = rnd.nextInt(metadata.getColumnCount());
-                for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    columnIndex += i;
-                    columnIndex = columnIndex % metadata.getColumnCount();
+                for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
                     if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
                             && metadata.isColumnIndexed(columnIndex)) {
-                        break;
-                    }
-
-                    if (i == metadata.getColumnCount() - 1) {
-                        // No indexed symbols
-                        return;
+                        checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
                     }
                 }
-
-                String columnName = metadata.getColumnName(columnIndex);
-                long randomRow = rnd.nextLong(reader.size());
-                sink.clear();
-                TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + tableNameNoWal + " limit " + randomRow + ", 1", sink);
-                String prefix = "a\n";
-                String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
-                String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
-                LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + indexedWhereClause, tableNameWal + indexedWhereClause, LOG);
             }
         }
     }

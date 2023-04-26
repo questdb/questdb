@@ -755,7 +755,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
-        w.setMaxValue(count + rowAdjust - 1);
+        w.setMaxValue(row + rowAdjust);
     }
 
     // lowest timestamp of partition where data is headed
