@@ -1180,10 +1180,10 @@ public final class TableUtils {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
-    public static void setSinkForPartition(CharSink path, int partitionBy, long timestamp, long nameTxn) {
-        PartitionBy.setSinkForPartition(path, partitionBy, timestamp);
+    public static void setSinkForPartition(CharSink sink, int partitionBy, long timestamp, long nameTxn) {
+        PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
         if (nameTxn > -1L) {
-            path.put('.').put(nameTxn);
+            sink.put('.').put(nameTxn);
         }
     }
 

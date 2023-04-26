@@ -1187,7 +1187,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             compile("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
 
                             //noinspection resource
-                            Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200252-799000.1").concat("ts.d");
+                            Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
                             FilesFacade ff = configuration.getFilesFacade();
                             Assert.assertTrue(ff.exists(path.$()));
 

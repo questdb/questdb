@@ -2727,6 +2727,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
     }
 
+    private boolean canAppendToPartitionPart(int partitionIndex) {
+        long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        if (fromTxn < 0) {
+            fromTxn = 0;
+        }
+        long toTxn = txWriter.getTxn();
+        if (partitionIndex + 1 < txWriter.getPartitionCount()) {
+            // If next partition is a split partition part of same logical partition
+            // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
+            // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
+            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
+                    txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
+                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
+            }
+        }
+
+        return txnScoreboard.isRangeAvailable(fromTxn, toTxn);
+    }
+
     private void cancelRowAndBump() {
         rowCancel();
         masterRef++;
@@ -3412,6 +3431,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metrics.tableWriter().incrementO3Commits();
     }
 
+    private CharSequence formatPartitinonForTimestamp(long partitionTimestamp, long nameTxn) {
+        fileNameSink.clear();
+        TableUtils.setSinkForPartition(fileNameSink, partitionBy, partitionTimestamp, nameTxn);
+        return fileNameSink;
+    }
+
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         Misc.free(columns.getAndSetQuick(pi, NullMemory.INSTANCE));
         Misc.free(columns.getAndSetQuick(si, NullMemory.INSTANCE));
@@ -3511,25 +3536,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             lastErrno = O3_ERRNO_FATAL;
             logRecord.$(", ex=").$(e).I$();
         }
-    }
-
-    private boolean canAppendToPartitionPart(int partitionIndex) {
-        long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        if (fromTxn < 0) {
-            fromTxn = 0;
-        }
-        long toTxn = txWriter.getTxn();
-        if (partitionIndex + 1 < txWriter.getPartitionCount()) {
-            // If next partition is a split partition part of same logical partition
-            // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
-            // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
-            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
-                    txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
-                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
-            }
-        }
-
-        return txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
@@ -4751,13 +4757,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (newPartitionTimestamp != partitionTimestamp) {
             LOG.info()
-                    .$("split partition [table=").utf8(tableToken.getTableName())
-                    .$(", ts=").$ts(partitionTimestamp)
-                    .$(", txn=").$(txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp))
-                    .$(", oldPartitionSize=").$(oldPartitionSize)
-                    .$(", ts=").$ts(newPartitionTimestamp)
-                    .$(", txn=").$(txWriter.txn)
-                    .$(", newPartitionSize=").$(newPartitionSize)
+                    .$("o3 split partition [table=").utf8(tableToken.getTableName())
+                    .$(", part1=").$(
+                            formatPartitinonForTimestamp(
+                                    partitionTimestamp,
+                                    txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp)
+                            )
+                    )
+                    .$(", part1OldSize=").$(
+                            txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp)
+                    )
+                    .$(", part1NewSize=").$(oldPartitionSize)
+                    .$(", part2=").$(formatPartitinonForTimestamp(newPartitionTimestamp, txWriter.txn))
+                    .$(", part2Size=").$(newPartitionSize)
                     .I$();
             this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, partitionTimestamp);
             txWriter.bumpPartitionTableVersion();

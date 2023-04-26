@@ -67,42 +67,42 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             compile(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
-                            " from long_sequence(700)",
+                            " from long_sequence(200)",
                     sqlExecutionContext
             );
 
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t820\t2020-02-04T195900-000001\n");
+                    "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
 
             // Partition "2020-02-04" squashed the new update
 
-            compile(sqlPrefix +
-                            " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
-                            " from long_sequence(50)",
-                    sqlExecutionContext
-            );
-
-            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1250\t2020-02-04\n" +
-                    "2020-02-04T20:00:00.000000Z\t820\t2020-02-04T195900-000001\n");
-
             try (TableReader ignore = getReader("x")) {
-                // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
                 compile(sqlPrefix +
-                                " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
+                                " timestamp_sequence('2020-02-04T18:01', 60*1000000L) ts" +
                                 " from long_sequence(50)",
                         sqlExecutionContext
                 );
 
+                // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1083\t2020-02-04\n" +
-                        "2020-02-04T18:01:01.200000Z\t219\t2020-02-04T180100-000001\n" +
-                        "2020-02-04T20:01:01.100000Z\t818\t2020-02-04T200100-000001\n");
+                        "2020-02-04T00:00:00.000000Z\t1080\t2020-02-04\n" +
+                        "2020-02-04T18:00:00.000000Z\t170\t2020-02-04T175900-000001\n" +
+                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
             }
 
-            // commit in order, should squash partitions
+            // should squash partitions into 2 pieces
+            compile(sqlPrefix +
+                            " timestamp_sequence('2020-02-04T18:01', 1000000L) ts" +
+                            " from long_sequence(50)",
+                    sqlExecutionContext
+            );
+
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1300\t2020-02-04\n" +
+                    "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+
             compile(sqlPrefix +
                             " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
                             " from long_sequence(50)",
@@ -110,15 +110,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1302\t2020-02-04\n" +
-                    "2020-02-04T20:01:01.100000Z\t868\t2020-02-04T200100-000001\n");
-
-            // commit in order, rolls to next partition, should squash "2020-02-04" to single part
-            compile(sqlPrefix +
-                            " timestamp_sequence('2020-02-04T22:01:13', 60*1000000L) ts" +
-                            " from long_sequence(50)",
-                    sqlExecutionContext
-            );
+                    "2020-02-04T00:00:00.000000Z\t1300\t2020-02-04\n" +
+                    "2020-02-04T20:00:00.000000Z\t370\t2020-02-04T195900-000001\n");
 
             // commit in order rolls to the next partition, should squash partition "2020-02-04" to single part
             compile(sqlPrefix +
@@ -128,7 +121,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t2220\t2020-02-04\n" +
+                    "2020-02-04T00:00:00.000000Z\t1670\t2020-02-04\n" +
                     "2020-02-05T01:01:15.000000Z\t50\t2020-02-05\n");
         });
     }
@@ -206,12 +199,12 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             }
 
             assertSql("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", "i\tj\tstr\tts\n" +
-                    "34\t-34\tOPHNIMY\t2020-02-03T17:00:00.000000Z\n" +
-                    "35\t-35\tDTNPHFLPBNHGZWW\t2020-02-03T17:00:00.000000Z\n" +
-                    "1000000\t-1000001\tXEJCTIZKYFLUHZQS\t2020-02-03T17:00:00.000000Z\n" +
                     "1000000\t-1000001\tXMKJSM\t2020-02-03T17:00:00.000000Z\n" +
+                    "1000000\t-1000001\tXEJCTIZKYFLUHZQS\t2020-02-03T17:00:00.000000Z\n" +
+                    "0\t0\t\t1970-01-01T00:00:00.000000Z\n" +
+                    "0\t0\tXEJCTIZKYFLUHZQS\t1970-01-01T00:00:00.000000Z\n" +
                     "36\t-36\tNGTNLE\t2020-02-03T18:00:00.000000Z\n" +
-                    "37\t-37\t\t2020-02-03T18:00:00.000000Z");
+                    "37\t-37\t\t2020-02-03T18:00:00.000000Z\n");
         });
     }
 

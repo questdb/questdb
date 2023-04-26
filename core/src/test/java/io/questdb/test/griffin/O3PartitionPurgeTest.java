@@ -420,6 +420,9 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     // in order insert
                     compiler.compile("insert into tbl select 2, '2022-02-26T19'", sqlExecutionContext);
 
+                    path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
                     // OOO insert
                     compiler.compile("insert into tbl select 4, '2022-02-24T19'", sqlExecutionContext);
 
@@ -435,10 +438,10 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             }
             runPartitionPurgeJobs();
 
-            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T19.1");
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.1");
             Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T19.3");
+            path.of(engine.getConfiguration().getRoot()).concat(token).concat("2022-02-24T185959-687501.3");
             Assert.assertTrue(Chars.toString(path), Files.exists(path));
         });
     }

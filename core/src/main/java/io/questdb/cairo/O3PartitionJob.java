@@ -481,9 +481,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 boolean partitionSplit = false;
 
                 if (prefixType == O3_BLOCK_DATA
-                        && mergeType == O3_BLOCK_MERGE
                         && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                        && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Lo - mergeO3Hi)
+                        && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                 ) {
                     // large prefix copy, better to split the partition
                     long maxSourceTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + prefixHi * Long.BYTES);
@@ -507,7 +506,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long newMergeDataLo = mergeDataLo - shiftLeft;
                             // Check that splitting still makes sense
                             if (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Lo - mergeO3Hi)
+                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                             ) {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;
