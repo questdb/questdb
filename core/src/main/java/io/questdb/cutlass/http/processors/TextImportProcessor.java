@@ -94,7 +94,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             try {
                 transientState.lo = lo;
                 transientState.hi = hi;
-                transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
+                transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);

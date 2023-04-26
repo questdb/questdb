@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -182,7 +182,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
+        TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
@@ -227,7 +227,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
         try {
-            entry.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
+            entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
@@ -267,7 +267,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
         tableToken = engine.createTable(
-                AllowAllCairoSecurityContext.INSTANCE,
+                AllowAllSecurityContext.INSTANCE,
                 ddlMem,
                 path,
                 true,
@@ -281,7 +281,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         TableToken tableToken = engine.getTableTokenIfExists(token);
         switch (entry.state) {
             case 0:
-                int exists = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableToken);
+                int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;

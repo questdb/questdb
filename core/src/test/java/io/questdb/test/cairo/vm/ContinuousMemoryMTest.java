@@ -41,6 +41,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(ContinuousMemoryMTest.class);
@@ -143,6 +145,45 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             // read these values back from
             assertRandomByte(rwMem, MAX, N);
             assertRandomByte(roMem, MAX, N);
+        });
+    }
+
+    @Test
+    public void testCMARWToleratesLengthFailureOnClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Path path = Path.getThreadLocal(root).concat("t.d").$();
+            AtomicBoolean trigger = new AtomicBoolean();
+
+            FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long length(int fd) {
+                    long r = Files.length(fd);
+                    if (r < 0 || trigger.get()) {
+                        throw CairoException.critical(Os.errno()).put("Checking file size failed");
+                    }
+                    return r;
+                }
+            };
+
+            MemoryCMARW rwMem1 = Vm.getCMARWInstance(
+                    ff,
+                    path,
+                    Files.PAGE_SIZE,
+                    (long) (Files.PAGE_SIZE * 3.5),
+                    MemoryTag.MMAP_DEFAULT,
+                    configuration.getWriterFileOpenOpts()
+            );
+
+            rwMem1.jumpTo((long) (Files.PAGE_SIZE * 2.5));
+            trigger.set(true);
+            rwMem1.close();
+
+            rwMem1.of(TestFilesFacadeImpl.INSTANCE, path, Files.PAGE_SIZE,
+                    (long) (Files.PAGE_SIZE * 1.5),
+                    MemoryTag.MMAP_DEFAULT);
+            rwMem1.putLong(123);
+
+            rwMem1.close();
         });
     }
 
@@ -747,6 +788,35 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                 Assert.assertTrue(ff.remove(path));
             }
         }
+    }
+
+    @Test
+    public void testTruncateSameFileWithDifferentFd() {
+        final Path path = Path.getThreadLocal(root).concat("t.d").$();
+
+        MemoryCMARW rwMem1 = Vm.getCMARWInstance(
+                TestFilesFacadeImpl.INSTANCE,
+                path,
+                Files.PAGE_SIZE,
+                (long) (Files.PAGE_SIZE * 1.5),
+                MemoryTag.MMAP_DEFAULT,
+                configuration.getWriterFileOpenOpts()
+        );
+
+        MemoryCMARW rwMem2 = Vm.getCMARWInstance(
+                TestFilesFacadeImpl.INSTANCE,
+                path,
+                Files.PAGE_SIZE,
+                (long) (Files.PAGE_SIZE * 3.5),
+                MemoryTag.MMAP_DEFAULT,
+                configuration.getWriterFileOpenOpts()
+        );
+
+        rwMem1.close();
+
+        rwMem2.jumpTo((long) (Files.PAGE_SIZE * 2.5));
+        // Assert no errors on close
+        rwMem2.close();
     }
 
     private void assertBool(MemoryR rwMem, int count) {

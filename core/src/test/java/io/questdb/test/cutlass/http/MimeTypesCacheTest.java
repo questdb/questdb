@@ -30,19 +30,21 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.io.InputStream;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class MimeTypesCacheTest {
+public class MimeTypesCacheTest extends AbstractTest {
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -137,14 +139,19 @@ public class MimeTypesCacheTest {
                         filePath = Files.getResourcePath(getClass().getResource("/mime.types"));
                     }
                     path.of(filePath).$();
-                    MimeTypesCache mimeTypes = new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path);
-                    Assert.assertEquals(980, mimeTypes.size());
-                    TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
-                    TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
-                    TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("inkml"));
-                    TestUtils.assertEquals("application/mp21", mimeTypes.get("m21"));
-                    TestUtils.assertEquals("application/mp21", mimeTypes.get("mp21"));
-                    TestUtils.assertEquals("application/mp4", mimeTypes.get("mp4s"));
+                    assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleResource() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() throws Exception {
+                try (InputStream inputStream = getClass().getResourceAsStream("/mime.types")) {
+                    assertMimeTypes(new MimeTypesCache(inputStream));
                 }
             }
         });
@@ -220,6 +227,17 @@ public class MimeTypesCacheTest {
         }, "wrong file size");
 
         Assert.assertEquals(1, closeCount.get());
+    }
+
+    private static void assertMimeTypes(MimeTypesCache mimeTypes) {
+        Assert.assertEquals(981, mimeTypes.size());
+        TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
+        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
+        TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("inkml"));
+        TestUtils.assertEquals("application/mp21", mimeTypes.get("m21"));
+        TestUtils.assertEquals("application/mp21", mimeTypes.get("mp21"));
+        TestUtils.assertEquals("application/mp4", mimeTypes.get("mp4s"));
+        TestUtils.assertEquals("x-conference/x-cooltalk", mimeTypes.get("ice"));
     }
 
     private void testFailure(FilesFacade ff, CharSequence startsWith) throws Exception {

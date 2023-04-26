@@ -37,14 +37,12 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import sun.misc.Signal;
 
 import java.io.*;
 import java.net.*;
 import java.nio.file.Paths;
 import java.util.Enumeration;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -53,32 +51,26 @@ import java.util.zip.ZipInputStream;
 public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
-    private static final String BANNER =
-            "     ___                  _   ____  ____\n" +
-                    "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
-                    "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
-                    "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
-                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
     private static final String CONFIG_FILE = "/server.conf";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
     private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
     private final String banner;
-    private final PropServerConfiguration config;
+    private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
-        this(BANNER, System.getenv(), null, args);
+        this(new DefaultBootstrapConfiguration(), args);
     }
 
-    public Bootstrap(String banner, @Nullable Map<String, String> env, FilesFacade ffOverride, String... args) {
+    public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
-        this.banner = banner;
+        this.banner = bootstrapConfiguration.getBanner();
 
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
@@ -90,6 +82,7 @@ public class Bootstrap {
         if (!rootPath.exists()) {
             throw new BootstrapException("Root directory does not exist: " + rootDirectory);
         }
+
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
             Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
         }
@@ -148,29 +141,51 @@ public class Bootstrap {
         }
 
         try {
-            // site
-            extractSite();
+            if (bootstrapConfiguration.useSite()) {
+                // site
+                extractSite();
+            }
 
-            // /server.conf properties
-            final Properties properties = loadProperties(rootPath);
-            config = ffOverride == null
-                    ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
-                    : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
-                private CairoConfiguration cairoConf;
+            ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
+            if (configuration == null) {
+                // /server.conf properties
+                final Properties properties = loadProperties();
+                final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
+                if (ffOverride == null) {
+                    config = new PropServerConfiguration(
+                            rootDirectory,
+                            properties,
+                            bootstrapConfiguration.getEnv(),
+                            log,
+                            buildInformation
+                    );
+                } else {
+                    config = new PropServerConfiguration(
+                            rootDirectory,
+                            properties,
+                            bootstrapConfiguration.getEnv(),
+                            log,
+                            buildInformation
+                    ) {
+                        private CairoConfiguration cairoConf;
 
-                @Override
-                public CairoConfiguration getCairoConfiguration() {
-                    if (cairoConf == null) {
-                        cairoConf = new PropCairoConfiguration() {
-                            @Override
-                            public FilesFacade getFilesFacade() {
-                                return ffOverride;
+                        @Override
+                        public CairoConfiguration getCairoConfiguration() {
+                            if (cairoConf == null) {
+                                cairoConf = new PropCairoConfiguration() {
+                                    @Override
+                                    public FilesFacade getFilesFacade() {
+                                        return ffOverride;
+                                    }
+                                };
                             }
-                        };
-                    }
-                    return cairoConf;
+                            return cairoConf;
+                        }
+                    };
                 }
-            };
+            } else {
+                config = configuration;
+            }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (Throwable e) {
@@ -219,10 +234,7 @@ public class Bootstrap {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         NativeLPSZ name = new NativeLPSZ();
-        try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
-        ) {
+        try (Path path = new Path().of(dbRoot).slash$(); Path other = new Path().of(dbRoot).slash$()) {
             int plen = path.length();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
@@ -241,12 +253,7 @@ public class Bootstrap {
                         if (shouldRename && ff.rename(path, other) == 0) {
                             log.criticalW().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW()
-                                    .$("could not rename crash file [path=").$(path)
-                                    .$(", errno=").$(ff.errno())
-                                    .$(", index=").$(counter.get())
-                                    .$(", max=").$(maxFiles)
-                                    .I$();
+                            log.criticalW().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
                         }
                     }
                 }
@@ -256,53 +263,51 @@ public class Bootstrap {
 
     public void extractSite() throws IOException {
         URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
-        long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
             log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
         } else {
-            thisVersion = resource.openConnection().getLastModified();
-        }
+            long thisVersion = resource.openConnection().getLastModified();
+            final String publicDir = rootDirectory + Files.SEPARATOR + "public";
+            final byte[] buffer = new byte[1024 * 1024];
 
-        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-        final byte[] buffer = new byte[1024 * 1024];
-
-        boolean extracted = false;
-        final String oldVersionStr = getPublicVersion(publicDir);
-        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
-        if (oldVersionStr == null) {
-            if (thisVersion != 0) {
-                extractSite0(publicDir, buffer, Long.toString(thisVersion));
-            } else {
-                extractSite0(publicDir, buffer, Chars.toString(dbVersion));
-            }
-            extracted = true;
-        } else {
-            // This is a hack to deal with RT package problem
-            // in this package "thisVersion" is always 0, and we need to fall back
-            // to the database version.
-            if (thisVersion == 0) {
-                if (!Chars.equals(oldVersionStr, dbVersion)) {
+            boolean extracted = false;
+            final String oldVersionStr = getPublicVersion(publicDir);
+            final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+            if (oldVersionStr == null) {
+                if (thisVersion != 0) {
+                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                } else {
                     extractSite0(publicDir, buffer, Chars.toString(dbVersion));
-                    extracted = true;
                 }
+                extracted = true;
             } else {
-                // it is possible that old version is the database version
-                // which means user might have switched from RT distribution to no-JVM on the same data dir
-                // in this case we might fail to parse the version string
-                try {
-                    final long oldVersion = Numbers.parseLong(oldVersionStr);
-                    if (thisVersion > oldVersion) {
+                // This is a hack to deal with RT package problem
+                // in this package "thisVersion" is always 0, and we need to fall back
+                // to the database version.
+                if (thisVersion == 0) {
+                    if (!Chars.equals(oldVersionStr, dbVersion)) {
+                        extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                        extracted = true;
+                    }
+                } else {
+                    // it is possible that old version is the database version
+                    // which means user might have switched from RT distribution to no-JVM on the same data dir
+                    // in this case we might fail to parse the version string
+                    try {
+                        final long oldVersion = Numbers.parseLong(oldVersionStr);
+                        if (thisVersion > oldVersion) {
+                            extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                            extracted = true;
+                        }
+                    } catch (NumericException e) {
                         extractSite0(publicDir, buffer, Long.toString(thisVersion));
                         extracted = true;
                     }
-                } catch (NumericException e) {
-                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                    extracted = true;
                 }
             }
-        }
-        if (!extracted) {
-            log.infoW().$("Web Console is up to date").$();
+            if (!extracted) {
+                log.infoW().$("Web Console is up to date").$();
+            }
         }
     }
 
@@ -310,7 +315,11 @@ public class Bootstrap {
         return banner;
     }
 
-    public PropServerConfiguration getConfiguration() {
+    public BuildInformation getBuildInformation() {
+        return buildInformation;
+    }
+
+    public ServerConfiguration getConfiguration() {
         return config;
     }
 
@@ -320,6 +329,22 @@ public class Bootstrap {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public String getRootDirectory() {
+        return rootDirectory;
+    }
+
+    @NotNull
+    public Properties loadProperties() throws IOException {
+        final Properties properties = new Properties();
+        java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+        log.advisoryW().$("Server config: ").$(configFile).$();
+
+        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
+            properties.load(is);
+        }
+        return properties;
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -433,18 +458,6 @@ public class Bootstrap {
         copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
     }
 
-    @NotNull
-    private Properties loadProperties(File rootPath) throws IOException {
-        final Properties properties = new Properties();
-        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
-        log.advisoryW().$("Server config: ").$(configFile).$();
-
-        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
-            properties.load(is);
-        }
-        return properties;
-    }
-
     private void reportValidateConfig() {
         final boolean httpEnabled = config.getHttpServerConfiguration().isEnabled();
         final boolean httpReadOnly = config.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
@@ -469,8 +482,7 @@ public class Bootstrap {
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input");
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker");
             verifyFileOpts(path, cairoConfig);
-            cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) ->
-                    verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']'));
+            cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']'));
         }
         if (JitUtil.isJitSupported()) {
             final int jitMode = cairoConfig.getSqlJitMode();
@@ -508,11 +520,9 @@ public class Bootstrap {
         }
     }
 
-    static void logWebConsoleUrls(PropServerConfiguration config, Log log, String banner) {
+    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner) {
         if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW().$('\n')
-                    .$(banner)
-                    .$("Web Console URL(s):").$("\n\n");
+            final LogRecord r = log.infoW().$('\n').$(banner).$("Web Console URL(s):").$("\n\n");
 
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();

@@ -58,7 +58,7 @@ public class TableReaderReloadBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
-                            configuration.getCairoSecurityContextFactory().getInstance(null),
+                            configuration.getSecurityContextFactory().getRootContext(),
                             null,
                             null,
                             -1,

@@ -26,27 +26,25 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
-public class HttpFlushQueryCacheTest {
+public class HttpFlushQueryCacheTest extends AbstractTest {
 
     private static final String JSON_DDL_RESPONSE = "0c\r\n" +
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -160,7 +158,7 @@ public class HttpFlushQueryCacheTest {
     }
 
     private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        final String baseDir = temp.getRoot().getAbsolutePath();
+        final String baseDir = root;
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
             public int getQueryCacheEventQueueCapacity() {
@@ -169,7 +167,7 @@ public class HttpFlushQueryCacheTest {
         };
         new HttpQueryTestBuilder()
                 .withWorkerCount(workerCount)
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)
                 .run(configuration, code);

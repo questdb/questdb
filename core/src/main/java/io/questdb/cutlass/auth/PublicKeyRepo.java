@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.CairoSecurityContext;
+import java.security.PublicKey;
 
-public class AllowAllCairoSecurityContext implements CairoSecurityContext {
-    public static final AllowAllCairoSecurityContext INSTANCE = new AllowAllCairoSecurityContext();
-
-    @Override
-    public boolean canWrite() {
-        return true;
-    }
+public interface PublicKeyRepo {
+    PublicKey getPublicKey(CharSequence keyId);
 }

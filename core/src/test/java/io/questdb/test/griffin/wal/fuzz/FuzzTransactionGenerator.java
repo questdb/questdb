@@ -67,6 +67,9 @@ public class FuzzTransactionGenerator {
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
 
+        // To prevent long loops of cancelling rows, limit max probability of cancelling rows
+        probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
+
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
         transactionCount = Math.min(transactionCount, 1_500_000 / rowCount);
 
@@ -121,7 +124,6 @@ public class FuzzTransactionGenerator {
                     size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
-                boolean allRowsSameTimestamp = rnd.nextDouble() <= probabilityOfSameTimestamp;
 
                 generateDataBlock(
                         transactionList,
@@ -138,9 +140,7 @@ public class FuzzTransactionGenerator {
                         probabilityOfTransactionRollback,
                         maxStrLenForStrColumns,
                         symbols,
-                        rnd.nextLong(),
-                        transactionCount,
-                        allRowsSameTimestamp
+                        probabilityOfSameTimestamp
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
@@ -293,29 +293,22 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
-            long seed,
-            long transactionCount,
-            boolean allRowsSameTimestamp
+            double probabilityOfRowsSameTimestamp
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
         final long delta = stopTs - startTs;
         for (int i = 0; i < rowCount; i++) {
-            if (allRowsSameTimestamp) {
-                if (i == 0) {
-                    timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount;
-                }
-            } else {
+            // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
+            if (rnd.nextDouble() >= probabilityOfRowsSameTimestamp) {
                 if (o3) {
-                    timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount + i;
+                    timestamp = startTs + rnd.nextLong(delta) + i;
                 } else {
                     timestamp = timestamp + delta / rowCount;
                 }
             }
-            // Use stable random seeds which depends on the transaction index and timestamp
-            // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
-            long seed1 = seed + timestamp;
-            long seed2 = timestamp;
+            long seed1 = rnd.nextLong();
+            long seed2 = rnd.nextLong();
             transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 

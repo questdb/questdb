@@ -26,11 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.*;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
-import io.questdb.cairo.security.CairoSecurityContextFactory;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlParserFactory;
+import io.questdb.griffin.SqlParserFactoryImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -45,11 +47,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final CharSequence root;
-    private final CairoSecurityContextFactory securityContextFactory = new AllowAllSecurityContextFactory();
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final boolean writerMixedIOEnabled;
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
@@ -59,6 +61,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
     }
 
     @Override
@@ -122,8 +125,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CairoSecurityContextFactory getCairoSecurityContextFactory() {
-        return securityContextFactory;
+    public SecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
     }
 
     @Override
@@ -725,6 +728,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public SqlParserFactory getSqlParserFactory() {
+        return SqlParserFactoryImpl.INSTANCE;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }
@@ -951,6 +959,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return true;
+    }
+
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        return writerMixedIOEnabled;
     }
 
     @Override

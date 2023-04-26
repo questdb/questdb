@@ -105,7 +105,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int defaultCommitMode;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
-    private final boolean directIOFlag;
     private final FilesFacade ff;
     private final StringSink fileNameSink = new StringSink();
     private final int fileOperationRetryCount;
@@ -123,6 +122,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
+    private final boolean mixedIOFlag;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
@@ -171,6 +171,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
+    private CommitListener commitListener;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -243,7 +244,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
+        this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
         this.messageBus = ownMessageBus != null ? ownMessageBus : messageBus;
@@ -2003,6 +2004,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables();
                 columnVersionWriter.readUnsafe();
+                closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -2402,6 +2404,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
         txWriter.setMinTimestamp(Math.min(txWriter.getMinTimestamp(), txWriter.getLagMinTimestamp()));
@@ -2411,6 +2414,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         txWriter.setLagRowCount(txWriter.getLagRowCount() - lagRowCount);
         txWriter.setMaxTimestamp(maxTimestamp);
+        if (indexCount > 0) {
+            updateIndexesParallel(initialTransientRowCount, txWriter.getTransientRowCount());
+        }
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(
@@ -2927,7 +2933,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            return getTxn();
+            final long txn = getTxn();
+
+            if (commitListener != null) {
+                commitListener.onCommit(txn, rowsAdded);
+            }
+            return txn;
         }
         return TableSequencer.NO_TXN;
     }
@@ -2998,7 +3009,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         configureNullSetters(o3NullSetters2, type, oooPrimary2, oooSecondary2);
 
-        if (indexFlag) {
+        if (indexFlag && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer());
         }
         rowValueIsNotNull.add(0);
@@ -3260,6 +3271,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastOpenPartitionTs = -1L;
         lastOpenPartitionIsReadOnly = false;
         freeColumns(truncate & !distressed);
+        commitListener = Misc.free(commitListener);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
@@ -3921,7 +3933,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcDataMax,
                         partitionMutates
                 );
-
             }
         }
     }
@@ -5282,7 +5293,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                     } else {
                         srcDataMax = 0;
-                        // A version needed to housekeep dropped partitions
+                        // A version needed to housekeep dropped partitions.
                         // When partition created without O3 merge, use `txn-1` as partition version.
                         // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
                         // be written within the same commit when new partition initially written in order
@@ -6938,6 +6949,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    boolean allowMixedIO() {
+        return mixedIOFlag;
+    }
+
     void closeActivePartition(long size) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
@@ -7025,10 +7040,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.set(offset + 7, srcDataMax);
 
         o3ClockDownPartitionUpdateCount();
-    }
-
-    boolean preferDirectIO() {
-        return directIOFlag;
     }
 
     void purgeUnusedPartitions() {

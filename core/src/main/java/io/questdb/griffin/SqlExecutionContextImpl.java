@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -51,7 +50,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
     private BindVariableService bindVariableService;
-    private CairoSecurityContext cairoSecurityContext;
+    private SecurityContext securityContext;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
@@ -72,7 +71,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
         cairoConfiguration = cairoEngine.getConfiguration();
         clock = cairoConfiguration.getMicrosecondClock();
-        cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
+        securityContext = cairoEngine.getConfiguration().getSecurityContextFactory().getRootContext();
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();
@@ -109,8 +108,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return cairoSecurityContext;
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     @Override
@@ -234,8 +233,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetryFacade.store(event, origin);
     }
 
-    public SqlExecutionContextImpl with(@NotNull CairoSecurityContext cairoSecurityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
-        this.cairoSecurityContext = cairoSecurityContext;
+    public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
+        this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         return this;
@@ -253,8 +252,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker;
     }
 
-    public SqlExecutionContextImpl with(@NotNull CairoSecurityContext cairoSecurityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd, long requestFd, @Nullable SqlExecutionCircuitBreaker circuitBreaker) {
-        this.cairoSecurityContext = cairoSecurityContext;
+    public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService) {
+        return with(securityContext, bindVariableService, null, -1, null);
+    }
+
+    public SqlExecutionContextImpl with(
+            @NotNull SecurityContext securityContext,
+            @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd,
+            long requestFd,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;

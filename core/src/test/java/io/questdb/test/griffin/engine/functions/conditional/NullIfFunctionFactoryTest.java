@@ -79,6 +79,28 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntNonConstant() throws Exception {
+        assertQuery(
+                "nullif\n" +
+                        "5\n" +
+                        "NaN\n" +
+                        "4\n",
+
+                "select nullif(five, four) from x \n" +
+                        "UNION \n" +
+                        "select nullif(five, five) from x \n" +
+                        "UNION \n" +
+                        "select nullif(four, five) from x \n",
+                "create table x as (" +
+                        "SELECT 5 as five, 4 as four" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testIntSimple() throws Exception {
         assertQuery(
                 "int\tnullif\n" +
@@ -90,6 +112,62 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
                 "select int,nullif(int,5) from x",
                 "create table x as (" +
                         "select rnd_int(1,5,0) as int\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLongConstNull() throws Exception {
+        assertQuery(
+                "nullif1\tnullif2\n" +
+                        "NaN\t5\n",
+                "select nullif(null,5::long) nullif1, nullif(5::long,null) nullif2",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLongNonConstant() throws Exception {
+        assertQuery(
+                "nullif\n" +
+                        "5\n" +
+                        "NaN\n" +
+                        "4\n",
+
+                "select nullif(five, four) from x \n" +
+                        "UNION \n" +
+                        "select nullif(five, five) from x \n" +
+                        "UNION \n" +
+                        "select nullif(four, five) from x \n",
+                "create table x as (" +
+                        "SELECT 5::long as five, 4::long as four" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
+
+    @Test
+    public void testLongSimple() throws Exception {
+        assertQuery(
+                "long\tnullif\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\tNaN\n" +
+                        "4\t4\n" +
+                        "5\t5\n",
+                "select long,nullif(long,3) from x",
+                "create table x as (" +
+                        "select x as long\n" +
                         "from long_sequence(5)" +
                         ")",
                 null,

@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -208,14 +209,10 @@ public class ConcurrentTest {
         final int total = 100_000;
         int subThreads = 4;
 
-        CyclicBarrier latch = new CyclicBarrier(subThreads + 1);
+        CyclicBarrier barrier = new CyclicBarrier(subThreads + 1);
 
         Thread pubTh = new Thread(() -> {
-            try {
-                latch.await();
-            } catch (InterruptedException | BrokenBarrierException e) {
-                throw new RuntimeException(e);
-            }
+            TestUtils.await(barrier);
 
             for (int i = 0; i < total; i++) {
                 long seq;
@@ -244,11 +241,7 @@ public class ConcurrentTest {
 
         for (int th = 0; th < subThreads; th++) {
             Thread subTh = new Thread(() -> {
-                try {
-                    latch.await();
-                } catch (InterruptedException | BrokenBarrierException e) {
-                    throw new RuntimeException(e);
-                }
+                TestUtils.await(barrier);
 
                 for (int i = 0; i < total; i++) {
                     long seq;

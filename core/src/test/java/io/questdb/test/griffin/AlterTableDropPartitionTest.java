@@ -398,7 +398,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
             assertPartitionResult("count\n44\n", "2020-01-01");
 
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
                 Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path));
@@ -424,7 +424,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
             assertReader("x\tts\n" +
                     "1\t2022-12-12T10:04:59.000000Z\n", "x");
 
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             TableReader rdr1 = getReader(tableToken);
             try (TableWriter tw = getWriter(tableToken)) {
 
@@ -955,7 +955,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
                     // Delete partition directory
                     String dirToDelete = insertIterations > 1 ? partitionDirBaseName + "." + (insertIterations - 1) : partitionDirBaseName;
-                    TableToken tableToken = engine.getTableToken(src.getName());
+                    TableToken tableToken = engine.verifyTableName(src.getName());
                     File dir = new File(Paths.get(root.toString(), tableToken.getDirName(), dirToDelete).toString());
                     deleteDir(dir);
 

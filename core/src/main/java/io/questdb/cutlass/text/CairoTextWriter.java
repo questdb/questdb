@@ -205,11 +205,11 @@ public class CairoTextWriter implements Closeable, Mutable {
     private TableToken createTable(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            CairoSecurityContext cairoSecurityContext,
+            SecurityContext securityContext,
             Path path
     ) throws TextException {
         TableToken tableToken = engine.createTable(
-                cairoSecurityContext,
+                securityContext,
                 ddlMem,
                 path,
                 false,
@@ -224,10 +224,9 @@ public class CairoTextWriter implements Closeable, Mutable {
             TableToken tableToken,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            CairoSecurityContext cairoSecurityContext,
             TypeManager typeManager
     ) {
-        final TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+        final TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
         // Now, compare column count. Cannot continue if different.
@@ -320,7 +319,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     void prepareTable(
-            CairoSecurityContext cairoSecurityContext,
+            SecurityContext securityContext,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
             Path path,
@@ -336,10 +335,10 @@ public class CairoTextWriter implements Closeable, Mutable {
         boolean canUpdateMetadata = true;
         TableToken tableToken = engine.getTableTokenIfExists(tableName);
 
-        switch (engine.getStatus(cairoSecurityContext, path, tableToken)) {
+        switch (engine.getTableStatus(path, tableToken)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);
-                writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+                tableToken = createTable(names, detectedTypes, securityContext, path);
+                writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
                 metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
@@ -347,13 +346,13 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
-                    engine.drop(cairoSecurityContext, path, tableToken);
-                    tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);
-                    writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+                    engine.drop(path, tableToken);
+                    tableToken = createTable(names, detectedTypes, securityContext, path);
+                    writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 } else {
                     canUpdateMetadata = false;
-                    initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, cairoSecurityContext, typeManager);
+                    initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     if (importedTimestampColumnName != null &&

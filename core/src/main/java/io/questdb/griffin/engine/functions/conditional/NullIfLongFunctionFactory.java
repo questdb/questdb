@@ -30,16 +30,16 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullIfIFunctionFactory implements FunctionFactory {
+public class NullIfLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "nullif(Ii)";
+        return "nullif(LL)";
     }
 
     @Override
@@ -50,33 +50,36 @@ public class NullIfIFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
+        return new NullIfLongFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final int replacement;
-        private final Function value;
+    private static class NullIfLongFunction extends LongFunction implements BinaryFunction {
+        private final Function longFunc1;
+        private final Function longFunc2;
 
-        public NullIfIFunction(Function value, int replacement) {
-            super();
-            this.value = value;
-            this.replacement = replacement;
+        public NullIfLongFunction(Function longFunc1, Function longFunc2) {
+            this.longFunc1 = longFunc1;
+            this.longFunc2 = longFunc2;
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public Function getLeft() {
+            return longFunc1;
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int val = value.getInt(rec);
-            return val == replacement ? Numbers.INT_NaN : val;
+        public long getLong(Record rec) {
+            return longFunc1.getLong(rec) == longFunc2.getLong(rec) ? Numbers.LONG_NaN : longFunc1.getLong(rec);
+        }
+
+        @Override
+        public Function getRight() {
+            return longFunc2;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("nullif(").val(value).val(',').val(replacement).val(')');
+            sink.val("nullif(").val(longFunc1).val(',').val(longFunc2).val(')');
         }
     }
 }

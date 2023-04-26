@@ -32,11 +32,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -46,11 +43,11 @@ import io.questdb.std.str.Path;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
-import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -62,11 +59,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3Test extends AbstractO3Test {
-    private static final Log LOG = LogFactory.getLog(O3Test.class);
-
     private final StringBuilder tstData = new StringBuilder();
-    @Rule
-    public TestName name = new TestName();
 
     @Before
     public void setUp4() {
@@ -78,7 +71,7 @@ public class O3Test extends AbstractO3Test {
         int count = Vect.getPerformanceCountersCount();
         if (count > 0) {
             tstData.setLength(0);
-            tstData.append(name.getMethodName()).append(",");
+            tstData.append(testName.getMethodName()).append(",");
             long total = 0;
             for (int i = 0; i < count; i++) {
                 long val = Vect.getPerformanceCounter(i);
@@ -1020,12 +1013,12 @@ public class O3Test extends AbstractO3Test {
                  SqlCompiler compiler,
                  SqlExecutionContext sqlExecutionContext) -> {
                     String strColVal =
-                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, directIoFlag=true]";
+                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, mixedIOFlag=true]";
                     int len = getStorageLength(strColVal);
                     int records = Integer.MAX_VALUE / len + 5;
 
                     // String
-                    String tableName = name.getMethodName();
+                    String tableName = testName.getMethodName();
                     compiler.compile("create table " + tableName + " as ( " +
                             "select " +
                             "'" + strColVal + "' as str, " +
@@ -1047,11 +1040,11 @@ public class O3Test extends AbstractO3Test {
                     Assert.assertTrue(max > (2L << 30));
 
                     TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
-                            strColVal + "\t2022-02-24T00:51:34.357000Z\n" +
-                            strColVal + "\t2022-02-24T00:51:34.358000Z\n" +
-                            strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
-                            "abcd\t2022-02-24T00:51:34.359000Z\n" +
-                            strColVal + "\t2022-02-24T00:51:34.360000Z\n");
+                            strColVal + "\t2022-02-24T00:51:43.301000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:43.302000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:43.303000Z\n" +
+                            "abcd\t2022-02-24T00:51:43.303000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:43.304000Z\n");
                 }, new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {

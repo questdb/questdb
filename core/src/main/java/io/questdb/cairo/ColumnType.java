@@ -326,7 +326,8 @@ public final class ColumnType {    //@formatter:off
                 || (fromType == STRING && toTag == GEOINT)
                 || (fromType == STRING && toTag == GEOLONG)
                 || (fromType == STRING && toTag == TIMESTAMP)
-                || (fromType == SYMBOL && toTag == TIMESTAMP);
+                || (fromType == SYMBOL && toTag == TIMESTAMP)
+                || (fromType == STRING && toTag == LONG256);
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {

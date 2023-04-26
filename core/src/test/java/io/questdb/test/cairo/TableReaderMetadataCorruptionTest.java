@@ -304,7 +304,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
                 String tableName = "all";
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
 
                 long len = TestFilesFacadeImpl.INSTANCE.length(path);

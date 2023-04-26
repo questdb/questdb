@@ -123,13 +123,13 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public ExpressionNode getTableNameExpr() {
-        return tableNameExpr;
+    public CharSequence getTableName() {
+        return tableNameExpr.token;
     }
 
     @Override
-    public CharSequence getTableName() {
-        return tableNameExpr.token;
+    public ExpressionNode getTableNameExpr() {
+        return tableNameExpr;
     }
 
     public void setBatchSize(long batchSize) {

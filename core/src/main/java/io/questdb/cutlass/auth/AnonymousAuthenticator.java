@@ -22,19 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.security;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.NetworkIOJob;
 
-public class CairoSecurityContextImpl implements CairoSecurityContext {
-    private final boolean canWrite;
+public class AnonymousAuthenticator implements Authenticator {
 
-    public CairoSecurityContextImpl(boolean canWrite) {
-        this.canWrite = canWrite;
+    public static final AnonymousAuthenticator INSTANCE = new AnonymousAuthenticator();
+
+    @Override
+    public long getRecvBufPos() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean canWrite() {
-        return canWrite;
+    public LineTcpConnectionContext.IOContextResult handleIO(NetworkIOJob job) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getRecvBufPseudoStart() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void init(int fd) {
+    }
+
+    @Override
+    public CharSequence getPrincipal() {
+        return null;
+    }
+
+    @Override
+    public boolean isAuthenticated() {
+        return true;
     }
 }

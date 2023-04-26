@@ -33,7 +33,7 @@ import org.junit.Test;
 public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
         AbstractGriffinTest.setUpStatic();
     }

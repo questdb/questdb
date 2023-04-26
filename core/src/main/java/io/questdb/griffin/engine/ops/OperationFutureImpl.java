@@ -145,11 +145,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             correlationId = engine.getCommandCorrelationId();
             asyncWriterCommand.setCommandCorrelationId(correlationId);
 
-            try (TableWriter writer = engine.getWriterOrPublishCommand(
-                    executionContext.getCairoSecurityContext(),
-                    asyncWriterCommand.getTableToken(),
-                    asyncWriterCommand
-            )) {
+            try (TableWriter writer = engine.getWriterOrPublishCommand(asyncWriterCommand.getTableToken(), asyncWriterCommand)) {
                 if (writer != null) {
                     LOG.info()
                             .$("published SYNC writer command [name=").$(cmdName)

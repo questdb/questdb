@@ -104,7 +104,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
@@ -408,7 +408,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
 
         context.with(
-                context.getCairoSecurityContext(),
+                context.getSecurityContext(),
                 context.getBindVariableService(),
                 context.getRandom(),
                 context.getRequestFd(),
@@ -426,7 +426,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
             TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
         } finally {
             context.with(
-                    context.getCairoSecurityContext(),
+                    context.getSecurityContext(),
                     context.getBindVariableService(),
                     context.getRandom(),
                     context.getRequestFd(),
