@@ -77,7 +77,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
             long varOffset = getVarOffset(offset);
 
             // Map source offset file, it will be used to copy data from anyway.
-            long srcFixMapSize = (sourceOffset + sourceSize + 1) * Long.BYTES;
+            long srcFixMapSize = (sourceSize - sourceOffset + 1) * Long.BYTES;
             final long srcFixAddr = TableUtils.mapAppendColumnBuffer(
                     ff,
                     sourceColumn.getSecondaryFd(),
@@ -108,14 +108,13 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
                 }
 
                 long fixedOffset = offset * Long.BYTES;
-                long fixedSize = (sourceSize - sourceOffset + 1) * Long.BYTES;
-                if (!ff.truncate(fixedFd, fixedOffset + fixedSize)) {
+                if (!ff.truncate(fixedFd, fixedOffset + srcFixMapSize)) {
                     throw CairoException.critical(ff.errno())
                             .put("Cannot set variable file fixed size to [fd=").put(varFd)
                             .put(", size=").put(varOffset + copySize).put(']');
                 }
 
-                long fixAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, fixedOffset, fixedSize, true, MEMORY_TAG);
+                long fixAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, fixedOffset, srcFixMapSize, true, MEMORY_TAG);
                 try {
                     Vect.shiftCopyFixedSizeColumnData(
                             varSrcOffset - varOffset,
@@ -125,7 +124,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
                             fixAddr
                     );
                 } finally {
-                    TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, fixedSize, MEMORY_TAG);
+                    TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, srcFixMapSize, MEMORY_TAG);
                 }
 
                 varAppendOffset = offset + (sourceSize - sourceOffset);

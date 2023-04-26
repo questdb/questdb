@@ -481,24 +481,63 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 boolean partitionSplit = false;
 
                 if (prefixType == O3_BLOCK_DATA
+                        && mergeType == O3_BLOCK_MERGE
                         && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                        && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo)
+                        && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Lo - mergeO3Hi)
                 ) {
                     // large prefix copy, better to split the partition
-                    LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
-                            .$(", timestamp=").$ts(partitionTimestamp)
-                            .$(", nameTxn=").$(srcDataTxn)
-                            .$(", partitionSize=").$(partitionSize)
-                            .$(", partitionNewSize=").$(prefixHi + 1)
-                            .$(", newPartitionTimestamp=").$ts(o3TimestampLo)
-                            .$(", nameTxn=").$(txn)
-                            .I$();
+                    long maxSourceTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + prefixHi * Long.BYTES);
+                    assert maxSourceTimestamp <= o3TimestampLo;
+                    boolean canSplit = true;
 
-                    partitionSplit = true;
-                    partitionTimestamp = o3TimestampLo;
-                    prefixType = O3_BLOCK_NONE;
-                    newPartitionSize -= prefixHi + 1;
-                    oldPartitionSize = prefixHi + 1;
+                    if (maxSourceTimestamp == o3TimestampLo) {
+                        // We cannot split the partition if existing data has timestamp with exactly same value
+                        // because 2 partition parts cannot have data with exactly same timestamp.
+                        // To make this work, we can reduce the prefix by the size of the rows which equals to o3TimestampLo.
+                        long newPrefixHi = -1 + Vect.boundedBinarySearch64Bit(
+                                srcTimestampAddr,
+                                o3TimestampLo,
+                                prefixLo,
+                                prefixHi - 1,
+                                BinarySearch.SCAN_UP
+                        );
+
+                        if (newPrefixHi > -1L) {
+                            long shiftLeft = prefixHi - newPrefixHi;
+                            long newMergeDataLo = mergeDataLo - shiftLeft;
+                            // Check that splitting still makes sense
+                            if (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
+                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Lo - mergeO3Hi)
+                            ) {
+                                prefixHi = newPrefixHi;
+                                mergeDataLo = newMergeDataLo;
+                                maxSourceTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + prefixHi * Long.BYTES);
+                                assert maxSourceTimestamp < o3TimestampLo;
+                            } else {
+                                canSplit = false;
+                            }
+                        } else {
+                            canSplit = false;
+                        }
+                    }
+
+                    if (canSplit) {
+                        partitionSplit = true;
+                        partitionTimestamp = maxSourceTimestamp + 1;
+                        prefixType = O3_BLOCK_NONE;
+                        newPartitionSize -= prefixHi + 1;
+                        oldPartitionSize = prefixHi + 1;
+
+                        // large prefix copy, better to split the partition
+                        LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
+                                .$(", timestamp=").$ts(oldPartitionTimestamp)
+                                .$(", nameTxn=").$(srcDataTxn)
+                                .$(", partitionSize=").$(partitionSize)
+                                .$(", partitionNewSize=").$(oldPartitionSize)
+                                .$(", newPartitionTimestamp=").$ts(partitionTimestamp)
+                                .$(", nameTxn=").$(txn)
+                                .I$();
+                    }
                 }
 
                 if (!partitionSplit && prefixType == O3_BLOCK_NONE) {

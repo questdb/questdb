@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -71,8 +73,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1202\t2020-02-04\n" +
-                    "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
+                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                    "2020-02-04T20:00:00.000000Z\t820\t2020-02-04T195900-000001\n");
 
             // Partition "2020-02-04" squashed the new update
 
@@ -83,8 +85,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1252\t2020-02-04\n" +
-                    "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
+                    "2020-02-04T00:00:00.000000Z\t1250\t2020-02-04\n" +
+                    "2020-02-04T20:00:00.000000Z\t820\t2020-02-04T195900-000001\n");
 
             try (TableReader ignore = getReader("x")) {
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
@@ -96,8 +98,8 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
                 assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                         "2020-02-04T00:00:00.000000Z\t1083\t2020-02-04\n" +
-                        "2020-02-04T18:01:00.000000Z\t219\t2020-02-04T180100\n" +
-                        "2020-02-04T20:01:00.000000Z\t818\t2020-02-04T200100\n");
+                        "2020-02-04T18:01:01.200000Z\t219\t2020-02-04T180100-000001\n" +
+                        "2020-02-04T20:01:01.100000Z\t818\t2020-02-04T200100-000001\n");
             }
 
             // commit in order, should squash partitions
@@ -109,7 +111,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t1302\t2020-02-04\n" +
-                    "2020-02-04T20:01:00.000000Z\t868\t2020-02-04T200100\n");
+                    "2020-02-04T20:01:01.100000Z\t868\t2020-02-04T200100-000001\n");
 
             // commit in order, rolls to next partition, should squash "2020-02-04" to single part
             compile(sqlPrefix +
@@ -128,6 +130,162 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t2220\t2020-02-04\n" +
                     "2020-02-05T01:01:15.000000Z\t50\t2020-02-05\n");
+        });
+    }
+
+    @Test
+    public void testSplitLastPartitionAtExistingTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table with 2 points every hour for 1 day of 2020-02-03
+
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " cast(" + start + " + (x / 2) * 60 * 60 * 1000000L  as timestamp) ts" +
+                            " from long_sequence(2*24)" +
+                            ") timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            CompiledQuery cc = compiler.compile("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", sqlExecutionContext);
+            try (var cursorFactory = cc.getRecordCursorFactory();
+                 // Open reader
+                 var cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                // Check that the originally open reader does not see these changes
+                sink.clear();
+                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                String expected = "i\tj\tstr\tts\n" +
+                        "34\t-34\tOPHNIMY\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\tDTNPHFLPBNHGZWW\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\tNGTNLE\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\t\t2020-02-03T18:00:00.000000Z\n";
+                TestUtils.assertEquals(expected, sink);
+
+                // Split at 17:30
+                compiler.compile(
+                        "insert into x " +
+                                "select" +
+                                " cast(x as int) * 1000000 i," +
+                                " -x - 1000000L as j," +
+                                " rnd_str(5,16,2) as str," +
+                                " timestamp_sequence('2020-02-03T17', 60*1000000L) ts" +
+                                " from long_sequence(1)",
+                        sqlExecutionContext
+                );
+
+                // Check that the originally open reader does not see these changes
+                sink.clear();
+                cursor.toTop();
+                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                TestUtils.assertEquals(expected, sink);
+
+                // add data at 17:15
+                compiler.compile(
+                        "insert into x " +
+                                "select" +
+                                " cast(x as int) * 1000000 i," +
+                                " -x - 1000000L as j," +
+                                " rnd_str(5,16,2) as str," +
+                                " timestamp_sequence('2020-02-03T17', 60*1000000L) ts" +
+                                " from long_sequence(1)",
+                        sqlExecutionContext
+                );
+
+                // Check that the originally open reader does not see these changes
+                sink.clear();
+                cursor.toTop();
+                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            assertSql("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", "i\tj\tstr\tts\n" +
+                    "34\t-34\tOPHNIMY\t2020-02-03T17:00:00.000000Z\n" +
+                    "35\t-35\tDTNPHFLPBNHGZWW\t2020-02-03T17:00:00.000000Z\n" +
+                    "1000000\t-1000001\tXEJCTIZKYFLUHZQS\t2020-02-03T17:00:00.000000Z\n" +
+                    "1000000\t-1000001\tXMKJSM\t2020-02-03T17:00:00.000000Z\n" +
+                    "36\t-36\tNGTNLE\t2020-02-03T18:00:00.000000Z\n" +
+                    "37\t-37\t\t2020-02-03T18:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testSplitLastPartitionLockedAndCannotBeAppended() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table with 2 points every hour for 1 day of 2020-02-03
+
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " cast(" + start + " + (x / 2) * 60 * 60 * 1000000L  as timestamp) ts" +
+                            " from long_sequence(2*24)" +
+                            ") timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            CompiledQuery cc = compiler.compile("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", sqlExecutionContext);
+            try (var cursorFactory = cc.getRecordCursorFactory();
+                 // Open reader
+                 var cursor = cursorFactory.getCursor(sqlExecutionContext)
+            ) {
+                // Check that the originally open reader does not see these changes
+                sink.clear();
+                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                String expected = "i\tj\tstr\tts\n" +
+                        "34\t-34\tOPHNIMY\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\tDTNPHFLPBNHGZWW\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\tNGTNLE\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\t\t2020-02-03T18:00:00.000000Z\n";
+                TestUtils.assertEquals(expected, sink);
+
+                // Split at 17:30
+                compiler.compile(
+                        "insert into x " +
+                                "select" +
+                                " cast(x as int) * 1000000 i," +
+                                " -x - 1000000L as j," +
+                                " rnd_str(5,16,2) as str," +
+                                " timestamp_sequence('2020-02-03T17:30', 60*1000000L) ts" +
+                                " from long_sequence(1)",
+                        sqlExecutionContext
+                );
+
+                // Check that the originally open reader does not see these changes
+                sink.clear();
+                cursor.toTop();
+                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                TestUtils.assertEquals(expected, sink);
+
+                // add data at 17:15
+                compiler.compile(
+                        "insert into x " +
+                                "select" +
+                                " cast(x as int) * 1000000 i," +
+                                " -x - 1000000L as j," +
+                                " rnd_str(5,16,2) as str," +
+                                " timestamp_sequence('2020-02-03T17:15', 60*1000000L) ts" +
+                                " from long_sequence(1)",
+                        sqlExecutionContext
+                );
+
+                // Check that the originally open reader does not see these changes
+                sink.clear();
+                cursor.toTop();
+                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                TestUtils.assertEquals(expected, sink);
+            }
         });
     }
 
@@ -234,7 +392,7 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
                 assertSql("select name, minTimestamp from table_partitions('x')", "name\tminTimestamp\n" +
                         "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
                         "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
-                        "2020-02-04T230100\t2020-02-04T23:01:00.000000Z\n" +
+                        "2020-02-04T225900-000001\t2020-02-04T23:00:00.000000Z\n" +
                         "2020-02-05\t2020-02-05T00:00:00.000000Z\n");
             }
 

@@ -1378,7 +1378,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void openLastPartition() {
         try {
             openPartition(txWriter.getLastPartitionTimestamp());
-            setAppendPosition(txWriter.getTransientRowCount(), false);
+            setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
         } catch (Throwable e) {
             freeColumns(false);
             throw e;
@@ -6739,7 +6739,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
                         TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
                         long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(sourcePartition);
-                        lastPartitionSquashed = sourcePartition == txWriter.getLastPartitionTimestamp();
+                        lastPartitionSquashed = partitionIndexLo + 2 == txWriter.getPartitionCount();
                         if (lastPartitionSquashed) {
                             closeActivePartition(false);
                             partitionSize = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
@@ -6751,6 +6751,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", source=").$ts(sourcePartition).$(", sourceSize=").$(partitionSize).I$();
                         try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
                             FrameAlgebra.append(targetFrame, sourceFrame);
+                            physicallyWrittenRowsSinceLastCommit.addAndGet(sourceFrame.getSize());
                         }
 
                         txWriter.removeAttachedPartitions(sourcePartition);
@@ -6765,7 +6766,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (lastPartitionSquashed) {
                         // last partition is squashed, adjust fixed/transient row sizes
                         long newTransientRowCount = targetFrame.getSize() - txWriter.getLagRowCount();
-                        txWriter.fixedRowCount += txWriter.transientRowCount - newTransientRowCount;
+                        assert newTransientRowCount >= 0;
+                        txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
+                        assert txWriter.fixedRowCount >= 0;
                         txWriter.transientRowCount = newTransientRowCount;
                     }
                 } finally {
