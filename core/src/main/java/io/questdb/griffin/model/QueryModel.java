@@ -117,6 +117,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
+    private boolean explicitTimestamp;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -379,6 +380,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableToken = null;
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
+        explicitTimestamp = false;
     }
 
     public void clearColumnMapStructs() {
@@ -849,6 +851,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return withClauseModel;
     }
 
+    public boolean hasExplicitTimestamp() {
+        return timestamp != null && explicitTimestamp;
+    }
+
     @Override
     public int hashCode() {
         int hash = super.hashCode();
@@ -894,6 +900,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isDistinct() {
         return distinct;
+    }
+
+    public boolean isExplicitTimestamp() {
+        return explicitTimestamp;
     }
 
     public boolean isLimitImplemented() {
@@ -1015,6 +1025,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setDistinct(boolean distinct) {
         this.distinct = distinct;
+    }
+
+    public void setExplicitTimestamp(boolean explicitTimestamp) {
+        this.explicitTimestamp = explicitTimestamp;
     }
 
     public void setIsUpdate(boolean isUpdate) {
