@@ -72,6 +72,7 @@ public interface SecurityContext {
     default void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
     }
 
+    //TODO: remove tableName, CREATE is granted on DB level
     default void authorizeTableCreate(CharSequence tableName) {
     }
 
