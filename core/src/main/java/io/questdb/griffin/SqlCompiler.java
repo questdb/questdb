@@ -2361,7 +2361,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (null != tok) {
+        if (tok != null) {
             // show tables
             // show columns from tab
             // show partitions from tab
@@ -2396,6 +2396,8 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     factory = new ShowTimeZoneFactory();
                 }
+            } else {
+                factory = unknownShowStatement(tok, executionContext);
             }
             if (factory != null) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -2403,7 +2405,7 @@ public class SqlCompiler implements Closeable {
                     return compiledQuery.of(factory);
                 }
                 Misc.free(factory);
-                throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [tok=").put(tok).put(']');
+                throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [").put(tok).put(']');
             }
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("expected ")
@@ -2416,11 +2418,11 @@ public class SqlCompiler implements Closeable {
     private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
-        if (null == tok || !isFromKeyword(tok)) {
+        if (tok == null || !isFromKeyword(tok)) {
             throw SqlException.position(lexer.getPosition()).put("expected 'from'");
         }
         tok = SqlUtil.fetchNext(lexer);
-        if (null == tok) {
+        if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
@@ -2742,6 +2744,10 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
+    }
+
+    protected RecordCursorFactory unknownShowStatement(CharSequence tok, SqlExecutionContext executionContext) throws SqlException {
+        return null; // no-op
     }
 
     @FunctionalInterface
