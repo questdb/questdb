@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey {
+public enum PropertyKey implements ConfigProperty {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
@@ -413,6 +413,7 @@ public enum PropertyKey {
         return Optional.ofNullable(nameMapping.get(name));
     }
 
+    @Override
     public String getPropertyPath() {
         return propertyPath;
     }

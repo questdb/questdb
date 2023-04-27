@@ -161,7 +161,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
                 assertQuery8("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances where");
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [tok=where]");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [where]");
             }
         });
     }

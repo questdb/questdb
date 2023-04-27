@@ -76,19 +76,19 @@ public class SqlCompiler implements Closeable {
     };
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-    private final CairoEngine engine;
+    protected final CompiledQueryImpl compiledQuery;
+    protected final CairoConfiguration configuration;
+    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    protected final GenericLexer lexer;
     private final AlterOperationBuilder alterOperationBuilder;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
     private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
-    protected final CompiledQueryImpl compiledQuery;
-    protected final CairoConfiguration configuration;
+    private final CairoEngine engine;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
-    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-    protected final GenericLexer lexer;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
@@ -179,71 +179,6 @@ public class SqlCompiler implements Closeable {
 
         textLoader = new TextLoader(engine);
         alterOperationBuilder = new AlterOperationBuilder();
-    }
-
-    protected void registerKeywordBasedExecutors() {
-        // For each 'this::method' reference java compiles a class
-        // We need to minimize repetition of this syntax as each site generates garbage
-        final KeywordBasedExecutor compileSet = this::compileSet;
-        final KeywordBasedExecutor compileBegin = this::compileBegin;
-        final KeywordBasedExecutor compileCommit = this::compileCommit;
-        final KeywordBasedExecutor compileRollback = this::compileRollback;
-        final KeywordBasedExecutor truncateTables = this::truncateTables;
-        final KeywordBasedExecutor alterTable = this::alterTable;
-        final KeywordBasedExecutor reindexTable = this::reindexTable;
-        final KeywordBasedExecutor dropTable = this::dropTable;
-        final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
-        final KeywordBasedExecutor sqlShow = this::sqlShow;
-        final KeywordBasedExecutor vacuumTable = this::vacuum;
-        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
-        final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
-
-        keywordBasedExecutors.put("truncate", truncateTables);
-        keywordBasedExecutors.put("TRUNCATE", truncateTables);
-        keywordBasedExecutors.put("alter", alterTable);
-        keywordBasedExecutors.put("ALTER", alterTable);
-        keywordBasedExecutors.put("reindex", reindexTable);
-        keywordBasedExecutors.put("REINDEX", reindexTable);
-        keywordBasedExecutors.put("set", compileSet);
-        keywordBasedExecutors.put("SET", compileSet);
-        keywordBasedExecutors.put("begin", compileBegin);
-        keywordBasedExecutors.put("BEGIN", compileBegin);
-        keywordBasedExecutors.put("commit", compileCommit);
-        keywordBasedExecutors.put("COMMIT", compileCommit);
-        keywordBasedExecutors.put("rollback", compileRollback);
-        keywordBasedExecutors.put("ROLLBACK", compileRollback);
-        keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("DISCARD", compileSet);
-        keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("CLOSE", compileSet);  //no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
-        keywordBasedExecutors.put("reset", compileSet);  //no-op
-        keywordBasedExecutors.put("RESET", compileSet);  //no-op
-        keywordBasedExecutors.put("drop", dropTable);
-        keywordBasedExecutors.put("DROP", dropTable);
-        keywordBasedExecutors.put("backup", sqlBackup);
-        keywordBasedExecutors.put("BACKUP", sqlBackup);
-        keywordBasedExecutors.put("show", sqlShow);
-        keywordBasedExecutors.put("SHOW", sqlShow);
-        keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("VACUUM", vacuumTable);
-        keywordBasedExecutors.put("snapshot", snapshotDatabase);
-        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
-        keywordBasedExecutors.put("deallocate", compileDeallocate);
-        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
-    }
-
-    private static void configureLexer(GenericLexer lexer) {
-        for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
-            lexer.defineSymbol(sqlControlSymbols.getQuick(i));
-        }
-        for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
-            OperatorExpression op = OperatorExpression.operators.getQuick(i);
-            if (op.symbol) {
-                lexer.defineSymbol(op.token);
-            }
-        }
     }
 
     @Override
@@ -338,44 +273,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
-        TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
-        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-
-        // Update QueryModel structure is
-        // QueryModel with SET column expressions
-        // |-- QueryModel of select-virtual or select-choose of data selected for update
-        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
-                updateTableToken,
-                selectQueryModel,
-                updateQueryModel,
-                executionContext
-        );
-
-        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-            return new UpdateOperation(
-                    updateTableToken,
-                    selectQueryModel.getTableId(),
-                    selectQueryModel.getTableVersion(),
-                    lexer.getPosition(),
-                    recordCursorFactory
-            );
-        } else {
-            recordCursorFactory.close();
-
-            if (selectQueryModel.containsJoin()) {
-                throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
-            }
-
-            return new UpdateOperation(
-                    updateTableToken,
-                    metadata.getTableId(),
-                    metadata.getStructureVersion(),
-                    lexer.getPosition()
-            );
-        }
-    }
-
     public CairoEngine getEngine() {
         return engine;
     }
@@ -416,40 +313,20 @@ public class SqlCompiler implements Closeable {
         parser.expr(lexer, listener);
     }
 
-    protected static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
+    private static void configureLexer(GenericLexer lexer) {
+        for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
+            lexer.defineSymbol(sqlControlSymbols.getQuick(i));
         }
-
-        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
+        for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
+            OperatorExpression op = OperatorExpression.operators.getQuick(i);
+            if (op.symbol) {
+                lexer.defineSymbol(op.token);
+            }
         }
-    }
-
-    protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
-        }
-
-        return tok;
     }
 
     private static boolean isCompatibleCase(int from, int to) {
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
-    }
-
-    protected static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (expect && tok == null) {
-            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
-        }
-
-        return tok;
     }
 
     private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
@@ -1230,19 +1107,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void clear() {
-        sqlNodePool.clear();
-        characterStore.clear();
-        queryColumnPool.clear();
-        queryModelPool.clear();
-        optimiser.clear();
-        parser.clear();
-        backupAgent.clear();
-        alterOperationBuilder.clear();
-        backupAgent.clear();
-        functionParser.clear();
-    }
-
     private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
         return compiledQuery.ofBegin();
     }
@@ -1310,7 +1174,14 @@ public class SqlCompiler implements Closeable {
         }
 
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        final CompiledQuery cq = executor == null ? compileUsingModel(executionContext) : executor.execute(executionContext);
+        CompiledQuery cq = null;
+        if (executor != null) {
+            // an executor can return null as a fallback to execution model
+            cq = executor.execute(executionContext);
+        }
+        if (cq == null) {
+            cq = compileUsingModel(executionContext);
+        }
         final short type = cq.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
             cq.withSqlStatement(Chars.toString(query));
@@ -1948,6 +1819,44 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+        TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+
+        // Update QueryModel structure is
+        // QueryModel with SET column expressions
+        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                updateTableToken,
+                selectQueryModel,
+                updateQueryModel,
+                executionContext
+        );
+
+        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
+            return new UpdateOperation(
+                    updateTableToken,
+                    selectQueryModel.getTableId(),
+                    selectQueryModel.getTableVersion(),
+                    lexer.getPosition(),
+                    recordCursorFactory
+            );
+        } else {
+            recordCursorFactory.close();
+
+            if (selectQueryModel.containsJoin()) {
+                throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
+            }
+
+            return new UpdateOperation(
+                    updateTableToken,
+                    metadata.getTableId(),
+                    metadata.getStructureVersion(),
+                    lexer.getPosition()
+            );
+        }
+    }
+
     private int getNextValidTokenPosition() {
         while (lexer.hasNext()) {
             CharSequence token = SqlUtil.fetchNext(lexer);
@@ -2439,7 +2348,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (null != tok) {
+        if (tok != null) {
             // show tables
             // show columns from tab
             // show partitions from tab
@@ -2474,6 +2383,8 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     factory = new ShowTimeZoneFactory();
                 }
+            } else {
+                factory = unknownShowStatement(tok, executionContext);
             }
             if (factory != null) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -2481,7 +2392,7 @@ public class SqlCompiler implements Closeable {
                     return compiledQuery.of(factory);
                 }
                 Misc.free(factory);
-                throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [tok=").put(tok).put(']');
+                throw SqlException.position(lexer.lastTokenPosition()).put("unexpected token [").put(tok).put(']');
             }
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("expected ")
@@ -2494,11 +2405,11 @@ public class SqlCompiler implements Closeable {
     private TableToken sqlShowFromTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
-        if (null == tok || !isFromKeyword(tok)) {
+        if (tok == null || !isFromKeyword(tok)) {
             throw SqlException.position(lexer.getPosition()).put("expected 'from'");
         }
         tok = SqlUtil.fetchNext(lexer);
-        if (null == tok) {
+        if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
@@ -2733,8 +2644,110 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    protected static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
+        }
+
+        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
+        }
+    }
+
+    protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        }
+
+        return tok;
+    }
+
+    protected static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (expect && tok == null) {
+            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        }
+
+        return tok;
+    }
+
+    protected void clear() {
+        sqlNodePool.clear();
+        characterStore.clear();
+        queryColumnPool.clear();
+        queryModelPool.clear();
+        optimiser.clear();
+        parser.clear();
+        backupAgent.clear();
+        alterOperationBuilder.clear();
+        backupAgent.clear();
+        functionParser.clear();
+    }
+
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
+    }
+
+    protected void registerKeywordBasedExecutors() {
+        // For each 'this::method' reference java compiles a class
+        // We need to minimize repetition of this syntax as each site generates garbage
+        final KeywordBasedExecutor compileSet = this::compileSet;
+        final KeywordBasedExecutor compileBegin = this::compileBegin;
+        final KeywordBasedExecutor compileCommit = this::compileCommit;
+        final KeywordBasedExecutor compileRollback = this::compileRollback;
+        final KeywordBasedExecutor truncateTables = this::truncateTables;
+        final KeywordBasedExecutor alterTable = this::alterTable;
+        final KeywordBasedExecutor reindexTable = this::reindexTable;
+        final KeywordBasedExecutor dropTable = this::dropTable;
+        final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
+        final KeywordBasedExecutor sqlShow = this::sqlShow;
+        final KeywordBasedExecutor vacuumTable = this::vacuum;
+        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
+
+        keywordBasedExecutors.put("truncate", truncateTables);
+        keywordBasedExecutors.put("TRUNCATE", truncateTables);
+        keywordBasedExecutors.put("alter", alterTable);
+        keywordBasedExecutors.put("ALTER", alterTable);
+        keywordBasedExecutors.put("reindex", reindexTable);
+        keywordBasedExecutors.put("REINDEX", reindexTable);
+        keywordBasedExecutors.put("set", compileSet);
+        keywordBasedExecutors.put("SET", compileSet);
+        keywordBasedExecutors.put("begin", compileBegin);
+        keywordBasedExecutors.put("BEGIN", compileBegin);
+        keywordBasedExecutors.put("commit", compileCommit);
+        keywordBasedExecutors.put("COMMIT", compileCommit);
+        keywordBasedExecutors.put("rollback", compileRollback);
+        keywordBasedExecutors.put("ROLLBACK", compileRollback);
+        keywordBasedExecutors.put("discard", compileSet);
+        keywordBasedExecutors.put("DISCARD", compileSet);
+        keywordBasedExecutors.put("close", compileSet); //no-op
+        keywordBasedExecutors.put("CLOSE", compileSet);  //no-op
+        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
+        keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
+        keywordBasedExecutors.put("reset", compileSet);  //no-op
+        keywordBasedExecutors.put("RESET", compileSet);  //no-op
+        keywordBasedExecutors.put("drop", dropTable);
+        keywordBasedExecutors.put("DROP", dropTable);
+        keywordBasedExecutors.put("backup", sqlBackup);
+        keywordBasedExecutors.put("BACKUP", sqlBackup);
+        keywordBasedExecutors.put("show", sqlShow);
+        keywordBasedExecutors.put("SHOW", sqlShow);
+        keywordBasedExecutors.put("vacuum", vacuumTable);
+        keywordBasedExecutors.put("VACUUM", vacuumTable);
+        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
+        keywordBasedExecutors.put("deallocate", compileDeallocate);
+        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
+    }
+
+    protected RecordCursorFactory unknownShowStatement(CharSequence tok, SqlExecutionContext executionContext) throws SqlException {
+        return null; // no-op
     }
 
     @FunctionalInterface
@@ -2869,8 +2882,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private class DatabaseBackupAgent implements Closeable {
-        private final Path srcPath = new Path();
         private final Path dstPath = new Path();
+        private final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
         private transient String cachedTmpBackupRoot;

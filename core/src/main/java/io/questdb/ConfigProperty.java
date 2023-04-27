@@ -24,20 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.std.FilesFacadeImpl;
-
-class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
-
-    @Override
-    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-        return new PropServerConfiguration(
-                bootstrap.getRootDirectory(),
-                bootstrap.loadProperties(),
-                getEnv(),
-                bootstrap.getLog(),
-                bootstrap.getBuildInformation(),
-                FilesFacadeImpl.INSTANCE,
-                FactoryProviderFactoryImpl.INSTANCE
-        );
-    }
+public interface ConfigProperty {
+    String getPropertyPath();
 }
