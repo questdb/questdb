@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.std.FilesFacadeImpl;
+
 class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
 
     @Override
@@ -34,6 +36,7 @@ class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
                 getEnv(),
                 bootstrap.getLog(),
                 bootstrap.getBuildInformation(),
+                FilesFacadeImpl.INSTANCE,
                 FactoryProviderFactoryImpl.INSTANCE
         );
     }

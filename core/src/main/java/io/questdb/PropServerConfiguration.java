@@ -108,6 +108,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
     private final int fileOperationRetryCount;
+    private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
@@ -459,7 +460,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        this(root, properties, env, log, buildInformation, (configuration, engine, functionFactoryCache) -> DefaultFactoryProvider.INSTANCE);
+        this(root, properties, env, log, buildInformation, FilesFacadeImpl.INSTANCE, (configuration, engine, functionFactoryCache) -> DefaultFactoryProvider.INSTANCE);
     }
 
     public PropServerConfiguration(
@@ -468,9 +469,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation,
+            FilesFacade filesFacade,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
+        this.filesFacade = filesFacade;
         this.fpf = fpf;
         this.validator = newValidator();
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
@@ -1830,7 +1833,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
+            return filesFacade;
         }
 
         @Override
