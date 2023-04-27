@@ -26,13 +26,16 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitFailedException;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -46,6 +49,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final long checkIdleInterval;
     private final long commitInterval;
+    private final LineTcpReceiverConfiguration configuration;
     private final boolean disconnectOnError;
     private final long idleTimeout;
     private final Metrics metrics;
@@ -58,12 +62,15 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected long recvBufPos;
     protected long recvBufStart;
     protected long recvBufStartOfMeasurement;
+    protected SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
     private long nextCheckIdleTime;
     private long nextCommitTime;
+    private final Authenticator authenticator;
 
     public LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+        this.configuration = configuration;
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
@@ -79,6 +86,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         this.nextCheckIdleTime = now + checkIdleInterval;
         this.nextCommitTime = now + commitInterval;
         this.idleTimeout = configuration.getWriterIdleTimeout();
+        this.authenticator = configuration.getFactoryProvider().getAuthenticatorFactory().getLineTCPAuthenticator(recvBufStart, recvBufEnd);
     }
 
     public void checkIdle(long millis) {
@@ -94,6 +102,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public void clear() {
+        securityContext = DenyAllSecurityContext.INSTANCE;
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
@@ -163,14 +172,41 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     public IOContextResult handleIO(NetworkIOJob netIoJob) {
-        read();
-        try {
-            IOContextResult parasResult = parseMeasurements(netIoJob);
-            doMaintenance(milliClock.getTicks());
-            return parasResult;
-        } finally {
-            netIoJob.releaseWalTableDetails();
+        if (authenticator.isAuthenticated()) {
+            read();
+            try {
+                IOContextResult parasResult = parseMeasurements(netIoJob);
+                doMaintenance(milliClock.getTicks());
+                return parasResult;
+            } finally {
+                netIoJob.releaseWalTableDetails();
+            }
+        } else {
+            try {
+                IOContextResult result = authenticator.handleIO(netIoJob);
+                if (authenticator.isAuthenticated()) {
+                    assert securityContext == DenyAllSecurityContext.INSTANCE;
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(authenticator.getPrincipal(), false);
+                    recvBufPos = authenticator.getRecvBufPos();
+                    resetParser(authenticator.getRecvBufPseudoStart());
+                    return parseMeasurements(netIoJob);
+                }
+                return result;
+            } catch (AuthenticatorException e) {
+                return IOContextResult.NEEDS_DISCONNECT;
+            }
         }
+    }
+
+    @Override
+    public LineTcpConnectionContext of(int fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
+        authenticator.init(fd);
+        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+            // when security context has not been set by anything else (subclass) we assume
+            // this is an authenticated, anonymous user
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(null, false);
+        }
+        return super.of(fd, dispatcher);
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -254,8 +290,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return false;
     }
 
-    protected CairoSecurityContext getSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    protected SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
@@ -356,9 +392,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected void resetParser() {
-        parser.of(recvBufStart);
+        resetParser(recvBufStart);
+    }
+
+    protected void resetParser(long pos) {
+        parser.of(pos);
         goodMeasurement = true;
-        recvBufStartOfMeasurement = recvBufStart;
+        recvBufStartOfMeasurement = pos;
     }
 
     public enum IOContextResult {

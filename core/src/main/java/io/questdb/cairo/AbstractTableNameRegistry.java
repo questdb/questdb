@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
@@ -60,11 +60,11 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped) {
-        bucket.clear();
+    public void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped) {
+        target.clear();
         for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
-                bucket.add(entry.getToken());
+                target.add(entry.getToken());
             }
         }
     }

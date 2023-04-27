@@ -176,7 +176,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
 
-            TableToken tableToken = engine.getTableToken("tbl");
+            TableToken tableToken = engine.verifyTableName("tbl");
             try (Path path = new Path()) {
                 Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("invalid_folder.123").$(), 509);
                 Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-01.invalid").$(), 509);
@@ -199,7 +199,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-10', 60*60*1000000L) ts from long_sequence(5)) timestamp(ts) partition by HOUR", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
                         compile("alter table tbl drop partition where ts >= '1970-01-10T03'", sqlExecutionContext);
@@ -292,7 +292,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ) {
                 for (int i = 0; i < tableCount; i++) {
                     String tableName = "tbl" + i;
-                    TableToken tableToken = engine.getTableToken(tableName);
+                    TableToken tableToken = engine.verifyTableName(tableName);
                     path.of(engine.getConfiguration().getRoot()).concat(tableToken);
                     int len = path.length();
                     int partitionBy = PartitionBy.DAY;
@@ -344,7 +344,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             runPartitionPurgeJobs();
 
             try (Path path = new Path()) {
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
                 int len = path.length();
                 for (int i = 0; i < 3; i++) {
@@ -365,7 +365,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 // OOO inserts partition 1970-01-09
                 compiler.compile("insert into tbl select 4, '1970-01-09T10'", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
@@ -418,7 +418,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                         startTimestamp += Timestamps.HOUR_MICROS;
                     }
 
-                    TableToken tableToken = engine.getTableToken("tbl");
+                    TableToken tableToken = engine.verifyTableName("tbl");
                     path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-01T01.0").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
@@ -461,7 +461,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
             }
@@ -498,7 +498,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
@@ -586,7 +586,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     , sqlExecutionContext);
 
             try (Path path = new Path()) {
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
@@ -615,7 +615,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-10', 60*60*1000000L) ts from long_sequence(1)) timestamp(ts) partition by HOUR", sqlExecutionContext);
 
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 try (TableReader rdr = getReader("tbl")) {
                     try (TableReader rdr2 = getReader("tbl")) {
                         compile("alter table tbl drop partition list '1970-01-10T00'", sqlExecutionContext);
@@ -673,7 +673,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path()) {
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
                 int len = path.length();
 
@@ -727,7 +727,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path()) {
-                TableToken tableToken = engine.getTableToken("tbl");
+                TableToken tableToken = engine.verifyTableName("tbl");
                 path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
                 int len = path.length();
 

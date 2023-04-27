@@ -244,13 +244,8 @@ public class SimpleLockTest {
         SimpleWaitingLock lock = new SimpleWaitingLock();
         Thread thread = new Thread(() -> {
             lock.lock();
-            try {
-                Thread.sleep(25);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            } finally {
-                lock.unlock();
-            }
+            Os.sleep(25);
+            lock.unlock();
         }, "thread");
         thread.start();
 

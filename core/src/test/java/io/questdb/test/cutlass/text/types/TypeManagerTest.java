@@ -38,39 +38,29 @@ import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
-import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
 
-public class TypeManagerTest {
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
+public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;
-    private static String root;
     private static DirectCharSink utf8Sink;
 
     @BeforeClass
-    public static void setUp() {
+    public static void setUpStatic() throws Exception {
+        AbstractTest.setUpStatic();
         utf8Sink = new DirectCharSink(64);
         jsonLexer = new JsonLexer(1024, 2048);
     }
 
-    @BeforeClass
-    public static void setUpStatic() {
-        try {
-            root = temp.newFolder("conf").getAbsolutePath();
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
-    }
-
     @AfterClass
-    public static void tearDown() {
+    public static void tearDownStatic() throws Exception {
         Misc.free(utf8Sink);
         Misc.free(jsonLexer);
+        AbstractTest.tearDownStatic();
     }
 
     @Before
@@ -130,7 +120,7 @@ public class TypeManagerTest {
 
     @Test
     public void testDefaultFileName() throws JsonException, IOException {
-        File configFile = temp.newFile("conf/text_loader.json");
+        File configFile = new File(root, "text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/text_loader.json");
         Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
@@ -164,7 +154,7 @@ public class TypeManagerTest {
 
     @Test
     public void testNonDefaultFileName() throws JsonException, IOException {
-        File configFile = temp.newFile("conf/my_awesome_text_loader.json");
+        File configFile = new File(root, "my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/my_awesome_text_loader.json");
         Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());

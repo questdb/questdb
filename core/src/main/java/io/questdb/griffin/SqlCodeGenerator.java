@@ -2896,7 +2896,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
+        final RecordCursorFactory factory;
+        try {
+            //if model uses explicit timestamp (e.g. select * from X timestamp(ts)) then we shouldn't expect the inner models to produce one
+            if (overrideTimestampRequired) {
+                executionContext.pushTimestampRequiredFlag(false);
+            }
+            factory = generateSubQuery(model, executionContext);
+        } finally {
+            if (overrideTimestampRequired) {
+                executionContext.popTimestampRequiredFlag();
+            }
+        }
 
         final RecordMetadata metadata = factory.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -3639,7 +3651,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             try (
                     TableReader reader = executionContext.getReader(tableToken);
-                    TableRecordMetadata metadata = executionContext.getMetadata(tableToken, model.getTableVersion())
+                    TableRecordMetadata metadata = engine.getMetadata(tableToken, model.getTableVersion())
             ) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
             }

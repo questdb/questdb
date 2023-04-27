@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.SecurityContext;
 
 @FunctionalInterface
 public interface PGAuthenticator {
-    CairoSecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, AuthenticationException;
+    SecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, AuthenticationException;
 }

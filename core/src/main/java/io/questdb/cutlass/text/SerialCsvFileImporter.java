@@ -88,7 +88,7 @@ public final class SerialCsvFileImporter implements Closeable {
         inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
 
-    public void process(CairoSecurityContext securityContext) throws TextImportException {
+    public void process(SecurityContext securityContext) throws TextImportException {
         LOG.info()
                 .$("started [importId=").$hexPadded(importId)
                 .$(", file=`").$(inputFilePath).$('`').I$();

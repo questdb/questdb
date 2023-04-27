@@ -46,7 +46,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     private int iteration;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         columnVersionPurgeQueueCapacity = 2;
         AbstractGriffinTest.setUpStatic();
     }
@@ -319,7 +319,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.touch(path.$());
@@ -350,7 +350,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
-                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.mkdirs(path.$(), configuration.getMkDirMode());
@@ -384,7 +384,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
 
     private void assertFilesExist(String tableName, String partition, String[] files, String colSuffix, boolean exist) {
         Path path = Path.getThreadLocal(configuration.getRoot());
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
 
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];

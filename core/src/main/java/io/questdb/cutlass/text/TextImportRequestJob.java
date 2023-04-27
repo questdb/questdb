@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -81,9 +80,9 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
 
-        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
+        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null, configuration.getSqlParserFactory());
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+        this.sqlExecutionContext.with(configuration.getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
@@ -100,8 +99,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         ") timestamp(ts) partition by DAY BYPASS WAL",
                 sqlExecutionContext
         );
-        this.statusTableToken = engine.getTableToken(statusTableName);
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
+        this.statusTableToken = engine.verifyTableName(statusTableName);
+        this.writer = engine.getWriter(statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
         this.path = new Path();
@@ -163,7 +162,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             // if we closed the writer, we need to reopen it again
             if (writer == null) {
                 try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
+                    writer = engine.getWriter(statusTableToken, "QuestDB system");
                 } catch (Throwable e) {
                     LOG.error()
                             .$("could not re-open writer [table=").$(statusTableToken)
@@ -176,10 +175,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
     private boolean useParallelImport() {
         TableToken tableToken = engine.getTableTokenIfExists(task.getTableName());
-        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (engine.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
             return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
         }
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+        try (TableReader reader = engine.getReader(tableToken)) {
             return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
     }
@@ -223,7 +222,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
-                    parallelImporter.process(task.getSecurityContext());
+                    parallelImporter.process();
                 } else {
                     serialImporter.of(
                             task.getTableName(),

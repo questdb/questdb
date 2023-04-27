@@ -36,15 +36,15 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.net.URLEncoder;
@@ -53,10 +53,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class DispatcherWriterQueueTest {
+public class DispatcherWriterQueueTest extends AbstractTest {
     private static final String utf8Encoding = "UTF-8";
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -103,7 +101,7 @@ public class DispatcherWriterQueueTest {
         SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -155,7 +153,7 @@ public class DispatcherWriterQueueTest {
     public void testAlterTableAddIndexContinuesAfterStartTimeoutExpired() throws Exception {
         SOCountDownLatch alterAckReceived = new SOCountDownLatch(1);
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -189,7 +187,7 @@ public class DispatcherWriterQueueTest {
         SOCountDownLatch alterAckReceived = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -284,7 +282,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testRestUpdateTimeout() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -318,7 +316,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testUpdateBusyTable() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -358,7 +356,7 @@ public class DispatcherWriterQueueTest {
         SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -412,13 +410,6 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testUpdateSucceedsAfterReaderOutOfDateException() throws Exception {
         testUpdateSucceedsAfterReaderOutOfDateException(1, 30_000L);
-    }
-
-    private TableReader getReader(CairoEngine engine, String tableName) {
-        return engine.getReader(
-                engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                engine.getTableToken(tableName)
-        );
     }
 
     private void runAlterOnBusyTable(
@@ -493,7 +484,7 @@ public class DispatcherWriterQueueTest {
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseInactive();
-                try (TableReader rdr = getReader(engine, tableName)) {
+                try (TableReader rdr = engine.getReader(tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
@@ -512,7 +503,7 @@ public class DispatcherWriterQueueTest {
             final String... httpAlterQueries
     ) throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(httpWorkers)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
@@ -611,7 +602,7 @@ public class DispatcherWriterQueueTest {
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseAllReaders();
-                try (TableReader rdr = getReader(engine, tableName)) {
+                try (TableReader rdr = engine.getReader(tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
@@ -635,7 +626,7 @@ public class DispatcherWriterQueueTest {
         final SOCountDownLatch updateAckReceived = new SOCountDownLatch(1);
 
         final HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)

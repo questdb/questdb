@@ -222,4 +222,8 @@ public class AlterOperationBuilder {
         this.tableId = tableId;
         return this;
     }
+
+    public ObjList<CharSequence> getExtraStrInfo() {
+        return extraStrInfo;
+    }
 }

@@ -141,14 +141,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(type, null);
     }
 
-    public CompiledQuery ofAlter(AlterOperation statement) {
+    public CompiledQuery ofAlter(AlterOperation alterOp) {
         of(ALTER);
-        alterOp = statement;
-        return this;
-    }
-
-    public CompiledQuery ofLock() {
-        type = LOCK;
+        this.alterOp = alterOp;
         return this;
     }
 
@@ -159,11 +154,6 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQuery ofTableSetType() {
         type = TABLE_SET_TYPE;
-        return this;
-    }
-
-    public CompiledQuery ofUnlock() {
-        type = UNLOCK;
         return this;
     }
 

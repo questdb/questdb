@@ -25,14 +25,15 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Os;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -52,9 +53,7 @@ import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 // They run the same test multiple times in order to test concurrent retry executions.
 // If a test becomes unstable (fails sometimes on build server or local run), increase number of iterations
 // to reproduce the failure.
-public class RetryIODispatcherTest {
-    private static final Log LOG = LogFactory.getLog(RetryIODispatcherTest.class);
-
+public class RetryIODispatcherTest extends AbstractTest {
     private static final String ValidImportRequest = "POST /upload HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -148,7 +147,7 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
-                            .withTempFolder(temp)
+                            .withTempFolder(root)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                             .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine) {
@@ -158,8 +157,8 @@ public class RetryIODispatcherTest {
                                 }
                             })),
                     0, ValidImportRequest, ValidImportResponse, false, true);
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -170,8 +169,8 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             assertImportProcessedWhenClientDisconnected();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -180,7 +179,7 @@ public class RetryIODispatcherTest {
         final int parallelCount = 4;
 
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -242,8 +241,8 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportRerunsExceedsRerunProcessingQueueSize(1000);
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -334,7 +333,7 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
-                            .withTempFolder(temp)
+                            .withTempFolder(root)
                             .withWorkerCount(4)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                                     .withNetwork(getSendDelayNetworkFacade(500))
@@ -342,8 +341,8 @@ public class RetryIODispatcherTest {
                             ),
                     500, ValidImportRequest, ValidImportResponse
                     , true, false);
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -354,21 +353,21 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
-                            .withTempFolder(temp)
+                            .withTempFolder(root)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(
                                     new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(500))
                             ),
                     0, ValidImportRequest, ValidImportResponse, true, true);
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
     @Test
     public void testImportsCreateAsSelectAndDrop() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(4)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -405,7 +404,7 @@ public class RetryIODispatcherTest {
     @Test
     public void testImportsHeaderIsNotFullyReceivedIntoReceiveBuffer() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
@@ -432,15 +431,15 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
-                            .withTempFolder(temp)
+                            .withTempFolder(root)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(
                                     new HttpServerConfigurationBuilder()
                                             .withReceiveBufferSize(256)
                             ),
                     200, ValidImportRequest, ValidImportResponse, false, true);
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -451,8 +450,8 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             assertInsertWaitsExceedsRerunProcessingQueueSize();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -463,8 +462,8 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             assertInsertWaitsWhenWriterLocked();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -475,8 +474,8 @@ public class RetryIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             assertInsertsIsPerformedWhenWriterLockedAndDisconnected();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -484,7 +483,7 @@ public class RetryIODispatcherTest {
     public void testRenameWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -530,7 +529,7 @@ public class RetryIODispatcherTest {
     private void assertImportProcessedWhenClientDisconnected() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -596,7 +595,7 @@ public class RetryIODispatcherTest {
         final int rerunProcessingQueueSize = 1;
         final int parallelCount = 4;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withRerunProcessingQueueSize(rerunProcessingQueueSize))
                 .withTelemetry(false)
@@ -660,7 +659,7 @@ public class RetryIODispatcherTest {
     private void assertInsertWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -723,7 +722,7 @@ public class RetryIODispatcherTest {
         final int parallelCount = 4;
         final Metrics metrics = Metrics.enabled();
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)

@@ -38,15 +38,15 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.CountDownLatch;
@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder.RequestHeaders;
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
-public class ImportIODispatcherTest {
+public class ImportIODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
     private static final String PostHeader = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
@@ -307,9 +307,6 @@ public class ImportIODispatcherTest {
             "\r\n";
 
     @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
-
-    @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
@@ -321,7 +318,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportDesignatedTsFromSchema() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -433,7 +430,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportDropReimportDifferentSchema() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -474,7 +471,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportDropReimportDifferentSchemaTextQuery() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -570,7 +567,7 @@ public class ImportIODispatcherTest {
     public void testImportLocksTable() throws Exception {
         final String tableName = "trips";
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -580,7 +577,7 @@ public class ImportIODispatcherTest {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
                                 TableToken tt = engine.getTableTokenIfExists(tableName);
-                                if (engine.getStatus(engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(), path, tt) == TableUtils.TABLE_RESERVED) {
+                                if (engine.getTableStatus(path, tt) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -605,7 +602,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -719,8 +716,8 @@ public class ImportIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWitNocacheSymbols();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -755,7 +752,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportWithWrongPartitionBy() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -783,7 +780,7 @@ public class ImportIODispatcherTest {
     @Test
     public void testImportWithWrongPartitionByJson() throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -815,8 +812,8 @@ public class ImportIODispatcherTest {
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWithWrongTimestampSpecified();
-            temp.delete();
-            temp.create();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
         }
     }
 
@@ -841,7 +838,7 @@ public class ImportIODispatcherTest {
         };
 
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -867,7 +864,7 @@ public class ImportIODispatcherTest {
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     CairoConfiguration configuration = engine.getConfiguration();
-                    TableToken tableToken = engine.getTableToken("xyz");
+                    TableToken tableToken = engine.verifyTableName("xyz");
                     try (
                             Path path = new Path().concat(configuration.getRoot()).concat(tableToken);
                             TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
@@ -913,7 +910,7 @@ public class ImportIODispatcherTest {
 
     private void testImportMisDetectsTimestampColumn(HttpServerConfigurationBuilder serverConfigBuilder, int rowCount) throws Exception {
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(serverConfigBuilder)
                 .withTelemetry(false)
@@ -960,7 +957,7 @@ public class ImportIODispatcherTest {
         final int insertCount = 1;
         final int importRowCount = 10;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
@@ -1050,7 +1047,7 @@ public class ImportIODispatcherTest {
         final int parallelCount = 2;
         final int insertCount = 9;
         new HttpQueryTestBuilder()
-                .withTempFolder(temp)
+                .withTempFolder(root)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)

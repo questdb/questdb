@@ -34,11 +34,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -52,15 +52,16 @@ public class IndexBuilderTest extends AbstractCairoTest {
     TableWriter tempWriter;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(configuration));
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         compiler.close();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After
@@ -357,7 +358,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> tempWriter = TestUtils.getWriter(engine,"xxx"),
+                        tablePath -> tempWriter = TestUtils.getWriter(engine, "xxx"),
                         indexBuilder -> {
                             try {
                                 indexBuilder.reindexColumn("sym2");
@@ -487,7 +488,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 indexBuilder -> indexBuilder.reindexAllInPartition("1970-01-01"));
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
+            try (TableReader reader = engine.getReader("xxx")) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -593,7 +594,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         );
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
+            try (TableReader reader = engine.getReader("xxx")) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -633,7 +634,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            TableToken xxx = engine.getTableToken("xxx");
+            TableToken xxx = engine.verifyTableName("xxx");
             String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 

@@ -86,8 +86,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Override
     @After
-    public void tearDown() {
-        Misc.free(path);
+    public void tearDown() throws Exception {
+        path = Misc.free(path);
         super.tearDown();
     }
 

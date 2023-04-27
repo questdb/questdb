@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -39,8 +39,7 @@ import static io.questdb.network.IODispatcher.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
-    private final boolean allowDeflateBeforeSend;
-    private final CairoSecurityContext cairoSecurityContext;
+    private final HttpContextConfiguration configuration;
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final boolean dumpNetworkTraffic;
     private final HttpHeaderParser headerParser;
@@ -58,7 +57,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
         throw RetryOperationException.INSTANCE;
     };
-    private final boolean serverKeepAlive;
+    private SecurityContext securityContext;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -68,6 +67,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long totalBytesSent;
 
     public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
+        this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
@@ -77,9 +77,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
-        this.cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
-        this.serverKeepAlive = configuration.getServerKeepAlive();
+        // this is default behaviour until the security context is overridden with correct principal
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
     }
 
@@ -134,6 +133,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
+        this.securityContext = DenyAllSecurityContext.INSTANCE;
         clearSuspendEvent();
         LOG.debug().$("closed").$();
     }
@@ -150,8 +150,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return retryAttemptAttributes;
     }
 
-    public CairoSecurityContext getCairoSecurityContext() {
-        return cairoSecurityContext;
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {
@@ -216,7 +216,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
         boolean useful = keepGoing;
         if (keepGoing) {
-            if (serverKeepAlive) {
+            if (configuration.getServerKeepAlive()) {
                 do {
                     keepGoing = handleClientRecv(selector, rescheduleContext);
                 } while (keepGoing);
@@ -239,6 +239,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // The context is about to be returned to the pool, so we should release the memory.
             recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             responseSink.close();
+            securityContext = DenyAllSecurityContext.INSTANCE;
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
@@ -320,7 +321,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         clear();
-        if (serverKeepAlive) {
+        if (configuration.getServerKeepAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;
         } else {
             dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
@@ -338,6 +339,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (RetryOperationException e) {
             pendingRetry = true;
             scheduleRetry(processor, rescheduleContext);
+        }
+    }
+
+    private void configureSecurityContext() {
+        if (securityContext == DenyAllSecurityContext.INSTANCE) {
+            securityContext = configuration.getSecurityContextFactory().getInstance(
+                    headerParser.getHeader("Authorization"),
+                    configuration.readOnlySecurityContext()
+            );
         }
     }
 
@@ -520,7 +530,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor = null;
+        HttpRequestProcessor processor;
         final CharSequence url = headerParser.getUrl();
         processor = selector.select(url);
         if (processor == null) {
@@ -562,6 +572,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     dumpBuffer(recvBuffer, read);
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
                 }
+                configureSecurityContext();
             }
 
             final CharSequence url = headerParser.getUrl();
@@ -573,7 +584,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
-            if (allowDeflateBeforeSend && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
+            if (configuration.allowDeflateBeforeSend() && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
                 responseSink.setDeflateBeforeSend(true);
             }
 

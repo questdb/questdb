@@ -48,7 +48,6 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
@@ -71,13 +70,9 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
-        try {
-            inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractGriffinTest.setUpStatic();
     }
 
