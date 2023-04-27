@@ -26,6 +26,8 @@ package io.questdb.test;
 
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
@@ -39,9 +41,11 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.tools.TestUtils;
 
 public class TestServerConfiguration extends DefaultServerConfiguration {
 
+    private final CairoConfiguration cairoConfiguration;
     private final HttpMinServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
         @Override
         public boolean isEnabled() {
@@ -108,6 +112,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     };
     private final LineTcpReceiverConfiguration confLineTcp = new DefaultLineTcpReceiverConfiguration() {
         @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
         public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return confLineTcpIOPool;
         }
@@ -115,11 +124,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         @Override
         public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
             return confLineTcpWriterPool;
-        }
-
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
         }
 
         @Override
@@ -150,6 +154,17 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         this.workerCountLineTcpIO = workerCountLineTcpIO;
         this.workerCountLineTcpWriter = workerCountLineTcpWriter;
         this.factoryProvider = factoryProvider;
+        this.cairoConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return TestUtils.getCsvRoot();
+            }
+        };
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return cairoConfiguration;
     }
 
     @Override
