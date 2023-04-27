@@ -1107,19 +1107,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void clear() {
-        sqlNodePool.clear();
-        characterStore.clear();
-        queryColumnPool.clear();
-        queryModelPool.clear();
-        optimiser.clear();
-        parser.clear();
-        backupAgent.clear();
-        alterOperationBuilder.clear();
-        backupAgent.clear();
-        functionParser.clear();
-    }
-
     private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
         return compiledQuery.ofBegin();
     }
@@ -2687,6 +2674,19 @@ public class SqlCompiler implements Closeable {
         }
 
         return tok;
+    }
+
+    protected void clear() {
+        sqlNodePool.clear();
+        characterStore.clear();
+        queryColumnPool.clear();
+        queryModelPool.clear();
+        optimiser.clear();
+        parser.clear();
+        backupAgent.clear();
+        alterOperationBuilder.clear();
+        backupAgent.clear();
+        functionParser.clear();
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
