@@ -41,6 +41,63 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCannotSplitPartitionAllRowsSameTimstamp() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
+
+            // create table with 800 points at 2020-02-03 sharp
+            // and 200 points in at 2020-02-03T01
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " cast(" + start + " + (x / 800) * 60 * 60 * 1000000L  as timestamp) ts" +
+                            " from long_sequence(1000)" +
+                            ") timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            // Split at 2020-02-03
+            compiler.compile(
+                    "insert into x " +
+                            "select" +
+                            " cast(x as int) * 1000000 i," +
+                            " -x - 1000000L as j," +
+                            " rnd_str(5,16,2) as str," +
+                            " cast('2020-02-03' as timestamp) ts" +
+                            " from long_sequence(10)",
+                    sqlExecutionContext
+            );
+
+
+            // Check that the partition is not split
+            assertSql("select name from table_partitions('x')", "name\n" +
+                    "2020-02-03\n");
+
+            // Split at 2020-02-03T01
+            compiler.compile(
+                    "insert into x " +
+                            "select" +
+                            " cast(x as int) * 1000000 i," +
+                            " -x - 1000000L as j," +
+                            " rnd_str(5,16,2) as str," +
+                            " cast('2020-02-03T00:30' as timestamp) ts" +
+                            " from long_sequence(10)",
+                    sqlExecutionContext
+            );
+
+            // Check that the partition is split
+            assertSql("select name from table_partitions('x')", "name\n" +
+                    "2020-02-03\n" +
+                    "2020-02-03T000000-000001\n");
+        });
+    }
+
+    @Test
     public void testSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold

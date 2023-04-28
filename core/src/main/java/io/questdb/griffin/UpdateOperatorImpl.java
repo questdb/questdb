@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -42,25 +41,37 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseable, UpdateOperator {
+public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
+    private final CairoConfiguration configuration;
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
+    private final FilesFacade ff;
     private final long fileOpenOpts;
+    private final Path path;
+    private final PurgingOperator purgingOperator;
+    private final int rootLen;
+    private final TableWriter tableWriter;
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private IndexBuilder indexBuilder;
+    private final IntList updateColumnIndexes = new IntList();
 
     public UpdateOperatorImpl(
             CairoConfiguration configuration,
-            MessageBus messageBus,
             TableWriter tableWriter,
             Path path,
-            int rootLen
+            int rootLen,
+            PurgingOperator purgingOperator
     ) {
-        super(LOG, configuration, messageBus, tableWriter, path, rootLen);
+        this.tableWriter = tableWriter;
+        this.rootLen = rootLen;
+        this.purgingOperator = purgingOperator;
         this.indexBuilder = new IndexBuilder();
         this.dataAppendPageSize = configuration.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
+        this.ff = configuration.getFilesFacade();
+        this.configuration = configuration;
+        this.path = path;
     }
 
     @Override
@@ -78,7 +89,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             final long tableVersion = op.getTableVersion();
             final RecordCursorFactory factory = op.getFactory();
 
-            cleanupColumnVersions.clear();
+            purgingOperator.clear();
 
             if (tableWriter.inTransaction()) {
                 LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
@@ -226,7 +237,15 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                 op.forceTestTimeout();
                 tableWriter.commit();
                 tableWriter.openLastPartition();
-                purgeOldColumnVersions();
+                purgingOperator.purge(
+                        path.trimTo(rootLen),
+                        tableWriter.getTableToken(),
+                        tableWriter.getPartitionBy(),
+                        tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                        tableWriter.getMetadata(),
+                        tableWriter.getTruncateVersion(),
+                        tableWriter.getTxn()
+                );
             }
 
             LOG.info().$("update finished [table=").$(tableToken)
@@ -611,7 +630,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     if (columnTop > -1) {
                         // columnTop == -1 means column did not exist at the partition
-                        cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                        purgingOperator.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
                 }
 

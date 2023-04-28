@@ -1702,20 +1702,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDayPartitionTruncateDirIterateFail() throws Exception {
-        testTruncate(new CountingFilesFacade() {
-
-            @Override
-            public int findNext(long findPtr) {
-                if (--count == 0) {
-                    throw CairoException.critical(0).put("FindNext failed");
-                }
-                return super.findNext(findPtr);
-            }
-        });
-    }
-
-    @Test
     public void testDayPartitionTruncatePurgeSymbolTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
@@ -2265,7 +2251,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.k")) {
+                if (Chars.endsWith(name, "supplier.d")) {
                     count++;
                     return false;
                 }
@@ -2493,17 +2479,38 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameColumnCannotRemoveCFile() throws Exception {
+        renameColumn(new TestFilesFacade() {
+            int count = 0;
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.endsWith(name, "supplier.c")) {
+                    count++;
+                    return false;
+                }
+                return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count > 0;
+            }
+        });
+    }
+
+    @Test
     public void testRenameColumnCannotRemoveDFile() throws Exception {
         renameColumn(new TestFilesFacade() {
             int count = 0;
 
             @Override
-            public int rename(LPSZ name, LPSZ to) {
+            public boolean remove(LPSZ name) {
                 if (Chars.endsWith(name, "supplier.d")) {
                     count++;
-                    return Files.FILES_RENAME_ERR_OTHER;
+                    return false;
                 }
-                return super.rename(name, to);
+                return super.remove(name);
             }
 
             @Override
@@ -3980,31 +3987,27 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void testRenameColumn(TableModel model) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.create(model);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newTableWriter(configuration, model.getName(), metrics)) {
+            int columnTypeTag;
+            TableToken tableToken;
+            try (TableWriter writer = getWriter(model.getName())) {
 
                 // optional
                 writer.warmUp();
 
                 ts = append10KProducts(ts, rnd, writer);
-
-                int columnTypeTag = ColumnType.tagOf(writer.getMetadata().getColumnType("supplier"));
-
+                columnTypeTag = ColumnType.tagOf(writer.getMetadata().getColumnType("supplier"));
                 writer.renameColumn("supplier", "sup");
 
                 try (Path path = new Path()) {
-                    TableToken tableToken = engine.verifyTableName(model.getName());
+                    tableToken = writer.getTableToken();
                     path.of(root).concat(tableToken);
                     final int plen = path.length();
                     if (columnTypeTag == ColumnType.SYMBOL) {
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.o").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.c").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.k").$()));
                         Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.v").$()));
                         Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.o").$()));
                         Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.c").$()));
@@ -4014,8 +4017,6 @@ public class TableWriterTest extends AbstractCairoTest {
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                         if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
                             int nlen = path.length();
-                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
                             Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.d").$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
                                 Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.i").$()));
@@ -4027,11 +4028,33 @@ public class TableWriterTest extends AbstractCairoTest {
                 ts = append10KWithNewName(ts, rnd, writer);
 
                 writer.commit();
-
                 Assert.assertEquals(20000, writer.size());
             }
 
-            try (TableWriter writer = newTableWriter(configuration, model.getName(), metrics)) {
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine, null)) {
+                purgeJob.run(0);
+            }
+
+            try (Path path = new Path()) {
+                path.of(root).concat(tableToken);
+                final int plen = path.length();
+                Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));
+                Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.o").$()));
+                Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.c").$()));
+                Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.k").$()));
+                FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                    if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                        int nlen = path.length();
+                        Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
+                        if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
+                        }
+                    }
+                });
+            }
+
+            try (TableWriter writer = getWriter(model.getName())) {
                 append10KWithNewName(ts, rnd, writer);
                 writer.commit();
                 Assert.assertEquals(30000, writer.size());

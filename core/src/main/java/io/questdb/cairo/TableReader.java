@@ -183,38 +183,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    /**
-     * Closed column files. Similarly to {@link #closeColumnForRemove(CharSequence)} closed reader column files before
-     * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
-     * Bounds checking is performed via assertion.
-     *
-     * @param columnIndex column index
-     */
-    public void closeColumnForRemove(int columnIndex) {
-        assert columnIndex > -1 && columnIndex < columnCount;
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            // replace columns we force closed with special marker object
-            // when we come to reloading table reader we would be able to
-            // tell that column has to be attempted to be read from disk
-            closePartitionColumnFile(getColumnBase(partitionIndex), columnIndex);
-        }
-
-        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-            // same goes for symbol map reader - replace object with maker instance
-            Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
-        }
-    }
-
-    /**
-     * Closes column files. This method should be used before call to TableWriter.removeColumn() on
-     * Windows OS.
-     *
-     * @param columnName name of column to be closed.
-     */
-    public void closeColumnForRemove(CharSequence columnName) {
-        closeColumnForRemove(metadata.getColumnIndex(columnName));
-    }
-
     public long floorToPartitionTimestamp(long timestamp) {
         return txFile.getPartitionTimestampByTimestamp(timestamp);
     }
@@ -388,6 +356,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
         }
+    }
+
+    public boolean isActive() {
+        return txnAcquired;
     }
 
     public boolean isColumnCached(int columnIndex) {

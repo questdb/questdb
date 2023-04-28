@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -40,8 +41,8 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -102,6 +103,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(17));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(18));
     };
+    private static final int CANNOT_DELETE = -1;
     private static final int blobLen = 64 * 1024;
     private static final RecordAssert BATCH1_ASSERTER = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
@@ -289,203 +291,6 @@ public class TableReaderTest extends AbstractCairoTest {
         // generate blob to roll forward random generator, don't assert blob value
         if (rnd.nextBoolean()) {
             rnd.nextChars(blob, blobLen / 2);
-        }
-    };
-    private static final RecordAssert BATCH1_ASSERTER_NULL_BIN = (r, exp, ts, blob) -> {
-        // same as BATCH1_ASSERTER + special treatment of "bin" column
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.getByte(2));
-        } else {
-            Assert.assertEquals(0, r.getByte(2));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
-        } else {
-            Assert.assertFalse(r.getBool(8));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextShort(), r.getShort(1));
-        } else {
-            Assert.assertEquals(0, r.getShort(1));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextInt(), r.getInt(0));
-        } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
-        } else {
-            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
-        } else {
-            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextLong(), r.getLong(5));
-        } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(ts, r.getDate(10));
-        } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
-        }
-
-        // generate random bin for random generator state consistency
-        if (exp.nextBoolean()) {
-            exp.nextChars(blob, blobLen / 2);
-        }
-
-        Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(9));
-        Assert.assertNull(r.getBin(9));
-
-        if (exp.nextBoolean()) {
-            assertStrColumn(exp.nextChars(10), r, 6);
-        } else {
-            assertNullStr(r, 6);
-        }
-
-        if (exp.nextBoolean()) {
-            TestUtils.assertEquals(exp.nextChars(7), r.getSym(7));
-        } else {
-            Assert.assertNull(r.getSym(7));
-        }
-    };
-    private static final RecordAssert BATCH1_ASSERTER_NULL_SYM = (r, exp, ts, blob) -> {
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.getByte(2));
-        } else {
-            Assert.assertEquals(0, r.getByte(2));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
-        } else {
-            Assert.assertFalse(r.getBool(8));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextShort(), r.getShort(1));
-        } else {
-            Assert.assertEquals(0, r.getShort(1));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextInt(), r.getInt(0));
-        } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
-        } else {
-            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
-        } else {
-            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextLong(), r.getLong(5));
-        } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(ts, r.getDate(10));
-        } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
-        }
-
-        assertBin(r, exp, blob, 9);
-
-        if (exp.nextBoolean()) {
-            assertStrColumn(exp.nextChars(10), r, 6);
-        } else {
-            assertNullStr(r, 6);
-        }
-
-        if (exp.nextBoolean()) {
-            exp.nextChars(7);
-        }
-        Assert.assertNull(r.getSym(7));
-    };
-    private static final RecordAssert BATCH1_ASSERTER_NULL_INT = (r, exp, ts, blob) -> {
-        // same as BATCH1_ASSERTER + special treatment of int field
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.getByte(2));
-        } else {
-            Assert.assertEquals(0, r.getByte(2));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
-        } else {
-            Assert.assertFalse(r.getBool(8));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextShort(), r.getShort(1));
-        } else {
-            Assert.assertEquals(0, r.getShort(1));
-        }
-
-        if (exp.nextBoolean()) {
-            exp.nextInt();
-        }
-
-        Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
-        } else {
-            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
-        } else {
-            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextLong(), r.getLong(5));
-        } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
-        }
-
-        if (exp.nextBoolean()) {
-            Assert.assertEquals(ts, r.getDate(10));
-        } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
-        }
-
-        assertBin(r, exp, blob, 9);
-
-        if (exp.nextBoolean()) {
-            assertStrColumn(exp.nextChars(10), r, 6);
-        } else {
-            assertNullStr(r, 6);
-        }
-
-        if (exp.nextBoolean()) {
-            TestUtils.assertEquals(exp.nextChars(7), r.getSym(7));
-        } else {
-            Assert.assertNull(r.getSym(7));
         }
     };
     private static final RecordAssert BATCH1_7_ASSERTER = (r, exp, ts, blob) -> {
@@ -1346,7 +1151,6 @@ public class TableReaderTest extends AbstractCairoTest {
             r.putInt(22, rnd.nextInt());
         }
     };
-
     private static final FieldGenerator BATCH9_GENERATOR = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
             r.putByte(2, rnd.nextByte());
@@ -1716,36 +1520,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testCloseColumnNonPartitioned1() throws Exception {
-        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin", BATCH1_ASSERTER_NULL_BIN);
-    }
-
-    @Test
-    public void testCloseColumnNonPartitioned2() throws Exception {
-        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "int", BATCH1_ASSERTER_NULL_INT);
-    }
-
-    @Test
-    public void testCloseColumnNonPartitioned3() throws Exception {
-        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "sym", BATCH1_ASSERTER_NULL_SYM);
-    }
-
-    @Test
-    public void testCloseColumnPartitioned1() throws Exception {
-        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "bin", BATCH1_ASSERTER_NULL_BIN);
-    }
-
-    @Test
-    public void testCloseColumnPartitioned2() throws Exception {
-        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "int", BATCH1_ASSERTER_NULL_INT);
-    }
-
-    @Test
-    public void testCloseColumnPartitioned3() throws Exception {
-        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "sym", BATCH1_ASSERTER_NULL_SYM);
     }
 
     @Test
@@ -2190,8 +1964,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 // open another writer, which should fail
                 try {
-                    newTableWriter(configuration, "all", metrics);
-                    Assert.fail();
+                    try (TableWriter ignore = newTableWriter(configuration, "all", metrics)) {
+                        Assert.fail();
+                    }
                 } catch (CairoException ignored) {
 
                 }
@@ -2962,45 +2737,11 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolIndex() throws Exception {
-        String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":2},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
+    public void testStringColumnRemove() throws Exception {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
 
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
-                    .col("a", ColumnType.SYMBOL).indexed(true, 2)
-                    .col("b", ColumnType.INT)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
-
-            int N = 1000;
-            long ts = TimestampFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
-            final Rnd rnd = new Rnd();
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
-                sink.clear();
-                writer.getMetadata().toJson(sink);
-                TestUtils.assertEquals(expected, sink);
-
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow(ts + ((long) i) * 2 * 360000000L);
-                    row.putSym(0, rnd.nextChars(3));
-                    row.putInt(1, rnd.nextInt());
-                    row.append();
-                    writer.commit();
-                }
-            }
-
-            try (TableReader reader = newTableReader(configuration, "x")) {
-                sink.clear();
-                reader.getMetadata().toJson(sink);
-                TestUtils.assertEquals(expected, sink);
-            }
-        });
-    }
-
-    @Test
-    public void testUnsuccessfulFileRemove() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(ff, () -> {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
@@ -3010,33 +2751,8 @@ public class TableReaderTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             final int N = 1000;
             // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 0;
 
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
-                        counter++;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter > 0;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
-
-            // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     row.putStr(0, rnd.nextChars(10));
@@ -3045,7 +2761,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = newTableReader(configuration, "x")) {
+                try (TableReader reader = getReader("x")) {
                     long counter = 0;
 
                     rnd.reset();
@@ -3083,14 +2799,51 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * 2, counter);
                 }
             }
+        });
+    }
 
-            Assert.assertTrue(ff.wasCalled());
+    @Test
+    public void testSymbolIndex() throws Exception {
+        String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":2},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.SYMBOL).indexed(true, 2)
+                    .col("b", ColumnType.INT)
+                    .timestamp()) {
+                CreateTableTestUtils.create(model);
+            }
+
+            int N = 1000;
+            long ts = TimestampFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+                sink.clear();
+                writer.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expected, sink);
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow(ts + ((long) i) * 2 * 360000000L);
+                    row.putSym(0, rnd.nextChars(3));
+                    row.putInt(1, rnd.nextInt());
+                    row.append();
+                    writer.commit();
+                }
+            }
+
+            try (TableReader reader = newTableReader(configuration, "x")) {
+                sink.clear();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expected, sink);
+            }
         });
     }
 
     @Test
     public void testUnsuccessfulFileRemoveAndReloadStr() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
+        assertMemoryLeak(ff, () -> {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.STRING)) {
@@ -3100,42 +2853,9 @@ public class TableReaderTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             final int N = 1000;
             // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 2;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
-                    )) {
-                        counter--;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter < 1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
 
             // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     row.putSym(0, rnd.nextChars(10));
@@ -3144,7 +2864,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = newTableReader(configuration, "x")) {
+                try (TableReader reader = getReader("x")) {
                     long counter = 0;
 
                     rnd.reset();
@@ -3161,10 +2881,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     // this should write metadata without column "b" but will ignore
                     // file delete failures
                     writer.removeColumn("b");
-
-                    if (configuration.getFilesFacade().isRestrictedFileSystem()) {
-                        reader.closeColumnForRemove("b");
-                    }
 
                     // now when we add new column by same name it must not pick up files we failed to delete previously
                     writer.addColumn("b", ColumnType.STRING);
@@ -3200,16 +2916,16 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }
 
-            Assert.assertTrue(ff.wasCalled());
+            checkColumnPurgeRemovesFiles(counterRef, ff, 2);
         });
     }
 
-    // TODO: rename column is non transactional on File System. When file rename fails, metadata does not match files on the disk
-    // To fix it we have to copy files and then delete. We can use hard links to copy on the file systems where it's supported
     @Test
-    @Ignore
     public void testUnsuccessfulFileRename() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
+
+        assertMemoryLeak(ff, () -> {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
@@ -3218,43 +2934,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
             Rnd rnd = new Rnd();
             final int N = 1000;
-            // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 0;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
-                        counter++;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public int rename(LPSZ name, LPSZ to) {
-                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
-                        counter++;
-                        return Files.FILES_RENAME_ERR_OTHER;
-                    }
-                    return super.rename(name, to);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter > 0;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
 
             // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     row.putStr(0, rnd.nextChars(10));
@@ -3263,7 +2945,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = newTableReader(configuration, "x")) {
+                try (TableReader reader = getReader("x")) {
                     long counter = 0;
 
                     rnd.reset();
@@ -3302,13 +2984,16 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }
 
-            Assert.assertTrue(ff.wasCalled());
+            checkColumnPurgeRemovesFiles(counterRef, ff, 2);
         });
     }
 
     @Test
     public void testUnsuccessfulRemoveAndReloadSym() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
+
+        assertMemoryLeak(ff, () -> {
 
             // create table with two string columns
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
@@ -3317,43 +3002,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
             Rnd rnd = new Rnd();
             final int N = 1000;
-            // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 5;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
-                    )) {
-                        counter--;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter < 1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
 
             // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
@@ -3374,10 +3025,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     // this should write metadata without column "b" but will ignore
                     // file delete failures
                     writer.removeColumn("b");
-
-                    if (configuration.getFilesFacade().isRestrictedFileSystem()) {
-                        reader.closeColumnForRemove("b");
-                    }
 
 //                    reader.reload();
 
@@ -3410,59 +3057,29 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * 2, counter);
                 }
             }
-
-            Assert.assertTrue(ff.wasCalled());
+            checkColumnPurgeRemovesFiles(counterRef, ff, 1);
         });
     }
 
     @Test
     public void testUnsuccessfulRemoveAndReloadSymTwice() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
 
+        assertMemoryLeak(ff, () -> {
             // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL)
+                    .col("b", ColumnType.SYMBOL).indexed(true, 256)) {
                 CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
             final int N = 1000;
             // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 5;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
-                    )) {
-                        counter--;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter < 1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
 
             // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
@@ -3483,7 +3100,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     // this should write metadata without column "b" but will ignore
                     // file delete failures
                     writer.removeColumn("b");
-
                     reader.reload();
 
                     // now when we add new column by same name it must not pick up files we failed to delete previously
@@ -3514,60 +3130,30 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     Assert.assertEquals(N * 2, counter);
                 }
-            }
 
-            Assert.assertTrue(ff.wasCalled());
+                checkColumnPurgeRemovesFiles(counterRef, ff, 5);
+            }
         });
     }
 
     @Test
     public void testUnsuccessfulRemoveExplicitColCloseAndReloadSym() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
+
+        assertMemoryLeak(ff, () -> {
 
             // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL).indexed(true, 256)) {
                 CreateTableTestUtils.create(model);
             }
 
             Rnd rnd = new Rnd();
             final int N = 1000;
             // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 5;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
-                    )) {
-                        counter--;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter < 1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
 
             // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
@@ -3588,8 +3174,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     // this should write metadata without column "b" but will ignore
                     // file delete failures
                     writer.removeColumn("b");
-
-                    reader.closeColumnForRemove("b");
 
                     // now when we add new column by same name it must not pick up files we failed to delete previously
                     writer.addColumn("b", ColumnType.SYMBOL);
@@ -3621,62 +3205,30 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }
 
-            Assert.assertTrue(ff.wasCalled());
+            checkColumnPurgeRemovesFiles(counterRef, ff, 5);
         });
     }
 
     @Test
     public void testUnsuccessfulRemoveLastSym() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        AtomicInteger counterRef = new AtomicInteger(CANNOT_DELETE);
+        TestFilesFacade ff = createColumnDeleteCounterFileFacade(counterRef, "b");
 
-            // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
-                CreateTableTestUtils.create(model);
-            }
+        // create table with two string columns
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
+            CreateTableTestUtils.create(model);
+        }
 
-            Rnd rnd = new Rnd();
-            final int N = 1000;
-            // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 5;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
-                    )) {
-                        counter--;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter < 1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+        Rnd rnd = new Rnd();
+        final int N = 1000;
+        assertMemoryLeak(ff, () -> {
 
             // populate table and delete column
-            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = getWriter("x")) {
                 appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
-                try (TableReader reader = newTableReader(configuration, "x")) {
+                try (TableReader reader = getReader("x")) {
                     long counter = 0;
 
                     rnd.reset();
@@ -3712,7 +3264,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }
 
-            Assert.assertTrue(ff.wasCalled());
+            checkColumnPurgeRemovesFiles(counterRef, ff, 2);
         });
     }
 
@@ -3748,6 +3300,48 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, r.getStrB(index));
         Assert.assertNotSame(r.getStr(index), r.getStrB(index));
         Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void checkColumnPurgeRemovesFiles(AtomicInteger counterRef, TestFilesFacade ff, int removeCallsExpected) throws SqlException {
+        Assert.assertFalse(ff.wasCalled());
+        try (ColumnPurgeJob job = new ColumnPurgeJob(engine, null)) {
+            counterRef.set(0);
+            job.run(0);
+        }
+        Assert.assertTrue(ff.called() >= removeCallsExpected);
+    }
+
+    @NotNull
+    private static TestFilesFacade createColumnDeleteCounterFileFacade(AtomicInteger counterRef, String columnName) {
+        return new TestFilesFacade() {
+            @Override
+            public int called() {
+                return counterRef.get();
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (
+                        Chars.endsWith(name, columnName + ".i") ||
+                                Chars.endsWith(name, columnName + ".d") ||
+                                Chars.endsWith(name, columnName + ".o") ||
+                                Chars.endsWith(name, columnName + ".k") ||
+                                Chars.endsWith(name, columnName + ".c") ||
+                                Chars.endsWith(name, columnName + ".v")
+                ) {
+                    if (counterRef.get() == CANNOT_DELETE) {
+                        return false;
+                    }
+                    counterRef.incrementAndGet();
+                }
+                return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return counterRef.get() > 0;
+            }
+        };
     }
 
     private static void freeBlob(long blob) {
@@ -4015,69 +3609,6 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void testCloseColumn(int partitionBy, int count, long increment, String column, RecordAssert assertAfter) throws Exception {
-        final Rnd rnd = new Rnd();
-        final LongList fds = new LongList();
-        String dcol = column + ".d";
-        String icol = column + ".i";
-
-        TestFilesFacade ff = new TestFilesFacade() {
-
-            boolean called = false;
-
-            @Override
-            public boolean close(int fd) {
-                fds.remove(fd);
-                return super.close(fd);
-            }
-
-            @Override
-            public int openRO(LPSZ name) {
-                int fd = super.openRO(name);
-                if (Chars.endsWith(name, dcol) || Chars.endsWith(name, icol)) {
-                    fds.add(fd);
-                    called = true;
-                }
-                return fd;
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return called;
-            }
-
-
-        };
-
-        long blob = allocBlob();
-        try {
-            TestUtils.assertMemoryLeak(() -> {
-                CreateTableTestUtils.createAllTable(engine, partitionBy);
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-
-                CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                };
-                testAppend(rnd, configuration, ts, count, increment, blob, 0);
-
-                try (TableReader reader = newTableReader(configuration, "all")) {
-                    RecordCursor cursor = reader.getCursor();
-                    assertCursor(cursor, ts, increment, blob, count, BATCH1_ASSERTER);
-                    reader.closeColumnForRemove(column);
-                    assertCursor(cursor, ts, increment, blob, count, assertAfter);
-                }
-
-                Assert.assertTrue(ff.wasCalled());
-                Assert.assertEquals(0, fds.size());
-            });
-        } finally {
-            freeBlob(blob);
-        }
-    }
-
     private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 1024_0000;
@@ -4311,11 +3842,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertBatch4(count, increment, ts, blob, reader);
 
                         // now delete last column
-
-                        if (configuration.getFilesFacade().isRestrictedFileSystem()) {
-                            reader.closeColumnForRemove("bin2");
-                        }
-
                         writer.removeColumn("bin2");
 
                         Assert.assertTrue(reader.reload());
@@ -4334,10 +3860,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         // and assert that all columns that have not been deleted contain correct values
                         assertBatch6(count, increment, ts, blob, cursor);
 
-                        if (configuration.getFilesFacade().isRestrictedFileSystem()) {
-                            reader.closeColumnForRemove("int");
-                        }
-
                         // remove first column and add new column by same name
                         writer.removeColumn("int");
                         writer.addColumn("int", ColumnType.INT);
@@ -4355,10 +3877,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertOpenPartitionCount(reader);
 
                         assertBatch8(count, increment, ts, blob, cursor);
-
-                        if (configuration.getFilesFacade().isRestrictedFileSystem()) {
-                            reader.closeColumnForRemove("sym");
-                        }
 
                         writer.removeColumn("sym");
                         writer.addColumn("sym", ColumnType.SYMBOL);

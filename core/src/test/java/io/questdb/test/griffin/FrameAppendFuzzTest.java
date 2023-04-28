@@ -151,7 +151,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 transactions = generateSet(rnd, metadata, start, end, tableName);
             }
 
-            applyNonWal(transactions, tableName);
+            applyNonWal(transactions, tableName, rnd);
             engine.releaseInactive();
 
             copyTableDir(src, merged);

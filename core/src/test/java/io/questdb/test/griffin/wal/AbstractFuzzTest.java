@@ -96,6 +96,25 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
     }
 
+    private static void reloadPartitions(TableReader rdr1) {
+        if (rdr1.isActive()) {
+            for (int i = 0; i < rdr1.getPartitionCount(); i++) {
+                rdr1.openPartition(i);
+            }
+        }
+    }
+
+    private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
+        if (reloadRnd.nextBoolean()) {
+            LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
+            rdr1.goPassive();
+            if (reloadRnd.nextBoolean()) {
+                rdr1.goActive();
+                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
+            }
+        }
+    }
+
     private String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
@@ -119,8 +138,14 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
         return symbols;
     }
 
-    protected static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
-        try (TableWriterAPI writer = getWriter(tableName)) {
+    protected static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName, Rnd reloadRnd) {
+
+        try (
+                TableReader rdr1 = getReader(tableName);
+                TableReader rdr2 = getReader(tableName);
+                TableWriter writer = getWriter(tableName);
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)
+        ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
             for (int i = 0; i < transactionSize; i++) {
@@ -129,6 +154,7 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                     operation.apply(rnd, writer, -1);
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.1);
                 }
 
                 if (transaction.rollback) {
@@ -146,6 +172,17 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
 
     protected static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
         return 1 + rnd.nextInt(2);
+    }
+
+    protected static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
+        if (reloadRnd.nextDouble() < realoadThreashold) {
+            purgeJob.run(0);
+            reloadPartitions(rdr1);
+            reloadPartitions(rdr2);
+
+            reloadReader(reloadRnd, rdr1, "1");
+            reloadReader(reloadRnd, rdr1, "2");
+        }
     }
 
     protected void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
