@@ -511,6 +511,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;
                                 maxSourceTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + prefixHi * Long.BYTES);
+                                mergeType = O3_BLOCK_MERGE;
                                 assert maxSourceTimestamp < o3TimestampLo;
                             } else {
                                 canSplit = false;
