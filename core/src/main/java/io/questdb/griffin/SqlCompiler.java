@@ -2653,6 +2653,7 @@ public class SqlCompiler implements Closeable {
         functionParser.clear();
     }
 
+    // marked as protected since it's an extension point
     protected CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
         // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
         expectKeyword(lexer, "table");
