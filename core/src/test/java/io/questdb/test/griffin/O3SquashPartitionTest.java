@@ -259,9 +259,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
 
             assertSql("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", "i\tj\tstr\tts\n" +
                     "1000000\t-1000001\tXMKJSM\t2020-02-03T17:00:00.000000Z\n" +
+                    "34\t-34\tOPHNIMY\t2020-02-03T17:00:00.000000Z\n" +
                     "1000000\t-1000001\tXEJCTIZKYFLUHZQS\t2020-02-03T17:00:00.000000Z\n" +
-                    "0\t0\t\t1970-01-01T00:00:00.000000Z\n" +
-                    "0\t0\tXEJCTIZKYFLUHZQS\t1970-01-01T00:00:00.000000Z\n" +
+                    "35\t-35\tDTNPHFLPBNHGZWW\t2020-02-03T17:00:00.000000Z\n" +
                     "36\t-36\tNGTNLE\t2020-02-03T18:00:00.000000Z\n" +
                     "37\t-37\t\t2020-02-03T18:00:00.000000Z\n");
         });
