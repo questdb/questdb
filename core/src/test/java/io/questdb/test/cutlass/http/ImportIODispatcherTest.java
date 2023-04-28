@@ -55,7 +55,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder.RequestHeaders;
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest extends AbstractTest {
@@ -215,6 +214,27 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private final String ValidImportResponse1Json = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "\r\n" +
+            "0147\r\n" +
+            "{\"status\":\"OK\"," +
+            "\"location\":\"trips\"," +
+            "\"rowsRejected\":0," +
+            "\"rowsImported\":24," +
+            "\"header\":true," +
+            "\"partitionBy\":\"DAY\"," +
+            "\"timestamp\":\"Pickup_DateTime\"," +
+            "\"columns\":[" +
+            "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
+            "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "]}\r\n" +
+            "00\r\n" +
+            "\r\n";
     private final String ValidImportResponse2 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -267,12 +287,13 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0172\r\n" +
+            "0186\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
             "\"rowsImported\":24," +
-            "\"header\":false," +
+            "\"header\":true," +
+            "\"partitionBy\":\"NONE\"," +
             "\"warnings\":[" +
             "\"Existing table timestamp column is used\"," +
             "\"Existing table PartitionBy is used\"]," +
@@ -700,6 +721,34 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWithTimestampAndPartitionByOverwriteJson() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] ddl = new String[]{DdlCols1, DdlCols2};
+
+                    final String requestTemplate = requests[0];
+                    final String ddlCols = ddl[0];
+
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
+                            "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+
+                    String request = requestTemplate
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime&overwrite=true HTTP");
+
+                    new SendAndReceiveRequestBuilder().execute(request, ValidImportResponse1Json);
+                });
+    }
+
+    @Test
     public void testImportWithWrongPartitionBy() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -808,7 +857,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     compiler.compile("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
 
                     // Here fail expected
-                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + RequestHeaders,
+                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
                             "8e\r\n" +
                                     "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: ");
 
