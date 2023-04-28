@@ -1683,10 +1683,7 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
         // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' expected");
-        }
-        if (!Chars.equalsLowerCaseAscii(tok, "table")) {
+        if (tok == null || !Chars.equalsLowerCaseAscii(tok, "table")) {
             return unknownDropStatement(executionContext, tok);
         }
 
@@ -2754,6 +2751,9 @@ public class SqlCompiler implements Closeable {
     }
 
     protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+        }
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
