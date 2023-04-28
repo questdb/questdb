@@ -26,10 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
@@ -101,7 +98,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     }
 
     private void copyTableDir(TableToken src, TableToken merged) {
-        var ff = configuration.getFilesFacade();
+        FilesFacade ff = configuration.getFilesFacade();
 
         Path pathDest = Path.getThreadLocal(configuration.getRoot()).concat(merged).$();
         Path pathSrc = Path.getThreadLocal2(configuration.getRoot()).concat(src).$();
@@ -111,7 +108,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     }
 
     private void mergeAllPartitions(TableToken merged) {
-        var ff = configuration.getFilesFacade();
+        FilesFacade ff = configuration.getFilesFacade();
         try (TableWriter writer = getWriter(merged)) {
             writer.squashAllPartitions();
         }

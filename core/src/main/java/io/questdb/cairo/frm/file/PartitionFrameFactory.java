@@ -93,11 +93,11 @@ public class PartitionFrameFactory implements Pool<PartitionFrame>, Closeable {
 
     private PartitionFrame getOrCreate() {
         if (framePool.size() > 0) {
-            var frm = framePool.getLast();
+            PartitionFrame frm = framePool.getLast();
             framePool.setPos(framePool.size() - 1);
             return frm;
         }
-        var frame = new PartitionFrame(columnPool);
+        PartitionFrame frame = new PartitionFrame(columnPool);
         frame.setPool(this);
         return frame;
     }

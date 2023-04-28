@@ -4007,19 +4007,21 @@ public class TableWriterTest extends AbstractCairoTest {
                     tableToken = writer.getTableToken();
                     path.of(root).concat(tableToken);
                     final int plen = path.length();
+                    long colVersion = writer.getTxn() - 1;
+
                     if (columnTypeTag == ColumnType.SYMBOL) {
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.v").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.o").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.c").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.k").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.v." + colVersion).$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.o." + colVersion).$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.c." + colVersion).$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.k." + colVersion).$()));
                     }
                     path.trimTo(plen);
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                         if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
                             int nlen = path.length();
-                            Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.d").$()));
+                            Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.d." + colVersion).$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
-                                Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.i").$()));
+                                Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.i." + colVersion).$()));
                             }
                         }
                     });
@@ -4291,62 +4293,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    private void testTruncate(CountingFilesFacade ff) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            int N = 200;
-            create(ff, PartitionBy.DAY, N);
-            Rnd rnd = new Rnd();
-            final long increment = 60 * 60000 * 1000L;
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-
-                @Override
-                public long getMiscAppendPageSize() {
-                    return 1024 * 1024;
-                }
-            };
-            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-
-                for (int k = 0; k < 3; k++) {
-                    ts = populateProducts(writer, rnd, ts, N, increment);
-                    writer.commit();
-                    Assert.assertEquals(N, writer.size());
-
-                    // this truncate will fail quite early and will leave
-                    // table in inconsistent state to recover from which
-                    // truncate has to be repeated
-                    try {
-                        ff.count = 6;
-                        writer.truncate();
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        LOG.info().$((Sinkable) e).$();
-                    }
-
-                    writer.truncate();
-                }
-            }
-
-            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2014-03-04T00:00:00.000Z");
-                Assert.assertEquals(0, writer.size());
-                populateProducts(writer, rnd, ts, 1000, increment);
-                writer.commit();
-                Assert.assertEquals(1000, writer.size());
-            }
-
-            // open writer one more time and just assert the size
-            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-                Assert.assertEquals(1000, writer.size());
-            }
-        });
     }
 
     private void testTruncateOnClose(TestFilesFacade ff, int N) throws Exception {

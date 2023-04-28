@@ -79,13 +79,13 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
             switch (columnType) {
                 case ColumnType.SYMBOL:
                     if (canWrite && isIndexed) {
-                        var indexedColumn = getIndexedColumn();
+                        ContinuousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
                         indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex);
                         return indexedColumn;
                     }
 
                 default: {
-                    var column = getFixColumn();
+                    ContinuousFileFixFrameColumn column = getFixColumn();
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
@@ -96,7 +96,7 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
                 case ColumnType.STRING:
                 case ColumnType.BINARY: {
-                    var column = getVarColumn();
+                    ContinuousFileVarFrameColumn column = getVarColumn();
                     if (canWrite) {
                         column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                     } else {
@@ -109,33 +109,33 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
         private ContinuousFileFixFrameColumn getFixColumn() {
             if (fixColumnPool.size() > 0) {
-                var col = fixColumnPool.getLast();
+                ContinuousFileFixFrameColumn col = fixColumnPool.getLast();
                 fixColumnPool.setPos(fixColumnPool.size() - 1);
                 return col;
             }
-            var col = new ContinuousFileFixFrameColumn(ff, fileOpts);
+            ContinuousFileFixFrameColumn col = new ContinuousFileFixFrameColumn(ff, fileOpts);
             col.setPool(fixColumnPool);
             return col;
         }
 
         private ContinuousFileIndexedFrameColumn getIndexedColumn() {
             if (indexedColumnPool.size() > 0) {
-                var col = indexedColumnPool.getLast();
+                ContinuousFileFixFrameColumn col = indexedColumnPool.getLast();
                 indexedColumnPool.setPos(indexedColumnPool.size() - 1);
                 return (ContinuousFileIndexedFrameColumn) col;
             }
-            var col = new ContinuousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
+            ContinuousFileIndexedFrameColumn col = new ContinuousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
             col.setPool(indexedColumnPool);
             return col;
         }
 
         private ContinuousFileVarFrameColumn getVarColumn() {
             if (varColumnPool.size() > 0) {
-                var col = varColumnPool.getLast();
+                ContinuousFileVarFrameColumn col = varColumnPool.getLast();
                 varColumnPool.setPos(varColumnPool.size() - 1);
                 return col;
             }
-            var col = new ContinuousFileVarFrameColumn(ff, fileOpts);
+            ContinuousFileVarFrameColumn col = new ContinuousFileVarFrameColumn(ff, fileOpts);
             col.setPool(varColumnPool);
             return col;
         }

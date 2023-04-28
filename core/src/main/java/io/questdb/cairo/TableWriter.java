@@ -2862,7 +2862,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // That's when the data from the last partition is moved to in-memory lag.
                     // One way to detect this is to check if index of the "last" partition is not
                     // last partition in the attached partition list.
-                    if (txWriter.reconcileOptimisticPartitions()) {
+                    if (reconcileOptimisticPartitions()) {
                         this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
                         this.partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
                         openLastPartition();
@@ -2911,6 +2911,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return txn;
         }
         return TableSequencer.NO_TXN;
+    }
+
+    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, int columnType) {
+        try {
+            PurgingOperator purgingOperator = getPurgingOperator();
+            long newColumnNameTxn = getTxn();
+            long defaultColumnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
+                    // Link files in each partition.
+                    long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                    long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                    if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
+                        long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                        columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
+                    }
+                }
+            } else {
+                long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+            }
+
+            if (ColumnType.isSymbol(columnType)) {
+                // Link .o, .c, .k, .v symbol files in the table root folder
+                linkFile(ff, offsetFileName(path.trimTo(rootLen), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(rootLen), newName, newColumnNameTxn));
+                linkFile(ff, charFileName(path.trimTo(rootLen), columnName, defaultColumnNameTxn), charFileName(other.trimTo(rootLen), newName, newColumnNameTxn));
+                linkFile(ff, keyFileName(path.trimTo(rootLen), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(rootLen), newName, newColumnNameTxn));
+                linkFile(ff, valueFileName(path.trimTo(rootLen), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(rootLen), newName, newColumnNameTxn));
+                purgingOperator.add(columnIndex, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+            }
+            long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
+            columnVersionWriter.upsertDefaultTxnName(columnIndex, newColumnNameTxn, columnAddedPartition);
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
     }
 
     private void configureAppendPosition() {
@@ -3556,44 +3594,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, int columnType) {
-        try {
-            var purgingOperator = getPurgingOperator();
-            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, newName, partitionTimestamp, partitionNameTxn);
-            }
-            if (!PartitionBy.isPartitioned(partitionBy)) {
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, newName, txWriter.getLastPartitionTimestamp(), -1L);
-            }
-
-            long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
-            if (ColumnType.isSymbol(columnType)) {
-                linkFile(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn), offsetFileName(other.trimTo(rootLen), newName, columnNameTxn));
-                linkFile(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn), charFileName(other.trimTo(rootLen), newName, columnNameTxn));
-                linkFile(ff, keyFileName(path.trimTo(rootLen), columnName, columnNameTxn), keyFileName(other.trimTo(rootLen), newName, columnNameTxn));
-                linkFile(ff, valueFileName(path.trimTo(rootLen), columnName, columnNameTxn), valueFileName(other.trimTo(rootLen), newName, columnNameTxn));
-                purgingOperator.add(columnIndex, columnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
-            }
-        } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
-        }
-    }
-
-    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, long partitionTimestamp, long partitionNameTxn) {
+    private void hardLinkAndPurgeColumnFiles(CharSequence columnName, int columnIndex, int columnType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
         setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         setPathForPartition(other, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.length();
-        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, columnNameTxn));
-        linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, columnNameTxn));
-        linkFile(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn), keyFileName(other.trimTo(plen), newName, columnNameTxn));
-        linkFile(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn), valueFileName(other.trimTo(plen), newName, columnNameTxn));
+        linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, newColumnNameTxn));
+        if (ColumnType.isVariableLength(columnType)) {
+            linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
+        } else if (ColumnType.isSymbol(columnType)) {
+            linkFile(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn), keyFileName(other.trimTo(plen), newName, newColumnNameTxn));
+            linkFile(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn), valueFileName(other.trimTo(plen), newName, newColumnNameTxn));
+        }
         path.trimTo(rootLen);
         other.trimTo(rootLen);
         purgingOperator.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    private boolean reconcileOptimisticPartitions() {
+        if (txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1) > txWriter.getMaxTimestamp()) {
+            int maxTimestampPartitionIndex = txWriter.getPartitionIndex(txWriter.getMaxTimestamp());
+            if (maxTimestampPartitionIndex < getPartitionCount() - 1) {
+                for (int i = maxTimestampPartitionIndex + 1, n = getPartitionCount(); i < n; i++) {
+                    // Schedule folder deletion
+                    long timestamp = txWriter.getPartitionTimestampByIndex(i);
+                    long partitionTxn = txWriter.getPartitionNameTxn(i);
+                    partitionRemoveCandidates.add(timestamp, partitionTxn);
+                }
+                txWriter.reconcileOptimisticPartitions();
+                return true;
+            }
+        }
+        return false;
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
@@ -6094,7 +6125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removeColumnFiles(int columnIndex) {
-        var purgingOperator = getPurgingOperator();
+        PurgingOperator purgingOperator = getPurgingOperator();
         long defaultNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
         if (PartitionBy.isPartitioned(partitionBy)) {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {

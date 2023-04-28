@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractGriffinTest;
@@ -204,9 +206,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             CompiledQuery cc = compiler.compile("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", sqlExecutionContext);
-            try (var cursorFactory = cc.getRecordCursorFactory();
+            try (RecordCursorFactory cursorFactory = cc.getRecordCursorFactory();
                  // Open reader
-                 var cursor = cursorFactory.getCursor(sqlExecutionContext)
+                 RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 // Check that the originally open reader does not see these changes
                 sink.clear();
@@ -286,9 +288,9 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             );
 
             CompiledQuery cc = compiler.compile("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'", sqlExecutionContext);
-            try (var cursorFactory = cc.getRecordCursorFactory();
+            try (RecordCursorFactory cursorFactory = cc.getRecordCursorFactory();
                  // Open reader
-                 var cursor = cursorFactory.getCursor(sqlExecutionContext)
+                 RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 // Check that the originally open reader does not see these changes
                 sink.clear();

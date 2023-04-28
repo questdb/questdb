@@ -2983,7 +2983,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * 2, counter);
                 }
             }
-
+            engine.releaseInactive();
             checkColumnPurgeRemovesFiles(counterRef, ff, 2);
         });
     }

@@ -131,7 +131,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteEqualTimestamp() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG, 29867797867666L, 1682616347313L);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.5);
         setFuzzCounts(
                 true,
@@ -166,7 +166,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteManySmallTransactions() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG, 29371904850750L, 1682615851420L);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01);
         setFuzzCounts(
                 true,
@@ -185,7 +185,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteManyTablesInOrder() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = TestUtils.generateRandom(LOG, 416897136954875L, 1682513901395L);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         setRandomAppendPageSize(rnd);
         long s0 = rnd.getSeed0();
         long s1 = rnd.getSeed1();
