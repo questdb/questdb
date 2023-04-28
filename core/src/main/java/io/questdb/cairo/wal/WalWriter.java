@@ -272,26 +272,6 @@ public class WalWriter implements TableWriterAPI {
         return NO_TXN;
     }
 
-    public void doClose(boolean truncate) {
-        if (open) {
-            open = false;
-            metadata.close(Vm.TRUNCATE_TO_POINTER);
-            Misc.free(events);
-            freeSymbolMapReaders();
-            Misc.free(symbolMapMem);
-            freeColumns(truncate);
-
-            releaseSegmentLock();
-
-            try {
-                releaseWalLock();
-            } finally {
-                Misc.free(path);
-                LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
-            }
-        }
-    }
-
     @Override
     public TableRecordMetadata getMetadata() {
         return metadata;
@@ -945,6 +925,26 @@ public class WalWriter implements TableWriterAPI {
         return segmentPathLen;
     }
 
+    private void doClose(boolean truncate) {
+        if (open) {
+            open = false;
+            metadata.close(Vm.TRUNCATE_TO_POINTER);
+            Misc.free(events);
+            freeSymbolMapReaders();
+            Misc.free(symbolMapMem);
+            freeColumns(truncate);
+
+            releaseSegmentLock();
+
+            try {
+                releaseWalLock();
+            } finally {
+                Misc.free(path);
+                LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            }
+        }
+    }
+
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         final MemoryMA primaryColumn = columns.getAndSetQuick(pi, NullMemory.INSTANCE);
         final MemoryMA secondaryColumn = columns.getAndSetQuick(si, NullMemory.INSTANCE);
@@ -1069,10 +1069,11 @@ public class WalWriter implements TableWriterAPI {
 
     private void openNewSegment() {
         try {
-            segmentId++;
+            final int newSegmentId = segmentId + 1;
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
-            final int segmentPathLen = createSegmentDir(segmentId);
+            final int segmentPathLen = createSegmentDir(newSegmentId);
+            segmentId = newSegmentId;
 
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
@@ -1106,6 +1107,7 @@ public class WalWriter implements TableWriterAPI {
     private void releaseSegmentLock() {
         if (ff.close(segmentLockFd)) {
             segmentLockFd = -1;
+            sequencer.notifySegmentClosed(tableToken, walId, segmentId);
         }
     }
 

@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -79,6 +81,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private @NotNull WalListener walListener;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -100,6 +103,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.walListener = new DefaultWalListener();
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -442,6 +446,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public IDGenerator getTableIdGenerator() {
+        return tableIdGenerator;
+    }
+
+    public TableSequencerAPI getTableSequencerAPI() {
+        return tableSequencerAPI;
+    }
+
     public int getTableStatus(Path path, TableToken tableToken) {
         if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
             return TableUtils.TABLE_RESERVED;
@@ -458,14 +470,6 @@ public class CairoEngine implements Closeable, WriterSource {
             return TableUtils.TABLE_DOES_NOT_EXIST;
         }
         return getTableStatus(Path.getThreadLocal(configuration.getRoot()), tableToken);
-    }
-
-    public IDGenerator getTableIdGenerator() {
-        return tableIdGenerator;
-    }
-
-    public TableSequencerAPI getTableSequencerAPI() {
-        return tableSequencerAPI;
     }
 
     public TableToken getTableTokenByDirName(String dirName, int tableId) {
@@ -518,6 +522,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken getUpdatedTableToken(TableToken tableToken) {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
+    }
+
+    public @NotNull WalListener getWalListener() {
+        return walListener;
     }
 
     // For testing only
@@ -753,6 +761,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setReaderListener(ReaderPool.ReaderListener readerListener) {
         readerPool.setTableReaderListener(readerListener);
+    }
+
+    public void setWalListener(@NotNull WalListener walListener) {
+        this.walListener = walListener;
     }
 
     public void unlock(
