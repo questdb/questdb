@@ -187,9 +187,9 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
+        securityContext.authorizeTableCreate();
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
-        securityContext.authorizeTableCreate(tableName);
 
         int tableId = (int) tableIdGenerator.getNextId();
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
@@ -242,9 +242,9 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
+        securityContext.authorizeTableCreate();
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
-        securityContext.authorizeTableCreate(tableName);
 
         int tableId = (int) tableIdGenerator.getNextId();
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());

@@ -94,7 +94,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableCreate(CharSequence tableName) {
+    public void authorizeTableCreate() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
