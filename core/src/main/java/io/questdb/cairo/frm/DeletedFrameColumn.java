@@ -29,10 +29,12 @@ public class DeletedFrameColumn implements FrameColumn {
 
     @Override
     public void append(long offset, FrameColumn sourceColumn, long sourceOffset, long sourceSize) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void appendNulls(long offset, long count) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

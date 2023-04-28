@@ -80,7 +80,8 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 truncateProb,
                 equalTsRowsProb,
                 strLen,
-                generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName)
+                generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
+                3
         );
     }
 
@@ -213,6 +214,11 @@ public class AbstractFuzzTest extends AbstractGriffinTest {
                 " rnd_boolean() bool1 " +
                 " from long_sequence(" + rowCount + ")" +
                 "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        // force few column tops
+        compile("alter table " + tableName1 + " add column long_top long");
+        compile("alter table " + tableName1 + " add column str_top long");
+        compile("alter table " + tableName1 + " add column sym_top symbol index");
+
         return engine.verifyTableName(tableName1);
     }
 

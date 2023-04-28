@@ -53,10 +53,10 @@ public class FuzzTransactionGenerator {
             double probabilityOfTruncate,
             double probabilityOfSameTimestamp,
             int maxStrLenForStrColumns,
-            String[] symbols
+            String[] symbols,
+            int metaVersion
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
-        int metaVersion = 0;
         int waitBarrierVersion = 0;
         RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
 

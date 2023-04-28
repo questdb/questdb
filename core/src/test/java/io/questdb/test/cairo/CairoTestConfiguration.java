@@ -314,7 +314,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
 
     @Override
     public long getPartitionO3SplitThreshold() {
-        return overrides.getPartitionO3SplitThreshold() > 0 ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitThreshold();
+        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitThreshold();
     }
 
     @Override
