@@ -1680,42 +1680,6 @@ public class SqlCompiler implements Closeable {
         return executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
-    private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
-        // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
-        expectKeyword(lexer, "table");
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected [if exists] table-name");
-        }
-        boolean hasIfExists = false;
-        if (SqlKeywords.isIfKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expected exists");
-            }
-            hasIfExists = true;
-        } else {
-            lexer.unparseLast(); // tok has table name
-        }
-        final int tableNamePosition = lexer.getPosition();
-        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
-        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
-        }
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-            if (hasIfExists) {
-                return compiledQuery.ofDrop();
-            }
-            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
-        }
-        executionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        engine.drop(path, tableToken);
-        return compiledQuery.ofDrop();
-    }
-
     @NotNull
     private CompiledQuery executeCopy(SecurityContext securityContext, CopyModel copyModel) throws SqlException {
         securityContext.authorizeCopyExecute();
@@ -2687,6 +2651,42 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder.clear();
         backupAgent.clear();
         functionParser.clear();
+    }
+
+    protected CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
+        // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
+        expectKeyword(lexer, "table");
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected [if exists] table-name");
+        }
+        boolean hasIfExists = false;
+        if (SqlKeywords.isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected exists");
+            }
+            hasIfExists = true;
+        } else {
+            lexer.unparseLast(); // tok has table name
+        }
+        final int tableNamePosition = lexer.getPosition();
+        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
+        TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        }
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+            if (hasIfExists) {
+                return compiledQuery.ofDrop();
+            }
+            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
+        }
+        executionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.drop(path, tableToken);
+        return compiledQuery.ofDrop();
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
