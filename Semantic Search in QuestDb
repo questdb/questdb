@@ -1,0 +1,28 @@
+QuestDB itself does not provide built-in natural language processing (NLP) capabilities. However, you can integrate with external NLP libraries or services to perform NLP operations within QuestDB.
+
+Here's an example of how you might use the Stanford CoreNLP library to perform NLP operations on text within QuestDB:
+
+SELECT text, sentiment
+FROM (
+  SELECT text, 
+         nl_processing(json_stringify(stanfordnlp(text, 'sentiment'), ''))
+           AS sentiment
+  FROM my_table
+)
+WHERE sentiment = 'Positive';
+
+In this example, the stanfordnlp() function is used to analyze the sentiment of the text column within the my_table table. The json_stringify() function is used to convert the results of the stanfordnlp() function to a JSON string, and the nl_processing() function is used to extract the sentiment value from the JSON string.
+
+The nl_processing() function is a custom function that you would need to define to extract the relevant data from the JSON string returned by the NLP library. This function might look something like this:
+CREATE FUNCTION nl_processing(input STRING)
+RETURNS STRING
+LANGUAGE JAVASCRIPT
+AS '
+  const data = JSON.parse(input);
+  return data.sentiment;
+';
+
+In this example, the nl_processing() function extracts the sentiment value from the JSON string returned by the stanfordnlp() function.
+Here's an example of how you might modify the MySQL query to perform a semantic search in QuestDB:
+
+SELECT * FROM Question WHERE MATCH (QuestionContent) AGAINST ('+semantic +search' IN NATURAL LANGUAGE MODE);
