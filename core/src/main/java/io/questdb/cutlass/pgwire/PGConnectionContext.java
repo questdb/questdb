@@ -390,6 +390,69 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.typesAndUpdateCache = typesAndUpdateCache;
         this.typesAndUpdatePool = typesAndUpdatePool;
 
+        handleResume();
+
+        boolean keepReceiving = true;
+        OUTER:
+        do {
+            if (operation == IOOperation.READ) {
+                if (recv() == 0) {
+                    keepReceiving = false;
+                }
+            }
+
+            // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
+            if (keepReceiving) {
+                do {
+                    // Parse will update the value of recvBufferReadOffset upon completion of
+                    // logical block. We cannot count on return value because 'parse' may try to
+                    // respond to client and fail with exception. When it does fail we would have
+                    // to retry 'send' but not parse the same input again
+
+                    long readOffsetBeforeParse = recvBufferReadOffset;
+                    totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+                    try {
+                        parseMessage(
+                                recvBuffer + recvBufferReadOffset,
+                                (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                                compiler
+                        );
+                    } catch (SqlException e) {
+                        inErrorState = true;
+                        reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
+                    } catch (ImplicitCastException e) {
+                        inErrorState = true;
+                        reportNonCriticalError(-1, e.getFlyweightMessage());
+                    } catch (CairoException e) {
+                        inErrorState = true;
+                        clearCursorAndFactory();
+                        if (e.isInterruption()) {
+                            reportQueryCancelled(e.getFlyweightMessage());
+                        } else {
+                            reportError(e);
+                        }
+                    } catch (AuthenticationException e) {
+                        prepareNonCriticalError(-1, e.getMessage());
+                        sendAndReset();
+                    }
+
+                    // nothing changed?
+                    if (readOffsetBeforeParse == recvBufferReadOffset) {
+                        // shift to start
+                        if (readOffsetBeforeParse > 0) {
+                            shiftReceiveBuffer(readOffsetBeforeParse);
+                        }
+                        continue OUTER;
+                    }
+                } while (recvBufferReadOffset < recvBufferWriteOffset);
+                // at this point we have parsed all available data
+                // -> we can clear the receive buffer
+                clearRecvBuffer();
+            }
+        } while (keepReceiving && operation == IOOperation.READ);
+    }
+
+    private void handleResume() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         try {
             if (isPausedQuery) {
                 isPausedQuery = false;
@@ -402,68 +465,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     resumeProcessor.resume(false);
                 }
             }
-
-            boolean keepReceiving = true;
-            OUTER:
-            do {
-                if (operation == IOOperation.READ) {
-                    if (recv() == 0) {
-                        keepReceiving = false;
-                    }
-                }
-
-                // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-                if (keepReceiving) {
-                    do {
-                        // Parse will update the value of recvBufferReadOffset upon completion of
-                        // logical block. We cannot count on return value because 'parse' may try to
-                        // respond to client and fail with exception. When it does fail we would have
-                        // to retry 'send' but not parse the same input again
-
-                        long readOffsetBeforeParse = recvBufferReadOffset;
-                        totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                        try {
-                            parseMessage(
-                                    recvBuffer + recvBufferReadOffset,
-                                    (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                                    compiler
-                            );
-                        } catch (SqlException e) {
-                            inErrorState = true;
-                            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
-                        } catch (ImplicitCastException e) {
-                            inErrorState = true;
-                            reportNonCriticalError(-1, e.getFlyweightMessage());
-                        } catch (CairoException e) {
-                            inErrorState = true;
-                            clearCursorAndFactory();
-                            if (e.isInterruption()) {
-                                reportQueryCancelled(e.getFlyweightMessage());
-                            } else {
-                                reportError(e);
-                            }
-                        }
-
-                        // nothing changed?
-                        if (readOffsetBeforeParse == recvBufferReadOffset) {
-                            // shift to start
-                            if (readOffsetBeforeParse > 0) {
-                                shiftReceiveBuffer(readOffsetBeforeParse);
-                            }
-                            continue OUTER;
-                        }
-                    } while (recvBufferReadOffset < recvBufferWriteOffset);
-                    // at this point we have parsed all available data
-                    // -> we can clear the receive buffer
-                    clearRecvBuffer();
-                }
-            } while (keepReceiving && operation == IOOperation.READ);
-        } catch (SqlException e) {
-            inErrorState = true;
-            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
-        } catch (ImplicitCastException e) {
-            inErrorState = true;
-            reportNonCriticalError(-1, e.getFlyweightMessage());
         } catch (CairoException e) {
             inErrorState = true;
             clearCursorAndFactory();
@@ -472,10 +473,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             } else {
                 reportError(e);
             }
-        } catch (AuthenticationException e) {
-            prepareNonCriticalError(-1, e.getMessage());
-            sendAndReset();
-            clearRecvBuffer();
+            assert resumeProcessor == null;
+        } catch (SqlException e) {
+            inErrorState = true;
+            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
+            assert resumeProcessor == null; // we rely on resumeProcessor impls to remove itself upon SQL error
         }
     }
 
