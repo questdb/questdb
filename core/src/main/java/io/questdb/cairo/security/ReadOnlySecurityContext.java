@@ -34,12 +34,37 @@ public class ReadOnlySecurityContext implements SecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext();
 
     @Override
+    public void authorizeAlterTableAttachPartition(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAlterTableDetachPartition(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeAlterTableDropPartition(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeAlterTableAddColumn(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
     @Override
-    public void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public  void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public  void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public  void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -49,7 +74,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableRenameColumns(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -64,7 +89,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeCopyExecute() {
+    public void authorizeCopy() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
@@ -74,7 +99,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeGrant(TableToken tableToken) {
+    public void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
         throw CairoException.authorization().put("Grant permission denied").setCacheable(true);
     }
 

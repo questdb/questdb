@@ -33,14 +33,34 @@ public interface SecurityContext {
     default void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
-    default void authorizeAlterTableAlterColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableAttachPartition(TableToken tableToken) {
     }
 
+    default void authorizeAlterTableDetachPartition(TableToken tableToken) {
+    }
+
+    default void authorizeAlterTableDropPartition(TableToken tableToken) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
+    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    }
+
+    // TODO: columnNames should be removed, or this permission should change to column level
     default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
+    // TODO: columnNames should be removed, or this permission should change to column level
     // the names are pairs from-to
-    default void authorizeAlterTableRenameColumns(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    default void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
     }
 
     default void authorizeAlterTableSetType(TableToken tableToken) {
@@ -49,13 +69,13 @@ public interface SecurityContext {
     default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
     }
 
-    default void authorizeCopyExecute() {
+    default void authorizeCopy() {
     }
 
     default void authorizeDatabaseSnapshot() {
     }
 
-    default void authorizeGrant(TableToken tableToken) {
+    default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
     }
 
     // when insert SQL doesn't specify any columns (this means all columns) the 'columnName' list
@@ -78,6 +98,7 @@ public interface SecurityContext {
     default void authorizeTableDrop(TableToken tableToken) {
     }
 
+    // TODO: columnName should be removed, or this permission should change to column level
     default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
     }
 
