@@ -33,6 +33,7 @@ import io.questdb.std.str.CharSink;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
 //#else
+import io.questdb.std.str.StringSink;
 import jdk.internal.math.FDBigInteger;
 //#endif
 import org.jetbrains.annotations.NotNull;
@@ -336,25 +337,25 @@ public final class Numbers {
 
     /**
      * Append a long value to a CharSink in hex format.
-     * 
+     *
      * @param sink the CharSink to append to
      * @param value the value to append
      * @param padToBytes if non-zero, pad the output to the specified number of bytes
      */
     public static void appendHexPadded(CharSink sink, long value, int padToBytes) {
         assert padToBytes >= 0 && padToBytes <= 8;
-        // This code might be unclear, so here are some hints: 
+        // This code might be unclear, so here are some hints:
         // This method uses longHexAppender() and longHexAppender() is always padding to a whole byte. It never prints
         // just a nibble. It means the longHexAppender() will print value 0xf as "0f". Value 0xff will be printed as "ff".
-        // Value 0xfff will be printed as "0fff". Value 0xffff will be printed as "ffff" and so on. 
+        // Value 0xfff will be printed as "0fff". Value 0xffff will be printed as "ffff" and so on.
         // So this method needs to pad only from the next whole byte up.
         // In other words: This method always pads with full bytes (=even number of zeros), never with just a nibble.
 
-        // Example 1: Value is 0xF and padToBytes is 2. This means the desired output is 000f. 
+        // Example 1: Value is 0xF and padToBytes is 2. This means the desired output is 000f.
         // longHexAppender() pads to a full byte. This means it will output is 0f. So this method needs to pad with 2 zeros.
 
         // Example 2: The value is 0xFF and padToBytes is 2. This means the desired output is 00ff.
-        // longHexAppender() will output "ff". This is a full byte so longHexAppender() will not do any padding on its own. 
+        // longHexAppender() will output "ff". This is a full byte so longHexAppender() will not do any padding on its own.
         // So this method needs to pad with 2 zeros.
         int leadingZeroBits = Long.numberOfLeadingZeros(value);
         int padToBits = padToBytes << 3;
@@ -478,6 +479,12 @@ public final class Numbers {
         }
 
         appendHex(sink, a, false);
+    }
+
+    public static String toHexStrPadded(long value) {
+        StringSink sink = new StringSink();
+        appendHexPadded(sink, value, Long.BYTES);
+        return sink.toString();
     }
 
     public static void appendUuid(long lo, long hi, CharSink sink) {
