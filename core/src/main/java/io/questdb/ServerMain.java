@@ -40,6 +40,7 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.engine.functions.analytic.RankFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -61,10 +62,10 @@ public class ServerMain implements Closeable {
     private final ServerConfiguration config;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
-    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
+    private FreeOnExitList freeOnExitList = new FreeOnExitList();
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -81,7 +82,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExitList.register(new CairoEngine(cairoConfig, metrics));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -89,10 +90,10 @@ public class ServerMain implements Closeable {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
 
-        config.init(engine, ffCache);
+        config.init(engine, ffCache, freeOnExitList);
 
         // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
+        final DatabaseSnapshotAgent snapshotAgent = freeOnExitList.register(new DatabaseSnapshotAgent(engine));
 
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
@@ -148,7 +149,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        freeOnExitList.add(telemetryJob);
+                        freeOnExitList.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -169,7 +170,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit(Services.createHttpServer(
+        freeOnExitList.register(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -179,7 +180,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExit(Services.createMinHttpServer(
+        freeOnExitList.register(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -187,7 +188,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit(Services.createPGWireServer(
+        freeOnExitList.register(Services.createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
@@ -198,7 +199,7 @@ public class ServerMain implements Closeable {
 
         if (!isReadOnly) {
             // ilp/tcp
-            freeOnExit(Services.createLineTcpReceiver(
+            freeOnExitList.register(Services.createLineTcpReceiver(
                     config.getLineTcpReceiverConfiguration(),
                     engine,
                     workerPoolManager,
@@ -206,7 +207,7 @@ public class ServerMain implements Closeable {
             ));
 
             // ilp/udp
-            freeOnExit(Services.createLineUdpReceiver(
+            freeOnExitList.register(Services.createLineUdpReceiver(
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
@@ -247,11 +248,7 @@ public class ServerMain implements Closeable {
     public void close() {
         if (closed.compareAndSet(false, true)) {
             workerPoolManager.halt();
-            // free instances in reverse order to which we allocated them
-            for (int i = freeOnExitList.size() - 1; i >= 0; i--) {
-                Misc.free(freeOnExitList.getQuick(i));
-            }
-            freeOnExitList.clear();
+            freeOnExitList.close();
         }
     }
 
@@ -310,13 +307,6 @@ public class ServerMain implements Closeable {
                 System.err.println("QuestDB is shutdown.");
             }
         }));
-    }
-
-    protected <T extends Closeable> T freeOnExit(T closeable) {
-        if (closeable != null) {
-            freeOnExitList.add(closeable);
-        }
-        return closeable;
     }
 
     protected void setupWalApplyJob(

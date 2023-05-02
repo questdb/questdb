@@ -131,7 +131,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 new FunctionFactoryCache(
                         configuration,
                         ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-                )
+                ),
+                freeOnExitList
         );
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
@@ -140,6 +141,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
     @Override
     @After
     public void tearDown() {
+        freeOnExitList.close();
         engine = Misc.free(engine);
         TestUtils.removeTestPath(root);
     }

@@ -24,13 +24,29 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public interface FactoryProviderFactory {
-    FactoryProvider getInstance(
-            ServerConfiguration configuration,
-            CairoEngine engine,
-            FunctionFactoryCache functionFactoryCache,
-            FreeOnExitList freeOnExitList);
+import java.io.Closeable;
+
+public class FreeOnExitList implements QuietCloseable {
+
+    private final ObjList<Closeable> list = new ObjList<>();
+
+    public <T extends Closeable> T register(T closeable) {
+        if (closeable != null) {
+            list.add(closeable);
+        }
+        return closeable;
+    }
+
+    @Override
+    public void close() {
+        // free instances in reverse order to which we allocated them
+        for (int i = list.size() - 1; i >= 0; i--) {
+            Misc.free(list.getQuick(i));
+        }
+        list.clear();
+    }
 }

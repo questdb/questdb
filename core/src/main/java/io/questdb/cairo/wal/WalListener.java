@@ -27,11 +27,15 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.TableToken;
 
 public interface WalListener {
-    void dataTxnCommitted(TableToken tableToken, long txn);
+    default void dataTxnCommitted(TableToken tableToken, long txn, int walId, int segmentId, int segmentTxn) {
+    }
 
-    void nonDataTxnCommitted(TableToken tableToken, long txn);
+    default void nonDataTxnCommitted(TableToken tableToken, long txn) {
+    }
 
-    void segmentClosed(final TableToken tabletoken, int walId, int segmentId);
+    default void segmentClosed(final TableToken tabletoken, int walId, int segmentId) {
+    }
 
-    void tableDropped(TableToken tableToken);
+    default void tableDropped(TableToken tableToken) {
+    }
 }

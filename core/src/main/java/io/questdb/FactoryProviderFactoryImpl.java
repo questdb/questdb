@@ -34,7 +34,8 @@ public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
     public FactoryProvider getInstance(
             ServerConfiguration configuration,
             CairoEngine engine,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            FreeOnExitList freeOnExitList
     ) {
         return new FactoryProviderImpl(configuration);
     }
