@@ -349,6 +349,7 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         return alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
+                        executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                         return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
@@ -363,6 +364,7 @@ public class SqlCompiler implements Closeable {
                 } else if (SqlKeywords.isAttachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
+                        executionContext.getSecurityContext().authorizeAlterTableAttachPartition(tableToken);
                         return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -370,6 +372,7 @@ public class SqlCompiler implements Closeable {
                 } else if (SqlKeywords.isDetachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
+                        executionContext.getSecurityContext().authorizeAlterTableDetachPartition(tableToken);
                         return alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -731,7 +734,7 @@ public class SqlCompiler implements Closeable {
                 columnName,
                 Numbers.ceilPow2(indexValueBlockSize)
         );
-        securityContext.authorizeAlterTableAlterColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableAddIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -758,7 +761,7 @@ public class SqlCompiler implements Closeable {
             alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableToken, metadata.getTableId(), columnName);
         }
 
-        securityContext.authorizeAlterTableAlterColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableAlterColumnCache(tableToken, alterOperationBuilder.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -774,7 +777,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
         }
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
-        securityContext.authorizeAlterTableAlterColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1007,7 +1010,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
-        securityContext.authorizeAlterTableRenameColumns(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableRenameColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1722,7 +1725,7 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     private CompiledQuery executeCopy(SecurityContext securityContext, CopyModel copyModel) throws SqlException {
-        securityContext.authorizeCopyExecute();
+        securityContext.authorizeCopy();
         if (!copyModel.isCancel() && Chars.equalsLowerCaseAscii(copyModel.getFileName().token, "stdin")) {
             // no-op implementation
             setupTextLoaderFromModel(copyModel);
