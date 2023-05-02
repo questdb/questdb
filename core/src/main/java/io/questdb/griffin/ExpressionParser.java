@@ -192,8 +192,12 @@ public class ExpressionParser {
         return argStackDepth;
     }
 
-    @SuppressWarnings("ConstantConditions")
     void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
+        parseExpr(lexer, listener, false);
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    void parseExpr(GenericLexer lexer, ExpressionParserListener listener, boolean unquoteStringConstants) throws SqlException {
         try {
             int paramCount = 0;
             int braceCount = 0;
@@ -773,7 +777,7 @@ public class ExpressionParser {
                                 }
 
                                 ExpressionNode constNode = expressionNodePool.next().of(ExpressionNode.CONSTANT,
-                                        GenericLexer.immutableOf(tok),
+                                        unquoteStringConstants ? GenericLexer.unquote(tok) : GenericLexer.immutableOf(tok),
                                         0,
                                         lastPos
                                 );

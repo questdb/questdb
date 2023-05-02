@@ -33,6 +33,7 @@ import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -1228,7 +1229,7 @@ public class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
 
-                ExpressionNode n = expr(lexer, model);
+                ExpressionNode n = expr(lexer, model, true);
                 if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
@@ -2176,9 +2177,13 @@ public class SqlParser {
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
+        return expr(lexer, model, false);
+    }
+
+    ExpressionNode expr(GenericLexer lexer, QueryModel model, boolean unquoteStringConstants) throws SqlException {
         try {
             expressionTreeBuilder.pushModel(model);
-            expressionParser.parseExpr(lexer, expressionTreeBuilder);
+            expressionParser.parseExpr(lexer, expressionTreeBuilder, unquoteStringConstants);
             return rewriteKnownStatements(expressionTreeBuilder.poll());
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
@@ -2189,6 +2194,7 @@ public class SqlParser {
     }
 
     // test only
+    @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
         expressionParser.parseExpr(lexer, listener);
     }
