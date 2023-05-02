@@ -31,21 +31,29 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.*;
-import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.cutlass.pgwire.test.PgWireCodec;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.AfterClass;
+import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,6 +64,23 @@ import java.util.TimeZone;
 import static io.questdb.std.Numbers.hexDigits;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
+
+    protected static PgWireCodec pgCodec;
+
+    @BeforeClass
+    public static void setUpPgCodec() {
+        pgCodec = new PgWireCodec();
+    }
+
+    @AfterClass
+    public static void closePgCodec() {
+        pgCodec = Misc.freeIfCloseable(pgCodec);
+    }
+
+    @Before
+    public void clearPgCodec() {
+        pgCodec.clear();
+    }
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
