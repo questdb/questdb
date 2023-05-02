@@ -42,7 +42,7 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
         ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public int getBindPort() {
-                return BasePGTest.PG_PORT;
+                return 0;  // Bind to ANY port.
             }
 
             @Override

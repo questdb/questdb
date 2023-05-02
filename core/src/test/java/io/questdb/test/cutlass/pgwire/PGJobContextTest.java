@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -1214,8 +1213,7 @@ if __name__ == "__main__":
      */
     public void testAsyncPgExecutesTableDoesNotExists() throws Exception {
         skipOnWalRun();
-
-        String recordedScript = ">0000000804d2162f\n" +
+        String script = ">0000000804d2162f\n" +
                 "<4e\n" +
                 ">0000003900030000636c69656e745f656e636f64696e6700277574662d382700757365720061646d696e006461746162617365007164620000\n" +
                 "<520000000800000003\n" +
@@ -1228,42 +1226,6 @@ if __name__ == "__main__":
                 ">510000004753454c4543542070675f61647669736f72795f756e6c6f636b5f616c6c28293b0a434c4f534520414c4c3b0a554e4c495354454e202a3b0a524553455420414c4c3b00\n" +
                 "<540000002f000170675f61647669736f72795f756e6c6f636b5f616c6c0000000000000100000413ffffffffffff0000440000000a0001ffffffff430000000d53454c4543542031004300000008534554004300000008534554004300000008534554005a0000000549";
 
-        pgCodec.out().sslRequest()
-                .in().sslDeclined()
-                .out().startup("admin", "qdb", "'utf-8'")
-                .in().authenticationCleartextPassword()
-                .out().password("quest")
-                .in()
-                .authenticationOk()
-                .parameterStatus("TimeZone", "GMT")
-                .parameterStatus("application_name", "QuestDB")
-                .parameterStatus("server_version", "11.3")
-                .parameterStatus("integer_datetimes", "on")
-                .parameterStatus("client_encoding", "UTF8")
-                .backendKeyData(63, -1148479920)
-                .readyForQuery_idle()
-                .out()
-                .parse("__asyncpg_stmt_1__", "SELECT * FROM thistabledoesnotexist;")
-                .describeStatement("__asyncpg_stmt_1__")
-                .flush()
-                .in().error(15, "table does not exist [table=thistabledoesnotexist]")
-                .out().sync()
-                .in().readyForQuery_idle()
-                .out().simpleQuery("SELECT pg_advisory_unlock_all();\nCLOSE ALL;\nUNLISTEN *;\nRESET ALL;")
-                .in()
-                .rowDescription().varcharColumnText("pg_advisory_unlock_all").rowDescriptionDone()
-                .rowData().varcharColumn(null).rowDataDone()
-                .commandCompletion("SELECT 1")
-                .commandCompletion("SET")
-                .commandCompletion("SET")
-                .commandCompletion("SET")
-                .readyForQuery_idle()
-                .dumpAndClear(sink);
-
-        String script = sink.toString();
-
-//         sanity check - make the builder produces the same script as the one we recorded
-        TestUtils.assertEquals(recordedScript, script);
 
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -1310,58 +1272,7 @@ if __name__ == "__main__":
         }
      */
     public void testSyncAfterLoginSendsRNQ() throws Exception {
-        pgCodec
-                .out()
-                .sslRequest()
-                .in()
-                .sslDeclined()
-                .out()
-                .startup().addParam("user", "admin").addParam("database", "qdb").addParam("DateStyle", "ISO, MDY").addParam("client_encoding", "UTF8").addParam("TimeZone", "UTC").addParam("extra_float_digits", "3").startupDone()
-                .in()
-                .authenticationCleartextPassword()
-                .out()
-                .password("quest")
-                .in()
-                .authenticationOk()
-                .parameterStatus("TimeZone", "GMT")
-                .parameterStatus("application_name", "QuestDB")
-                .parameterStatus("server_version", "11.3")
-                .parameterStatus("integer_datetimes", "on")
-                .parameterStatus("client_encoding", "UTF8")
-                .backendKeyData(63, -1148479920)
-                .readyForQuery_idle()
-                .out().sync()
-                .in().readyForQuery_idle()
-                .out()
-                .parse("sqlx_s_1", "SELECT $1 from long_sequence(2)", PGOids.PG_INT4)
-                .describeStatement("sqlx_s_1")
-                .sync()
-                .in()
-                .parseComplete()
-                .parameterDescription().int4Column().parameterDescriptionDone() // todo: this is weird - parameter description says int32 yet row description below return string. a bug in questdb?
-                .rowDescription().varcharColumnText("$1").rowDescriptionDone()
-                .readyForQuery_idle()
-                .out()
-                .bind("", "sqlx_s_1")
-                .paramFormats().addBin().doneParamFormats()
-                .paramValues().addInt4bin(1).doneParamValues()
-                .resultFormats().addBin().doneResultFormats()
-                .bindDone()
-                .execute()
-                .closePortal()
-                .sync()
-                .in()
-                .bindComplete()
-                .rowData().varcharColumn("1").rowDataDone()
-                .rowData().varcharColumn("1").rowDataDone()
-                .commandCompletion("SELECT 2")
-                .closeComplete()
-                .readyForQuery_idle()
-                .out().terminate()
-                .dumpAndClear(sink);
-
-
-        String recordedScript = ">0000000804d2162f\n" +
+        String script = ">0000000804d2162f\n" +
                 "<4e\n" +
                 ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300330000\n" +
                 "<520000000800000003\n" +
@@ -1375,12 +1286,7 @@ if __name__ == "__main__":
                 "<3200000004440000000b00010000000131440000000b00010000000131430000000d53454c45435420320033000000045a0000000549\n" +
                 ">5800000004";
 
-        String generatedScript = sink.toString();
-
-        // sanity check - make sure that generated script is the same as recorded
-        TestUtils.assertEquals(recordedScript, generatedScript);
-
-        assertHexScript(NetworkFacadeImpl.INSTANCE, generatedScript, new Port0PGWireConfiguration());
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
     }
 
     @Test
@@ -1884,37 +1790,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testSimpleMessageQuery() throws Exception {
-        pgCodec.out().startup("admin", "quest")
-                .in().authenticationCleartextPassword()
-                .out().password("quest")
-                .in()
-                .authenticationOk()
-                .parameterStatus("TimeZone", "GMT")
-                .parameterStatus("application_name", "QuestDB")
-                .parameterStatus("server_version", "11.3")
-                .parameterStatus("integer_datetimes", "on")
-                .parameterStatus("client_encoding", "UTF8")
-                .backendKeyData(63, -1148479920)
-                .readyForQuery_idle()
-                .out().simpleQuery("select x, x+1 as incremented from long_sequence(5)")
-                .in()
-                .rowDescription().int8ColumnText("x").int8ColumnText("incremented").rowDescriptionDone()
-                .newLine()
-                .rowData().int8ColumnText(1).int8ColumnText(2).rowDataDone()
-                .rowData().int8ColumnText(2).int8ColumnText(3).rowDataDone()
-                .rowData().int8ColumnText(3).int8ColumnText(4).rowDataDone()
-                .rowData().int8ColumnText(4).int8ColumnText(5).rowDataDone()
-                .rowData().int8ColumnText(5).int8ColumnText(6).rowDataDone()
-                .commandCompletion("SELECT 5")
-                .readyForQuery_idle()
-                .dumpAndClear(sink);
-
-        String script = sink.toString();
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
-    }
-
-    @Test
     public void testCairoException() throws Exception {
         skipOnWalRun(); // non-partitioned
         assertMemoryLeak(() -> {
@@ -2146,7 +2021,7 @@ if __name__ == "__main__":
     @Test
     public void testCloseMessageForPortalHex() throws Exception {
         skipOnWalRun(); // non-partitioned
-        String recordedScript = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+        String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
                 ">70000000076f6800\n" +
                 "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
@@ -2163,95 +2038,6 @@ if __name__ == "__main__":
                 ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
                 "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
                 ">430000000950535f31005300000004\n";
-
-        pgCodec.out()
-                .startup().addParam("user", "xyz").addParam("database", "qdb").addParam("client_encoding", "UTF8").addParam("DateStyle", "ISO").addParam("TimeZone", "Europe/London").addParam("extra_float_digits", "2").startupDone()
-                .in().authenticationCleartextPassword()
-                .out().password("oh")
-                .in()
-                .authenticationOk().parameterStatus("TimeZone", "GMT")
-                .parameterStatus("application_name", "QuestDB")
-                .parameterStatus("server_version", "11.3")
-                .parameterStatus("integer_datetimes", "on")
-                .parameterStatus("client_encoding", "UTF8")
-                .backendKeyData(63, -1148479920)
-                .readyForQuery_idle()
-                .out()
-                .parse("", "SET extra_float_digits = 3")
-                .bind("", "").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().doneResultFormats().bindDone()
-                .execute("", 1)
-                .sync()
-                .in()
-                .parseComplete()
-                .bindComplete()
-                .commandCompletion("SET")
-                .readyForQuery_idle()
-                .out()
-                .parse("", "SET application_name = 'PostgreSQL JDBC Driver'")
-                .bind("", "").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().doneResultFormats().bindDone()
-                .execute("", 1)
-                .sync()
-                .in()
-                .parseComplete()
-                .bindComplete()
-                .commandCompletion("SET")
-                .readyForQuery_idle()
-                .out()
-                .parse("", "select 1,2,3 from long_sequence(1)")
-                .bind("", "").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().doneResultFormats().bindDone()
-                .describePortal("")
-                .execute()
-                .sync()
-                .in()
-                .parseComplete()
-                .bindComplete()
-                .rowDescription().int4ColumnText("1").int4ColumnText("2").int4ColumnText("3").rowDescriptionDone()
-                .rowData().int4ColumnText(1).int4ColumnText(2).int4ColumnText(3).rowDataDone()
-                .commandCompletion("SELECT 1")
-                .readyForQuery_idle()
-                .out()
-                .parse("S_1", "select 1,2,3 from long_sequence(1)")
-                .bind("", "S_1").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().doneResultFormats().bindDone()
-                .describePortal("")
-                .execute()
-                .sync()
-                .in()
-                .parseComplete()
-                .bindComplete()
-                .rowDescription().int4ColumnText("1").int4ColumnText("2").int4ColumnText("3").rowDescriptionDone()
-                .rowData().int4ColumnText(1).int4ColumnText(2).int4ColumnText(3).rowDataDone()
-                .commandCompletion("SELECT 1")
-                .readyForQuery_idle()
-                .out()
-                .bind("", "S_1").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().doneResultFormats().bindDone()
-                .execute()
-                .sync()
-                .in()
-                .bindComplete()
-                .rowData().int4ColumnText(1).int4ColumnText(2).int4ColumnText(3).rowDataDone()
-                .commandCompletion("SELECT 1")
-                .readyForQuery_idle()
-                .out()
-                .bind("", "S_1").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().doneResultFormats().bindDone()
-                .execute()
-                .sync()
-                .in()
-                .bindComplete()
-                .rowData().int4ColumnText(1).int4ColumnText(2).int4ColumnText(3).rowDataDone()
-                .commandCompletion("SELECT 1")
-                .readyForQuery_idle()
-                .out()
-                .closePortal("S_1")
-                .sync();
-
-
-        pgCodec.dumpAndClear(sink);
-        sink.put('\n'); // the recorded script ends with a newline
-        String script = sink.toString();
-
-        // sanity check
-        TestUtils.assertEquals(recordedScript, script);
-
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
@@ -3119,7 +2905,7 @@ if __name__ == "__main__":
      */
     public void testGolangBoolean() throws Exception {
         skipOnWalRun(); // table not created
-        final String recordedScript = ">0000000804d2162f\n" +
+        final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
                 ">0000002400030000757365720078797a00646174616261736500706f7374677265730000\n" +
                 "<520000000800000003\n" +
@@ -3130,52 +2916,9 @@ if __name__ == "__main__":
                 ">420000001a006c72757073635f315f30000000000000020001000144000000065000450000000900000000005300000004\n" +
                 "<3200000004540000003500027472756500000000000001000000100001ffffffff000166616c736500000000000002000000100001ffffffff00014400000010000200000001010000000100430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
-
-        pgCodec.out().sslRequest()
-                .in().sslDeclined()
-                .out().startup().addParam("user", "xyz").addParam("database", "postgres").startupDone()
-                .in().authenticationCleartextPassword()
-                .out().password("oh")
-                .in().authenticationOk().parameterStatus("TimeZone", "GMT")
-                .parameterStatus("application_name", "QuestDB")
-                .parameterStatus("server_version", "11.3")
-                .parameterStatus("integer_datetimes", "on")
-                .parameterStatus("client_encoding", "UTF8")
-                .backendKeyData(63, -1148479920)
-                .readyForQuery_idle()
-                .out()
-                .parse("lrupsc_1_0", "SELECT true, false")
-                .describeStatement("lrupsc_1_0")
-                .sync()
-                .in()
-                .parseComplete()
-                .parameterDescription().parameterDescriptionDone()
-                .rowDescription().boolColumnText("true").boolColumnText("false").rowDescriptionDone()
-                .readyForQuery_idle()
-                .out()
-                .bind("", "lrupsc_1_0").paramFormats().doneParamFormats().paramValues().doneParamValues().resultFormats().addBin().addBin().doneResultFormats().bindDone()
-                .describePortal("")
-                .execute()
-                .sync()
-                .in()
-                .bindComplete()
-                .rowDescription().boolColumnBin("true").boolColumnBin("false").rowDescriptionDone()
-                .rowData().boolColumnBin(true).boolColumnBin(false).rowDataDone()
-                .commandCompletion("SELECT 1")
-                .readyForQuery_idle()
-                .out().terminate();
-
-        pgCodec.dumpAndClear(sink);
-        sink.put('\n'); // the recorded script ends with a new line, let's do the same
-
-        String generatedScript = sink.toString();
-
-        // sanity check
-        TestUtils.assertEquals(recordedScript, generatedScript);
-
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                recordedScript,
+                script,
                 getHexPgWireConfig()
         );
     }
@@ -9015,36 +8758,11 @@ create table tab as (
         });
     }
 
-    //    @Test
-    public void recordHexScript() throws Exception {
-        // use this to record a script for replaying in tests
-        boolean dumpTrafficBefore = DUMP_TRAFFIC;
-        int portBefore = PG_PORT;
-
-        DUMP_TRAFFIC = true;
-        PG_PORT = 1234;
-
-        assertMemoryLeak(() -> {
-            try (
-                    PGWireServer server = createPGServer(getStdPgWireConfig());
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                Thread.sleep(3600_000);
-            } finally {
-                DUMP_TRAFFIC = dumpTrafficBefore;
-                PG_PORT = portBefore;
-            }
-        });
-    }
-
     private void assertHexScript(
             NetworkFacade clientNf,
             String script,
             PGWireConfiguration configuration
     ) throws Exception {
-
-        // see recordHexScript() for a tool to record a script
 
         /*
             You can use Wireshark to capture and decode. You can also see executed statements in the logs.
