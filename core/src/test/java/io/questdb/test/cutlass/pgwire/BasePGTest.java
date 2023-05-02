@@ -53,6 +53,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -67,7 +68,12 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     protected static boolean DUMP_TRAFFIC = false;
     protected static int PG_PORT = 0; // ephemeral port
 
-    protected static PgWireCodec pgCodec = new PgWireCodec();
+    protected static PgWireCodec pgCodec;
+
+    @BeforeClass
+    public static void setUpPgCodec() {
+        pgCodec = new PgWireCodec();
+    }
 
     @AfterClass
     public static void closePgCodec() {
