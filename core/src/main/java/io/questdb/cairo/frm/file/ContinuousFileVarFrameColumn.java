@@ -59,29 +59,34 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceOffset, long sourceSize) {
+    public void addTop(long value) {
+        this.columnTop += value;
+    }
+
+    @Override
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
         if (sourceColumn.getStorageType() != COLUMN_CONTINUOUS_FILE) {
             throw new UnsupportedOperationException();
         }
 
-        sourceOffset -= sourceColumn.getColumnTop();
-        sourceSize -= sourceColumn.getColumnTop();
+        sourceLo -= sourceColumn.getColumnTop();
+        sourceHi -= sourceColumn.getColumnTop();
         offset -= columnTop;
 
-        assert sourceSize >= 0;
-        assert sourceOffset >= 0;
+        assert sourceHi >= 0;
+        assert sourceLo >= 0;
         assert offset >= 0;
 
-        if (sourceSize > 0) {
+        if (sourceHi > 0) {
 
             long varOffset = getVarOffset(offset);
 
             // Map source offset file, it will be used to copy data from anyway.
-            long srcFixMapSize = (sourceSize - sourceOffset + 1) * Long.BYTES;
+            long srcFixMapSize = (sourceHi - sourceLo + 1) * Long.BYTES;
             final long srcFixAddr = TableUtils.mapAppendColumnBuffer(
                     ff,
                     sourceColumn.getSecondaryFd(),
-                    sourceOffset * Long.BYTES,
+                    sourceLo * Long.BYTES,
                     srcFixMapSize,
                     false,
                     MEMORY_TAG
@@ -89,8 +94,8 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
             try {
                 long varSrcOffset = Unsafe.getUnsafe().getLong(srcFixAddr);
-                assert (sourceOffset == 0 && varSrcOffset == 0) || (sourceOffset > 0 && varSrcOffset > 0 && varSrcOffset < 1L << 40);
-                long copySize = Unsafe.getUnsafe().getLong(srcFixAddr + sourceSize * Long.BYTES) - varSrcOffset;
+                assert (sourceLo == 0 && varSrcOffset == 0) || (sourceLo > 0 && varSrcOffset > 0 && varSrcOffset < 1L << 40);
+                long copySize = Unsafe.getUnsafe().getLong(srcFixAddr + sourceHi * Long.BYTES) - varSrcOffset;
                 assert copySize > 0 && copySize < 1L << 40;
 
                 TableUtils.allocateDiskSpace(ff, varFd, varOffset + copySize);
@@ -113,17 +118,17 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
                             varSrcOffset - varOffset,
                             srcFixAddr,
                             0,
-                            sourceSize,
+                            sourceHi,
                             fixAddr
                     );
                 } finally {
                     TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, srcFixMapSize, MEMORY_TAG);
                 }
 
-                varAppendOffset = offset + (sourceSize - sourceOffset);
+                varAppendOffset = offset + (sourceHi - sourceLo);
                 varLength = varOffset + copySize;
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, srcFixAddr, sourceOffset * Long.BYTES, srcFixMapSize, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, srcFixAddr, sourceLo * Long.BYTES, srcFixMapSize, MEMORY_TAG);
             }
         }
     }
@@ -135,10 +140,8 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
         if (count > 0) {
 
-            long fixedOffset = (offset + 1) * Long.BYTES;
             long varOffset = getVarOffset(offset);
             long appendVarSize = count * (ColumnType.isString(columnType) ? Integer.BYTES : Long.BYTES);
-
             TableUtils.allocateDiskSpace(ff, varFd, varOffset + appendVarSize);
 
             // Set nulls in variable file
@@ -151,20 +154,21 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
 
             // Set pointers to nulls
             long fixedSize = count * Long.BYTES;
+            long fixedOffset = (offset + 1) * Long.BYTES;
             TableUtils.allocateDiskSpace(ff, fixedFd, fixedOffset + fixedSize);
             long fixAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, fixedOffset, fixedSize, true, MEMORY_TAG);
             try {
                 if (ColumnType.isString(columnType)) {
-                    Vect.setVarColumnRefs32Bit(fixAddr, varOffset, count);
+                    Vect.setVarColumnRefs32Bit(fixAddr, varOffset + Integer.BYTES, count);
                 } else {
-                    Vect.setVarColumnRefs64Bit(fixAddr, varOffset, count);
+                    Vect.setVarColumnRefs64Bit(fixAddr, varOffset + Long.BYTES, count);
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, fixedOffset, fixedSize, MEMORY_TAG);
             }
 
-            varAppendOffset = offset + count;
-            varLength = varOffset + appendVarSize;
+//            varAppendOffset = offset + count;
+//            varLength = varOffset + appendVarSize;
         }
     }
 
@@ -270,11 +274,6 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
         } finally {
             partitionPath.trimTo(plen);
         }
-    }
-
-    @Override
-    public void setAddTop(long value) {
-        this.columnTop += value;
     }
 
     public void setPool(Pool<ContinuousFileVarFrameColumn> pool) {

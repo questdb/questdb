@@ -262,7 +262,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionNameTxnByPartitionTimestamp(long ts, long defaultValue) {
-        final int index = findAttachedPartitionIndex(ts);
+        final int index = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (index > -1) {
             return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
         }
@@ -278,9 +278,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionSizeByPartitionTimestamp(long ts) {
-        final int index = findAttachedPartitionIndex(ts);
-        if (index > -1) {
-            return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
         }
         return -1;
     }
@@ -294,9 +294,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionTimestampByTimestamp(long timestamp) {
-        int index = findAttachedPartitionIndex(timestamp);
-        if (index > -1) {
-            return attachedPartitions.getQuick(index + PARTITION_TS_OFFSET);
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw > -1) {
+            return attachedPartitions.getQuick(indexRaw + PARTITION_TS_OFFSET);
         }
         return getPartitionFloor(timestamp);
     }
@@ -353,13 +353,13 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean isPartitionReadOnly(int i) {
-        return isPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return isPartitionReadOnlyByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public boolean isPartitionReadOnlyByPartitionTimestamp(long ts) {
-        int index = findAttachedPartitionIndex(ts);
-        if (index > -1) {
-            return isPartitionReadOnlyByIndex(index);
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return isPartitionReadOnlyByRawIndex(indexRaw);
         }
         return false;
     }
@@ -482,8 +482,8 @@ public class TxReader implements Closeable, Mutable {
         return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 
-    private boolean isPartitionReadOnlyByIndex(int index) {
-        long maskedSize = attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET);
+    private boolean isPartitionReadOnlyByRawIndex(int indexRaw) {
+        long maskedSize = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
         return ((maskedSize >>> PARTITION_MASK_READ_ONLY_BIT_OFFSET) & 1) == 1;
     }
 
@@ -551,7 +551,7 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
     }
 
-    protected int findAttachedPartitionIndex(long ts) {
+    protected int findAttachedPartitionRawIndex(long ts) {
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (indexRaw > -1L) {
             return indexRaw;

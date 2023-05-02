@@ -22,35 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.frm;
+package io.questdb.cairo;
 
-import java.io.Closeable;
+public class ColumnVersionWriterColumnTopSink implements ColumnTopSink {
+    private ColumnVersionWriter columnVersionWriter;
+    private long partitionTimestamp;
 
-public interface FrameColumn extends Closeable {
-    int COLUMN_CONTINUOUS_FILE = 0;
-    int COLUMN_CONTINUOUS_MEM = 1;
+    public ColumnTopSink of(long targetPartition, ColumnVersionWriter columnVersionWriter) {
+        partitionTimestamp = targetPartition;
+        this.columnVersionWriter = columnVersionWriter;
+        return this;
+    }
 
-    void addTop(long value);
+    @Override
+    public void saveColumnTop(int columnIndex, long columnTop) {
 
-    void appendNulls(long offset, long count);
-
-    void close();
-
-    int getColumnIndex();
-
-    long getColumnTop();
-
-    int getColumnType();
-
-    long getPrimaryAddress();
-
-    int getPrimaryFd();
-
-    long getSecondaryAddress();
-
-    int getSecondaryFd();
-
-    int getStorageType();
-
-    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi);
+        if (columnTop != columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex)) {
+            columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
+        }
+    }
 }

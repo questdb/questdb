@@ -43,23 +43,24 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceOffset, long count) {
-        super.append(offset, sourceColumn, sourceOffset, count);
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
+        super.append(offset, sourceColumn, sourceLo, sourceHi);
         int fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
-        count -= sourceColumn.getColumnTop();
-        assert count >= 0;
-        if (count > 0) {
-            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, count << shl, false, MEMORY_TAG);
+        sourceHi -= sourceColumn.getColumnTop();
+        assert sourceHi >= 0;
+        if (sourceHi > 0) {
+            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, sourceHi << shl, false, MEMORY_TAG);
             try {
+                // TODO: use sourceLo
                 indexWriter.rollbackConditionally(offset);
-                for (long i = 0; i < count; i++) {
+                for (long i = 0; i < sourceHi; i++) {
                     indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), i + offset);
                 }
-                indexWriter.setMaxValue(offset + count - 1);
+                indexWriter.setMaxValue(offset + sourceHi - 1);
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, count << shl, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, sourceHi << shl, MEMORY_TAG);
             }
         }
     }

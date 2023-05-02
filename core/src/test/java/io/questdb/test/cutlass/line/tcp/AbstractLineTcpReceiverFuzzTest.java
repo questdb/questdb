@@ -116,8 +116,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
-        random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
+        random = new Rnd(1682703179177L, 59148475669083L);
+        getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -188,7 +188,12 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     Assert.assertEquals(dataMinTs, txnMinTs);
                     cursor.toTop();
                 }
-                assertCursorTwoPass(expected, cursor, metadata);
+
+                try {
+                    assertCursorTwoPass(expected, cursor, metadata);
+                } catch (AssertionError e) {
+                    throw new AssertionError("Table: " + table.getName(), e);
+                }
             } else {
                 try (
                         SqlCompiler compiler = new SqlCompiler(engine);

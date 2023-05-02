@@ -477,6 +477,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
 
+            // Useful for debugging
+            // assert reconcileColumnTops();
             return true;
         } catch (Throwable e) {
             releaseTxn();
@@ -562,9 +564,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
         columns.remove(baseIndex, newBaseIndex - 1);
-        openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
 
-        LOG.info().$("deleted partition [path=").$(path).$(", timestamp=").$ts(partitionTimestamp).I$();
+        int colTopStart = columnBase / 2;
+        int columnSlotSize = getColumnBase(1);
+        columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
+
+        openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
+        LOG.info().$("closed deleted partition [table=").$(tableToken).$(", ts=").$ts(partitionTimestamp).$(", partitionIndex=").$(partitionIndex).I$();
         partitionCount--;
     }
 
@@ -712,6 +718,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         }
 
                         if (fromColumnIndex > -1) {
+                            assert fromColumnIndex < this.columnCount;
                             copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
                         } else if (fromColumnIndex != Integer.MIN_VALUE) {
                             // new instance
@@ -772,11 +779,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
-        final int topBase = columnBase / 2;
-        final int topSlotSize = columnSlotSize / 2;
+
         final int idx = getPrimaryColumnIndex(columnBase, 0);
         columns.insert(idx, columnSlotSize, NullMemoryMR.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize, null);
+
+        final int topBase = columnBase / 2;
+        final int topSlotSize = columnSlotSize / 2;
         columnTops.insert(topBase, topSlotSize);
         columnTops.seed(topBase, topSlotSize, 0);
 
@@ -787,7 +796,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1L);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1L);
         partitionCount++;
-        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", path=").$(path).$(", timestamp=").$ts(timestamp).I$();
+        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken).$(", timestamp=").$ts(timestamp).I$();
     }
 
     @NotNull
@@ -967,6 +976,30 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    // Useful debugging method
+    private boolean reconcileColumnTops() {
+        for (int p = 0; p < partitionCount; p++) {
+            long partitionRowCount = getPartitionRowCount(p);
+            if (partitionRowCount != -1) {
+                long partitionTimestamp = openPartitionInfo.getQuick(p * PARTITIONS_SLOT_SIZE);
+                for (int c = 0; c < columnCount; c++) {
+                    long colTop = Math.min(getColumnTop(getColumnBase(p), c), partitionRowCount);
+                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
+                    long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
+                    if (columnTop != colTop) {
+                        LOG.criticalW().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                                .$(", column=").$(c)
+                                .$(", expected=").$(columnTop)
+                                .$(", actual=").$(colTop).$(']').
+                                $();
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
@@ -1144,6 +1177,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
 
             try {
+                assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
                 metadata.applyTransitionIndex();
                 if (reshuffleColumns) {
                     final int columnCount = metadata.getColumnCount();
@@ -1216,7 +1250,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadSlow(boolean reshuffle) {
+    private void reloadSlow(final boolean reshuffle) {
         final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
         do {
             // Reload txn

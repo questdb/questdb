@@ -66,6 +66,13 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
+    public void testAllMixedSplitPart() throws Exception {
+        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
+        initFuzzParameters(-1, -1, -1, 10, -1, false, true, false, false);
+        runTest();
+    }
+
+    @Test
     public void testDuplicatesReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false);

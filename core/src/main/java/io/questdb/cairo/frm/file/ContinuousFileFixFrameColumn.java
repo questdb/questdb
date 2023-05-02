@@ -54,27 +54,33 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceOffset, long count) {
+    public void addTop(long value) {
+        assert value >= 0;
+        columnTop += value;
+    }
+
+    @Override
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
         if (sourceColumn.getStorageType() == COLUMN_CONTINUOUS_FILE) {
-            sourceOffset -= sourceColumn.getColumnTop();
-            count -= sourceColumn.getColumnTop();
+            sourceLo -= sourceColumn.getColumnTop();
+            sourceHi -= sourceColumn.getColumnTop();
             offset -= columnTop;
 
-            assert sourceOffset >= 0;
-            assert count >= 0;
+            assert sourceLo >= 0;
+            assert sourceHi >= 0;
             assert offset >= 0;
 
-            if (count > 0) {
+            if (sourceHi > 0) {
                 int sourceFd = sourceColumn.getPrimaryFd();
-                long length = count << shl;
-                TableUtils.allocateDiskSpace(ff, fd, (offset + count) << shl);
-                if (ff.copyData(sourceFd, fd, sourceOffset << shl, offset << shl, length) != length) {
+                long length = sourceHi << shl;
+                TableUtils.allocateDiskSpace(ff, fd, (offset + sourceHi) << shl);
+                if (ff.copyData(sourceFd, fd, sourceLo << shl, offset << shl, length) != length) {
                     throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
                             .put(", destOffset=").put(offset << shl)
                             .put(", size=").put(length)
                             .put(", fileSize").put(ff.length(fd))
                             .put(", srcFd=").put(sourceColumn.getSecondaryFd())
-                            .put(", srcOffset=").put(sourceOffset << shl)
+                            .put(", srcOffset=").put(sourceLo << shl)
                             .put(", srcFileSize=").put(ff.length(sourceColumn.getSecondaryFd()))
                             .put(']');
                 }
@@ -184,12 +190,6 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
         } finally {
             partitionPath.trimTo(plen);
         }
-    }
-
-    @Override
-    public void setAddTop(long value) {
-        assert value >= 0;
-        columnTop += value;
     }
 
     public void setPool(Pool<ContinuousFileFixFrameColumn> pool) {

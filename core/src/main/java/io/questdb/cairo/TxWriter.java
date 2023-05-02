@@ -327,20 +327,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
-        setPartitionReadOnlyByIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
+        setPartitionReadOnlyByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
     }
 
-    public void setPartitionReadOnlyByIndex(int index, boolean isReadOnly) {
-        if (index < 0) {
+    public void setPartitionReadOnlyByRawIndex(int indexRaw, boolean isReadOnly) {
+        if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
-        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         attachedPartitions.setQuick(offset, updatePartitionIsReadOnly(maskedSize, isReadOnly));
     }
 
     public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
-        setPartitionReadOnlyByIndex(findAttachedPartitionIndex(timestamp), isReadOnly);
+        setPartitionReadOnlyByRawIndex(findAttachedPartitionRawIndex(timestamp), isReadOnly);
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -622,7 +622,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     // That's when the data from the last partition is moved to in-memory lag.
     // One way to detect this is to check if index of the "last" partition is not
     // last partition in the attached partition list.
-    boolean reconcileOptimisticPartitions() {
+    void reconcileOptimisticPartitions() {
         int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;
         if (lastPartitionTsIndex > 0 && maxTimestamp < attachedPartitions.getQuick(lastPartitionTsIndex)) {
             int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());
@@ -640,10 +640,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 this.fixedRowCount -= rowCount;
                 this.maxTimestamp = getMaxTimestamp();
                 this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
-                return true;
             }
         }
-        return false;
     }
 
     void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {

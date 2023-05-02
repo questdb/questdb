@@ -28,7 +28,12 @@ public class DeletedFrameColumn implements FrameColumn {
     public static final FrameColumn INSTANCE = new DeletedFrameColumn();
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceOffset, long sourceSize) {
+    public void addTop(long value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi) {
         throw new UnsupportedOperationException();
     }
 
@@ -78,11 +83,6 @@ public class DeletedFrameColumn implements FrameColumn {
 
     @Override
     public int getStorageType() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setAddTop(long value) {
         throw new UnsupportedOperationException();
     }
 }

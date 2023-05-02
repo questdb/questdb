@@ -45,6 +45,38 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     @Test
+    public void testAddColumnAndDropPartition() throws Exception {
+        assertMemoryLeak(() -> {
+                    compile("create table x as (" +
+                            "select x as i," +
+                            "x as j," +
+                            "x as g," +
+                            "timestamp_sequence('2018-01-01', 72000000L) ts " +
+                            "from long_sequence(1000)" +
+                            ") timestamp (ts) partition by DAY");
+
+                    compile("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(20)");
+                    compile("alter table x add column new_col int");
+                    compile("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
+                    compile("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
+                    try (TableReader ignored = getReader("x")) {
+                        // Open table reader and all partitions
+                        assertSql("select sum(i) / sum(i) from x", "column\n" +
+                                "1\n");
+                    }
+
+                    compile("alter table x add column new_col2 int");
+                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-02'", sqlExecutionContext).getType());
+
+                    try (TableReader ignored = getReader("x")) {
+                        assertSql("select sum(i) / sum(i) from x", "column\n" +
+                                "1\n");
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testDropMalformedPartition0() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 72000000);
@@ -1009,7 +1041,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     // Delete partition directory
                     String dirToDelete = insertIterations > 1 ? partitionDirBaseName + "." + (insertIterations - 1) : partitionDirBaseName;
                     TableToken tableToken = engine.verifyTableName(src.getName());
-                    File dir = new File(Paths.get(root.toString(), tableToken.getDirName(), dirToDelete).toString());
+                    File dir = new File(Paths.get(root, tableToken.getDirName(), dirToDelete).toString());
                     deleteDir(dir);
 
                     if (opened) {

@@ -22,35 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.frm;
+package io.questdb.cairo;
 
-import java.io.Closeable;
-
-public interface FrameColumn extends Closeable {
-    int COLUMN_CONTINUOUS_FILE = 0;
-    int COLUMN_CONTINUOUS_MEM = 1;
-
-    void addTop(long value);
-
-    void appendNulls(long offset, long count);
-
-    void close();
-
-    int getColumnIndex();
-
-    long getColumnTop();
-
-    int getColumnType();
-
-    long getPrimaryAddress();
-
-    int getPrimaryFd();
-
-    long getSecondaryAddress();
-
-    int getSecondaryFd();
-
-    int getStorageType();
-
-    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi);
+public interface ColumnTopSink {
+    void saveColumnTop(int columnIndex, long columnTop);
 }
