@@ -1740,8 +1740,12 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
         // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
-        expectKeyword(lexer, "table");
         CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !Chars.equalsLowerCaseAscii(tok, "table")) {
+            return unknownDropStatement(executionContext, tok);
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected [if exists] table-name");
         }
@@ -2442,7 +2446,7 @@ public class SqlCompiler implements Closeable {
                     factory = new ShowTimeZoneFactory();
                 }
             } else {
-                factory = unknownShowStatement(tok, executionContext);
+                factory = unknownShowStatement(executionContext, tok);
             }
             if (factory != null) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -2772,8 +2776,14 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
     }
 
-    @SuppressWarnings({"RedundantThrows", "unused"})
-    protected RecordCursorFactory unknownShowStatement(CharSequence tok, SqlExecutionContext executionContext) throws SqlException {
+    protected CompiledQuery unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+        }
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+    }
+
+    protected RecordCursorFactory unknownShowStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         return null; // no-op
     }
 

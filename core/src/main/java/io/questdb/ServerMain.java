@@ -312,7 +312,7 @@ public class ServerMain implements Closeable {
         }));
     }
 
-    private <T extends Closeable> T freeOnExit(T closeable) {
+    protected <T extends Closeable> T freeOnExit(T closeable) {
         if (closeable != null) {
             freeOnExitList.add(closeable);
         }
