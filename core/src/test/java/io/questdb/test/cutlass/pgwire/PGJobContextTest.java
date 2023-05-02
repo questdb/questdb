@@ -2940,6 +2940,53 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testFetchTablePartitions() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table if not exists t1 as " +
+                    "(" +
+                    "select dateadd('h', x::int, '2023-03-23T00:00:00.000000Z') as ts  " +
+                    "from long_sequence(30)" +
+                    ") " +
+                    "timestamp(ts) partition by day")) {
+                stmt.execute();
+                mayDrainWalQueue();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM table_partitions('t1')")) {
+                ResultSet resultSet = stmt.executeQuery();
+
+                resultSet.next();
+                assertEquals(0, resultSet.getLong(1));
+                assertEquals("DAY", resultSet.getString(2));
+                assertEquals("2023-03-23", resultSet.getString(3));
+                assertTrue(resultSet.getString(4).startsWith("2023-03-23 01:00:00"));
+                assertTrue(resultSet.getString(5).startsWith("2023-03-23 23:00:00"));
+                assertEquals(23L, resultSet.getLong(6));
+                //skip disk sizes as there's a race
+                assertFalse(resultSet.getBoolean(9));
+                assertFalse(resultSet.getBoolean(10));
+                assertTrue(resultSet.getBoolean(11));
+                assertFalse(resultSet.getBoolean(12));
+                assertFalse(resultSet.getBoolean(13));
+
+                resultSet.next();
+                assertEquals(1, resultSet.getLong(1));
+                assertEquals("DAY", resultSet.getString(2));
+                assertEquals("2023-03-24", resultSet.getString(3));
+                assertTrue(resultSet.getString(4).startsWith("2023-03-24 00:00:00"));
+                assertTrue(resultSet.getString(5).startsWith("2023-03-24 06:00:00"));
+                assertEquals(7L, resultSet.getLong(6));
+                //skip disk sizes as there's a race
+                assertFalse(resultSet.getBoolean(9));
+                assertTrue(resultSet.getBoolean(10));
+                assertTrue(resultSet.getBoolean(11));
+                assertFalse(resultSet.getBoolean(12));
+                assertFalse(resultSet.getBoolean(13));
+            }
+        });
+    }
+
+    @Test
     public void testGORMConnect() throws Exception {
         skipOnWalRun(); // table not created
         // GORM is a Golang ORM tool

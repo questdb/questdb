@@ -214,6 +214,10 @@ public class TextLoader implements Closeable, Mutable {
         return forceHeaders;
     }
 
+    public boolean isHeaderDetected() {
+        return textMetadataDetector.isHeader();
+    }
+
     public void parse(long lo, long hi, int lineCountLimit, CsvTextLexer.Listener textLexerListener) {
         lexer.parse(lo, hi, lineCountLimit, textLexerListener);
     }

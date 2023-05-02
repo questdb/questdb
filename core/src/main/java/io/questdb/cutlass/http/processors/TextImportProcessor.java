@@ -302,7 +302,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         .putQuoted("location").put(':').encodeUtf8AndQuote(completeState.getTableName()).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + completeState.getErrorLineCount()).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
-                        .putQuoted("header").put(':').put(completeState.isForceHeaders()).put(',');
+                        .putQuoted("header").put(':').put(completeState.isHeaderDetected()).put(',')
+                        .putQuoted("partitionBy").put(':').putQuoted(PartitionBy.toString(completeState.getPartitionBy())).put(',');
+
+                int tsIdx = metadata.getTimestampIndex();
+                if (tsIdx != -1) {
+                    socket.putQuoted("timestamp").put(':').encodeUtf8AndQuote(metadata.getColumnName(tsIdx)).put(',');
+                }
                 if (completeState.getWarnings() != TextLoadWarning.NONE) {
                     final int warningFlags = completeState.getWarnings();
                     socket.putQuoted("warnings").put(':').put('[');
