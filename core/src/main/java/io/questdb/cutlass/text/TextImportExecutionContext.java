@@ -28,29 +28,27 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.std.Mutable;
-import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 public class TextImportExecutionContext implements Mutable {
     public static final long INACTIVE = -1;
     private final AtomicLong activeImportId = new AtomicLong(INACTIVE);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
-    private final Rnd rnd;
+    private final LongSupplier importIDSupplier;
     private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
     public TextImportExecutionContext(CairoConfiguration configuration) {
-        MicrosecondClock clock = configuration.getMicrosecondClock();
-        this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
+        this.importIDSupplier = configuration.getImportIDSupplier();
     }
 
     public long assignActiveImportId(SecurityContext securityContext) {
-        long nextId = rnd.nextPositiveLong();
-        activeImportId.set(nextId);
+        final long id = importIDSupplier.getAsLong();
+        activeImportId.set(id);
         this.originatorSecurityContext = securityContext;
-        return nextId;
+        return id;
     }
 
     @Override

@@ -35,8 +35,10 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-public class DefaultCairoConfiguration implements CairoConfiguration {
+import java.util.function.LongSupplier;
 
+public class DefaultCairoConfiguration implements CairoConfiguration {
+    private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final BuildInformation buildInformation = new BuildInformationHolder();
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
@@ -57,6 +59,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
         this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
+    }
+
+    @Override
+    public LongSupplier getImportIDSupplier() {
+        return importIDSupplier;
     }
 
     @Override

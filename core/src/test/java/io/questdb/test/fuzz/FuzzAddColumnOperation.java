@@ -22,28 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.test.fuzz;
 
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Rnd;
 
-public class FuzzDropColumnOperation implements FuzzTransactionOperation {
-    private final String columnName;
+public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
-    public FuzzDropColumnOperation(String columnName) {
-        this.columnName = columnName;
+    private final boolean indexFlag;
+    private final int indexValueBlockCapacity;
+    private final String newColName;
+    private final int newType;
+    private final boolean symbolTableStatic;
+
+    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
+        this.newColName = newColName;
+        this.newType = newType;
+        this.indexFlag = indexFlag;
+        this.indexValueBlockCapacity = indexValueBlockCapacity;
+        this.symbolTableStatic = symbolTableStatic;
     }
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
-                0,
-                wApi.getTableToken(),
-                wApi.getMetadata().getTableId()
-        ).ofDropColumn(columnName).build();
-        wApi.apply(alterOp, true);
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
         return true;
     }
 }

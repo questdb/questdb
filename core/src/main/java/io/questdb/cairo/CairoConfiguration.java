@@ -39,6 +39,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
+import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
@@ -489,6 +490,8 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    LongSupplier getImportIDSupplier();
 
     FactoryProvider getFactoryProvider();
 }

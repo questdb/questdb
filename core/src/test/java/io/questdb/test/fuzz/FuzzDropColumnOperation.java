@@ -22,32 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.test.fuzz;
 
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.Rnd;
 
-public class FuzzTestColumnMeta extends GenericRecordMetadata {
-    int liveColumnCount = 0;
+public class FuzzDropColumnOperation implements FuzzTransactionOperation {
+    private final String columnName;
+
+    public FuzzDropColumnOperation(String columnName) {
+        this.columnName = columnName;
+    }
 
     @Override
-    public GenericRecordMetadata add(TableColumnMetadata meta) {
-        columnNameIndexMap.put(meta.getName(), columnCount);
-        columnMetadata.extendAndSet(columnCount, meta);
-        columnCount++;
-        if (meta.getType() > 0) {
-            liveColumnCount++;
-        }
-        return this;
-    }
-
-    public int getLiveColumnCount() {
-        return liveColumnCount;
-    }
-
-    public void rename(int columnIndex, String name, String newName) {
-        columnMetadata.get(columnIndex).setName(newName);
-        columnNameIndexMap.remove(name);
-        columnNameIndexMap.put(newName, columnIndex);
+    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
+        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
+                0,
+                wApi.getTableToken(),
+                wApi.getMetadata().getTableId()
+        ).ofDropColumn(columnName).build();
+        wApi.apply(alterOp, true);
+        return true;
     }
 }

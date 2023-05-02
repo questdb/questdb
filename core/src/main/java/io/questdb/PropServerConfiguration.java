@@ -61,6 +61,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.function.LongSupplier;
 
 public class PropServerConfiguration implements ServerConfiguration {
 
@@ -70,6 +71,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+
+    static {
+        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
+        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
+        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
+        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
+    }
+
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -1529,6 +1538,25 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
         }
 
+        private static <KeyT> void registerReplacements(
+                Map<KeyT, String> map,
+                KeyT old,
+                ConfigProperty... replacements) {
+            StringBuilder sb = new StringBuilder("Replaced by ");
+            for (int index = 0; index < replacements.length; ++index) {
+                if (index > 0) {
+                    sb.append(index < (replacements.length - 1)
+                            ? ", "
+                            : " and ");
+                }
+                String replacement = replacements[index].getPropertyPath();
+                sb.append('`');
+                sb.append(replacement);
+                sb.append('`');
+            }
+            map.put(old, sb.toString());
+        }
+
         public ValidationResult validate(Properties properties) {
             // Settings that used to be valid but no longer are.
             Map<String, String> obsolete = new HashMap<>();
@@ -1600,25 +1628,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return new ValidationResult(isError, sb.toString());
         }
 
-        private static <KeyT> void registerReplacements(
-                Map<KeyT, String> map,
-                KeyT old,
-                ConfigProperty... replacements) {
-            StringBuilder sb = new StringBuilder("Replaced by ");
-            for (int index = 0; index < replacements.length; ++index) {
-                if (index > 0) {
-                    sb.append(index < (replacements.length - 1)
-                            ? ", "
-                            : " and ");
-                }
-                String replacement = replacements[index].getPropertyPath();
-                sb.append('`');
-                sb.append(replacement);
-                sb.append('`');
-            }
-            map.put(old, sb.toString());
-        }
-
         protected Optional<ConfigProperty> lookupConfigProperty(String propName) {
             return PropertyKey.getByString(propName).map(prop -> prop);
         }
@@ -1643,6 +1652,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {
+        private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
+
+        @Override
+        public LongSupplier getImportIDSupplier() {
+            return importIDSupplier;
+        }
+
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
@@ -3965,12 +3981,5 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean haltOnError() {
             return sharedWorkerHaltOnError;
         }
-    }
-
-    static {
-        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
-        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
-        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
-        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
     }
 }

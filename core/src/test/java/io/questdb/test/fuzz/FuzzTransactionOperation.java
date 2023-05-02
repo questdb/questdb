@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.test.fuzz;
 
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;

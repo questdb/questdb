@@ -22,30 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal.fuzz;
+package io.questdb.test.fuzz;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.std.Rnd;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 
-public class FuzzAddColumnOperation implements FuzzTransactionOperation {
-
-    private final boolean indexFlag;
-    private final int indexValueBlockCapacity;
-    private final String newColName;
-    private final int newType;
-    private final boolean symbolTableStatic;
-
-    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
-        this.newColName = newColName;
-        this.newType = newType;
-        this.indexFlag = indexFlag;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
-        this.symbolTableStatic = symbolTableStatic;
-    }
+public class FuzzTestColumnMeta extends GenericRecordMetadata {
+    int liveColumnCount = 0;
 
     @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
-        return true;
+    public GenericRecordMetadata add(TableColumnMetadata meta) {
+        columnNameIndexMap.put(meta.getName(), columnCount);
+        columnMetadata.extendAndSet(columnCount, meta);
+        columnCount++;
+        if (meta.getType() > 0) {
+            liveColumnCount++;
+        }
+        return this;
+    }
+
+    public int getLiveColumnCount() {
+        return liveColumnCount;
+    }
+
+    public void rename(int columnIndex, String name, String newName) {
+        columnMetadata.get(columnIndex).setName(newName);
+        columnNameIndexMap.remove(name);
+        columnNameIndexMap.put(newName, columnIndex);
     }
 }

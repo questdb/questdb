@@ -37,11 +37,18 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
+import java.util.function.LongSupplier;
+
 public class CairoConfigurationWrapper implements CairoConfiguration {
     private final CairoConfiguration conf;
 
     public CairoConfigurationWrapper(CairoConfiguration conf) {
         this.conf = conf;
+    }
+
+    @Override
+    public LongSupplier getImportIDSupplier() {
+        return conf.getImportIDSupplier();
     }
 
     @Override
