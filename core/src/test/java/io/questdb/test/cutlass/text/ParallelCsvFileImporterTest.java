@@ -2274,7 +2274,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try {
                 executeCopy(compiler, sqlExecutionContext);
-                engine.getTextImportExecutionContext().clear();
+                engine.getCopyContext().clear();
                 executeCopy(compiler, sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
@@ -2790,7 +2790,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
         configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
-        new TextImportRequestJob(engine, 1, null).close();
+        new CopyRequestJob(engine, 1, null).close();
         assertQuery("count\n" + daysToKeep + "\n",
                 "select count() from " + backlogTableName,
                 null,
@@ -2816,7 +2816,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                 try {
                     if (pool != null) {
-                        TextImportJob.assignToPool(engine.getMessageBus(), pool);
+                        CopyJob.assignToPool(engine.getMessageBus(), pool);
                         pool.start(LOG);
                     }
 

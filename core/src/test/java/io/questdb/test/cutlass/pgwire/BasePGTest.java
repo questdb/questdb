@@ -31,8 +31,8 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.*;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -44,6 +44,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,6 +57,8 @@ import java.util.TimeZone;
 import static io.questdb.std.Numbers.hexDigits;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
+
+    protected CopyRequestJob copyRequestJob = null;
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
@@ -85,6 +88,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         }
 
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+
 
         return new PGWireServer(
                 configuration,
@@ -146,25 +150,31 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         TestUtils.assertEquals(message, expected, sink);
     }
 
-    protected PGWireServer createPGServer(PGWireConfiguration configuration) {
+    protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
+        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
+
+        workerPool.assign(copyRequestJob);
+        workerPool.freeOnExit(copyRequestJob);
+
         return createPGWireServer(
                 configuration,
                 engine,
-                new TestWorkerPool(configuration.getWorkerCount(), metrics),
+                workerPool,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent
         );
     }
 
-    protected PGWireServer createPGServer(int workerCount) {
+    protected PGWireServer createPGServer(int workerCount) throws SqlException {
         return createPGServer(workerCount, Long.MAX_VALUE);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
         return createPGServer(workerCount, maxQueryTime, -1);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) {
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override

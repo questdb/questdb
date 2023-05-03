@@ -30,11 +30,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -706,6 +702,10 @@ public final class Numbers {
             val = r;
         }
         return val;
+    }
+
+    public static long parseHexLong(CharSequence sequence) throws NumericException {
+        return parseHexLong(sequence, 0, sequence.length());
     }
 
     public static long parseHexLong(CharSequence sequence, int lo, int hi) throws NumericException {
