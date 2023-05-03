@@ -478,7 +478,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             txTruncateVersion = txFile.getTruncateVersion();
 
             // Useful for debugging
-            // assert reconcileColumnTops();
+            // assert DebugUtils.reconcileColumnTops(PARTITIONS_SLOT_SIZE, openPartitionInfo, columnVersionReader, this);
             return true;
         } catch (Throwable e) {
             releaseTxn();
@@ -974,30 +974,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             Os.pause();
         }
-    }
-
-    // Useful debugging method
-    private boolean reconcileColumnTops() {
-        for (int p = 0; p < partitionCount; p++) {
-            long partitionRowCount = getPartitionRowCount(p);
-            if (partitionRowCount != -1) {
-                long partitionTimestamp = openPartitionInfo.getQuick(p * PARTITIONS_SLOT_SIZE);
-                for (int c = 0; c < columnCount; c++) {
-                    long colTop = Math.min(getColumnTop(getColumnBase(p), c), partitionRowCount);
-                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
-                    long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
-                    if (columnTop != colTop) {
-                        LOG.criticalW().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
-                                .$(", column=").$(c)
-                                .$(", expected=").$(columnTop)
-                                .$(", actual=").$(colTop).$(']').
-                                $();
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
     }
 
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {

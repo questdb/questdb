@@ -1174,7 +1174,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionO3SplitThreshold() {
-        long splitMinSizeBytes = configuration.getPartitionO3SplitThreshold();
+        long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes / avgRecordSize;
     }
 
@@ -1696,7 +1696,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, 1, configuration.getO3PartitionSplitMaxCount());
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, 1, configuration.getO3LastPartitionMaxSplits());
 
             // Bookmark masterRef to track how many rows is in uncommitted state
             committedMasterRef = masterRef;
@@ -2888,7 +2888,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.commit(commitMode, denseSymbolMapWriters);
 
             // Check if partitions are split into too many pieces and merge few of them back.
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), 1, configuration.getO3PartitionSplitMaxCount());
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), 1, configuration.getO3LastPartitionMaxSplits());
 
             // Bookmark masterRef to track how many rows is in uncommitted state
             this.committedMasterRef = masterRef;

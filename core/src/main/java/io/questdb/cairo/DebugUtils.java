@@ -24,14 +24,18 @@
 
 package io.questdb.cairo;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.TestOnly;
 
+@SuppressWarnings("unused")
 public class DebugUtils {
+    private static final Log LOG = LogFactory.getLog(DebugUtils.class);
+
     // For debugging purposes
-    @TestOnly
     public static boolean checkAscendingTimestamp(FilesFacade ff, long size, int fd) {
         if (size > 0) {
             long buffer = TableUtils.mapAppendColumnBuffer(ff, fd, 0, size * Long.BYTES, false, MemoryTag.MMAP_DEFAULT);
@@ -46,6 +50,31 @@ public class DebugUtils {
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, buffer, 0, size * Long.BYTES, MemoryTag.MMAP_DEFAULT);
+            }
+        }
+        return true;
+    }
+
+    // Useful debugging method
+    public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
+        int partitionCount = reader.getPartitionCount();
+        for (int p = 0; p < partitionCount; p++) {
+            long partitionRowCount = reader.getPartitionRowCount(p);
+            if (partitionRowCount != -1) {
+                long partitionTimestamp = openPartitionInfo.getQuick(p * partitionsSlotSize);
+                for (int c = 0; c < reader.getColumnCount(); c++) {
+                    long colTop = Math.min(reader.getColumnTop(reader.getColumnBase(p), c), partitionRowCount);
+                    long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
+                    long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
+                    if (columnTop != colTop) {
+                        LOG.criticalW().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                                .$(", column=").$(c)
+                                .$(", expected=").$(columnTop)
+                                .$(", actual=").$(colTop).$(']').
+                                $();
+                        return false;
+                    }
+                }
             }
         }
         return true;

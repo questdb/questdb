@@ -401,7 +401,8 @@ public enum PropertyKey {
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
-    CAIRO_O3_PARTITION_SPLIT_MAX_COUNT("cairo.o3.partition.split.max.count");
+    CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
+    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

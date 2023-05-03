@@ -356,8 +356,8 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
-                    public long getPartitionO3SplitThreshold() {
-                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitThreshold();
+                    public long getPartitionO3SplitMinSize() {
+                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
                     }
                 };
 
@@ -416,8 +416,8 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
-                    public long getPartitionO3SplitThreshold() {
-                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitThreshold();
+                    public long getPartitionO3SplitMinSize() {
+                        return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
                     }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);

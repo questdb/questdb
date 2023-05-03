@@ -169,7 +169,7 @@ public interface CairoConfiguration {
 
     int getMaxFileNameLength();
 
-    int getO3PartitionSplitMaxCount();
+    int getO3LastPartitionMaxSplits();
 
     int getMaxSwapFileCount();
 
@@ -248,7 +248,7 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    long getPartitionO3SplitThreshold();
+    long getPartitionO3SplitMinSize();
 
     int getQueryCacheEventQueueCapacity();
 

@@ -393,6 +393,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalSquashUncommittedRowsMultiplier(), 0.00001);
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
+
+
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
+        Assert.assertEquals(50 * (1L << 20), configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
     }
 
     @Test

@@ -98,7 +98,7 @@ public class O3Utils {
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
         long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        assert srcLo == 0 || result > 0;
+        assert (srcLo == 0 && result == 0) || result > 0;
         return result;
     }
 

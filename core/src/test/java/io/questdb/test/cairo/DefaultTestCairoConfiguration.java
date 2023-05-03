@@ -76,7 +76,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public long getPartitionO3SplitThreshold() {
+    public long getPartitionO3SplitMinSize() {
         return 512 * (1L << 10); // 512KiB
     }
 }

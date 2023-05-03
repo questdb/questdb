@@ -176,6 +176,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
     private final int o3LagCalculationWindowsSize;
+    private final int o3LastPartitionMaxSplits;
     private final long o3MaxLag;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
@@ -400,13 +401,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long maxHttpQueryResponseRowLimit;
     private double maxRequiredDelimiterStdDev;
     private double maxRequiredLineLengthStdDev;
-    private final int o3PartitionSplitMaxCount;
     private int metadataStringPoolCapacity;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
     private int netTestConnectionBufferSize;
+    private final long o3PartitionSplitMinSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -962,7 +963,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
-            this.o3PartitionSplitMaxCount = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MAX_COUNT, 4);
+            this.o3LastPartitionMaxSplits = getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+            this.o3PartitionSplitMinSize = getLong(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * (1L << 20));
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -1810,11 +1812,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3PartitionSplitMaxCount() {
-            return o3PartitionSplitMaxCount;
-        }
-
-        @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;
         }
@@ -1862,6 +1859,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3LagCalculationWindowsSize() {
             return o3LagCalculationWindowsSize;
+        }
+
+        @Override
+        public int getO3LastPartitionMaxSplits() {
+            return o3LastPartitionMaxSplits;
         }
 
         @Override
@@ -1925,8 +1927,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPartitionO3SplitThreshold() {
-            return 300 * 1_000_000L;
+        public long getPartitionO3SplitMinSize() {
+            return o3PartitionSplitMinSize;
         }
 
         @Override

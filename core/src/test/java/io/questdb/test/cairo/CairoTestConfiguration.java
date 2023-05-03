@@ -167,8 +167,8 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionSplitMaxCount() {
-        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3PartitionSplitMaxCount();
+    public int getO3LastPartitionMaxSplits() {
+        return overrides.getO3PartitionSplitMaxCount() >= 0 ? overrides.getO3PartitionSplitMaxCount() : super.getO3LastPartitionMaxSplits();
     }
 
     @Override
@@ -313,8 +313,8 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public long getPartitionO3SplitThreshold() {
-        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitThreshold();
+    public long getPartitionO3SplitMinSize() {
+        return overrides.getPartitionO3SplitThreshold() > -1L ? overrides.getPartitionO3SplitThreshold() : super.getPartitionO3SplitMinSize();
     }
 
     @Override

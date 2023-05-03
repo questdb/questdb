@@ -330,8 +330,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionSplitMaxCount() {
-        return 3;
+    public int getO3LastPartitionMaxSplits() {
+        return 15;
     }
 
     @Override
@@ -446,8 +446,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionO3SplitThreshold() {
-        return 1_000_000L;
+    public long getPartitionO3SplitMinSize() {
+        return 50 * (1L << 20); // 50MB
     }
 
     @Override
