@@ -1748,7 +1748,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            createTableFromCursorExecutor(createTableModel, executionContext, name.position, volumeAlias);
+            tableToken = createTableFromCursorExecutor(createTableModel, executionContext, name.position, volumeAlias);
         }
 
         if (createTableModel.getQueryModel() == null) {
@@ -1758,7 +1758,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void createTableFromCursorExecutor(
+    private TableToken createTableFromCursorExecutor(
             CreateTableModel model,
             SqlExecutionContext executionContext,
             int position,
@@ -1805,6 +1805,7 @@ public class SqlCompiler implements Closeable {
                 }
                 throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
             }
+            return tableToken;
         }
     }
 
