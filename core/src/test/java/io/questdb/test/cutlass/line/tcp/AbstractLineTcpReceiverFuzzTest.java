@@ -116,7 +116,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
-        random = new Rnd(1682703179177L, 59148475669083L);
+        random = new Rnd(s0, s1);
         getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
     }
 
