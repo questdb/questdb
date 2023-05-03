@@ -50,6 +50,7 @@ import static io.questdb.cutlass.text.CopyTask.getStatusName;
 public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyRequestJob.class);
     private final MicrosecondClock clock;
+    private final CopyContext copyContext;
     private final CairoEngine engine;
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
@@ -57,7 +58,6 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
     private final StringSink stringSink = new StringSink();
-    private final CopyContext copyContext;
     private ParallelCsvFileImporter parallelImporter;
     private Path path;
     private SerialCsvFileImporter serialImporter;
@@ -84,8 +84,10 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(configuration.getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        this.sqlCompiler.compile(
-                "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
+        this.statusTableToken = this.sqlCompiler.query()
+                .$("CREATE TABLE IF NOT EXISTS \"")
+                .$(statusTableName)
+                .$("\" (" +
                         "ts timestamp, " + // 0
                         "id string, " + // 1
                         "table symbol, " + // 2
@@ -96,10 +98,11 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                         "rows_handled long," + // 7
                         "rows_imported long," + // 8
                         "errors long" + // 9
-                        ") timestamp(ts) partition by DAY BYPASS WAL",
-                sqlExecutionContext
-        );
-        this.statusTableToken = engine.verifyTableName(statusTableName);
+                        ") timestamp(ts) partition by DAY BYPASS WAL"
+                )
+                .compile(sqlExecutionContext)
+                .getTableToken();
+
         this.writer = engine.getWriter(statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.copyContext = engine.getCopyContext();

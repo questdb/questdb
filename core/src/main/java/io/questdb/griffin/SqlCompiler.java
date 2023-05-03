@@ -48,13 +48,13 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
-import java.util.function.Consumer;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -95,6 +95,7 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final Path path = new Path();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
+    private final QueryBuilder queryBuilder = new QueryBuilder();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final IndexBuilder rebuildIndex = new IndexBuilder();
@@ -383,6 +384,11 @@ public class SqlCompiler implements Closeable {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    public QueryBuilder query() {
+        queryBuilder.clear();
+        return queryBuilder;
     }
 
     // used in tests
@@ -1261,11 +1267,13 @@ public class SqlCompiler implements Closeable {
                 engine.getCopyContext(),
                 cancelCopyID,
                 cancelCopyIDStr,
-                compile(
-                        "select * from '" + engine.getConfiguration().getSystemTableNamePrefix() + "text_import_log' where id = '" + cancelCopyIDStr + "' limit -1",
-                        executionContext
-
-                ).getRecordCursorFactory()
+                query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory()
         );
     }
 
@@ -1682,12 +1690,12 @@ public class SqlCompiler implements Closeable {
             SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
-        final TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
+        TableToken tableToken = executionContext.getTableTokenIfExists(name.token);
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
         int status = executionContext.getTableStatus(path, tableToken);
         if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
-            return compiledQuery.ofCreateTable();
+            return compiledQuery.ofCreateTable(tableToken);
         }
 
         if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -1714,7 +1722,7 @@ public class SqlCompiler implements Closeable {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
                 if (volumeAlias == null) {
-                    engine.createTable(
+                    tableToken = engine.createTable(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
@@ -1722,7 +1730,7 @@ public class SqlCompiler implements Closeable {
                             createTableModel,
                             false);
                 } else {
-                    engine.createTableInVolume(
+                    tableToken = engine.createTableInVolume(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
@@ -1740,34 +1748,13 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            boolean keepLock = !createTableModel.isWalEnabled();
-            createTableFromCursorExecutor(createTableModel, executionContext, name.position, metadata -> {
-                if (volumeAlias == null) {
-                    engine.createTable(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            false,
-                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
-                            keepLock
-                    );
-                } else {
-                    engine.createTableInVolume(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            false,
-                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
-                            keepLock
-                    );
-                }
-            });
+            createTableFromCursorExecutor(createTableModel, executionContext, name.position, volumeAlias);
         }
 
         if (createTableModel.getQueryModel() == null) {
-            return compiledQuery.ofCreateTable();
+            return compiledQuery.ofCreateTable(tableToken);
         } else {
-            return compiledQuery.ofCreateTableAsSelect(insertCount);
+            return compiledQuery.ofCreateTableAsSelect(tableToken, insertCount);
         }
     }
 
@@ -1775,7 +1762,7 @@ public class SqlCompiler implements Closeable {
             CreateTableModel model,
             SqlExecutionContext executionContext,
             int position,
-            Consumer<RecordMetadata> createTableMethod
+            CharSequence volumeAlias
     ) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
@@ -1784,12 +1771,32 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
+            boolean keepLock = !model.isWalEnabled();
 
-            createTableMethod.accept(metadata);
+            final TableToken tableToken;
+
+            if (volumeAlias == null) {
+                tableToken = engine.createTable(
+                        executionContext.getSecurityContext(),
+                        mem,
+                        path,
+                        false,
+                        tableStructureAdapter.of(model, metadata, typeCast),
+                        keepLock
+                );
+            } else {
+                tableToken = engine.createTableInVolume(
+                        executionContext.getSecurityContext(),
+                        mem,
+                        path,
+                        false,
+                        tableStructureAdapter.of(model, metadata, typeCast),
+                        keepLock
+                );
+            }
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
-                TableToken tableToken = executionContext.getTableToken(model.getName().token);
                 copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
@@ -3103,6 +3110,29 @@ public class SqlCompiler implements Closeable {
             } finally {
                 tableTokens.clear();
             }
+        }
+    }
+
+    public class QueryBuilder implements Mutable {
+        private final StringSink sink = new StringSink();
+
+        public QueryBuilder $(CharSequence value) {
+            sink.put(value);
+            return this;
+        }
+
+        public QueryBuilder $(int value) {
+            sink.put(value);
+            return this;
+        }
+
+        @Override
+        public void clear() {
+            sink.clear();
+        }
+
+        public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompiler.this.compile(sink, executionContext);
         }
     }
 

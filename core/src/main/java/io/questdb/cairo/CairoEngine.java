@@ -179,7 +179,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.close();
     }
 
-    public TableToken createTable(
+    public @NotNull TableToken createTable(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
@@ -195,7 +195,7 @@ public class CairoEngine implements Closeable, WriterSource {
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
         if (tableToken == null) {
             if (ifNotExists) {
-                return null;
+                return getTableTokenIfExists(tableName);
             }
             throw EntryUnavailableException.instance("table exists");
         }
@@ -234,7 +234,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    public void createTableInVolume(
+    public @NotNull TableToken createTableInVolume(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
@@ -250,7 +250,7 @@ public class CairoEngine implements Closeable, WriterSource {
         TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
         if (tableToken == null) {
             if (ifNotExists) {
-                return;
+                return getTableTokenIfExists(tableName);
             }
             throw EntryUnavailableException.instance("table exists");
         }
@@ -286,6 +286,8 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             tableNameRegistry.unlockTableName(tableToken);
         }
+
+        return tableToken;
     }
 
     public void drop(Path path, TableToken tableToken) {
