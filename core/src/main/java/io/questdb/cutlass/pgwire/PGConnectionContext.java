@@ -371,7 +371,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public TableWriterAPI getTableWriterAPI(CharSequence tableName, String lockReason) {
-        return getTableWriterAPI(engine.verifyTableName(tableName) ,lockReason);
+        return getTableWriterAPI(engine.verifyTableName(tableName), lockReason);
     }
 
     public void handleClientOperation(
@@ -1655,20 +1655,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 processExec(msgLo, msgLimit, compiler);
                 break;
             case 'S': // sync
-                // At completion of each series of extended-query messages, the frontend should issue a Sync message. 
-                // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block 
-                // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued. 
-                // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message, 
-                // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing. 
-                // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.) 
+                // At completion of each series of extended-query messages, the frontend should issue a Sync message.
+                // This parameterless message causes the backend to close the current transaction if it's not inside a BEGIN/COMMIT transaction block
+                // (“close” meaning to commit if no error, or roll back if error). Then a ReadyForQuery response is issued.
+                // The purpose of Sync is to provide a resynchronization point for error recovery. When an error is detected while processing any extended-query message,
+                // the backend issues ErrorResponse, then reads and discards messages until a Sync is reached, then issues ReadyForQuery and returns to normal message processing.
+                // (But note that no skipping occurs if an error is detected while processing Sync — this ensures that there is one and only one ReadyForQuery sent for each Sync.)
                 processSyncActions();
                 prepareReadyForQuery();
                 prepareForNewQuery();
                 sendRNQ = true;
                 // fall thru
             case 'H': // flush
-                // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers. 
-                //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands. 
+                // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
+                //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
                 //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
                 // some clients (asyncpg) chose not to send 'S' (sync) message
                 // but instead fire 'H'. Can't wrap my head around as to why
@@ -1686,7 +1686,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sendRNQ = true;
                 processQuery(msgLo, msgLimit, compiler);
                 break;
-            case 'd': // COPY data 
+            case 'd': // COPY data
                 break;
             default:
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
@@ -1707,12 +1707,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         throw BadProtocolException.INSTANCE;
     }
 
-    //send BackendKeyData message with query cancellation info 
+    //send BackendKeyData message with query cancellation info
     private void prepareBackendKeyData(ResponseAsciiSink responseAsciiSink) {
         responseAsciiSink.put('K');
         responseAsciiSink.putNetworkInt(Integer.BYTES * 3); // length of this message
-        responseAsciiSink.putNetworkInt(circuitBreakerId);//process id 
-        responseAsciiSink.putNetworkInt(circuitBreaker.getSecret());//secret key 
+        responseAsciiSink.putNetworkInt(circuitBreakerId);//process id
+        responseAsciiSink.putNetworkInt(circuitBreaker.getSecret());//secret key
     }
 
     private void prepareBindComplete() {
@@ -1825,6 +1825,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareParams(responseAsciiSink, "client_encoding", "UTF8");
         prepareBackendKeyData(responseAsciiSink);
         prepareReadyForQuery();
+        sendRNQ = true;
     }
 
     private void prepareLoginResponse() {
@@ -1954,7 +1955,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         try {
             if (parameterValueCount > 0) {
-                //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message    
+                //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
                 if (this.parsePhaseBindVariableCount == parameterValueCount || activeBindVariableTypes.size() > 0) {
                     lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
                 } else {
@@ -2316,11 +2317,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sendAndReset();
                 break;
             case INIT_CANCEL_REQUEST:
-                // From https://www.postgresql.org/docs/current/protocol-flow.html :  
-                // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message 
-                // that would ordinarily be sent across a new connection. The server will process this request and then close the connection. 
+                // From https://www.postgresql.org/docs/current/protocol-flow.html :
+                // To issue a cancel request, the frontend opens a new connection to the server and sends a CancelRequest message, rather than the StartupMessage message
+                // that would ordinarily be sent across a new connection. The server will process this request and then close the connection.
                 // For security reasons, no direct reply is made to the cancel request message.
-                int pid = getIntUnsafe(address + 2 * Integer.BYTES);//thread id really 
+                int pid = getIntUnsafe(address + 2 * Integer.BYTES);//thread id really
                 int secret = getIntUnsafe(address + 3 * Integer.BYTES);
                 LOG.info().$("cancel request [pid=").$(pid).I$();
                 try {
