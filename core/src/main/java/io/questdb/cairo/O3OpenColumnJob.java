@@ -1335,7 +1335,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     if (prefixType != O3_BLOCK_NONE) {
                         // Set column top if it's not split partition.
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
-                        // If it's split partiton, do nothing. Old partiton will have the old column top
+                        // If it's split partition, do nothing. Old partiton will have the old column top
                         // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes;

@@ -236,6 +236,61 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSplitPartitionChagesColTop() throws Exception {
+        assertMemoryLeak(() -> {
+            // 4kb prefix split threshold
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
+
+            compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
+                            " from long_sequence(60*(23*2-24))" +
+                            ") timestamp (ts) partition by DAY"
+            );
+
+            String sqlPrefix = "insert into x " +
+                    "select" +
+                    " cast(x as int) * 1000000 i," +
+                    " -x - 1000000L as j," +
+                    " rnd_str(5,16,2) as str,";
+            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+
+            // Prevent squashing
+            try (TableReader ignore = getReader("x")) {
+                compile(
+                        sqlPrefix +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
+                                " x + 2 as k" +
+                                " from long_sequence(200)"
+                );
+
+                assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+            }
+
+            compile("alter table x add column k int");
+
+            // Append in order to check last partition opened for writing correctly.
+            compile(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(200)"
+            );
+
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n");
+
+        });
+    }
+
+    @Test
     public void testSplitLastPartitionAtExistingTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // create table with 2 points every hour for 1 day of 2020-02-03

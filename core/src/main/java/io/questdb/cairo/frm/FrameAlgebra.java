@@ -24,11 +24,9 @@
 
 package io.questdb.cairo.frm;
 
-import io.questdb.cairo.ColumnTopSink;
-
 public class FrameAlgebra {
 
-    public static void append(Frame target, Frame source, ColumnTopSink columnTopSink) {
+    public static void append(Frame target, Frame source) {
         if (source.getSize() > 0) {
             for (int i = 0, n = source.columnCount(); i < n; i++) {
                 try (
@@ -38,7 +36,6 @@ public class FrameAlgebra {
                     if (sourceColumn.getColumnType() >= 0) {
                         append(targetColumn, target.getSize(), sourceColumn, source.getSize());
                         target.saveChanges(targetColumn);
-                        columnTopSink.saveColumnTop(i, targetColumn.getColumnTop());
                     }
                 }
             }

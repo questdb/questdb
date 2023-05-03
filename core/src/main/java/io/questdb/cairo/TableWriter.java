@@ -99,7 +99,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
-    private final LongList columnTops;
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -174,7 +173,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private final ColumnVersionWriterColumnTopSink columnTopSink = new ColumnVersionWriterColumnTopSink();
     private CommitListener commitListener;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
@@ -313,7 +311,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.o3NullSetters = new ObjList<>(columnCount);
             this.o3NullSetters2 = new ObjList<>(columnCount);
             this.activeNullSetters = nullSetters;
-            this.columnTops = new LongList(columnCount);
             if (PartitionBy.isPartitioned(partitionBy)) {
                 this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                 this.partitionTimestampHi = txWriter.getLastPartitionTimestamp();
@@ -500,7 +497,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
         int columnIndex = columnCount - 1;
-        columnTops.extendAndSet(columnIndex, txWriter.getTransientRowCount());
 
         // Set txn number in the column version file to mark the transaction where the column is added
         columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
@@ -1763,7 +1759,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         scheduleRemoveAllPartitions();
 
         columnVersionWriter.truncate();
-        columnTops.zero(0);
         txWriter.removeAllPartitions();
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -4214,7 +4209,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(rowCount << shl);
             long src1 = mappedMem.addressOf(mappedRowLo << shl);
-            long lagMemOffset = (txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex)) << shl;
+            long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long src2 = Math.abs(lagAddr);
@@ -4350,7 +4345,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long src1DataAddr = src1Data.addressOf(src1DataLo) - src1DataLo;
             final long src1IndxAddr = src1Index.addressOf(mappedRowLo << 3);
 
-            final long lagIndxOffset = (txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex)) << 3;
+            final long lagIndxOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << 3;
             final long lagIndxSize = (lagRows + 1) << 3;
             final long lagIndxMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagIndex, lagIndxOffset, lagIndxSize, false) : 0;
             try {
@@ -4545,7 +4540,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long extendedSize;
                 long dstVarOffset = o3DataMem.getAppendOffset();
 
-                final long columnTop = columnTops.getQuick(colIndex);
+                final long columnTop = getColumnTop(colIndex);
 
                 if (columnTop > 0) {
                     LOG.debug()
@@ -4688,7 +4683,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryCR o3SrcIndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
             MemoryMA o3DstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
             MemoryMA o3DstIndexMem = columns.get(getSecondaryColumnIndex(columnIndex));
-            long destRowOffset = txWriter.getTransientRowCount() - columnTops.getQuick(columnIndex) + existingLagRows;
+            long destRowOffset = txWriter.getTransientRowCount() - getColumnTop(columnIndex) + existingLagRows;
 
             long size;
             long sourceOffset;
@@ -5261,7 +5256,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             assert columnCount > 0;
 
-            lastOpenPartitionTs = txWriter.getPartitionTimestampByTimestamp(timestamp);
+            lastOpenPartitionTs = timestamp;
             lastOpenPartitionIsReadOnly = partitionBy != PartitionBy.NONE && txWriter.isPartitionReadOnlyByPartitionTimestamp(lastOpenPartitionTs);
 
             for (int i = 0; i < columnCount; i++) {
@@ -5269,7 +5264,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final CharSequence name = metadata.getColumnName(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, i);
                     final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
-                    final long columnTop;
 
                     // prepare index writer if column requires indexing
                     if (indexer != null) {
@@ -5280,10 +5274,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);
-                    columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
-                    columnTops.extendAndSet(i, columnTop);
 
                     if (indexer != null) {
+                        final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
                         indexer.configureFollowerAndWriter(configuration, path, name, columnNameTxn, getPrimaryColumn(i), columnTop);
                     }
                 }
@@ -6634,7 +6627,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA mem2 = getSecondaryColumn(columnIndex);
             int type = metadata.getColumnType(columnIndex);
             if (type > 0) { // Not deleted
-                final long pos = size - columnTops.getQuick(columnIndex);
+                final long pos = size - getColumnTop(columnIndex);
                 if (pos > 0) {
                     // subtract column top
                     final long m1pos;
@@ -6832,7 +6825,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try (
                         Frame targetFrame = partitionFrameFactory.openRW(path, targetPartition, metadata, columnVersionWriter, originalSize)
                 ) {
-                    ColumnTopSink columnTopSink = this.columnTopSink.of(targetPartition, columnVersionWriter);
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
 
@@ -6851,7 +6843,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn)).$(", targetSize=").$(targetFrame.getSize())
                                 .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn)).$(", sourceSize=").$(partitionSize).I$();
                         try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
-                            FrameAlgebra.append(targetFrame, sourceFrame, columnTopSink);
+                            FrameAlgebra.append(targetFrame, sourceFrame);
                             physicallyWrittenRowsSinceLastCommit.addAndGet(sourceFrame.getSize());
                         }
 
@@ -6999,7 +6991,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
-        columnTops.zero(0);
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         try {
             clearTodoLog();
@@ -7277,7 +7268,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     long getColumnTop(int columnIndex) {
-        return columnTops.getQuick(columnIndex);
+        assert lastOpenPartitionTs >= 0;
+        return columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex);
     }
 
     ColumnVersionReader getColumnVersionReader() {
