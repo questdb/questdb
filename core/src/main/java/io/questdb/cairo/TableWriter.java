@@ -181,7 +181,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int indexCount;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
-    private long lastOpenPartitionTs = -1L;
+    private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastPartitionTimestamp;
     private LifecycleManager lifecycleManager;
     private int lockFd = -1;
@@ -3270,7 +3270,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
-        lastOpenPartitionTs = -1L;
+        lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
         Misc.free(partitionFrameFactory);
         freeColumns(truncate & !distressed);
@@ -7268,7 +7268,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     long getColumnTop(int columnIndex) {
-        assert lastOpenPartitionTs >= 0;
+        assert lastOpenPartitionTs != Long.MIN_VALUE;
         return columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex);
     }
 
