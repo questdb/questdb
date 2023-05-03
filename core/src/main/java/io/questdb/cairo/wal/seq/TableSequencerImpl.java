@@ -312,8 +312,10 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void rename(TableToken newTableToken) {
         checkDropped();
+        final TableToken oldToken = this.tableToken;
         tableToken = newTableToken;
         this.metadata.updateTableToken(newTableToken);
+        engine.getWalListener().tableRenamed(oldToken, newTableToken);
     }
 
     @Override

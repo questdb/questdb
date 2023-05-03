@@ -38,4 +38,9 @@ public interface WalListener {
 
     default void tableDropped(TableToken tableToken) {
     }
+
+    default void tableRenamed(TableToken oldToken, TableToken newTableToken) {
+    }
+
+    // TODO: create.
 }
