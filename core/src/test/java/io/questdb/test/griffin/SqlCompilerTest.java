@@ -4065,7 +4065,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderGroupByTokensCanBeQuoted() throws Exception {
+    public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE trigonometry AS " +
                     "(SELECT" +
@@ -4074,17 +4074,45 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "     rnd_double() sine" +
                     " FROM long_sequence(1000)" +
                     ")", sqlExecutionContext);
-            assertQuery("sym\tangle_rad\tSUM(sine)\n" +
-                            "B\t11.255060728744938\t183.76121842808922\n" +
+            assertQuery("sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
+                            "B\t11.255060728744938\t183.76121842808922\n" +
                             "C\t-0.888030888030888\t164.8875613340687\n",
-                    "SELECT " +
+                    "SELECT" +
                             "    sym AS 'sym'," +
-                            "    avg(angle_rad) AS angle_rad," +
+                            "    avg(angle_rad) AS avg_angle_rad," +
                             "    sum(sine) AS 'SUM(sine)' " +
                             "FROM trigonometry " +
                             "GROUP BY sym " +
-                            "ORDER BY 'SUM(sine)' DESC " +
+                            "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
+                            "LIMIT 1000",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testOrderGroupByTokensCanBeQuoted2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trigonometry AS " +
+                    "(SELECT" +
+                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                    "     rnd_symbol('A', 'B', 'C') sym," +
+                    "     rnd_double() sine" +
+                    " FROM long_sequence(1000)" +
+                    ")", sqlExecutionContext);
+            assertQuery("sym\tavg_angle_rad\tSUM(sine)\n" +
+                            "A\t-1.95703125\t168.46508050039918\n" +
+                            "B\t11.255060728744938\t183.76121842808922\n" +
+                            "C\t-0.888030888030888\t164.8875613340687\n",
+                    "SELECT" +
+                            "    sym AS 'sym'," +
+                            "    avg(angle_rad) AS avg_angle_rad," +
+                            "    sum(sine) AS \"SUM(sine)\" " +
+                            "FROM trigonometry " +
+                            "GROUP BY sym " +
+                            "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
                             "LIMIT 1000",
                     null,
                     true,
