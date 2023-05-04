@@ -26,6 +26,7 @@ package io.questdb.cairo.frm.file;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.std.FilesFacade;
@@ -48,19 +49,19 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
         int fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
-        sourceHi -= sourceColumn.getColumnTop();
-        assert sourceHi >= 0;
-        if (sourceHi > 0) {
-            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, sourceHi << shl, false, MEMORY_TAG);
+        final long size = sourceHi - sourceLo;
+        assert size >= 0;
+
+        if (size > 0) {
+            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, size << shl, false, MEMORY_TAG);
             try {
-                // TODO: use sourceLo
                 indexWriter.rollbackConditionally(offset);
-                for (long i = 0; i < sourceHi; i++) {
-                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), i + offset);
+                for (long i = 0; i < size; i++) {
+                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), offset + i);
                 }
-                indexWriter.setMaxValue(offset + sourceHi - 1);
+                indexWriter.setMaxValue(offset + size - 1);
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, sourceHi << shl, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, size << shl, MEMORY_TAG);
             }
         }
     }
@@ -102,6 +103,11 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
             long columnTop,
             int columnIndex
     ) {
+        DebugUtils.LOG.info().$("openRW [path=").$(partitionPath).$(", columnName=").$(columnName)
+                .$(", columnIndex=").$(columnIndex)
+                .$(", columnTop=").$(columnTop)
+                .$(", indexBlockCapacity=").$(indexBlockCapacity)
+                .I$();
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
         indexWriter.of(partitionPath, columnName, columnTxn, columnTop < 0 ? indexBlockCapacity : 0);
     }

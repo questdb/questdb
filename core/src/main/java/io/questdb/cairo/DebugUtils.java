@@ -33,7 +33,7 @@ import io.questdb.std.Unsafe;
 
 @SuppressWarnings("unused")
 public class DebugUtils {
-    private static final Log LOG = LogFactory.getLog(DebugUtils.class);
+    public static final Log LOG = LogFactory.getLog(DebugUtils.class);
 
     // For debugging purposes
     public static boolean checkAscendingTimestamp(FilesFacade ff, long size, int fd) {

@@ -277,6 +277,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
             if (init) {
                 this.keyMem.of(ff, path, keyAppendPageSize, 0L, MemoryTag.MMAP_INDEX_WRITER);
+                keyMem.zero();
                 initKeyMemory(this.keyMem, indexBlockCapacity);
             } else {
                 boolean exists = ff.exists(path);
@@ -432,6 +433,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // it would have been done when this key was first created
 
         // write last block offset because it changed in this scenario
+        assert newValueBlockOffset < valueMemSize;
         keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);
         Unsafe.getUnsafe().storeFence();
 

@@ -100,6 +100,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         try {
                             tenant.refresh();
                         } catch (Throwable th) {
+                            tenant.goodbye();
+                            tenant.close();
                             e.assignTenant(i, null);
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw th;
