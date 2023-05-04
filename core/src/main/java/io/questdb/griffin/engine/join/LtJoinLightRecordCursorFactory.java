@@ -176,6 +176,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
+                long slaveRowID = this.lastSlaveRowID;
                 if (slaveTimestamp < masterTimestamp) {
                     if (lastSlaveRowID != Numbers.LONG_NaN) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
@@ -188,6 +189,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                     final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
+                        slaveRowID = rec.getRowId();
                         if (slaveTimestamp < masterTimestamp) {
                             key = joinKeyMap.withKey();
                             key.put(rec, slaveKeySink);
@@ -200,7 +202,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
                     // now we have dangling slave record, which we need to hold on to
                     this.slaveTimestamp = slaveTimestamp;
-                    this.lastSlaveRowID = rec.getRowId();
+                    this.lastSlaveRowID = slaveRowID;
                 }
                 key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
