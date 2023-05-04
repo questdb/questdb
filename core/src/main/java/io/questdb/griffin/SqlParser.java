@@ -1229,7 +1229,7 @@ public class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
 
-                ExpressionNode n = expr(lexer, model);
+                ExpressionNode n = expr(lexer, model, true);
                 if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
@@ -2177,9 +2177,13 @@ public class SqlParser {
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
+        return expr(lexer, model, false);
+    }
+
+    ExpressionNode expr(GenericLexer lexer, QueryModel model, boolean unquoteStringConstants) throws SqlException {
         try {
             expressionTreeBuilder.pushModel(model);
-            expressionParser.parseExpr(lexer, expressionTreeBuilder);
+            expressionParser.parseExpr(lexer, expressionTreeBuilder, unquoteStringConstants);
             return rewriteKnownStatements(expressionTreeBuilder.poll());
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
