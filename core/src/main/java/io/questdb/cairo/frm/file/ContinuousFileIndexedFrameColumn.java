@@ -26,7 +26,6 @@ package io.questdb.cairo.frm.file;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.std.FilesFacade;
@@ -103,11 +102,6 @@ public class ContinuousFileIndexedFrameColumn extends ContinuousFileFixFrameColu
             long columnTop,
             int columnIndex
     ) {
-        DebugUtils.LOG.info().$("openRW [path=").$(partitionPath).$(", columnName=").$(columnName)
-                .$(", columnIndex=").$(columnIndex)
-                .$(", columnTop=").$(columnTop)
-                .$(", indexBlockCapacity=").$(indexBlockCapacity)
-                .I$();
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
         indexWriter.of(partitionPath, columnName, columnTxn, columnTop < 0 ? indexBlockCapacity : 0);
     }

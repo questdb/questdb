@@ -752,6 +752,22 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
+    public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
+        // Linux requires the mmap offset to be page aligned
+        long alignedOffset = Files.floorPageSize(offset);
+        long alignedExtraLen = offset - alignedOffset;
+        long mapAddr = rw ?
+                mapRW(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
+                mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
+        return mapAddr + alignedExtraLen;
+    }
+
+    public static void mapAppendColumnBufferRelease(FilesFacade ff, long address, long offset, long size, int memoryTag) {
+        long alignedOffset = Files.floorPageSize(offset);
+        long alignedExtraLen = offset - alignedOffset;
+        ff.munmap(address - alignedExtraLen, size + alignedExtraLen, memoryTag);
+    }
+
     public static long mapRO(FilesFacade ff, int fd, long size, int memoryTag) {
         return mapRO(ff, fd, size, 0, memoryTag);
     }
@@ -887,22 +903,6 @@ public final class TableUtils {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
-        // Linux requires the mmap offset to be page aligned
-        long alignedOffset = Files.floorPageSize(offset);
-        long alignedExtraLen = offset - alignedOffset;
-        long mapAddr = rw ?
-                mapRW(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
-                mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
-        return mapAddr + alignedExtraLen;
-    }
-
-    public static void mapAppendColumnBufferRelease(FilesFacade ff, long address, long offset, long size, int memoryTag) {
-        long alignedOffset = Files.floorPageSize(offset);
-        long alignedExtraLen = offset - alignedOffset;
-        ff.munmap(address - alignedExtraLen, size + alignedExtraLen, memoryTag);
     }
 
     public static int openRO(FilesFacade ff, LPSZ path, Log log) {
@@ -1176,10 +1176,28 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
+     */
     public static void setPathForPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
+    /**
+     * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param sink        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
+     */
     public static void setSinkForPartition(CharSink sink, int partitionBy, long timestamp, long nameTxn) {
         PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
         if (nameTxn > -1L) {

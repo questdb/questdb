@@ -24,46 +24,30 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.Reopenable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
-public class PagedDirectLongList implements Closeable, Reopenable {
+public class PagedDirectLongList implements Closeable {
     private final int memoryTag;
     private final ObjList<DirectLongList> pages = new ObjList<>();
-    private int currentPage = -1;
+    private int blockSize;
     private int pageCapacity;
 
     public PagedDirectLongList(int memoryTag) {
         this.memoryTag = memoryTag;
     }
 
-    public long allocateBlock(int blockSize) {
-        assert blockSize < pageCapacity;
-        if (currentPage > -1) {
+    public long allocateBlock() {
+        int currentPage = pages.size() - 1;
+        if (pages.size() > 0) {
             DirectLongList page = pages.get(currentPage);
             if (page.size() + blockSize < page.getCapacity()) {
                 page.setPos(page.size() + blockSize);
                 return page.getAddress() + (page.size() - blockSize) * Long.BYTES;
             }
         }
-        currentPage++;
-        DirectLongList page;
-        if (currentPage >= pages.size()) {
-            page = new DirectLongList(pageCapacity, memoryTag);
-            if (page.size() == 0 && page.getCapacity() < pageCapacity) {
-                page.setCapacity(pageCapacity);
-            } else {
-                assert page.getCapacity() >= pageCapacity;
-            }
-            pages.add(page);
-        } else {
-            page = pages.getQuick(currentPage);
-            if (page.getCapacity() < pageCapacity) {
-                page.setCapacity(pageCapacity);
-            }
-        }
+        DirectLongList page = new DirectLongList(pageCapacity, memoryTag);
+        pages.add(page);
 
         page.setPos(page.size() + blockSize);
         return page.getAddress() + (page.size() - blockSize) * Long.BYTES;
@@ -71,7 +55,6 @@ public class PagedDirectLongList implements Closeable, Reopenable {
 
     public void clear() {
         if (pages.size() > 0) {
-            currentPage = 0;
             for (int i = 0, n = pages.size(); i < n; i++) {
                 if (i > 0) {
                     pages.get(i).close();
@@ -84,18 +67,18 @@ public class PagedDirectLongList implements Closeable, Reopenable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.freeObjList(pages);
     }
 
-    public long getIndexAddress(long blockIndex) {
+    public long getBlockAddress(long blockIndex) {
         int blockPage = Numbers.decodeLowInt(blockIndex);
         long offset = Numbers.decodeHighInt(blockIndex);
 
         return pages.getQuick(blockPage).getAddress() + offset * Long.BYTES;
     }
 
-    public long nextBlockIndex(long prevBlockIndex, int blockSize) {
+    public long nextBlockIndex(long prevBlockIndex) {
         int blockPage = prevBlockIndex < 0 ? 0 : Numbers.decodeLowInt(prevBlockIndex);
         int prevBlockOffset = prevBlockIndex < 0 ? -blockSize : Numbers.decodeHighInt(prevBlockIndex);
 
@@ -107,12 +90,12 @@ public class PagedDirectLongList implements Closeable, Reopenable {
         return getBlockIndex(blockSize, ++blockPage, 0);
     }
 
-    @Override
-    public void reopen() {
-    }
-
-    public void setPageCapacity(int pageCapacity) {
-        this.pageCapacity = pageCapacity;
+    public void setBlockSize(int blockSize) {
+        if (pages.size() > 1 || (pages.size() == 1 && pages.getQuick(0).size() > 0)) {
+            throw new UnsupportedOperationException("list must be clear when changing block size");
+        }
+        this.blockSize = blockSize;
+        this.pageCapacity = Math.max(blockSize, (4096 / blockSize) * blockSize);
     }
 
     private long getBlockIndex(int blockSize, int blockPage, int probeOffset) {

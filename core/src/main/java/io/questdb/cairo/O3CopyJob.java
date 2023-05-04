@@ -29,10 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.tasks.O3CopyTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -74,7 +71,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long partitionTimestamp, // <-- this is used to determine if partition is last or not as well as partition dir
             int dstFixFd,
             long dstFixAddr,
@@ -99,7 +95,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long newPartitionSize,
             long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long partitionUpdateSinkAddr
     ) {
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
         LOG.debug().$("o3 copy [blockType=").$(blockType)
@@ -216,12 +213,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarSize,
-                srcDataMax,
                 srcOooMax,
-                srcOooPartitionLo,
                 srcOooPartitionHi,
                 timestampMin,
-                timestampMax,
                 partitionTimestamp,
                 dstFixFd,
                 dstFixAddr,
@@ -241,7 +235,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 newPartitionSize,
                 oldPartitionSize,
                 tableWriter,
-                indexWriter
+                indexWriter,
+                partitionUpdateSinkAddr
         );
     }
 
@@ -272,7 +267,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcOooPartitionLo = task.getSrcOooPartitionLo();
         final long srcOooPartitionHi = task.getSrcOooPartitionHi();
         final long timestampMin = task.getTimestampMin();
-        final long timestampMax = task.getTimestampMax();
         final long partitionTimestamp = task.getPartitionTimestamp();
         final int dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
@@ -298,6 +292,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long oldPartitionSize = task.getOldPartitionSize();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
+        final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
 
         subSeq.done(cursor);
 
@@ -328,7 +323,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcOooPartitionLo,
                 srcOooPartitionHi,
                 timestampMin,
-                timestampMax,
                 partitionTimestamp,
                 dstFixFd,
                 dstFixAddr,
@@ -353,7 +347,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 newPartitionSize,
                 oldPartitionSize,
                 tableWriter,
-                indexWriter
+                indexWriter,
+                partitionUpdateSinkAddr
         );
     }
 
@@ -444,12 +439,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long srcDataMax,
             long srcOooMax,
-            long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long partitionTimestamp,
             int dstFixFd,
             long dstFixAddr,
@@ -469,7 +461,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long newPartitionSize,
             long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long partitionUpdateSinkAddr
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             final FilesFacade ff = tableWriter.getFilesFacade();
@@ -518,12 +511,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updatePartition(
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
-                        srcDataMax,
                         srcOooMax,
-                        srcOooPartitionLo,
                         srcOooPartitionHi,
                         timestampMin,
-                        timestampMax,
                         partitionTimestamp,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -531,6 +521,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         partitionMutates,
                         newPartitionSize,
                         oldPartitionSize,
+                        partitionUpdateSinkAddr,
                         tableWriter
                 );
             }
@@ -763,12 +754,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void updatePartition(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataMax,
             long srcOooMax,
-            long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long partitionTimestamp,
             int srcTimestampFd,
             long srcTimestampAddr,
@@ -776,6 +764,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             boolean partitionMutates,
             long newPartitionSize,
             long oldPartitionSize,
+            long partitionUpdateSinkAddr,
             TableWriter tableWriter
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
@@ -784,7 +773,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             try {
                 O3Utils.close(ff, srcTimestampFd);
             } finally {
-                tableWriter.o3NotifyPartitionUpdate(
+                o3NotifyPartitionUpdate(
+                        tableWriter,
+                        partitionUpdateSinkAddr,
                         timestampMin,
                         partitionTimestamp,
                         newPartitionSize,
@@ -1095,6 +1086,26 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // we have exhausted all supported types in "case" clauses
                 break;
         }
+    }
+
+    static void o3NotifyPartitionUpdate(
+            TableWriter tableWriter,
+            final long partitionSinkAddress,
+            long timestampMin,
+            long partitionTimestamp,
+            final long newPartitionSize,
+            final long oldPartitionSize,
+            boolean partitionMutates,
+            boolean isLastWrittenPartition
+    ) {
+        Unsafe.getUnsafe().putLong(partitionSinkAddress, partitionTimestamp);
+        Unsafe.getUnsafe().putLong(partitionSinkAddress + Long.BYTES, timestampMin);
+        Unsafe.getUnsafe().putLong(partitionSinkAddress + 2 * Long.BYTES, newPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionSinkAddress + 3 * Long.BYTES, oldPartitionSize);
+        long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
+        Unsafe.getUnsafe().putLong(partitionSinkAddress + 4 * Long.BYTES, flags);
+
+        tableWriter.o3ClockDownPartitionUpdateCount();
     }
 
     @Override

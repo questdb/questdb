@@ -80,6 +80,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
+    // partitionUpdateSink (offset, description):
+    // 0, partitionTimestamp
+    // 1, timestampMin
+    // 2, newPartitionSize
+    // 3, oldPartitionSize
+    // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
+    // ... column top for every column
+    public static final int PARTITION_SINK_SIZE_LONGS = 5;
+    public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final long IGNORE = -1L;
@@ -88,7 +97,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     };
     private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
-    private static final int PARTITION_UPDATE_SINK_ENTRY_SIZE = 5;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
@@ -191,7 +199,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int metaSwapIndex;
     private long minSplitPartitionTimestamp;
     private long noOpRowCount;
-    private PagedDirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
     private long o3EffectiveLag = 0L;
@@ -201,11 +208,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<MemoryCARW> o3MemColumns2;
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
-    // o3PartitionUpdateSink (offset, description):
-    // 0, partitionTimestamp
-    // 1, timestampMin
-    // TODO comment
-    private DirectLongList o3PartitionUpdateSink;
+    private PagedDirectLongList o3PartitionUpdateSink;
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
@@ -3225,7 +3228,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
-        Misc.free(o3ColumnTopSink);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
@@ -3993,7 +3995,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long srcDataMax,
             long srcNameTxn,
             O3Basket o3Basket,
-            long colTopSinkAddr
+            long partitionUpdateSinkAddr
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -4018,7 +4020,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    colTopSinkAddr
+                    partitionUpdateSinkAddr
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -4042,22 +4044,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    colTopSinkAddr
+                    partitionUpdateSinkAddr
             );
         }
     }
 
     private void o3ConsumePartitionUpdateSink() {
-        long size = o3PartitionUpdateSink.size();
+        long blockIndex = -1;
 
-        for (long offset = 0; offset < size; offset += PARTITION_UPDATE_SINK_ENTRY_SIZE) {
-            long partitionTimestamp = o3PartitionUpdateSink.get(offset);
-            long timestampMin = o3PartitionUpdateSink.get(offset + 1);
+        while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
+            final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
+            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+            long timestampMin = Unsafe.getUnsafe().getLong(blockAddress + Long.BYTES);
 
             if (partitionTimestamp != -1L && timestampMin != -1L) {
-                long newPartitionSize = o3PartitionUpdateSink.get(offset + 2);
-                long oldPartitionSize = o3PartitionUpdateSink.get(offset + 3);
-                long flags = o3PartitionUpdateSink.get(offset + 4);
+                long newPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 2 * Long.BYTES);
+                long oldPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 3 * Long.BYTES);
+                long flags = Unsafe.getUnsafe().getLong(blockAddress + 4 * Long.BYTES);
                 boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 boolean isLastWrittenPartition = Numbers.decodeHighInt(flags) != 0;
 
@@ -5424,7 +5427,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // transientRowCount
             long commitTransientRowCount = transientRowCount;
 
-            resizeColumnTopSink();
             resizePartitionUpdateSink();
 
             // One loop iteration per partition.
@@ -5548,6 +5550,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // mid-column-count.
                     latchCount++;
 
+                    // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
+                    // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
+                    // then set first value to partition timestamp
+                    long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
+                    Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
                         // this also might fail, make sure exception is trapped and partitions are
@@ -5611,7 +5620,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         srcOooHi,
                                         srcOooMax,
                                         o3TimestampMin,
-                                        o3TimestampMax,
                                         partitionTimestamp,
                                         srcDataTop,
                                         srcDataMax,
@@ -5622,7 +5630,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         partitionSize,
                                         this,
                                         indexWriter,
-                                        getColumnNameTxn(partitionTimestamp, i)
+                                        getColumnNameTxn(partitionTimestamp, i),
+                                        partitionUpdateSinkAddr
                                 );
                             } catch (Throwable e) {
                                 if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
@@ -5640,13 +5649,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             flattenTimestamp = false;
                         }
 
-                        // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
-                        // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
-                        // then set first value to partition timestamp
-                        long columnTopPartitionSinkAddr = o3ColumnTopSink.allocateBlock(metadata.getColumnCount() + 1);
-                        Vect.memset(columnTopPartitionSinkAddr, (long) (metadata.getColumnCount() + 1) * Long.BYTES, -1);
-                        Unsafe.getUnsafe().putLong(columnTopPartitionSinkAddr, partitionTimestamp);
-
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -5661,7 +5663,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcDataMax,
                                 srcNameTxn,
                                 o3Basket,
-                                columnTopPartitionSinkAddr
+                                partitionUpdateSinkAddr
                         );
                     }
                 } catch (CairoException | CairoError e) {
@@ -6525,20 +6527,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
-    private void resizeColumnTopSink() {
-        if (o3ColumnTopSink == null) {
-            o3ColumnTopSink = new PagedDirectLongList(MemoryTag.NATIVE_O3);
-        }
-        o3ColumnTopSink.clear();
-        o3ColumnTopSink.setPageCapacity(Math.max(metadata.getColumnCount() + 1, 4096));
-    }
-
     private void resizePartitionUpdateSink() {
         if (o3PartitionUpdateSink == null) {
-            o3PartitionUpdateSink = new DirectLongList(2 * PARTITION_UPDATE_SINK_ENTRY_SIZE, MemoryTag.MMAP_TABLE_WRITER);
-        } else {
-            o3PartitionUpdateSink.clear();
+            o3PartitionUpdateSink = new PagedDirectLongList(MemoryTag.NATIVE_O3);
         }
+        o3PartitionUpdateSink.clear();
+        o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
     }
 
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
@@ -7154,16 +7148,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void updateO3ColumnTops() {
         int columnCount = metadata.getColumnCount();
-        int increment = columnCount + 1;
-
         long blockIndex = -1;
 
-        while ((blockIndex = o3ColumnTopSink.nextBlockIndex(blockIndex, increment)) > -1L) {
-            long blockAddress = o3ColumnTopSink.getIndexAddress(blockIndex);
+        while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
+            long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
 
             if (partitionTimestamp > -1) {
-                blockAddress += Long.BYTES;
+                blockAddress += PARTITION_SINK_SIZE_LONGS * Long.BYTES;
                 for (int column = 0; column < columnCount; column++) {
 
                     long colTop = Unsafe.getUnsafe().getLong(blockAddress);
@@ -7317,24 +7309,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     void o3CountDownDoneLatch() {
         o3DoneLatch.countDown();
-    }
-
-    synchronized void o3NotifyPartitionUpdate(
-            long timestampMin,
-            long partitionTimestamp,
-            final long newPartitionSize,
-            final long oldPartitionSize,
-            boolean partitionMutates,
-            boolean isLastWrittenPartition
-    ) {
-        o3PartitionUpdateSink.add(partitionTimestamp);
-        o3PartitionUpdateSink.add(timestampMin);
-        o3PartitionUpdateSink.add(newPartitionSize);
-        o3PartitionUpdateSink.add(oldPartitionSize);
-        long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
-        o3PartitionUpdateSink.add(flags);
-
-        o3ClockDownPartitionUpdateCount();
     }
 
     void purgeUnusedPartitions() {

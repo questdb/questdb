@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3OpenColumnTask {
     private int activeFixFd;
     private int activeVarFd;
-    private long colTopSinkAddr;
+    private long partitionUpdateSinkAddr;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -49,7 +49,6 @@ public class O3OpenColumnTask {
     private long newPartitionSize;
     private long oldPartitionSize;
     private long oldPartitionTimestamp;
-    private long oooTimestampLo;
     private int openColumnMode;
     private AtomicInteger partCounter;
     private long partitionTimestamp;
@@ -72,7 +71,6 @@ public class O3OpenColumnTask {
     private long suffixLo;
     private int suffixType;
     private TableWriter tableWriter;
-    private long timestampMax;
     private long timestampMergeIndexAddr;
     private long timestampMergeIndexSize;
     private long timestampMin;
@@ -86,8 +84,8 @@ public class O3OpenColumnTask {
         return activeVarFd;
     }
 
-    public long getColTopSinkAddr() {
-        return colTopSinkAddr;
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
     }
 
     public AtomicInteger getColumnCounter() {
@@ -148,10 +146,6 @@ public class O3OpenColumnTask {
 
     public long getOldPartitionTimestamp() {
         return oldPartitionTimestamp;
-    }
-
-    public long getOooTimestampLo() {
-        return oooTimestampLo;
     }
 
     public int getOpenColumnMode() {
@@ -242,10 +236,6 @@ public class O3OpenColumnTask {
         return tableWriter;
     }
 
-    public long getTimestampMax() {
-        return timestampMax;
-    }
-
     public long getTimestampMergeIndexAddr() {
         return timestampMergeIndexAddr;
     }
@@ -277,8 +267,6 @@ public class O3OpenColumnTask {
             long srcOooHi,
             long srcOooMax,
             long timestampMin,
-            long timestampMax,
-            long oooTimestampLo,
             long partitionTimestamp,
             long oldPartitionTimestamp,
             long srcDataTop,
@@ -306,7 +294,7 @@ public class O3OpenColumnTask {
             long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long colTopSinkAddr,
+            long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn
     ) {
@@ -324,8 +312,6 @@ public class O3OpenColumnTask {
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
         this.timestampMin = timestampMin;
-        this.timestampMax = timestampMax;
-        this.oooTimestampLo = oooTimestampLo;
         this.partitionTimestamp = partitionTimestamp;
         this.oldPartitionTimestamp = oldPartitionTimestamp;
         this.srcDataTop = srcDataTop;
@@ -351,7 +337,7 @@ public class O3OpenColumnTask {
         this.activeVarFd = activeVarFd;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
-        this.colTopSinkAddr = colTopSinkAddr;
+        this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.columnIndex = columnIndex;
         this.columnNameTxn = columnNameTxn;
         this.newPartitionSize = newPartitionSize;

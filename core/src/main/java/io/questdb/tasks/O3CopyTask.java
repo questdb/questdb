@@ -55,6 +55,7 @@ public class O3CopyTask {
     private AtomicInteger partCounter;
     private boolean partitionMutates;
     private long partitionTimestamp;
+    private long partitionUpdateSinkAddr;
     private long srcDataFixAddr;
     private int srcDataFixFd;
     private long srcDataFixOffset;
@@ -78,7 +79,6 @@ public class O3CopyTask {
     private int srcTimestampFd;
     private long srcTimestampSize;
     private TableWriter tableWriter;
-    private long timestampMax;
     private long timestampMergeIndexAddr;
     private long timestampMergeIndexSize;
     private long timestampMin;
@@ -179,6 +179,10 @@ public class O3CopyTask {
         return partitionTimestamp;
     }
 
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
+    }
+
     public long getSrcDataFixAddr() {
         return srcDataFixAddr;
     }
@@ -271,10 +275,6 @@ public class O3CopyTask {
         return tableWriter;
     }
 
-    public long getTimestampMax() {
-        return timestampMax;
-    }
-
     public long getTimestampMergeIndexAddr() {
         return timestampMergeIndexAddr;
     }
@@ -318,7 +318,6 @@ public class O3CopyTask {
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
-            long timestampMax,
             long oooTimestampHi,
             int dstFixFd,
             long dstFixAddr,
@@ -343,7 +342,8 @@ public class O3CopyTask {
             long newPartitionSize,
             long oldPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long partitionUpdateSinkAddr
     ) {
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
@@ -371,7 +371,6 @@ public class O3CopyTask {
         this.srcOooPartitionLo = srcOooPartitionLo;
         this.srcOooPartitionHi = srcOooPartitionHi;
         this.timestampMin = timestampMin;
-        this.timestampMax = timestampMax;
         this.partitionTimestamp = oooTimestampHi;
         this.dstFixFd = dstFixFd;
         this.dstFixAddr = dstFixAddr;
@@ -397,5 +396,6 @@ public class O3CopyTask {
         this.oldPartitionSize = oldPartitionSize;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
+        this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
     }
 }
