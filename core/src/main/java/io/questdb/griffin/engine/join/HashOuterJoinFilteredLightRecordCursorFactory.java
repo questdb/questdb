@@ -181,8 +181,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     if (filter.getBool(record)) {
                         return true;
-                    } else {
-                        slaveChainCursor.next();
                     }
                 }
             }
