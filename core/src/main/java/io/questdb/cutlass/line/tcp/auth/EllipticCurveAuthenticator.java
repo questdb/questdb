@@ -22,12 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.cutlass.line.tcp.auth;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.PublicKeyRepo;
+import io.questdb.cutlass.line.tcp.LineTcpConnectionContext;
+import io.questdb.cutlass.line.tcp.NetworkIOJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.Chars;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -35,54 +42,103 @@ import io.questdb.std.str.DirectByteCharSequence;
 import java.security.*;
 import java.util.Base64;
 
-public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
+public class EllipticCurveAuthenticator implements Authenticator {
     private static final int CHALLENGE_LEN = 512;
-    private static final Log LOG = LogFactory.getLog(LineTcpAuthConnectionContext.class);
+    private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
     private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
         try {
-            return Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+            return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_DER);
         } catch (NoSuchAlgorithmException ex) {
             throw new Error(ex);
         }
     });
     private static final ThreadLocal<Signature> tlSigP1363 = new ThreadLocal<>(() -> {
         try {
-            return Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363);
+            return Signature.getInstance(AuthUtils.SIGNATURE_TYPE_P1363);
         } catch (NoSuchAlgorithmException ex) {
             throw new Error(ex);
         }
     });
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
-    private final AuthDb authDb;
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
-    private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
+    private final NetworkFacade nf;
+    private final PublicKeyRepo publicKeyRepo;
+    private final long recvBufEnd;
+    private final long recvBufStart;
+    private final DirectByteCharSequence userNameFlyweight = new DirectByteCharSequence();
+    protected long recvBufPseudoStart;
     private AuthState authState;
-    private boolean authenticated;
+    private int fd;
+    private String principal;
     private PublicKey pubKey;
+    private long recvBufPos;
 
-    public LineTcpAuthConnectionContext(
-            LineTcpReceiverConfiguration configuration,
-            AuthDb authDb,
-            LineTcpMeasurementScheduler scheduler,
-            Metrics metrics
+    public EllipticCurveAuthenticator(
+            NetworkFacade networkFacade,
+            PublicKeyRepo publicKeyRepo,
+            long recvBufStart,
+            long recvBufEnd
     ) {
-        super(configuration, scheduler, metrics);
-        if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
+        if (recvBufEnd - recvBufStart < MIN_BUF_SIZE) {
             throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
-        this.authDb = authDb;
+        this.publicKeyRepo = publicKeyRepo;
+        this.recvBufStart = recvBufPos = recvBufStart;
+        this.recvBufEnd = recvBufEnd;
+        this.nf = networkFacade;
     }
 
     @Override
-    public void clear() {
-        authenticated = false;
-        authState = AuthState.WAITING_FOR_KEY_ID;
-        pubKey = null;
-        super.clear();
+    public CharSequence getPrincipal() {
+        return principal;
     }
 
-    private boolean checkAllZeros(byte[] signatureRaw) {
+    @Override
+    public long getRecvBufPos() {
+        return recvBufPos;
+    }
+
+    @Override
+    public long getRecvBufPseudoStart() {
+        return recvBufPseudoStart;
+    }
+
+    @Override
+    public LineTcpConnectionContext.IOContextResult handleIO(NetworkIOJob job) throws AuthenticatorException {
+        switch (authState) {
+            case WAITING_FOR_KEY_ID:
+                readKeyId();
+                break;
+            case SENDING_CHALLENGE:
+                sendChallenge();
+                break;
+            case WAITING_FOR_RESPONSE:
+                int p = waitForResponse();
+                if (authState == AuthState.COMPLETE && recvBufPos > recvBufStart) {
+                    recvBufPseudoStart = recvBufStart + p + 1;
+                }
+                break;
+            default:
+                break;
+        }
+        return authState.ioContextResult;
+    }
+
+    @Override
+    public void init(int fd) {
+        this.fd = fd;
+        authState = AuthState.WAITING_FOR_KEY_ID;
+        pubKey = null;
+        recvBufPos = recvBufStart;
+    }
+
+    @Override
+    public boolean isAuthenticated() {
+        return authState == AuthState.COMPLETE;
+    }
+
+    private static boolean checkAllZeros(byte[] signatureRaw) {
         int n = signatureRaw.length;
         for (int i = 0; i < n; i++) {
             if (signatureRaw[i] != 0) {
@@ -92,8 +148,17 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         return true;
     }
 
-    private int findLineEnd() {
-        read();
+    private int findLineEnd() throws AuthenticatorException {
+        int bufferRemaining = (int) (recvBufEnd - recvBufPos);
+        if (bufferRemaining > 0) {
+            int bytesRead = nf.recv(fd, recvBufPos, bufferRemaining);
+            if (bytesRead > 0) {
+                recvBufPos += bytesRead;
+            } else if (bytesRead < 0) {
+                LOG.info().$('[').$(fd).$("] authentication disconnected by peer when reading token").$();
+                throw AuthenticatorException.INSTANCE;
+            }
+        }
         int len = (int) (recvBufPos - recvBufStart);
         int n = 0;
         int lineEnd = -1;
@@ -105,52 +170,26 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             }
             n++;
         }
+
         if (lineEnd != -1) {
             return lineEnd;
         }
 
         if (recvBufPos == recvBufEnd) {
             LOG.info().$('[').$(fd).$("] authentication token is too long").$();
-            authState = AuthState.FAILED;
-            return -1;
+            throw AuthenticatorException.INSTANCE;
         }
-        if (peerDisconnected) {
-            LOG.info().$('[').$(fd).$("] authentication disconnected by peer when reading token").$();
-            authState = AuthState.FAILED;
-            return -1;
-        }
-        return -1;
+
+        return lineEnd;
     }
 
-    private IOContextResult handleAuth(NetworkIOJob netIoJob) {
-        switch (authState) {
-            case WAITING_FOR_KEY_ID:
-                readKeyId();
-                break;
-            case SENDING_CHALLENGE:
-                sendChallenge();
-                break;
-            case WAITING_FOR_RESPONSE:
-                waitForResponse();
-                if (authenticated && recvBufPos > recvBufStart) {
-                    // if authentication is completed and there are still bytes remaining in the buffer
-                    // we have to parse them
-                    return parseMeasurements(netIoJob);
-                }
-                break;
-            default:
-                break;
-        }
-        return authState.ioContextResult;
-    }
-
-    private void readKeyId() {
+    private void readKeyId() throws AuthenticatorException {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
-            charSeq.of(recvBufStart, recvBufStart + lineEnd);
-            LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(charSeq).$(']').$();
-            pubKey = authDb.getPublicKey(charSeq);
-
+            userNameFlyweight.of(recvBufStart, recvBufStart + lineEnd);
+            principal = Chars.toString(userNameFlyweight);
+            LOG.info().$('[').$(fd).$("] authentication read key id [keyId=").$(userNameFlyweight).$(']').$();
+            pubKey = publicKeyRepo.getPublicKey(userNameFlyweight);
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;
@@ -167,7 +206,7 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         }
     }
 
-    private void sendChallenge() {
+    private void sendChallenge() throws AuthenticatorException {
         int n = CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);
         assert n > 0;
         while (true) {
@@ -189,23 +228,23 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             break;
         }
         LOG.info().$('[').$(fd).$("] authentication peer disconnected when challenge was being sent").$();
-        authState = AuthState.FAILED;
+        throw AuthenticatorException.INSTANCE;
     }
 
-    private void waitForResponse() {
+    private int waitForResponse() throws AuthenticatorException {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
             // Verify signature
             if (null == pubKey) {
                 LOG.info().$('[').$(fd).$("] authentication failed, unknown key id").$();
-                authState = AuthState.FAILED;
-                return;
+                throw AuthenticatorException.INSTANCE;
             }
 
             byte[] signature = new byte[lineEnd];
             for (int n = 0; n < lineEnd; n++) {
                 signature[n] = Unsafe.getUnsafe().getByte(recvBufStart + n);
             }
+
             authState = AuthState.FAILED;
 
             byte[] signatureRaw = Base64.getDecoder().decode(signature);
@@ -216,48 +255,39 @@ public class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 // Check that it's not the case.
                 if (checkAllZeros(signatureRaw)) {
                     LOG.info().$('[').$(fd).$("] invalid signature, can be cyber attack!").$();
-                    authState = AuthState.FAILED;
-                    return;
+                    throw AuthenticatorException.INSTANCE;
                 }
                 sig.initVerify(pubKey);
                 sig.update(challengeBytes);
                 verified = sig.verify(signatureRaw);
             } catch (InvalidKeyException | SignatureException ex) {
                 LOG.info().$('[').$(fd).$("] authentication exception ").$(ex).$();
-                verified = false;
+                throw AuthenticatorException.INSTANCE;
             }
 
             if (!verified) {
                 LOG.info().$('[').$(fd).$("] authentication failed, signature was not verified").$();
-                authState = AuthState.FAILED;
-                return;
+                throw AuthenticatorException.INSTANCE;
             }
 
-            authenticated = true;
             authState = AuthState.COMPLETE;
-            compactBuffer(recvBufStart + lineEnd + 1);
-            // we must reset start of measurement address
-            resetParser();
             LOG.info().$('[').$(fd).$("] authentication success").$();
         }
-    }
-
-    @Override
-    public IOContextResult handleIO(NetworkIOJob netIoJob) {
-        if (authenticated) {
-            return super.handleIO(netIoJob);
-        }
-        return handleAuth(netIoJob);
+        return lineEnd;
     }
 
     private enum AuthState {
-        WAITING_FOR_KEY_ID(IOContextResult.NEEDS_READ), SENDING_CHALLENGE(IOContextResult.NEEDS_WRITE), WAITING_FOR_RESPONSE(IOContextResult.NEEDS_READ),
-        COMPLETE(IOContextResult.NEEDS_READ), FAILED(IOContextResult.NEEDS_DISCONNECT);
+        WAITING_FOR_KEY_ID(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
+        SENDING_CHALLENGE(LineTcpConnectionContext.IOContextResult.NEEDS_WRITE),
+        WAITING_FOR_RESPONSE(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
+        COMPLETE(LineTcpConnectionContext.IOContextResult.NEEDS_READ),
+        FAILED(LineTcpConnectionContext.IOContextResult.NEEDS_DISCONNECT);
 
-        private final IOContextResult ioContextResult;
+        private final LineTcpConnectionContext.IOContextResult ioContextResult;
 
-        AuthState(IOContextResult ioContextResult) {
+        AuthState(LineTcpConnectionContext.IOContextResult ioContextResult) {
             this.ioContextResult = ioContextResult;
         }
     }
+
 }

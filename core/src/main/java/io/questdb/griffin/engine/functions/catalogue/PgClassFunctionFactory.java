@@ -106,7 +106,6 @@ public class PgClassFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 new PgClassCursorFactory(
-                        configuration,
                         METADATA
                 )
         ) {
@@ -123,10 +122,10 @@ public class PgClassFunctionFactory implements FunctionFactory {
         private final Path path = new Path();
         private final long tempMem;
 
-        public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+        public PgClassCursorFactory(RecordMetadata metadata) {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new PgClassRecordCursor(configuration);
+            this.cursor = new PgClassRecordCursor();
         }
 
         @Override
@@ -158,13 +157,13 @@ public class PgClassFunctionFactory implements FunctionFactory {
         private final int[] intValues = new int[28];
         private final DelegatingRecord record = new DelegatingRecord();
         private final PgClassRecordCursor.StaticReadingRecord staticReadingRecord = new PgClassRecordCursor.StaticReadingRecord();
-        private final ObjList<TableToken> tableBucket = new ObjList<>();
+        private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         private CairoEngine engine;
         private int fixedRelPos = -1;
         private int tableIndex = -1;
         private String tableName;
 
-        public PgClassRecordCursor(CairoConfiguration configuration) {
+        public PgClassRecordCursor() {
             this.record.of(staticReadingRecord);
             // oid
             this.intValues[0] = 0; // OID

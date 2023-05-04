@@ -24,26 +24,25 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class PGBasicAuthenticator implements PGAuthenticator {
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final String password;
-    private final CairoSecurityContext securityContext;
+    private final SecurityContext securityContext;
     private final String username;
 
-    public PGBasicAuthenticator(String username, String password, boolean readOnlyContext) {
+    public PGBasicAuthenticator(SecurityContextFactory securityContextFactory, String username, String password, boolean readOnly) {
         this.username = username;
         this.password = password;
-        this.securityContext = readOnlyContext ? new CairoSecurityContextImpl(false) : AllowAllCairoSecurityContext.INSTANCE;
+        this.securityContext = securityContextFactory.getInstance(username, readOnly);
     }
 
     @Override
-    public CairoSecurityContext authenticate(
+    public SecurityContext authenticate(
             CharSequence username,
             long msg,
             long msgLimit

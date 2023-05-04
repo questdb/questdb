@@ -78,6 +78,11 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return partitionBy;
     }
 
+    @Override
+    public CharSequence getTableName() {
+        return target.token;
+    }
+
     public ExpressionNode getTarget() {
         return target;
     }

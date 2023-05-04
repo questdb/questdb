@@ -403,6 +403,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             try (Path path = new Path()) {
+                TableToken tableToken = mainEngine.verifyTableName(tableName);
                 path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableToken).slash$();
                 Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode()));
                 backupTable(tableToken);

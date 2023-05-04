@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.test.cutlass.NetUtils;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -40,7 +39,6 @@ import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFacto
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -50,6 +48,8 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.NetUtils;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -135,7 +135,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
@@ -146,11 +146,6 @@ public class PGJobContextTest extends BasePGTest {
         datesArr = dates.collect(Collectors.toList());
     }
 
-    @AfterClass
-    public static void tearDownStatic() {
-        BasePGTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
@@ -158,7 +153,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         super.tearDown();
         configOverrideDefaultTableWriteMode(-1);
     }
@@ -1252,6 +1247,46 @@ if __name__ == "__main__":
     }
 
     @Test
+    /*
+        use sqlx::postgres::{PgPoolOptions};
+
+        #[tokio::main]
+        async fn main() -> anyhow::Result<()> {
+
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect("postgres://admin:quest@localhost:8812/qdb")
+                .await?;
+
+            let result = sqlx::query("SELECT $1 from long_sequence(2)")
+                .bind(1)
+                .execute(&pool).await?;
+
+
+            assert_eq!(result.rows_affected(), 2);
+
+            Ok(())
+        }
+     */
+    public void testSyncAfterLoginSendsRNQ() throws Exception {
+        String script = ">0000000804d2162f\n" +
+                "<4e\n" +
+                ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300330000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                ">5300000004\n" +
+                "<5a0000000549\n" +
+                ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
+                "<3100000004740000000a000100000017540000001b000124310000000000000100000413ffffffffffff00005a0000000549\n" +
+                ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
+                "<3200000004440000000b00010000000131440000000b00010000000131430000000d53454c45435420320033000000045a0000000549\n" +
+                ">5800000004";
+
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
+    }
+
+    @Test
     public void testBadPasswordLength() throws Exception {
         skipOnWalRun();
         assertHexScript(
@@ -1868,7 +1903,7 @@ if __name__ == "__main__":
                     }
                 }
 
-                //first run query and complete  
+                //first run query and complete
                 try (final PreparedStatement stmt = sameConn.prepareStatement("select count(*) from tab where x > 0")) {
                     ResultSet result = stmt.executeQuery();
                     sink.clear();
@@ -1888,14 +1923,18 @@ if __name__ == "__main__":
         String[] queries = {"create table new_tab as (select count(*) from tab t1 cross join tab t2 where t1.x > 0)",
                 "select count(*) from tab t1 cross join tab t2 where t1.x > 0",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 cross join tab t2 where t1.x > 0",
-                "update dest set l = 1 from tab t1 where " +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = " +
-                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA100000' "
+                "update dest \n" +
+                        "set l = t1.x \n" +
+                        "from tab t1 \n" +
+                        "where \n" +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || t1.x = \n" +
+                        "'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' || dest.l || '00000'; "
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
-            compiler.compile("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
-            compiler.compile("create table if not exists dest as (select 1::long l)", sqlExecutionContext);
+            compiler.compile("create table if not exists tab as " +
+                    "(select x::timestamp ts, x, rnd_double() d from long_sequence(1000000)) timestamp(ts) partition by day", sqlExecutionContext);
+            compiler.compile("create table if not exists dest as (select x l from long_sequence(10000))", sqlExecutionContext);
             mayDrainWalQueue();
 
             for (String query : queries) {
@@ -2681,6 +2720,53 @@ if __name__ == "__main__":
         final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx left join crj on x <= p0";
 
         testFetchDisconnnectReleasesReader(query);
+    }
+
+    @Test
+    public void testFetchTablePartitions() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table if not exists t1 as " +
+                    "(" +
+                    "select dateadd('h', x::int, '2023-03-23T00:00:00.000000Z') as ts  " +
+                    "from long_sequence(30)" +
+                    ") " +
+                    "timestamp(ts) partition by day")) {
+                stmt.execute();
+                mayDrainWalQueue();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM table_partitions('t1')")) {
+                ResultSet resultSet = stmt.executeQuery();
+
+                resultSet.next();
+                assertEquals(0, resultSet.getLong(1));
+                assertEquals("DAY", resultSet.getString(2));
+                assertEquals("2023-03-23", resultSet.getString(3));
+                assertTrue(resultSet.getString(4).startsWith("2023-03-23 01:00:00"));
+                assertTrue(resultSet.getString(5).startsWith("2023-03-23 23:00:00"));
+                assertEquals(23L, resultSet.getLong(6));
+                //skip disk sizes as there's a race
+                assertFalse(resultSet.getBoolean(9));
+                assertFalse(resultSet.getBoolean(10));
+                assertTrue(resultSet.getBoolean(11));
+                assertFalse(resultSet.getBoolean(12));
+                assertFalse(resultSet.getBoolean(13));
+
+                resultSet.next();
+                assertEquals(1, resultSet.getLong(1));
+                assertEquals("DAY", resultSet.getString(2));
+                assertEquals("2023-03-24", resultSet.getString(3));
+                assertTrue(resultSet.getString(4).startsWith("2023-03-24 00:00:00"));
+                assertTrue(resultSet.getString(5).startsWith("2023-03-24 06:00:00"));
+                assertEquals(7L, resultSet.getLong(6));
+                //skip disk sizes as there's a race
+                assertFalse(resultSet.getBoolean(9));
+                assertTrue(resultSet.getBoolean(10));
+                assertTrue(resultSet.getBoolean(11));
+                assertFalse(resultSet.getBoolean(12));
+                assertFalse(resultSet.getBoolean(13));
+            }
+        });
     }
 
     @Test
@@ -4914,7 +5000,7 @@ nodejs code:
                         final Connection connection = getConnection(server.getPort(), false, false)) {
 
                     try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
-                            "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                            "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
                             "where ts between '2022-03-20' " +
                             "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
                             "AND id <> '0x05aba84839b9c7000006765675e630' " +
@@ -4949,7 +5035,7 @@ nodejs code:
                         final Connection connection = getConnection(server.getPort(), false, false)) {
 
                     try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
-                            "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                            "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
                             "where ts between '2022-03-20' " +
                             "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
                             "AND id <> '0x05aba84839b9c7000006765675e630' " +
@@ -8662,6 +8748,13 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testMetadata() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close();
+        });
+    }
+
     private void assertHexScript(
             NetworkFacade clientNf,
             String script,
@@ -8759,7 +8852,7 @@ create table tab as (
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {
                     if (isBindParam[p]) {
-                        ps.setString(bindIdx++, "null" .equals(bindValues[p]) ? null : bindValues[p]);
+                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
                     }
                 }
                 try (ResultSet result = ps.executeQuery()) {
@@ -8904,13 +8997,11 @@ create table tab as (
 
     @SuppressWarnings("unchecked")
     private List<Tuple> getRows(ResultSet rs) {
-        try {
+        return TestUtils.unchecked(() -> {
             Field field = PgResultSet.class.getDeclaredField("rows");
             field.setAccessible(true);
             return (List<Tuple>) field.get(rs);
-        } catch (IllegalAccessException | NoSuchFieldException e) {
-            throw new RuntimeException(e);
-        }
+        });
     }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {

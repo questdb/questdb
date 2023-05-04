@@ -81,6 +81,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid column: ").put(column);
     }
 
+    public static SqlException tableDoesNotExist(int position, CharSequence tableName) {
+        return position(position).put("table does not exist [table=").put(tableName).put(']');
+    }
+
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
     }

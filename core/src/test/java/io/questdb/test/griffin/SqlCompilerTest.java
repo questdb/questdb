@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -58,13 +57,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     private static Path path;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         path = new Path();
         AbstractGriffinTest.setUpStatic();
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         path = Misc.free(path);
         AbstractGriffinTest.tearDownStatic();
     }
@@ -1714,7 +1713,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertFailure(27, "new column name contains invalid characters",
+        assertFailure(29, "new column name contains invalid characters",
                 "create table x (" +
                         "t TIMESTAMP, " +
                         "`bool.flag` BOOLEAN) " +
@@ -2320,12 +2319,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             @Override
             public int softLink(LPSZ src, LPSZ softLink) {
                 Assert.assertEquals(target, src.toString());
-                Assert.assertEquals(root.toString() + Files.SEPARATOR + dirName, softLink.toString());
+                Assert.assertEquals(root + Files.SEPARATOR + dirName, softLink.toString());
                 return -1;
             }
         };
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             assertQuery13(
                     "geohash\n",
                     "select geohash from " + tableName,
@@ -2368,7 +2367,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String volumeAlias = "manzana";
         String volumePath = volume.getAbsolutePath();
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
             Assert.assertTrue(volume.delete());
             assertQuery13(
                     "geohash\n",
@@ -3631,9 +3630,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(CairoSecurityContext cairoSecurityContext, TableToken tableName, long version) {
+                public TableReader getReader(TableToken tableToken, long version) {
                     fiddler.run(this);
-                    return super.getReader(cairoSecurityContext, tableName, version);
+                    return super.getReader(tableToken, version);
                 }
             }) {
                 try (
@@ -3702,6 +3701,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_int()," +
                         " rnd_int()" +
                         " from long_sequence(30)", 12, "select clause must provide timestamp column");
+    }
+
+    @Test
+    public void testInsertFromStringToLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
+            compile("create table l256(v long256)", sqlExecutionContext);
+            compile("insert into l256 select * from t", sqlExecutionContext);
+            if (configuration.getWalEnabledDefault()) {
+                drainWalQueue();
+            }
+            String expected = "v\n" +
+                    "0xd29b84cdf070d2247559d6d5f9ed17242a1c9ad2bbc87e8041738668eaea02fa\n" +
+                    "0xc3fd21defa26f6555ab5573037d8a34872a8be1517a17fd4e43cb3b6894fc88c\n" +
+                    "0xc78d67954cb7866695b5e08df69df8819fc909a43f149089c143a3bb982af031\n" +
+                    "0x6ddedcf7415306f799ce31489578cac77b0ec57771d6e9f27c517f53d504487d\n" +
+                    "0xa38b2ad7fbc79d366f9b5d1b162ba472613f1eb5f98a2df86a7f0ebbd1d28a95\n";
+            printSqlResult(expected, "t limit -5", null, true, false);
+            printSqlResult(expected, "l256 limit -5", null, true, false);
+        });
     }
 
     @Test
@@ -3821,6 +3840,27 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         testGeoHashWithBits("20b", "#1110",
                 "geohash\n" +
                         "1110\n");
+    }
+
+    @Test
+    public void testInsertLong256() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "long256\n",
+                "long256",
+                "create table long256 (long256 long256)",
+                null,
+                "insert into long256 values" +
+                        "('0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3a')," +
+                        "('0X6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3b')," +
+                        "('6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c')",
+                "long256\n" +
+                        "0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3a\n" +
+                        "0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3b\n" +
+                        "0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c\n",
+                true,
+                true,
+                false
+        ));
     }
 
     @Test
@@ -4025,6 +4065,62 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trigonometry AS " +
+                    "(SELECT" +
+                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                    "     rnd_symbol('A', 'B', 'C') sym," +
+                    "     rnd_double() sine" +
+                    " FROM long_sequence(1000)" +
+                    ")", sqlExecutionContext);
+            assertQuery("sym\tavg_angle_rad\tSUM(sine)\n" +
+                            "A\t-1.95703125\t168.46508050039918\n" +
+                            "B\t11.255060728744938\t183.76121842808922\n" +
+                            "C\t-0.888030888030888\t164.8875613340687\n",
+                    "SELECT" +
+                            "    sym AS 'sym'," +
+                            "    avg(angle_rad) AS avg_angle_rad," +
+                            "    sum(sine) AS 'SUM(sine)' " +
+                            "FROM trigonometry " +
+                            "GROUP BY sym " +
+                            "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
+                            "LIMIT 1000",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testOrderGroupByTokensCanBeQuoted2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE trigonometry AS " +
+                    "(SELECT" +
+                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                    "     rnd_symbol('A', 'B', 'C') sym," +
+                    "     rnd_double() sine" +
+                    " FROM long_sequence(1000)" +
+                    ")", sqlExecutionContext);
+            assertQuery("sym\tavg_angle_rad\tSUM(sine)\n" +
+                            "A\t-1.95703125\t168.46508050039918\n" +
+                            "B\t11.255060728744938\t183.76121842808922\n" +
+                            "C\t-0.888030888030888\t164.8875613340687\n",
+                    "SELECT" +
+                            "    sym AS 'sym'," +
+                            "    avg(angle_rad) AS avg_angle_rad," +
+                            "    sum(sine) AS \"SUM(sine)\" " +
+                            "FROM trigonometry " +
+                            "GROUP BY sym " +
+                            "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
+                            "LIMIT 1000",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
     public void testRaceToCreateEmptyTable() throws InterruptedException {
         try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
             AtomicInteger index = new AtomicInteger();
@@ -4081,7 +4177,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
+                engine.drop(path, tt);
             }
         }
     }
@@ -4623,9 +4719,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(CairoSecurityContext cairoSecurityContext, TableToken tableName, long tableVersion) {
+            public TableReader getReader(TableToken tableToken, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(cairoSecurityContext, tableName, tableVersion);
+                return super.getReader(tableToken, tableVersion);
             }
         }) {
 
@@ -4633,16 +4729,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                    compiler.compile(sql, sqlExecutionContext);
-                    Assert.assertTrue(fiddler.isHappy());
-                    try (TableReader reader = getReader(engine, "Y")) {
-                        sink.clear();
-                        reader.getMetadata().toJson(sink);
-                        TestUtils.assertEquals(expectedMetadata, sink);
-                    }
-
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                compiler.compile(sql, sqlExecutionContext);
+                Assert.assertTrue(fiddler.isHappy());
+                try (TableReader reader = engine.getReader("Y")) {
+                    sink.clear();
+                    reader.getMetadata().toJson(sink);
+                    TestUtils.assertEquals(expectedMetadata, sink);
                 }
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            }
         }
     }
 

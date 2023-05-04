@@ -34,9 +34,6 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -55,7 +52,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class TableNameRegistryTest extends AbstractCairoTest {
-    protected static final Log LOG = LogFactory.getLog(TableNameRegistryTest.class);
 
     @Test
     public void testConcurrentCreateDropRemove() throws Exception {
@@ -72,7 +68,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
@@ -102,7 +98,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         Rnd rnd = TestUtils.generateRandom(LOG);
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
@@ -206,7 +202,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             engine.getTableTokens(tableTokenBucket, true);
             if (0 != tableTokenBucket.size()) {
                 Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
@@ -326,7 +322,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 for (int j = 0; j < tableCount; j++) {
                     compiler.compile(
@@ -343,7 +339,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         barrier.await();
                         try (
                                 SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
@@ -372,7 +368,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 throw new RuntimeException(ref.get());
             }
 
-            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             engine.getTableTokens(tableTokenBucket, true);
             if (tableCount != tableTokenBucket.size()) {
                 Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
@@ -430,7 +426,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.reloadTableNames();
 
             Assert.assertNull(engine.getTableTokenIfExists("tab1"));
-            Assert.assertEquals(tt2, engine.getTableToken("tab2"));
+            Assert.assertEquals(tt2, engine.verifyTableName("tab2"));
         });
     }
 
@@ -495,14 +491,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.reloadTableNames();
 
-            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
-            Assert.assertEquals(tt2, engine.getTableToken("tab2_ࠄ"));
-            Assert.assertEquals(tt3, engine.getTableToken("tab3_ࠄ"));
+            Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
+            Assert.assertEquals(tt2, engine.verifyTableName("tab2_ࠄ"));
+            Assert.assertEquals(tt3, engine.verifyTableName("tab3_ࠄ"));
         });
     }
 
     private static int getNonDroppedSize(TableNameRegistry ro) {
-        ObjList<TableToken> bucket = new ObjList<>();
+        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
         ro.getTableTokens(bucket, false);
         return bucket.size();
     }
@@ -557,29 +553,29 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             engine.reloadTableNames(convertedTables);
 
-            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
+            Assert.assertEquals(tt1, engine.verifyTableName("tab1"));
 
-            Assert.assertEquals(tt2.getTableId(), engine.getTableToken("tab2").getTableId());
-            Assert.assertEquals(tt2.getTableName(), engine.getTableToken("tab2").getTableName());
-            Assert.assertEquals(tt2.getDirName(), engine.getTableToken("tab2").getDirName());
+            Assert.assertEquals(tt2.getTableId(), engine.verifyTableName("tab2").getTableId());
+            Assert.assertEquals(tt2.getTableName(), engine.verifyTableName("tab2").getTableName());
+            Assert.assertEquals(tt2.getDirName(), engine.verifyTableName("tab2").getDirName());
             Assert.assertTrue(tt2.isWal());
-            Assert.assertFalse(engine.getTableToken("tab2").isWal());
+            Assert.assertFalse(engine.verifyTableName("tab2").isWal());
 
-            Assert.assertEquals(tt3.getTableId(), engine.getTableToken("tab3").getTableId());
-            Assert.assertEquals(tt3.getTableName(), engine.getTableToken("tab3").getTableName());
-            Assert.assertEquals(tt3.getDirName(), engine.getTableToken("tab3").getDirName());
+            Assert.assertEquals(tt3.getTableId(), engine.verifyTableName("tab3").getTableId());
+            Assert.assertEquals(tt3.getTableName(), engine.verifyTableName("tab3").getTableName());
+            Assert.assertEquals(tt3.getDirName(), engine.verifyTableName("tab3").getDirName());
             Assert.assertFalse(tt3.isWal());
-            Assert.assertTrue(engine.getTableToken("tab3").isWal());
+            Assert.assertTrue(engine.verifyTableName("tab3").isWal());
         });
     }
 
-    private String formatTableDirs(ObjList<TableToken> tableTokenBucket) {
+    private String formatTableDirs(ObjHashSet<TableToken> tableTokenBucket) {
         StringSink ss = new StringSink();
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             if (i > 0) {
                 ss.put(", ");
             }
-            ss.put(tableTokenBucket.getQuick(i).getTableName());
+            ss.put(tableTokenBucket.get(i).getTableName());
         }
         return ss.toString();
     }

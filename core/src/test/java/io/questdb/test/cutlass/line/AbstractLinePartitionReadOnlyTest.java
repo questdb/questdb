@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.line;
 
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -32,8 +31,10 @@ import io.questdb.cairo.TxReader;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.TestName;
 
@@ -62,29 +63,21 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
     @Rule
     public TestName testName = new TestName();
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        try {
-            createDummyConfiguration(
-                    "cairo.max.uncommitted.rows=500",
-                    "cairo.commit.lag=2000",
-                    "cairo.o3.max.lag=2000"
-            );
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                        "cairo.max.uncommitted.rows=500",
+                        "cairo.commit.lag=2000",
+                        "cairo.o3.max.lag=2000"
+                )
+        );
     }
 
     protected static void checkPartitionReadOnlyState(CairoEngine engine, TableToken tableToken, boolean... partitionIsReadOnly) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
-        try (
-                TableReader reader = engine.getReader(
-                        engine.getConfiguration().getCairoSecurityContextFactory().getRootContext(),
-                        tableToken
-                )
-        ) {
+        try (TableReader reader = engine.getReader(tableToken)) {
             TxReader txFile = reader.getTxFile();
             int partitionCount = txFile.getPartitionCount();
             Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);

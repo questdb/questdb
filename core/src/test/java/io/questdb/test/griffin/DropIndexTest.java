@@ -36,11 +36,11 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -83,7 +83,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     private static int tablePathLen;
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
         compiler2 = new SqlCompiler(engine, null, snapshotAgent);
         sqlExecutionContext2 = TestUtils.createSqlExecutionCtx(engine);
@@ -93,10 +93,10 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
-        AbstractGriffinTest.tearDownStatic();
-        compiler2.close();
+    public static void tearDownStatic() throws Exception {
+        compiler2 = Misc.free(compiler2);
         path = Misc.free(path);
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @Test
@@ -298,7 +298,7 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
-            TableToken tableToken = engine.getTableToken(tableName);
+            TableToken tableToken = engine.verifyTableName(tableName);
             try (Path path2 = new Path().put(configuration.getRoot()).concat(tableToken)) {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
@@ -556,7 +556,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = engine.verifyTableName(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
                 (String) configuration.getRoot(),
                 tableToken.getDirName()

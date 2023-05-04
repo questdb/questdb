@@ -66,7 +66,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry ze;
                 while ((ze = zip.getNextEntry()) != null) {
-                    final File dest = new File((String) root, ze.getName());
+                    final File dest = new File(root, ze.getName());
                     if (!ze.isDirectory()) {
                         copyInputStream(buffer, dest, zip);
                     }
@@ -79,7 +79,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @BeforeClass
-    public static void setUpStatic() {
+    public static void setUpStatic() throws Exception {
         AbstractGriffinTest.setUpStatic();
         configOverrideMangleTableDirNames(false);
     }
@@ -148,8 +148,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         compile("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken tokenAbc = engine.getTableToken("abc");
-        TableToken tokenDef = engine.getTableToken("def");
+        TableToken tokenAbc = engine.verifyTableName("abc");
+        TableToken tokenDef = engine.verifyTableName("def");
 
         engine.releaseInactive();
 
@@ -184,7 +184,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken token = engine.getTableToken("abc");
+        TableToken token = engine.verifyTableName("abc");
         CairoConfiguration config = engine.getConfiguration();
 
         TestUtils.messTxnUnallocated(
@@ -215,7 +215,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        TableToken token = engine.getTableToken("abc");
+        TableToken token = engine.verifyTableName("abc");
 
         CairoConfiguration config = engine.getConfiguration();
         try (TxWriter txWriter = new TxWriter(config.getFilesFacade())) {
@@ -1723,7 +1723,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 engine.getConfiguration().getFilesFacade(),
                 Path.getThreadLocal(root),
                 new Rnd(),
-                engine.getTableToken("t_col_top_ooo_day_wal")
+                engine.verifyTableName("t_col_top_ooo_day_wal")
         );
 
         Path from = Path.getThreadLocal(configuration.getRoot()).concat("t_col_top_день");

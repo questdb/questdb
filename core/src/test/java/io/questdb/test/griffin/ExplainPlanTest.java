@@ -55,7 +55,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.tools.StationaryMicrosClock;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -64,6 +66,12 @@ import java.util.Arrays;
 public class ExplainPlanTest extends AbstractGriffinTest {
 
     protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        testMicrosClock = StationaryMicrosClock.INSTANCE;
+        AbstractGriffinTest.setUpStatic();
+    }
 
     @Test
     public void test2686LeftJoinDoesntMoveOtherInnerJoinPredicate() throws Exception {
@@ -1233,7 +1241,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainUpdateWithFilter() throws Exception {
         assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)",
                 "update a set l = 20, d = d+rnd_double() " +
-                        "where d < 100.0d and ts > dateadd('d', -1, now());",
+                        "where d < 100.0d and ts > dateadd('d', 1, now()  );",
                 "Update table: a\n" +
                         "    VirtualRecord\n" +
                         "      functions: [20,d+rnd_double()]\n" +
@@ -1243,7 +1251,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: a\n" +
-                        "                  intervals: [static=[0,9223372036854775807,281481419161601,4294967296] dynamic=[dateadd('d',-1,now())]]\n");
+                        "                  intervals: [(\"1970-01-02T00:00:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -1475,7 +1483,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: trades\n" +
-                        "                  intervals: [static=[0,9223372036854775807,281481419161601,4294967296] dynamic=[dateadd('m',-30,now())]]\n");
+                        "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -2736,7 +2744,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Row backward scan\n" +
                         "      expectedSymbolsCount: 2147483647\n" +
                         "    Interval backward scan on: a\n" +
-                        "      intervals: [static=[1,9223372036854775807]\n");
+                        "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -4197,7 +4205,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Index forward scan on: sym deferred: true\n" +
                         "          filter: sym='S'\n" +
                         "        Interval forward scan on: a\n" +
-                        "          intervals: [static=[1,99]\n");
+                        "          intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000099Z\")]\n");
     }
 
     @Test
@@ -4648,7 +4656,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[0,9223372036854775807,281481419161601,4294967296] dynamic=[now()]]\n");
+                        "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -4658,7 +4666,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[NaN,0,844422782648321,4294967296,0,9223372036854775807,281481419161601,4294967296] dynamic=[now(),dateadd('d',-1,now())]]\n");
+                        "      intervals: [(\"1969-12-31T00:00:00.000001Z\",\"1969-12-31T23:59:59.999999Z\")]\n");
     }
 
     @Test
@@ -4668,7 +4676,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[0,9223372036854775807,281481419161601,4294967296,1640995200000001,9223372036854775807,2147483649,4294967296] dynamic=[now(),null]]\n");
+                        "      intervals: [(\"2022-01-01T00:00:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -4678,7 +4686,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row backward scan\n" +
                         "    Interval backward scan on: tab\n" +
-                        "      intervals: [static=[0,9223372036854775807,281481419161601,4294967296,1640995200000001,9223372036854775807,2147483649,4294967296] dynamic=[now(),null]]\n");
+                        "      intervals: [(\"2022-01-01T00:00:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -4792,7 +4800,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "            Index forward scan on: s deferred: true\n" +
                     "              filter: s=:s2::string\n" +
                     "        Interval forward scan on: a\n" +
-                    "          intervals: [static=[0,86399999999]\n";
+                    "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n";
 
             assertPlan(queryDesc, expectedPlan.replace("#ORDER#", " desc"));
             assertQuery("s\tts\n" +
@@ -4947,7 +4955,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "  filter: length(s)=2\n" +
                     "    Cursor-order scan\n" +
                     "    Interval forward scan on: a\n" +
-                    "      intervals: [static=[1678838400000000,1678924799999999]\n";
+                    "      intervals: [(\"2023-03-15T00:00:00.000000Z\",\"2023-03-15T23:59:59.999999Z\")]\n";
 
             assertPlan(query.replace("#ORDER#", "asc"),
                     expectedPlan.replace("#ORDER#", "asc"));
@@ -5010,7 +5018,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Index forward scan on: s\n" +
                         "      symbolOrder: asc\n" +
                         "    Interval forward scan on: a\n" +
-                        "      intervals: [static=[0,99]\n");
+                        "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.000099Z\")]\n");
     }
 
     @Test
@@ -5104,7 +5112,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "    Index backward scan on: s1\n" +
                             "      filter: s1=1\n" +
                             "    Interval forward scan on: a\n" +
-                            "      intervals: [static=[1,8]\n");
+                            "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000008Z\")]\n");
         });
     }
 
@@ -5124,7 +5132,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "        Index backward scan on: s1\n" +
                             "          filter: s1=2\n" +
                             "    Interval forward scan on: a\n" +
-                            "      intervals: [static=[1,8]\n");
+                            "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000008Z\")]\n");
         });
     }
 
@@ -5145,7 +5153,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: a\n" +
-                            "              intervals: [static=[1,8]\n");
+                            "              intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000008Z\")]\n");
         });
     }
 
@@ -5285,6 +5293,51 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectOrderByTsWithNegativeLimit1() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan("select ts, count(*)  from a sample by 1s limit -5",
+                "Limit lo: -5\n" +
+                        "    SampleBy\n" +
+                        "      values: [count(*)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+
+        assertPlan("select i, count(*)  from a group by i limit -5",
+                "Limit lo: -5\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+
+        assertPlan("select i, count(*)  from a limit -5",
+                "Limit lo: -5\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+
+        assertPlan("select distinct(i) from a limit -5",
+                "Limit lo: -5\n" +
+                        "    DistinctKey\n" +
+                        "        GroupBy vectorized: true\n" +
+                        "          keys: [i]\n" +
+                        "          values: [count(*)]\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n");
+    }
+
+    @Test
     public void testSelectOrderedAsc() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i asc",
@@ -5332,7 +5385,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[1583020800000001,9223372036854775807]\n");
+                        "      intervals: [(\"2020-03-01T00:00:00.000001Z\",\"MAX\")]\n");
     }
 
     @Test
@@ -5344,7 +5397,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
-                        "          intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
+                        "          intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n");
     }
 
     @Test
@@ -5356,7 +5409,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
-                        "          intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
+                        "          intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n");
     }
 
     @Test
@@ -5366,7 +5419,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[1583020800000000,1583107199999999]\n");
+                        "      intervals: [(\"2020-03-01T00:00:00.000000Z\",\"2020-03-01T23:59:59.999999Z\")]\n");
     }
 
     @Test // TODO: this should use interval scan with two ranges !
@@ -5395,7 +5448,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[1583798400000001,1585699199999999]\n");
+                        "      intervals: [(\"2020-03-10T00:00:00.000001Z\",\"2020-03-31T23:59:59.999999Z\")]\n");
     }
 
     @Test // TODO: this should use interval scan with two ranges !
@@ -5429,7 +5482,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
-                        "      intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
+                        "      intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n");
     }
 
     @Test
@@ -5439,7 +5492,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DataFrame\n" +
                         "    Row backward scan\n" +
                         "    Interval backward scan on: tab\n" +
-                        "      intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
+                        "      intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n");
     }
 
     @Test
@@ -5836,7 +5889,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
-                        "          intervals: [static=[1609459200000000,1609545599999999]\n");
+                        "          intervals: [(\"2021-01-01T00:00:00.000000Z\",\"2021-01-01T23:59:59.999999Z\")]\n");
     }
 
     @Test // TODO: this one should use jit
@@ -6921,7 +6974,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Index forward scan on: s deferred: true\n" +
                             "              filter: s=:s2::string\n" +
                             "        Interval forward scan on: a\n" +
-                            "          intervals: [static=[0,86399999999]\n");
+                            "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n");
 
             assertQuery("s\tts\n" +
                     "S2\t1970-01-01T00:00:00.000000Z\n" +
@@ -6940,7 +6993,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Index forward scan on: s deferred: true\n" +
                             "              filter: s=:s2::string\n" +
                             "        Interval forward scan on: a\n" +
-                            "          intervals: [static=[0,86399999999]\n");
+                            "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n");
 
             assertQuery("s\tts\n" +
                     "S1\t1970-01-01T00:00:00.000001Z\n" +

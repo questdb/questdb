@@ -45,9 +45,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
+    private boolean authorizationError = false;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
     private int messagePosition;
+
+    public static CairoException authorization() {
+        CairoException e = nonCritical();
+        e.authorizationError = true;
+        return e;
+    }
 
     public static CairoException critical(int errno) {
         CairoException ex = tlException.get();
@@ -57,6 +64,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         ex.errno = errno;
         ex.cacheable = false;
         ex.interruption = false;
+        ex.authorizationError = false;
         return ex;
     }
 
@@ -154,6 +162,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public boolean isAuthorizationError() {
+        return authorizationError;
     }
 
     public boolean isCacheable() {
