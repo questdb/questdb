@@ -41,15 +41,21 @@ import static io.questdb.cairo.TableUtils.lockName;
 
 public abstract class RebuildColumnBase implements Closeable, Mutable {
     static final int REBUILD_ALL_COLUMNS = -1;
+    protected final CairoConfiguration configuration;
     protected final String unsupportedTableMessage = "Table does not have any indexes";
+    private final MillisecondClock clock;
     private final StringSink tempStringSink = new StringSink();
-    protected CairoConfiguration configuration;
     protected FilesFacade ff;
     protected Path path = new Path();
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
-    private MillisecondClock clock;
     private int lockFd;
+
+    public RebuildColumnBase(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.clock = configuration.getMillisecondClock();
+    }
 
     @Override
     public void clear() {
@@ -62,20 +68,25 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         this.path = Misc.free(path);
     }
 
-    public RebuildColumnBase of(CharSequence tablePath, CairoConfiguration configuration) {
+    public RebuildColumnBase of(CharSequence tablePath) {
         this.path.of(tablePath);
         this.rootLen = tablePath.length();
-        this.configuration = configuration;
-        this.ff = configuration.getFilesFacade();
-        this.clock = configuration.getMillisecondClock();
         return this;
     }
 
     public void rebuildAll() {
-        reindex(null, null);
+        reindex(ff, null, null);
     }
 
     public void reindex(
+            @Nullable CharSequence partitionName,
+            @Nullable CharSequence columnName
+    ) {
+        reindex(ff, partitionName, columnName);
+    }
+
+    public void reindex(
+            FilesFacade ff,
             @Nullable CharSequence partitionName,
             @Nullable CharSequence columnName
     ) {
@@ -86,7 +97,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
                 columnVersionReader.readSafe(clock, deadline);
                 path.trimTo(rootLen);
-                reindex0(columnVersionReader, partitionName, columnName);
+                reindex0(ff, columnVersionReader, partitionName, columnName);
             }
         } finally {
             lockName(path);
@@ -94,7 +105,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    public void reindexAfterUpdate(long partitionTimestamp, CharSequence columnName, TableWriter tableWriter) {
+    public void reindexAfterUpdate(FilesFacade ff, long partitionTimestamp, CharSequence columnName, TableWriter tableWriter) {
         TxReader txReader = tableWriter.getTxReader();
         int partitionIndex = txReader.getPartitionIndex(partitionTimestamp);
         assert partitionIndex > -1L;
@@ -115,6 +126,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);
 
         doReindex(
+                ff,
                 tableWriter.getColumnVersionReader(),
                 // this may not be needed, because table writer's column index is the same
                 // as metadata writers' index.
@@ -136,7 +148,12 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         reindex(null, columnName);
     }
 
+    public void reindexColumn(FilesFacade ff, CharSequence columnName) {
+        reindex(ff, null, columnName);
+    }
+
     public void reindexColumn(
+            FilesFacade ff,
             ColumnVersionReader columnVersionReader,
             RecordMetadata metadata,
             int columnIndex,
@@ -146,6 +163,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionSize
     ) {
         doReindex(
+                ff,
                 columnVersionReader,
                 metadata.getWriterIndex(columnIndex),
                 metadata.getColumnName(columnIndex),
@@ -173,6 +191,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
     // this method is not used by UPDATE SQL
     private void reindex0(
+            FilesFacade ff,
             ColumnVersionReader columnVersionReader,
             @Nullable CharSequence partitionName, // will reindex all partitions if partition name is not provided
             @Nullable CharSequence columnName // will reindex all columns if name is not provided
@@ -203,6 +222,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1L) {
                             reindexPartition(
+                                    ff,
                                     metadata,
                                     columnVersionReader,
                                     txReader,
@@ -215,6 +235,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                     } else {
                         for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
                             reindexPartition(
+                                    ff,
                                     metadata,
                                     columnVersionReader,
                                     txReader,
@@ -228,6 +249,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 } else {
                     // reindexing columns in non-partitioned table
                     reindexOneOrAllColumns(
+                            ff,
                             metadata,
                             columnVersionReader,
                             columnIndex,
@@ -244,6 +266,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     private void reindexOneOrAllColumns(
+            FilesFacade ff,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             int columnIndex,
@@ -261,6 +284,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 if (isSupportedColumn(metadata, i)) {
                     isIndexed = true;
                     reindexColumn(
+                            ff,
                             columnVersionReader,
                             metadata,
                             i,
@@ -277,6 +301,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         } else {
             if (isSupportedColumn(metadata, columnIndex)) {
                 reindexColumn(
+                        ff,
                         columnVersionReader,
                         metadata,
                         columnIndex,
@@ -292,6 +317,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     private void reindexPartition(
+            FilesFacade ff,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             TxReader txReader,
@@ -305,6 +331,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 : txReader.getPartitionSize(partitionIndex);
 
         reindexOneOrAllColumns(
+                ff,
                 metadata,
                 columnVersionReader,
                 columnIndex,
@@ -332,6 +359,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     abstract protected void doReindex(
+            FilesFacade ff,
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,

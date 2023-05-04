@@ -99,7 +99,7 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final IndexBuilder rebuildIndex = new IndexBuilder();
+    private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path();
     private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -134,6 +134,7 @@ public class SqlCompiler implements Closeable {
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.messageBus = engine.getMessageBus();
+        this.rebuildIndex = new IndexBuilder(configuration);
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
@@ -2346,7 +2347,7 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(tok);
         }
         TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()), configuration);
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;

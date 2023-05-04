@@ -250,6 +250,11 @@ public class WalWriter implements TableWriterAPI {
             if (inTransaction()) {
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                // flush disk before getting next txn
+                final int commitMode = configuration.getCommitMode();
+                if (commitMode != CommitMode.NOSYNC) {
+                    sync(commitMode);
+                }
                 final long seqTxn = getSequencerTxn();
                 LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
@@ -275,7 +280,9 @@ public class WalWriter implements TableWriterAPI {
     public void doClose(boolean truncate) {
         if (open) {
             open = false;
-            metadata.close(Vm.TRUNCATE_TO_POINTER);
+            if (metadata != null) {
+                metadata.close(Vm.TRUNCATE_TO_POINTER);
+            }
             Misc.free(events);
             freeSymbolMapReaders();
             Misc.free(symbolMapMem);
@@ -1345,6 +1352,17 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
         }
+    }
+
+    private void sync(int commitMode) {
+        final boolean async = commitMode == CommitMode.ASYNC;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            MemoryMA column = columns.getQuick(i);
+            if (column != null) {
+                column.sync(async);
+            }
+        }
+        events.sync(async);
     }
 
     private class MetadataValidatorService implements MetadataServiceStub {

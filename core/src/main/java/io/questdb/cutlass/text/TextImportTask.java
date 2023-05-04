@@ -915,7 +915,7 @@ public class TextImportTask {
                                 .I$();
                     }
                 } finally {
-                    writer.commit(CommitMode.SYNC);
+                    writer.commit();
                 }
             }
         }

@@ -55,8 +55,8 @@ public class TxReader implements Closeable, Mutable {
     // a negative size value to mean that the partition is not open.
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
+    protected final FilesFacade ff;
     protected final AtomicLong structureVersion = new AtomicLong();
-    private final FilesFacade ff;
     private final IntList symbolCountSnapshot = new IntList();
     protected int attachedPartitionsSize = 0;
     protected long columnVersion;

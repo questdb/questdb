@@ -38,6 +38,7 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
+    private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final MemoryMARW keyMem = Vm.getMARWInstance();
     private final MemoryMARW valueMem = Vm.getMARWInstance();
@@ -50,8 +51,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private long valueMemSize = -1;
 
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
+        this(configuration);
         of(
-                configuration,
                 path,
                 name,
                 columnNameTxn,
@@ -61,14 +62,15 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
-        of(configuration, path, name, columnNameTxn, keyAppendPageSize, valueAppendPageSize);
+        this(configuration);
+        of(path, name, columnNameTxn, keyAppendPageSize, valueAppendPageSize);
     }
 
-    public BitmapIndexWriter() {
+    public BitmapIndexWriter(CairoConfiguration configuration) {
+        this.configuration = configuration;
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
-
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
         keyMem.toTop();
@@ -148,6 +150,15 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             valueMem.setSize(valueMemSize);
         }
         Misc.free(valueMem);
+    }
+
+    public void commit() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            final boolean async = commitMode == CommitMode.ASYNC;
+            keyMem.sync(async);
+            valueMem.sync(async);
+        }
     }
 
     public RowCursor getCursor(int key) {
@@ -253,7 +264,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
-    public final void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
+    public final void of(Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
         close();
         final int plen = path.length();
         final FilesFacade ff = configuration.getFilesFacade();

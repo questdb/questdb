@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -45,9 +46,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTest extends AbstractCairoTest {
@@ -1796,7 +1795,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             final int threads = 2;
             final CyclicBarrier startBarrier = new CyclicBarrier(threads);
-            final CountDownLatch stopLatch = new CountDownLatch(threads);
+            final SOCountDownLatch stopLatch = new SOCountDownLatch(threads);
             final AtomicInteger errors = new AtomicInteger(0);
 
             // start writer
@@ -1849,7 +1848,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }).start();
 
-            Assert.assertTrue(stopLatch.await(30, TimeUnit.SECONDS));
+            stopLatch.await();
             Assert.assertEquals(0, errors.get());
         });
     }
@@ -2353,10 +2352,11 @@ public class TableReaderTest extends AbstractCairoTest {
                 CreateTableTestUtils.create(model.timestamp());
             }
 
-            CountDownLatch stopLatch = new CountDownLatch(2);
+            SOCountDownLatch stopLatch = new SOCountDownLatch(2);
             CyclicBarrier barrier = new CyclicBarrier(2);
             int count = 1000000;
             AtomicInteger reloadCount = new AtomicInteger(0);
+            AtomicInteger errorCount = new AtomicInteger(0);
 
             try (
                     TableWriter writer = newTableWriter(configuration, "x", metrics);
@@ -2364,7 +2364,7 @@ public class TableReaderTest extends AbstractCairoTest {
             ) {
                 new Thread(() -> {
                     try {
-                        barrier.await();
+                        TestUtils.await(barrier);
                         for (int i = 0; i < count; i++) {
                             TableWriter.Row row = writer.newRow(i);
                             row.append();
@@ -2372,6 +2372,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
+                        errorCount.incrementAndGet();
                     } finally {
                         stopLatch.countDown();
                     }
@@ -2398,6 +2399,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
+                        errorCount.incrementAndGet();
                     } finally {
                         stopLatch.countDown();
                     }
@@ -2406,6 +2408,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 stopLatch.await();
 
                 Assert.assertTrue(reloadCount.get() > 0);
+                Assert.assertEquals(0, errorCount.get());
             }
         });
     }
@@ -4089,7 +4092,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             final int threads = 2;
             final CyclicBarrier startBarrier = new CyclicBarrier(threads);
-            final CountDownLatch stopLatch = new CountDownLatch(threads);
+            final SOCountDownLatch stopLatch = new SOCountDownLatch(threads);
             final AtomicInteger errors = new AtomicInteger(0);
 
             // start writer
@@ -4152,12 +4155,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }).start();
 
-            long start = System.currentTimeMillis();
-            boolean result = stopLatch.await(5, TimeUnit.MINUTES);
-            System.out.printf("took: %d%n", System.currentTimeMillis() - start);
-            if (!result) {
-                Assert.fail("too long, threading issue");
-            }
+            stopLatch.await();
             Assert.assertEquals(0, errors.get());
 
             // check that we had multiple partitions created during the test

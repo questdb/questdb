@@ -3419,7 +3419,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     }
             );
             Assert.assertEquals(expectedPartitionNames.size(), rmdirCallCount.get());
-            Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
             try (TableReader reader = getReader("test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());

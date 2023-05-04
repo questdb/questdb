@@ -34,7 +34,6 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
-    private final FilesFacade ff;
     private long baseVersion;
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
@@ -51,10 +50,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int txPartitionCount;
     private int writeAreaSize;
     private int writeBaseOffset;
+    private final CairoConfiguration configuration;
 
-    public TxWriter(FilesFacade ff) {
+    public TxWriter(FilesFacade ff, CairoConfiguration configuration) {
         super(ff);
-        this.ff = ff;
+        this.configuration = configuration;
     }
 
     public void append() {
@@ -80,7 +80,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
         structureVersion.incrementAndGet();
-        commit(CommitMode.NOSYNC, denseSymbolMapWriters);
+        commit(denseSymbolMapWriters);
     }
 
     public void bumpTruncateVersion() {
@@ -138,7 +138,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         writeTransientSymbolCount(symbolIndexInTxWriter, count);
     }
 
-    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+    public void commit(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         if (prevRecordStructureVersion == recordStructureVersion && prevRecordBaseOffset > 0) {
             // Optimisation for the case where commit appends rows to the last partition only
             // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
@@ -164,9 +164,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
+            int commitMode = configuration.getCommitMode();
+            if (commitMode != CommitMode.NOSYNC) {
+                txMemBase.sync(commitMode == CommitMode.ASYNC);
+            }
         } else {
             // Slow path, record structure changed
-            commitFullRecord(commitMode, symbolCountProviders);
+            commitFullRecord(configuration.getCommitMode(), symbolCountProviders);
         }
     }
 
@@ -265,14 +269,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             long fixedRowCount,
             long transientRowCount,
             long maxTimestamp,
-            int commitMode,
             ObjList<? extends SymbolCountProvider> symbolCountProviders
     ) {
         recordStructureVersion++;
         this.fixedRowCount = fixedRowCount;
         this.maxTimestamp = maxTimestamp;
         this.transientRowCount = transientRowCount;
-        commit(commitMode, symbolCountProviders);
+        commit(symbolCountProviders);
     }
 
     public void resetTimestamp() {

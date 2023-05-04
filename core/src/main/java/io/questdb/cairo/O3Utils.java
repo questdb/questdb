@@ -100,6 +100,16 @@ public class O3Utils {
         return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
     }
 
+    static void fsync(FilesFacade ff, int fd, int commitMode) {
+        if (fd != 0 && fd != -1 && commitMode != CommitMode.NOSYNC) {
+            if (ff.fsync(Math.abs(fd)) == 0) {
+                return;
+            }
+            throw CairoException.critical(ff.errno()).put("could not fsync [fd=").put(fd).put(']');
+        }
+
+    }
+
     static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
         return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
     }

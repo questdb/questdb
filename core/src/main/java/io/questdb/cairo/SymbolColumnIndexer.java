@@ -36,12 +36,23 @@ import io.questdb.std.str.Path;
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
+    private final CairoConfiguration configuration;
     private final MemorySRImpl mem = new MemorySRImpl();
-    private final BitmapIndexWriter writer = new BitmapIndexWriter();
+    private final BitmapIndexWriter writer;
     private long columnTop;
     private volatile boolean distressed = false;
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
+
+    public SymbolColumnIndexer(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        writer = new BitmapIndexWriter(configuration);
+    }
+
+    @Override
+    public void sync(boolean async) {
+        writer.commit();
+    }
 
     @Override
     public void clear() {
@@ -61,7 +72,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void configureFollowerAndWriter(
-            CairoConfiguration configuration,
             Path path,
             CharSequence name,
             long columnNameTxn,
@@ -71,7 +81,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         this.columnTop = columnTop;
         try {
             this.writer.of(
-                    configuration,
                     path,
                     name,
                     columnNameTxn,
@@ -90,7 +99,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         this.columnTop = columnTop;
         try {
             this.writer.of(
-                    configuration,
                     path,
                     name,
                     columnNameTxn,

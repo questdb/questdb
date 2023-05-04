@@ -8139,8 +8139,6 @@ public class IODispatcherTest extends AbstractTest {
                 }
         );
 
-        Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
-
         assertMetadataAndData(
                 tableName,
                 expectedO3MaxLag,

@@ -493,6 +493,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
+            final int commitMode = tableWriter.getConfiguration().getCommitMode();
+            O3Utils.fsync(ff, srcDataFixFd, commitMode);
+            O3Utils.fsync(ff, srcDataVarFd, commitMode);
+            O3Utils.fsync(ff, dstFixFd, commitMode);
+            O3Utils.fsync(ff, dstVarFd, commitMode);
+
             // unmap memory
             O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
             O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
@@ -699,6 +705,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
             try {
                 updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
+                indexWriter.commit();
             } finally {
                 if (closed) {
                     Misc.free(indexWriter);

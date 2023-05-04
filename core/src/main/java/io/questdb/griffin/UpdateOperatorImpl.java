@@ -58,7 +58,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             int rootLen
     ) {
         super(LOG, configuration, messageBus, tableWriter, path, rootLen);
-        this.indexBuilder = new IndexBuilder();
+        this.indexBuilder = new IndexBuilder(configuration);
         this.dataAppendPageSize = configuration.getDataAppendPageSize();
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
     }
@@ -676,12 +676,12 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             TableWriter tableWriter
     ) {
         int pathTrimToLen = path.length();
-        indexBuilder.of(path.trimTo(rootLen), configuration);
+        indexBuilder.of(path.trimTo(rootLen));
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
             if (tableMetadata.isColumnIndexed(columnIndex)) {
                 CharSequence colName = tableMetadata.getColumnName(columnIndex);
-                indexBuilder.reindexAfterUpdate(partitionTimestamp, colName, tableWriter);
+                indexBuilder.reindexAfterUpdate(ff, partitionTimestamp, colName, tableWriter);
             }
         }
         indexBuilder.clear();

@@ -103,7 +103,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void commit() {
         if (writer != null) {
-            writer.commit(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
+            writer.commit();
         }
     }
 

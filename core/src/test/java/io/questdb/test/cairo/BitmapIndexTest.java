@@ -1023,9 +1023,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     rwin.of(mem, MemoryTag.MMAP_DEFAULT);
 
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
-                    try (BitmapIndexWriter writer = new BitmapIndexWriter()) {
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
                         writer.of(
-                                configuration,
                                 path.trimTo(plen),
                                 "x",
                                 COLUMN_NAME_TXN_NONE,
