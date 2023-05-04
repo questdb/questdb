@@ -106,46 +106,12 @@ public class TableBackupTest {
         });
     }
 
-    public static TableToken executeCreateTableStmt(
-            @NotNull String tableName,
-            int partitionBy,
-            boolean isWal,
-            int numRows,
-            @NotNull SqlCompiler compiler,
-            @NotNull SqlExecutionContext context
-    ) throws SqlException {
-        executeSqlStmt(
-                "CREATE TABLE '" + tableName + "' AS (" +
-                        selectGenerator(numRows) +
-                        "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
-                        "PARTITION BY " + PartitionBy.toString(partitionBy) +
-                        (isWal ? " WAL" : " BYPASS WAL"),
-                compiler, context);
-        return compiler.getEngine().getTableToken(tableName);
-    }
-
-    public static void executeInsertGeneratorStmt(
-            TableToken tableToken,
-            int size,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        executeSqlStmt("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', compiler, sqlExecutionContext);
-    }
-
-    public static String testTableName(String tableName, String tableNameSuffix) {
-        int idx = tableName.indexOf('[');
-        return (idx > 0 ? tableName.substring(0, idx) : tableName) + '_' + tableNameSuffix;
-    }
-
     @Before
     public void setup() throws IOException {
         path = new Path();
         finalBackupPath = new Path();
         mkdirsErrno = -1;
         renameErrno = -1;
-        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
-        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         testFf = new TestFilesFacadeImpl() {
             private int nextErrno = -1;
 
@@ -180,6 +146,8 @@ public class TableBackupTest {
                 return super.rename(from, to);
             }
         };
+        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
+        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         mainConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
             public DateFormat getBackupDirTimestampFormat() {
@@ -204,9 +172,7 @@ public class TableBackupTest {
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
         mainSqlExecutionContext = TestUtils.createSqlExecutionCtx(mainEngine);
-
-        // create dummy mainConfiguration
-        File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));
+        File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
         Assert.assertTrue(confRoot.mkdirs());
         Assert.assertTrue(new File(confRoot, "server.conf").createNewFile());
         Assert.assertTrue(new File(confRoot, "mime.types").createNewFile());
@@ -388,7 +354,9 @@ public class TableBackupTest {
             selectAll(tableToken, true, firstBackup);
             Assert.assertEquals(sink1, firstBackup);
 
-            executeInsertGeneratorStmt(tableToken);
+            executeSqlStmt("INSERT INTO \"" + tableToken.getTableName() + "\" SELECT * FROM (" + selectGenerator() + ')', mainCompiler, mainSqlExecutionContext);
+            drainWalQueue();
+
             backupTable(tableToken);
             setFinalBackupPath(1);
             assertTables(tableToken);
@@ -403,7 +371,6 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
             try (Path path = new Path()) {
-                TableToken tableToken = mainEngine.verifyTableName(tableName);
                 path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableToken).slash$();
                 Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode()));
                 backupTable(tableToken);
@@ -430,13 +397,30 @@ public class TableBackupTest {
         });
     }
 
+    private static TableToken executeCreateTableStmt(
+            @NotNull String tableName,
+            int partitionBy,
+            boolean isWal,
+            @NotNull SqlCompiler compiler,
+            @NotNull SqlExecutionContext context
+    ) throws SqlException {
+        executeSqlStmt(
+                "CREATE TABLE \"" + tableName + "\" AS (" +
+                        selectGenerator() +
+                        "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
+                        "PARTITION BY " + PartitionBy.toString(partitionBy) +
+                        (isWal ? " WAL" : " BYPASS WAL"),
+                compiler, context);
+        return compiler.getEngine().verifyTableName(tableName);
+    }
+
     private static void executeSqlStmt(CharSequence stmt, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (OperationFuture future = compiler.compile(stmt, sqlExecutionContext).execute(null)) {
             future.await();
         }
     }
 
-    private static String selectGenerator(int size) {
+    private static String selectGenerator() {
         return " SELECT" +
                 "     rnd_boolean() bool," +
                 "     rnd_char() char," +
@@ -468,7 +452,12 @@ public class TableBackupTest {
                 "     rnd_geohash(60) g60," +
                 "     rnd_uuid4() uuid," +
                 "     rnd_long256() long256" +
-                " FROM long_sequence(" + size + ')';
+                " FROM long_sequence(10000)";
+    }
+
+    private static String testTableName(String tableName) {
+        int idx = tableName.indexOf('[');
+        return (idx > 0 ? tableName.substring(0, idx) : tableName) + "_すばらしい";
     }
 
     private void assertDatabase() {
@@ -516,7 +505,7 @@ public class TableBackupTest {
     }
 
     private void backupTable(TableToken tableToken) throws SqlException {
-        mainCompiler.compile("BACKUP TABLE '" + tableToken.getTableName() + '\'', mainSqlExecutionContext);
+        mainCompiler.compile("BACKUP TABLE \"" + tableToken.getTableName() + '"', mainSqlExecutionContext);
     }
 
     private void drainWalQueue() {
@@ -530,14 +519,9 @@ public class TableBackupTest {
     }
 
     private TableToken executeCreateTableStmt(String tableName) throws SqlException {
-        TableToken tableToken = executeCreateTableStmt(testTableName(tableName, "すばらしい"), partitionBy, isWal, 10000, mainCompiler, mainSqlExecutionContext);
+        TableToken tableToken = executeCreateTableStmt(testTableName(tableName), partitionBy, isWal, mainCompiler, mainSqlExecutionContext);
         drainWalQueue();
         return tableToken;
-    }
-
-    private void executeInsertGeneratorStmt(TableToken tableToken) throws SqlException {
-        executeInsertGeneratorStmt(tableToken, 6, mainCompiler, mainSqlExecutionContext);
-        drainWalQueue();
     }
 
     private void executeSqlStmt(String stmt) throws SqlException {

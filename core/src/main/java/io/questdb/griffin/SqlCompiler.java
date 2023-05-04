@@ -2881,11 +2881,10 @@ public class SqlCompiler implements Closeable {
         private final StringSink sink = new StringSink();
         private final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
-        private final ObjHashSet<TableToken> tableNames = new ObjHashSet<>();
-        private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+        private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
         private final BackupFileFindVisitor txnSeqFilesBackupOnFind = new BackupFileFindVisitor();
         private transient String cachedBackupTmpRoot;
-        private transient SqlExecutionContext currentExecutionContext;
         private transient int dstCurrDirLen;
         private transient int dstPathRoot;
 
@@ -2908,7 +2907,7 @@ public class SqlCompiler implements Closeable {
             Misc.free(dstPath);
         }
 
-        private void backupTable(@NotNull TableToken tableToken, @NotNull SqlExecutionContext executionContext) {
+        private void backupTable(@NotNull TableToken tableToken) {
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
@@ -2925,14 +2924,15 @@ public class SqlCompiler implements Closeable {
             auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
             int tableRootLen = auxPath.length();
             try {
-                CairoEngine contextEngine = executionContext.getCairoEngine();
-                try (TableReader reader = contextEngine.getReader(executionContext.getCairoSecurityContext(), tableToken)) { // acquire reader lock
+                try (TableReader reader = engine.getReader(tableToken)) { // acquire reader lock
                     if (ff.exists(auxPath)) {
                         throw CairoException.nonCritical()
                                 .put("backup dir already exists [path=").put(auxPath)
                                 .put(", table=").put(tableName)
                                 .put(']');
                     }
+
+                    // clone metadata
 
                     // create TMP folder
                     if (ff.mkdirs(auxPath, configuration.getBackupMkDirMode()) != 0) {
@@ -2991,7 +2991,7 @@ public class SqlCompiler implements Closeable {
                     }
 
                     // copy the data
-                    try (TableWriter backupWriter = contextEngine.getBackupWriter(executionContext.getCairoSecurityContext(), tableToken, cachedBackupTmpRoot)) {
+                    try (TableWriter backupWriter = engine.getBackupWriter(tableToken, cachedBackupTmpRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
                         srcPath.of(tableName).slash().put(reader.getVersion()).$();
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
@@ -3083,52 +3083,48 @@ public class SqlCompiler implements Closeable {
         }
 
         private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) {
-            currentExecutionContext = executionContext;
-            try {
-                mkBackupDstRoot();
-                mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
+            mkBackupDstRoot();
+            mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
 
-                // backup tables
-                engine.getTableTokens(tableTokenBucket, false);
-                for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                    backupTable(tableTokenBucket.getQuick(i), executionContext);
-                }
-
-                srcPath.of(configuration.getRoot()).$();
-                int srcLen = srcPath.length();
-
-                // backup table registry file (tables.d.<last>)
-                int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
-                srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
-                dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
-                LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
-                if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.critical(ff.errno())
-                            .put("cannot backup table registry file [from=").put(srcPath)
-                            .put("m to=").put(dstPath)
-                            .put(']');
-                }
-
-                // backup table index file (_tab_index.d)
-                srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-                dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-                LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
-                if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.critical(ff.errno())
-                            .put("cannot backup table index file [from=").put(srcPath)
-                            .put("m to=").put(dstPath)
-                            .put(']');
-                }
-
-                // backup conf directory
-                mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
-                auxPath.of(dstPath).$();
-                ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind.of(srcPath.length(), auxPath.length()));
-
-                return compiledQuery.ofBackupTable();
-            } finally {
-                currentExecutionContext = null;
+            // backup tables
+            engine.getTableTokens(tableTokenBucket, false);
+            executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                backupTable(tableTokenBucket.get(i));
             }
+
+            srcPath.of(configuration.getRoot()).$();
+            int srcLen = srcPath.length();
+
+            // backup table registry file (tables.d.<last>)
+            int version = TableNameRegistryFileStore.findLastTablesFileVersion(ff, srcPath, sink);
+            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put('.').put(version).$();
+            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).put(".0").$(); // reset to 0
+            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot backup table registry file [from=").put(srcPath)
+                        .put("m to=").put(dstPath)
+                        .put(']');
+            }
+
+            // backup table index file (_tab_index.d)
+            srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            LOG.info().$("backup copying file [from=").utf8(srcPath).$(", to=").utf8(dstPath).I$();
+            if (ff.copy(srcPath, dstPath) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("cannot backup table index file [from=").put(srcPath)
+                        .put("m to=").put(dstPath)
+                        .put(']');
+            }
+
+            // backup conf directory
+            mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
+            auxPath.of(dstPath).$();
+            ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind.of(srcPath.length(), auxPath.length()));
+
+            return compiledQuery.ofBackupTable();
         }
 
         private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
@@ -3141,9 +3137,9 @@ public class SqlCompiler implements Closeable {
                     if (null == tok) {
                         throw SqlException.position(lexer.getPosition()).put("expected a table name");
                     }
-                    CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+                    final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-                    tableNames.add(tableToken);
+                    tableTokens.add(tableToken);
                     tok = SqlUtil.fetchNext(lexer);
                     if (null == tok || Chars.equals(tok, ';')) {
                         break;
@@ -3152,12 +3148,15 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.lastTokenPosition()).put("expected ','");
                     }
                 }
-                for (int i = 0, n = tableNames.size(); i < n; i++) {
-                    backupTable(tableNames.get(i), executionContext);
+
+                executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
+
+                for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                    backupTable(tableTokens.get(i));
                 }
                 return compiledQuery.ofBackupTable();
             } finally {
-                tableNames.clear();
+                tableTokens.clear();
             }
         }
 

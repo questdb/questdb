@@ -55,6 +55,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
@@ -153,6 +154,14 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
+    static void dropTable(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            TableToken tableToken
+    ) throws Exception {
+        compiler.compile("DROP TABLE " + tableToken.getTableName(), context);
+    }
+
     static String[] extendArgsWith(String[] args, String... moreArgs) {
         int argsLen = args.length;
         int extLen = moreArgs.length;
@@ -177,14 +186,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
         }
-    }
-
-    static void dropTable(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            TableToken tableToken
-    ) throws Exception {
-        compiler.compile("DROP TABLE \"" + tableToken.getTableName() + '"', context);
     }
 
     static {
