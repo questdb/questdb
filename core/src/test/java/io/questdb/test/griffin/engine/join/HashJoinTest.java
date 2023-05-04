@@ -34,15 +34,16 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.
- * This is tricky because:
- * - memory allocation is delayed (so malloc() doesn't really allocate)
- * - most objects malloc but don't touch memory
- * - rss/wss can jump up and down due to gc, os, etc.
- */
+
 public class HashJoinTest extends AbstractGriffinTest {
 
+    /**
+     * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.
+     * This is tricky because:
+     * - memory allocation is delayed (so malloc() doesn't really allocate)
+     * - most objects malloc but don't touch memory
+     * - rss/wss can jump up and down due to gc, os, etc.
+     */
     @Test
     public void testHashJoinDoesntAllocateMemoryPriorToCursorOpenAndAfterCursorCloseForNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -110,13 +111,27 @@ public class HashJoinTest extends AbstractGriffinTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.drainCursor(cursor);
                     long rssDuringCursor = Os.getRss();
-                    Assert.assertTrue(rssDuringCursor - rssBeforeCursor< virtCursorMem);
+                    Assert.assertTrue(rssDuringCursor - rssBeforeCursor < virtCursorMem);
                     freeCount = Unsafe.getFreeCount();
                 }
 
                 Assert.assertTrue(freeCount < Unsafe.getFreeCount());
                 Assert.assertTrue(getMemUsedByFactories() < tagBeforeFactory + 1024 * 1024);
             }
+        });
+    }
+
+    @Test
+    public void testHashOuterLeftJoinWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table taba (i long, locale_name symbol )");
+            compile("create table tabb (i long, state symbol, city symbol)");
+            compile("insert into taba values (1, 'pl')");
+            compile("insert into tabb values (1, 'a', 'pl')");
+            compile("insert into tabb values (1, 'b', 'b')");
+
+            assertQuery("i\tlocale_name\ti1\tstate\tcity\n" +
+                    "1\tpl\t1\ta\tpl\n", "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
         });
     }
 
