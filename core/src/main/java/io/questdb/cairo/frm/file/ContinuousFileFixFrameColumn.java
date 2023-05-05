@@ -80,10 +80,10 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
                     throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
                             .put(", destOffset=").put(offset << shl)
                             .put(", size=").put(length)
-                            .put(", fileSize").put(ff.length(fd))
-                            .put(", srcFd=").put(sourceColumn.getSecondaryFd())
+                            .put(", fileSize=").put(ff.length(fd))
+                            .put(", srcFd=").put(sourceFd)
                             .put(", srcOffset=").put(sourceLo << shl)
-                            .put(", srcFileSize=").put(ff.length(sourceColumn.getSecondaryFd()))
+                            .put(", srcFileSize=").put(ff.length(sourceFd))
                             .put(']');
                 }
             }

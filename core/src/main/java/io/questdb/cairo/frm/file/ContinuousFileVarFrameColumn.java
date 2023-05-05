@@ -101,7 +101,7 @@ public class ContinuousFileVarFrameColumn implements FrameColumn {
                     throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(varFd)
                             .put(", destOffset=").put(varOffset)
                             .put(", size=").put(copySize)
-                            .put(", fileSize").put(ff.length(varFd))
+                            .put(", fileSize=").put(ff.length(varFd))
                             .put(", srcFd=").put(sourceColumn.getPrimaryFd())
                             .put(", srcOffset=").put(varSrcOffset)
                             .put(", srcFileSize=").put(ff.length(sourceColumn.getPrimaryFd()))

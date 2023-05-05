@@ -24,15 +24,21 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 public class O3SquashPartitionTest extends AbstractGriffinTest {
 
@@ -220,61 +226,6 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
             assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t1520\t2020-02-04\n");
-
-            // Append in order to check last partition opened for writing correctly.
-            compile(
-                    sqlPrefix +
-                            " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
-                            " x + 2 as k" +
-                            " from long_sequence(200)"
-            );
-
-            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                    "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n");
-
-        });
-    }
-
-    @Test
-    public void testSplitPartitionChagesColTop() throws Exception {
-        assertMemoryLeak(() -> {
-            // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
-
-            compile(
-                    "create table x as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " -x j," +
-                            " rnd_str(5,16,2) as str," +
-                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
-                            " from long_sequence(60*(23*2-24))" +
-                            ") timestamp (ts) partition by DAY"
-            );
-
-            String sqlPrefix = "insert into x " +
-                    "select" +
-                    " cast(x as int) * 1000000 i," +
-                    " -x - 1000000L as j," +
-                    " rnd_str(5,16,2) as str,";
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-
-            // Prevent squashing
-            try (TableReader ignore = getReader("x")) {
-                compile(
-                        sqlPrefix +
-                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
-                                " x + 2 as k" +
-                                " from long_sequence(200)"
-                );
-
-                assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
-                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
-                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
-            }
-
-            compile("alter table x add column k int");
 
             // Append in order to check last partition opened for writing correctly.
             compile(
@@ -498,6 +449,98 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSplitMidPartitionFailedToSquash() throws Exception {
+        AtomicLong failToCopyLen = new AtomicLong();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+                long result = super.copyData(srcFd, destFd, offsetSrc, destOffset, length);
+                if (length == failToCopyLen.get()) {
+                    return failToCopyLen.get() - 1;
+                }
+                return result;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            // 4kb prefix split threshold
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+
+            compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
+                            " from long_sequence(60*36)" +
+                            ") timestamp (ts) partition by DAY"
+            );
+
+            compile("alter table x add column k int");
+
+            String sqlPrefix = "insert into x " +
+                    "select" +
+                    " cast(x as int) * 1000000 i," +
+                    " -x - 1000000L as j," +
+                    " rnd_str(5,16,2) as str,";
+
+            try {
+                // fail squashing fix len column.
+                failToCopyLen.set(1760);
+                compile(
+                        sqlPrefix +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
+                                " x + 2 as k" +
+                                " from long_sequence(200)"
+                );
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot copy data");
+            }
+
+            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                    "2020-02-04T20:00:00.000000Z\t440\t2020-02-04T195900-000001\n" +
+                    "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n");
+
+            try {
+                // Append another time and fail squashing var len column.
+                failToCopyLen.set(13380);
+                compile(
+                        sqlPrefix +
+                                " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
+                                " x + 2 as k" +
+                                " from long_sequence(200)"
+                );
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot copy data");
+            }
+
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                    "2020-02-04T20:00:00.000000Z\t640\t2020-02-04T195900-000001\n" +
+                    "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n");
+
+            // success
+            failToCopyLen.set(0);
+            compile(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(200)"
+            );
+
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t2040\t2020-02-04\n" +
+                    "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n");
+
+        });
+    }
+
+    @Test
     public void testSplitMidPartitionOpenReader() throws Exception {
         assertMemoryLeak(() -> {
             compile(
@@ -564,6 +607,61 @@ public class O3SquashPartitionTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
+        });
+    }
+
+    @Test
+    public void testSplitPartitionChangesColTop() throws Exception {
+        assertMemoryLeak(() -> {
+            // 4kb prefix split threshold
+            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
+            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
+
+            compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
+                            " from long_sequence(60*(23*2-24))" +
+                            ") timestamp (ts) partition by DAY"
+            );
+
+            String sqlPrefix = "insert into x " +
+                    "select" +
+                    " cast(x as int) * 1000000 i," +
+                    " -x - 1000000L as j," +
+                    " rnd_str(5,16,2) as str,";
+            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+
+            // Prevent squashing
+            try (TableReader ignore = getReader("x")) {
+                compile(
+                        sqlPrefix +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts," +
+                                " x + 2 as k" +
+                                " from long_sequence(200)"
+                );
+
+                assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T00:00:00.000000Z\t1200\t2020-02-04\n" +
+                        "2020-02-04T20:00:00.000000Z\t320\t2020-02-04T195900-000001\n");
+            }
+
+            compile("alter table x add column k int");
+
+            // Append in order to check last partition opened for writing correctly.
+            compile(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T22:01', 1000000L) ts," +
+                            " x + 2 as k" +
+                            " from long_sequence(200)"
+            );
+
+            assertSql(partitionsSql, "minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n");
+
         });
     }
 }
