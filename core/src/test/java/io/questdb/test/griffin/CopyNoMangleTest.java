@@ -51,7 +51,7 @@ public class CopyNoMangleTest extends AbstractGriffinTest {
         String inputWorkRootTmp = inputWorkRoot;
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchImportId("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
         CopyTest.CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",

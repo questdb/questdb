@@ -55,7 +55,8 @@ public class PGFunctionsTest extends BasePGTest {
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
                                     "id[INTEGER],name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]\n" +
-                                            "1,a,null,NONE,1000,300000000\n",
+                                            "1,sys.text_import_log,ts,DAY,1000,300000000\n" +
+                                            "2,a,null,NONE,1000,300000000\n",
                                     sink,
                                     rs
                             );

@@ -33,34 +33,38 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class TextImportExecutionContext implements Mutable {
-    public static final long INACTIVE = -1;
-    private final AtomicLong activeImportId = new AtomicLong(INACTIVE);
+public class CopyContext implements Mutable {
+    public static final long INACTIVE_COPY_ID = -1;
+    private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final Rnd rnd;
     private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
-    public TextImportExecutionContext(CairoConfiguration configuration) {
+    public CopyContext(CairoConfiguration configuration) {
         MicrosecondClock clock = configuration.getMicrosecondClock();
         this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
     }
 
-    public long assignActiveImportId(SecurityContext securityContext) {
-        long nextId = rnd.nextPositiveLong();
-        activeImportId.set(nextId);
+    public long assignActiveCopyID(SecurityContext securityContext) {
+        // avoid using INACTIVE as real import ID
+        long copyID;
+        do {
+            copyID = rnd.nextPositiveLong();
+        } while (copyID == INACTIVE_COPY_ID);
+        activeCopyID.set(copyID);
         this.originatorSecurityContext = securityContext;
-        return nextId;
+        return copyID;
     }
 
     @Override
     public void clear() {
-        activeImportId.set(INACTIVE);
+        activeCopyID.set(INACTIVE_COPY_ID);
         originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
-    public long getActiveImportId() {
-        return activeImportId.get();
+    public long getActiveCopyID() {
+        return activeCopyID.get();
     }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
