@@ -113,10 +113,12 @@ public class Utf8String implements Utf8NativeCharSequence {
         return original.length();
     }
 
+    @Override
     public long ptr() {
         return ptr;
     }
 
+    @Override
     public int size() {
         return size;
     }
