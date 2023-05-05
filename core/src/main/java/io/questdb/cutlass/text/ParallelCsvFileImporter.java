@@ -862,7 +862,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 if (unused) {
                     names.add(metadata.getColumnName(i));
                     types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
-                    remapIndex.extendAndSet(types.size() - 1, i);
+                    remapIndex.add(i);
                 }
             }
         }
