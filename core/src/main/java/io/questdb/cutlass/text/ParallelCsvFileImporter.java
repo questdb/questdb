@@ -862,16 +862,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 if (unused) {
                     names.add(metadata.getColumnName(i));
                     types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    remapIndex.extendAndSet(types.size() - 1, i);
                 }
             }
         }
 
         // copy symbol capacities from the destination table to avoid
         // having default, undersized capacities in temporary tables
-        symbolCapacities.setAll(types.size(), -1);
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                final int columnWriterIndex = metadata.getWriterIndex(i);
+        symbolCapacities.setAll(remapIndex.size(), -1);
+        for (int i = 0, n = remapIndex.size(); i < n; i++) {
+            final int columnIndex = remapIndex.getQuick(i);
+            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                final int columnWriterIndex = metadata.getWriterIndex(columnIndex);
                 final MapWriter symbolWriter = writer.getSymbolMapWriter(columnWriterIndex);
                 symbolCapacities.set(i, symbolWriter.getSymbolCapacity());
             }
