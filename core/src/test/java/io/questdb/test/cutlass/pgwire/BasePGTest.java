@@ -31,6 +31,8 @@ import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.griffin.*;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -60,6 +62,8 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public abstract class BasePGTest extends AbstractGriffinTest {
 
+    protected CopyRequestJob copyRequestJob = null;
+
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
@@ -88,6 +92,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         }
 
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+
 
         return new PGWireServer(
                 configuration,
@@ -149,25 +154,31 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         TestUtils.assertEquals(message, expected, sink);
     }
 
-    protected PGWireServer createPGServer(PGWireConfiguration configuration) {
+    protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
+        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
+        copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount(), compiler.getFunctionFactoryCache());
+
+        workerPool.assign(copyRequestJob);
+        workerPool.freeOnExit(copyRequestJob);
+
         return createPGWireServer(
                 configuration,
                 engine,
-                new TestWorkerPool(configuration.getWorkerCount(), metrics),
+                workerPool,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent
         );
     }
 
-    protected PGWireServer createPGServer(int workerCount) {
+    protected PGWireServer createPGServer(int workerCount) throws SqlException {
         return createPGServer(workerCount, Long.MAX_VALUE);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
         return createPGServer(workerCount, maxQueryTime, -1);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) {
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
