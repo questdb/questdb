@@ -1005,6 +1005,7 @@ public final class TableUtils {
         mem.putLong(0, 0); // txn
         mem.putLong(32, 0); // count
         mem.jumpTo(40);
+        mem.sync(false);
     }
 
     public static void resetTxn(
@@ -1381,6 +1382,7 @@ public final class TableUtils {
             for (int i = 0; i < count; i++) {
                 mem.putStr(structure.getColumnName(i));
             }
+            mem.sync(false);
 
             // create symbol maps
             int symbolMapCount = 0;
@@ -1400,9 +1402,10 @@ public final class TableUtils {
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-
+            mem.sync(false);
             mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createColumnVersionFile(mem);
+            mem.sync(false);
             mem.close();
 
             resetTodoLog(ff, path, rootLen, mem);
@@ -1411,6 +1414,7 @@ public final class TableUtils {
 
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
+            mem.sync(false);
         } finally {
             if (dirFd > 0) {
                 if (ff.fsync(dirFd) != 0) {
