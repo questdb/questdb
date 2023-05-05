@@ -284,7 +284,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
-                                compiler.compile("create table if not exists tab" + j + " (x int)", executionContext);
+                                Assert.assertNotNull(compiler.query().$("create table if not exists tab").$(j).$(" (x int)").compile(executionContext).getTableToken());
                             }
                         }
                     } catch (Throwable e) {

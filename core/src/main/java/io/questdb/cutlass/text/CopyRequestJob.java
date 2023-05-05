@@ -44,30 +44,30 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
-import static io.questdb.cutlass.text.TextImportTask.getStatusName;
+import static io.questdb.cutlass.text.CopyTask.getPhaseName;
+import static io.questdb.cutlass.text.CopyTask.getStatusName;
 
-public class TextImportRequestJob extends SynchronizedJob implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
+public class CopyRequestJob extends SynchronizedJob implements Closeable {
+    private static final Log LOG = LogFactory.getLog(CopyRequestJob.class);
     private final MicrosecondClock clock;
+    private final CopyContext copyContext;
     private final CairoEngine engine;
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
-    private final RingQueue<TextImportRequestTask> requestQueue;
+    private final RingQueue<CopyRequestTask> requestQueue;
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
     private final StringSink stringSink = new StringSink();
-    private final TextImportExecutionContext textImportExecutionContext;
     private ParallelCsvFileImporter parallelImporter;
     private Path path;
     private SerialCsvFileImporter serialImporter;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
-    private TextImportRequestTask task;
+    private CopyRequestTask task;
     private TableWriter writer;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
-    public TextImportRequestJob(
+    public CopyRequestJob(
             final CairoEngine engine,
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
@@ -84,8 +84,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(configuration.getSecurityContextFactory().getRootContext(), null, null);
         final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        this.sqlCompiler.compile(
-                "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
+        this.statusTableToken = this.sqlCompiler.query()
+                .$("CREATE TABLE IF NOT EXISTS \"")
+                .$(statusTableName)
+                .$("\" (" +
                         "ts timestamp, " + // 0
                         "id string, " + // 1
                         "table symbol, " + // 2
@@ -96,13 +98,14 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         "rows_handled long," + // 7
                         "rows_imported long," + // 8
                         "errors long" + // 9
-                        ") timestamp(ts) partition by DAY BYPASS WAL",
-                sqlExecutionContext
-        );
-        this.statusTableToken = engine.verifyTableName(statusTableName);
+                        ") timestamp(ts) partition by DAY BYPASS WAL"
+                )
+                .compile(sqlExecutionContext)
+                .getTableToken();
+
         this.writer = engine.getWriter(statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-        this.textImportExecutionContext = engine.getTextImportExecutionContext();
+        this.copyContext = engine.getCopyContext();
         this.path = new Path();
         this.engine = engine;
         enforceLogRetention();
@@ -128,14 +131,14 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     ) {
         if (writer != null) {
             stringSink.clear();
-            Numbers.appendHex(stringSink, task.getImportId(), true);
+            Numbers.appendHex(stringSink, task.getCopyID(), true);
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
                 row.putStr(1, stringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
-                row.putSym(4, TextImportTask.getPhaseName(phase));
-                row.putSym(5, TextImportTask.getStatusName(status));
+                row.putSym(4, CopyTask.getPhaseName(phase));
+                row.putSym(5, CopyTask.getStatusName(status));
                 row.putStr(6, msg);
                 row.putLong(7, rowsHandled);
                 row.putLong(8, rowsImported);
@@ -144,7 +147,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 writer.commit();
             } catch (Throwable th) {
                 LOG.error()
-                        .$("could not update status table [importId=").$hexPadded(task.getImportId())
+                        .$("could not update status table [importId=").$hexPadded(task.getCopyID())
                         .$(", statusTableName=").$(statusTableToken)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())
@@ -212,13 +215,13 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                     parallelImporter.of(
                             task.getTableName(),
                             task.getFileName(),
-                            task.getImportId(),
+                            task.getCopyID(),
                             task.getPartitionBy(),
                             task.getDelimiter(),
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            textImportExecutionContext.getCircuitBreaker(),
+                            copyContext.getCircuitBreaker(),
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
@@ -227,12 +230,12 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                     serialImporter.of(
                             task.getTableName(),
                             task.getFileName(),
-                            task.getImportId(),
+                            task.getCopyID(),
                             task.getDelimiter(),
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            textImportExecutionContext.getCircuitBreaker(),
+                            copyContext.getCircuitBreaker(),
                             task.getAtomicity()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
@@ -240,8 +243,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 }
             } catch (TextImportException e) {
                 updateStatus(
-                        TextImportTask.NO_PHASE,
-                        e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED,
+                        CopyTask.NO_PHASE,
+                        e.isCancelled() ? CopyTask.STATUS_CANCELLED : CopyTask.STATUS_FAILED,
                         e.getMessage(),
                         0,
                         0,
@@ -249,7 +252,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 );
             } finally {
                 requestSubSeq.done(cursor);
-                textImportExecutionContext.clear();
+                copyContext.clear();
             }
             enforceLogRetention();
             return true;

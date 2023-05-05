@@ -51,6 +51,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final BitmapIndexWriter indexWriter;
     private final int maxHash;
     private final MemoryMARW offsetMem;
+    private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
     private int symbolIndexInTxWriter;
@@ -94,7 +95,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     configuration.getWriterFileOpenOpts()
             );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
-            final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+            this.symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             assert symbolCapacity > 0;
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
@@ -183,6 +184,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public boolean getNullFlag() {
         return offsetMem.getBool(HEADER_NULL_FLAG);
+    }
+
+    @Override
+    public int getSymbolCapacity() {
+        return symbolCapacity;
     }
 
     public int getSymbolCount() {

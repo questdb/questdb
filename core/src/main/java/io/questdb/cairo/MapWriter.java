@@ -69,6 +69,8 @@ public interface MapWriter extends SymbolCountProvider {
 
     boolean getNullFlag();
 
+    int getSymbolCapacity();
+
     boolean isCached();
 
     int put(char c);
