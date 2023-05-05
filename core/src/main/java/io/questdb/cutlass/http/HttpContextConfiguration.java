@@ -52,11 +52,11 @@ public interface HttpContextConfiguration {
 
     int getRequestHeaderBufferSize();
 
+    SecurityContextFactory getSecurityContextFactory();
+
     int getSendBufferSize();
 
     boolean getServerKeepAlive();
 
     boolean readOnlySecurityContext();
-
-    SecurityContextFactory getSecurityContextFactory();
 }

@@ -89,6 +89,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public SecurityContextFactory getSecurityContextFactory() {
+        return AllowAllSecurityContextFactory.INSTANCE;
+    }
+
+    @Override
     public int getSendBufferSize() {
         return 1024 * 1024;
     }
@@ -101,10 +106,5 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean readOnlySecurityContext() {
         return false;
-    }
-
-    @Override
-    public SecurityContextFactory getSecurityContextFactory() {
-        return AllowAllSecurityContextFactory.INSTANCE;
     }
 }
