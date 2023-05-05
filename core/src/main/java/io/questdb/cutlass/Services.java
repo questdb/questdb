@@ -214,7 +214,7 @@ public final class Services {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor();
+                return new HealthCheckProcessor(configuration.isPessimisticHealthCheckEnabled());
             }
         }, true);
         if (metrics.isEnabled()) {

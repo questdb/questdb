@@ -322,6 +322,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
+    private boolean httpPessimisticHealthCheckEnabled;
     private boolean httpReadOnlySecurityContext;
     private boolean httpServerKeepAlive;
     private String httpVersion;
@@ -629,6 +630,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
+                this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
                 this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
@@ -2599,6 +2601,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isEnabled() {
             return httpMinServerEnabled;
         }
+
+        @Override
+        public boolean isPessimisticHealthCheckEnabled() {
+            return httpPessimisticHealthCheckEnabled;
+        }
     }
 
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
@@ -2676,6 +2683,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpServerEnabled;
+        }
+
+        @Override
+        public boolean isPessimisticHealthCheckEnabled() {
+            return httpPessimisticHealthCheckEnabled;
         }
 
         @Override

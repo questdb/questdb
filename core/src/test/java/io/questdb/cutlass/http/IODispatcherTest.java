@@ -5250,7 +5250,7 @@ public class IODispatcherTest {
 
                             @Override
                             public HttpRequestProcessor getDefaultProcessor() {
-                                return new HealthCheckProcessor();
+                                return new HealthCheckProcessor(false);
                             }
 
                             @Override

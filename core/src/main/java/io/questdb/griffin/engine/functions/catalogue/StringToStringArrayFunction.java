@@ -43,6 +43,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     private static final int BRANCH_DOUBLE_QUOTE = 4;
     private static final int BRANCH_ITEM = 1;
     private final ObjList<CharSequence> items = new ObjList<>();
+    private final StringSink sink = new StringSink();
 
     public StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
         if (type == null) {
@@ -151,8 +152,18 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
+    public CharSequence getStr(Record rec) {
+        return initSink();
+    }
+
+    @Override
     public CharSequence getStr(Record rec, int arrayIndex) {
         return items.getQuick(arrayIndex);
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        sink.put(initSink());
     }
 
     @Override
@@ -161,8 +172,18 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
+    public CharSequence getStrB(Record rec) {
+        return initSink();
+    }
+
+    @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
         return getStr(rec, arrayIndex);
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return initSink().length();
     }
 
     @Override
@@ -203,5 +224,20 @@ public class StringToStringArrayFunction extends StrArrayFunction {
             }
         }
         throw SqlException.$(position, "array must start with '{'");
+    }
+
+    private StringSink initSink() {
+        if (sink.length() > 0) {
+            return sink;
+        }
+        sink.put('{');
+        for (int i = 0, n = items.size(); i < n; i++) {
+            sink.put(items.getQuick(i));
+            if (i != n - 1) {
+                sink.put(',');
+            }
+        }
+        sink.put('}');
+        return sink;
     }
 }

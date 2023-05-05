@@ -196,6 +196,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean isPessimisticHealthCheckEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isQueryCacheEnabled() {
         return true;
     }

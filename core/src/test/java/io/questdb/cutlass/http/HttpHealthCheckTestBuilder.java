@@ -1,4 +1,4 @@
-/*******************************************************************************
+package io.questdb.cutlass.http; /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
@@ -47,6 +46,7 @@ public class HttpHealthCheckTestBuilder {
     private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
     private boolean injectUnhandledError;
     private Metrics metrics;
+    private boolean pessimisticHealthCheck = false;
     private TemporaryFolder temp;
 
     public void run(HttpClientCode code) throws Exception {
@@ -54,6 +54,7 @@ public class HttpHealthCheckTestBuilder {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
+                    .withPessimisticHealthCheck(pessimisticHealthCheck)
                     .build();
             if (metrics == null) {
                 metrics = Metrics.enabled();
@@ -65,7 +66,7 @@ public class HttpHealthCheckTestBuilder {
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                workerPool.assign(workerId -> {
+                workerPool.assign((workerId) -> {
                     if (!alreadyErrored.getAndSet(true)) {
                         throw new NullPointerException("you'd better not handle me");
                     }
@@ -105,6 +106,11 @@ public class HttpHealthCheckTestBuilder {
 
     public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
         this.metrics = metrics;
+        return this;
+    }
+
+    public HttpHealthCheckTestBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
+        this.pessimisticHealthCheck = pessimisticHealthCheck;
         return this;
     }
 

@@ -221,6 +221,7 @@ public enum PropertyKey {
     HTTP_TEXT_ROLL_BUFFER_LIMIT("http.text.roll.buffer.limit"),
     HTTP_TEXT_ROLL_BUFFER_SIZE("http.text.roll.buffer.size"),
     HTTP_TEXT_UTF8_SINK_SIZE("http.text.utf8.sink.size"),
+    HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),

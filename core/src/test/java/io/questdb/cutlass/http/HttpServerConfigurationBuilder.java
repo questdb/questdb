@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,15 +25,14 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
@@ -46,6 +45,7 @@ public class HttpServerConfigurationBuilder {
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private Runnable onPeerDisconnect = HttpContextConfiguration.NONE;
+    private boolean pessimisticHealthCheck = false;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
@@ -61,7 +61,6 @@ public class HttpServerConfigurationBuilder {
 
         return new DefaultHttpServerConfiguration() {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-                private final DefaultSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
                 @Override
                 public MillisecondClock getClock() {
@@ -80,7 +79,7 @@ public class HttpServerConfigurationBuilder {
 
                 @Override
                 public FilesFacade getFilesFacade() {
-                    return TestFilesFacadeImpl.INSTANCE;
+                    return FilesFacadeImpl.INSTANCE;
                 }
 
                 @Override
@@ -97,11 +96,12 @@ public class HttpServerConfigurationBuilder {
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
                 }
+
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
                 @Override
                 public FilesFacade getFilesFacade() {
-                    return TestFilesFacadeImpl.INSTANCE;
+                    return FilesFacadeImpl.INSTANCE;
                 }
 
                 @Override
@@ -225,6 +225,11 @@ public class HttpServerConfigurationBuilder {
                     }
                 };
             }
+
+            @Override
+            public boolean isPessimisticHealthCheckEnabled() {
+                return pessimisticHealthCheck;
+            }
         };
     }
 
@@ -265,6 +270,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withOnPeerDisconnect(Runnable runnable) {
         this.onPeerDisconnect = runnable;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
+        this.pessimisticHealthCheck = pessimisticHealthCheck;
         return this;
     }
 

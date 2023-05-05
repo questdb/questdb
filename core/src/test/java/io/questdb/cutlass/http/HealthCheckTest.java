@@ -75,10 +75,11 @@ public class HealthCheckTest {
         testHealthy(Metrics.enabled(), healthCheckRequest);
     }
 
-    public void testUnhealthy(Metrics metrics, String expectedResponse) throws Exception {
+    public void testUnhealthy(Metrics metrics, boolean pessimisticHealthCheck, String expectedResponse) throws Exception {
         new HttpHealthCheckTestBuilder()
                 .withTempFolder(temp)
                 .withMetrics(metrics)
+                .withPessimisticHealthCheck(pessimisticHealthCheck)
                 .withInjectedUnhandledError()
                 .run(engine -> {
                     new SendAndReceiveRequestBuilder()
@@ -92,24 +93,7 @@ public class HealthCheckTest {
     }
 
     @Test
-    public void testUnhealthyWhenMetricsDisabled() throws Exception {
-        // Unhandled error detection is based on metrics,
-        // so we expect the health check to return HTTP 200.
-        final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
-                "Server: questDB/1.0\r\n" +
-                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                "Transfer-Encoding: chunked\r\n" +
-                "Content-Type: text/plain\r\n" +
-                "\r\n" +
-                "0f\r\n" +
-                "Status: Healthy\r\n" +
-                "00\r\n" +
-                "\r\n";
-        testUnhealthy(Metrics.disabled(), expectedResponse);
-    }
-
-    @Test
-    public void testUnhealthyWhenMetricsEnabled() throws Exception {
+    public void testUnhealthyWhenMetricsAndPessimisticHealthCheckEnabled() throws Exception {
         final String expectedResponse = "HTTP/1.1 500 Internal server error\r\n" +
                 "Server: questDB/1.0\r\n" +
                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -121,7 +105,39 @@ public class HealthCheckTest {
                 "Unhandled errors: 1\r\n" +
                 "00\r\n" +
                 "\r\n";
-        testUnhealthy(Metrics.enabled(), expectedResponse);
+        testUnhealthy(Metrics.enabled(), true, expectedResponse);
+    }
+
+    @Test
+    public void testUnhealthyWhenMetricsDisabled() throws Exception {
+        // Unhandled error detection is based on metrics, so we expect the health check to return HTTP 200.
+        final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: text/plain\r\n" +
+                "\r\n" +
+                "0f\r\n" +
+                "Status: Healthy\r\n" +
+                "00\r\n" +
+                "\r\n";
+        testUnhealthy(Metrics.disabled(), true, expectedResponse);
+    }
+
+    @Test
+    public void testUnhealthyWhenMetricsEnabledAndPessimisticHealthCheckDisabled() throws Exception {
+        // We expect the health check to ignore unhandled errors counter and return HTTP 200.
+        final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: text/plain\r\n" +
+                "\r\n" +
+                "0f\r\n" +
+                "Status: Healthy\r\n" +
+                "00\r\n" +
+                "\r\n";
+        testUnhealthy(Metrics.enabled(), false, expectedResponse);
     }
 
     private void testHealthy(Metrics metrics, String request) throws Exception {
@@ -129,7 +145,7 @@ public class HealthCheckTest {
                 .withTempFolder(temp)
                 .withMetrics(metrics)
                 .run(engine -> {
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                    final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
                             "Server: questDB/1.0\r\n" +
                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                             "Transfer-Encoding: chunked\r\n" +
@@ -139,7 +155,6 @@ public class HealthCheckTest {
                             "Status: Healthy\r\n" +
                             "00\r\n" +
                             "\r\n";
-
                     new SendAndReceiveRequestBuilder()
                             .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
                             .withExpectDisconnect(false)

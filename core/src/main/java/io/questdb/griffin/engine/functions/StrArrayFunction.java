@@ -145,26 +145,6 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final CharSequence getSymbol(Record rec) {
         return getStr(rec);
     }

@@ -55,8 +55,18 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getStr(Record rec) {
+            return "public";
+        }
+
+        @Override
         public CharSequence getStr(Record rec, int arrayIndex) {
             return "public";
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+            sink.put(getStr(rec));
         }
 
         @Override
@@ -65,8 +75,18 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getStrB(Record rec) {
+            return "public";
+        }
+
+        @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
             return getStr(rec, arrayIndex);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            return getStr(null).length();
         }
 
         @Override

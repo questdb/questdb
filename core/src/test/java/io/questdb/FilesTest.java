@@ -51,8 +51,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
-import static org.hamcrest.Matchers.lessThan;
 
 public class FilesTest {
     private static final String EOL = System.lineSeparator();
@@ -480,10 +478,10 @@ public class FilesTest {
                 try {
                     Files.truncate(fd1, fileSize);
 
-                    MatcherAssert.assertThat(Files.read(fd1, mem, 8L, 0), is(8L));
-                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize, -1), lessThan(0L));
-                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize, fileSize), is(0L));
-                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize + 8, fileSize), is(0L));
+                    Assert.assertEquals(8L, Files.read(fd1, mem, 8L, 0));
+                    Assert.assertTrue(Files.read(fd1, mem, fileSize, -1) < 0);
+                    Assert.assertEquals(0, Files.read(fd1, mem, fileSize, fileSize));
+                    Assert.assertEquals(0, Files.read(fd1, mem, fileSize + 8, fileSize));
 
                 } finally {
                     // Release mem, fd
@@ -592,7 +590,7 @@ public class FilesTest {
                     // Check written data
                     // Windows return 1 but Linux and others return 0 on success
                     // All return negative in case of error.
-                    MatcherAssert.assertThat(result, greaterThanOrEqualTo(0));
+                    Assert.assertTrue("error: " + Os.errno(), result >= 0);
 
                     fd2 = Files.openRO(path2.$());
                     long long1 = Files.readNonNegativeLong(fd2, 0L);
