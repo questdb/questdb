@@ -89,7 +89,7 @@ public final class PartitionBy {
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
-    private static final DateFormat PARTITION_WEEk_FORMAT = new IsoWeekPartitionFormat();
+    private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
 
     private PartitionBy() {

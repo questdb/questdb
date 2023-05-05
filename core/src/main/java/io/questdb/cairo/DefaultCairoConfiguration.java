@@ -447,7 +447,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getPartitionO3SplitMinSize() {
-        return 50 * (1L << 20); // 50MB
+        return 50 * Numbers.SIZE_1MB;
     }
 
     @Override
