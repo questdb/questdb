@@ -38,11 +38,11 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
     private final FilesFacade ff;
     private final long fileOpts;
-    private final IntPool<ContinuousFileFixFrameColumn> indexedColumnPool = new IntPool<>();
+    private final ListPool<ContinuousFileFixFrameColumn> fixColumnPool = new ListPool<>();
+    private final ListPool<ContinuousFileFixFrameColumn> indexedColumnPool = new ListPool<>();
     private final long keyAppendPageSize;
-    private final IntPool<ContinuousFileFixFrameColumn> fixColumnPool = new IntPool<>();
     private final long valueAppendPageSize;
-    private final IntPool<ContinuousFileVarFrameColumn> varColumnPool = new IntPool<>();
+    private final ListPool<ContinuousFileVarFrameColumn> varColumnPool = new ListPool<>();
     private boolean canWrite;
     private boolean isClosed;
 
@@ -108,9 +108,7 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
         private ContinuousFileFixFrameColumn getFixColumn() {
             if (fixColumnPool.size() > 0) {
-                ContinuousFileFixFrameColumn col = fixColumnPool.getLast();
-                fixColumnPool.setPos(fixColumnPool.size() - 1);
-                return col;
+                return fixColumnPool.pop();
             }
             ContinuousFileFixFrameColumn col = new ContinuousFileFixFrameColumn(ff, fileOpts);
             col.setPool(fixColumnPool);
@@ -119,9 +117,7 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
         private ContinuousFileIndexedFrameColumn getIndexedColumn() {
             if (indexedColumnPool.size() > 0) {
-                ContinuousFileFixFrameColumn col = indexedColumnPool.getLast();
-                indexedColumnPool.setPos(indexedColumnPool.size() - 1);
-                return (ContinuousFileIndexedFrameColumn) col;
+                return (ContinuousFileIndexedFrameColumn) indexedColumnPool.pop();
             }
             ContinuousFileIndexedFrameColumn col = new ContinuousFileIndexedFrameColumn(ff, fileOpts, keyAppendPageSize, valueAppendPageSize);
             col.setPool(indexedColumnPool);
@@ -130,9 +126,7 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
         private ContinuousFileVarFrameColumn getVarColumn() {
             if (varColumnPool.size() > 0) {
-                ContinuousFileVarFrameColumn col = varColumnPool.getLast();
-                varColumnPool.setPos(varColumnPool.size() - 1);
-                return col;
+                return varColumnPool.pop();
             }
             ContinuousFileVarFrameColumn col = new ContinuousFileVarFrameColumn(ff, fileOpts);
             col.setPool(varColumnPool);
@@ -140,25 +134,23 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
         }
     }
 
-    private class IntPool<T> implements Pool<T> {
+    private class ListPool<T> implements Pool<T> {
         private final ObjList<T> pool = new ObjList<>();
-
-        public T getLast() {
-            return pool.getLast();
-        }
 
         @Override
         public boolean isClosed() {
             return isClosed;
         }
 
+        public T pop() {
+            T last = pool.getLast();
+            pool.setPos(pool.size() - 1);
+            return last;
+        }
+
         @Override
         public void put(T frame) {
             pool.add(frame);
-        }
-
-        public void setPos(int pos) {
-            pool.setPos(pos);
         }
 
         public int size() {

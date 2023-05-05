@@ -2724,7 +2724,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
     }
 
-    private boolean canAppendToPartitionPart(int partitionIndex) {
+    private boolean canSquashOverwritePartitionTail(int partitionIndex) {
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
         if (fromTxn < 0) {
             fromTxn = 0;
@@ -5550,10 +5550,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // mid-column-count.
                     latchCount++;
 
-                    // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
-                    // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
-                    // then set first value to partition timestamp
+                    // To collect column top values and partition updates
+                    // from o3 partition tasks add them to pre-allocated continuous block of memory
                     long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
+                    // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
 
@@ -6748,9 +6748,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(long timestampMin, long timestampMax, int maxMidSubPartitionCount, int maxLastSubPartitionCount) {
-//        if (true) {
-//            return;
-//        }
 
         if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
             return;
@@ -6800,7 +6797,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Move partitionIndexLo to the first unlocked partition in the range
             for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
-                if (canAppendToPartitionPart(targetPartitionIndex)) {
+                if (canSquashOverwritePartitionTail(targetPartitionIndex)) {
                     targetPartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo);
                     break;
                 }

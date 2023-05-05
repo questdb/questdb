@@ -54,8 +54,7 @@ public class PartitionDateParseUtil {
                         for (; pos < mlim; pos++) {
                             char c = seq.charAt(pos);
                             if (c < '0' || c > '9') {
-                                // Timezone
-                                break;
+                                throw NumericException.INSTANCE;
                             }
                             micr *= 10;
                             micr += c - '0';
@@ -69,11 +68,16 @@ public class PartitionDateParseUtil {
                                 + sec * Timestamps.SECOND_MICROS
                                 + micr;
                     } else {
-                        // seconds
-                        ts += (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS
-                                + min * Timestamps.MINUTE_MICROS
-                                + sec * Timestamps.SECOND_MICROS;
+                        if (pos == lim) {
+
+                            // seconds
+                            ts += (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS
+                                    + sec * Timestamps.SECOND_MICROS;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
                     }
                 } else {
                     // minute
@@ -97,7 +101,7 @@ public class PartitionDateParseUtil {
 
     public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
         long ts;
-        if (lim - pos < 4) {
+        if (lim - pos < 4 || lim - pos > 25) {
             throw NumericException.INSTANCE;
         }
         int p = pos;

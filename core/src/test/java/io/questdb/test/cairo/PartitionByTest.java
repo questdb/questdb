@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -266,6 +267,80 @@ public class PartitionByTest {
     @Test
     public void testDirectoryParseFailureByMonth() {
         assertParseFailure("'yyyy-MM' expected, found [ts=2013-0-12]", "2013-0-12", PartitionBy.MONTH);
+    }
+
+    @Test
+    public void testParseFloor() throws NumericException {
+        checkPartitionPartialParseHour(PartitionBy.HOUR);
+        checkPartitionPartialParseDay(PartitionBy.DAY);
+        checkPartitionPartialParseMonth(PartitionBy.MONTH);
+        checkPartitionPartialParseMonth(PartitionBy.YEAR);
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013"), PartitionBy.parsePartitionDirName("2013", PartitionBy.YEAR));
+    }
+
+    @Test
+    public void testParseFloorFailsMonthTooShort() {
+        assertParseFails("2013-1", PartitionBy.MONTH);
+    }
+
+    @Test
+    public void testParseFloorFailsTooManyDaysDigits() {
+        assertParseFails("2019-02-003", PartitionBy.DAY);
+    }
+
+    @Test
+    public void testParseFloorFailsTooManyMonthsDigits() {
+        assertParseFails("2019-003", PartitionBy.DAY);
+    }
+
+    @Test
+    public void testParseFloorFailsTooManyTimeDigits() {
+        assertParseFails("2019-02-01T12234509", PartitionBy.DAY);
+    }
+
+    @Test
+    public void testParseFloorFailsTooManyUsecs() {
+        assertParseFails("2013-03-31T175501-12302123", PartitionBy.DAY);
+    }
+
+    @Test
+    public void testParseFloorFailsTooShort() {
+        assertParseFails("201", PartitionBy.DAY);
+    }
+
+    @Test
+    public void testParseFloorFailsWithTimezone() {
+        assertParseFails("2019-02-01T122345-23450b", PartitionBy.DAY);
+    }
+
+    private static void assertParseFails(String partitionName, int partitionBy) {
+        try {
+            PartitionBy.parsePartitionDirName(partitionName, partitionBy);
+            Assert.fail("exception expected");
+        } catch (Exception e) {
+        }
+    }
+
+    private static void checkPartitionPartialParseDay(int day) throws NumericException {
+        checkPartitionPartialParseHour(day);
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31"), PartitionBy.parsePartitionDirName("2013-03-31", day));
+    }
+
+    private static void checkPartitionPartialParseHour(int partBy) throws NumericException {
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.123021"), PartitionBy.parsePartitionDirName("2013-03-31T175501-123021", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.12302"), PartitionBy.parsePartitionDirName("2013-03-31T175501-12302", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.1230"), PartitionBy.parsePartitionDirName("2013-03-31T175501-1230", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.123"), PartitionBy.parsePartitionDirName("2013-03-31T175501-123", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.12"), PartitionBy.parsePartitionDirName("2013-03-31T175501-12", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01.1"), PartitionBy.parsePartitionDirName("2013-03-31T175501-1", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55:01"), PartitionBy.parsePartitionDirName("2013-03-31T175501", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17:55"), PartitionBy.parsePartitionDirName("2013-03-31T1755", partBy));
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03-31T17"), PartitionBy.parsePartitionDirName("2013-03-31T17", partBy));
+    }
+
+    private static void checkPartitionPartialParseMonth(int partitionBy) throws NumericException {
+        checkPartitionPartialParseDay(partitionBy);
+        Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2013-03"), PartitionBy.parsePartitionDirName("2013-03", partitionBy));
     }
 
     @Test
