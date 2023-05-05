@@ -49,6 +49,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final StringSink debugBuffer = new StringSink();
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final NativeLPSZ fileName = new NativeLPSZ();
     private final IntHashSet lockedWalIDSet = new IntHashSet();
     private final MillisecondClock millisecondClock;
     private final LongList onDiskWalIDSegmentIDPairs = new LongList();
@@ -280,6 +281,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             int segmentId = segmentKey >> 1;
             boolean segmentLocked = segmentKey != Integer.MAX_VALUE && (segmentKey & 1) == 1;
 
+            if (segmentHasPendingTasks(walId, segmentId)) {
+                continue;
+            }
+
             // If the current segment is locked, scroll to next wall id.
             final int walIdLimit = segmentLocked ? walId + 1 : walId;
             while (committedWalId < walIdLimit && ++committedWalSegmentIndex < committedSegmentSize) {
@@ -434,6 +439,29 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             LOG.error().$("could not delete directory [path=").utf8(path)
                     .$(", errno=").$(errno).$(']').$();
         }
+    }
+
+    /**
+     * Check if the segment directory has any ".pending" marker files.
+     */
+    private boolean segmentHasPendingTasks(int walId, int segmentId) {
+        final Path segmentPath = setSegmentPath(tableToken, walId, segmentId);
+        final long p = ff.findFirst(segmentPath);
+        if (p > 0) {
+            try {
+                do {
+                    final int type = ff.findType(p);
+                    final long pUtf8NameZ = ff.findName(p);
+                    fileName.of(pUtf8NameZ);
+                    if ((type == Files.DT_FILE) && Chars.endsWith(fileName, ".pending")) {
+                        return true;
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+            }
+        }
+        return false;
     }
 
     private Path setSegmentLockPath(TableToken tableName, int walId, int segmentId) {
