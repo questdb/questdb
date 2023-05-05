@@ -54,6 +54,7 @@ public class PartitionFrameFactory implements Pool<PartitionFrame>, Closeable {
     public void close() {
         closed = true;
         Misc.freeObjList(framePool);
+        Misc.free(columnPool);
     }
 
     @Override

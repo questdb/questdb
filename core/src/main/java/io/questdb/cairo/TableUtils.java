@@ -182,6 +182,11 @@ public final class TableUtils {
         }
     }
 
+    public static void allocateDiskSpaceToPage(FilesFacade ff, int fd, long size) {
+        size = Files.ceilPageSize(size);
+        allocateDiskSpace(ff, fd, size);
+    }
+
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
         return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
@@ -757,8 +762,9 @@ public final class TableUtils {
         long alignedOffset = Files.floorPageSize(offset);
         long alignedExtraLen = offset - alignedOffset;
         long mapAddr = rw ?
-                mapRW(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
+                mapRWNoAlloc(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
                 mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
+        ff.madvise(mapAddr, size + alignedExtraLen, rw ? Files.POSIX_MADV_RANDOM : Files.POSIX_MADV_SEQUENTIAL);
         return mapAddr + alignedExtraLen;
     }
 
@@ -821,6 +827,22 @@ public final class TableUtils {
         assert fd != -1;
         assert offset % ff.getPageSize() == 0;
         allocateDiskSpace(ff, fd, size + offset);
+        return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
+    }
+
+    /**
+     * Maps a file in read-write mode without allocating the disk space.
+     * <p>
+     * Important note. Linux requires the offset to be page aligned.
+     *
+     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd        file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+     * @param size      size of the mapped file region
+     * @param offset    offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-write memory address
+     */
+    public static long mapRWNoAlloc(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
             return addr;

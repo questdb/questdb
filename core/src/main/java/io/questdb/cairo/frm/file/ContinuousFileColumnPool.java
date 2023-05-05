@@ -33,7 +33,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
     private final ColumnTypePool columnTypePool = new ColumnTypePool();
@@ -55,7 +54,7 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         this.isClosed = true;
     }
 
@@ -143,10 +142,6 @@ public class ContinuousFileColumnPool implements FrameColumnPool, Closeable {
 
     private class IntPool<T> implements Pool<T> {
         private final ObjList<T> pool = new ObjList<>();
-
-        public void add(T t) {
-            pool.add(t);
-        }
 
         public T getLast() {
             return pool.getLast();

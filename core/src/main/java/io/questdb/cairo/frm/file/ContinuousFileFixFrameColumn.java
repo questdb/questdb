@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
@@ -73,7 +74,8 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
             if (sourceHi > 0) {
                 int sourceFd = sourceColumn.getPrimaryFd();
                 long length = sourceHi << shl;
-                TableUtils.allocateDiskSpace(ff, fd, (offset + sourceHi) << shl);
+                TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + sourceHi) << shl);
+                ff.fadvise(sourceFd, sourceLo << shl, length, Files.POSIX_FADV_SEQUENTIAL);
                 if (ff.copyData(sourceFd, fd, sourceLo << shl, offset << shl, length) != length) {
                     throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
                             .put(", destOffset=").put(offset << shl)
@@ -97,7 +99,7 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
         assert count >= 0;
 
         if (count > 0) {
-            TableUtils.allocateDiskSpace(ff, fd, (offset + count) << shl);
+            TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + count) << shl);
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, count << shl, true, MEMORY_TAG);
             try {
                 TableUtils.setNull(columnType, mappedAddress, count);
@@ -134,18 +136,8 @@ public class ContinuousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public long getPrimaryAddress() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getPrimaryFd() {
         return fd;
-    }
-
-    @Override
-    public long getSecondaryAddress() {
-        throw new UnsupportedOperationException();
     }
 
     @Override
