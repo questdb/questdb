@@ -245,7 +245,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public void sync(boolean async) {
         charMem.sync(async);
         offsetMem.sync(async);
-        indexWriter.commit();
+        indexWriter.sync(async);
     }
 
     @Override

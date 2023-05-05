@@ -155,9 +155,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public void commit() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            final boolean async = commitMode == CommitMode.ASYNC;
-            keyMem.sync(async);
-            valueMem.sync(async);
+            sync(commitMode == CommitMode.ASYNC);
         }
     }
 
@@ -373,6 +371,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     public void setMaxValue(long maxValue) {
         keyMem.putLong(38L, maxValue);
+    }
+
+    public void sync(boolean async) {
+        keyMem.sync(async);
+        valueMem.sync(async);
     }
 
     public void truncate() {

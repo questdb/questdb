@@ -51,7 +51,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void sync(boolean async) {
-        writer.commit();
+        writer.sync(async);
     }
 
     @Override
