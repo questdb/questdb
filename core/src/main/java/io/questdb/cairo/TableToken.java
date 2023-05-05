@@ -26,17 +26,22 @@ package io.questdb.cairo;
 
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 public class TableToken implements Sinkable {
     @NotNull
-    private final String dirName;
+    private final Utf8String dirName;
     private final boolean isWal;
     private final int tableId;
     @NotNull
-    private final String tableName;
+    private final Utf8String tableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
+        this(new Utf8String(tableName), new Utf8String(dirName), tableId, isWal);
+    }
+
+    public TableToken(@NotNull Utf8String tableName, @NotNull Utf8String dirName, int tableId, boolean isWal) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
@@ -60,6 +65,13 @@ public class TableToken implements Sinkable {
      * @return directory where the table is located.
      */
     public @NotNull String getDirName() {
+        return dirName.toString();
+    }
+
+    /**
+     * @return UTF-8 buffer naming the directory where the table is located.
+     */
+    public @NotNull Utf8String getDirNameUtf8() {
         return dirName;
     }
 
@@ -74,6 +86,13 @@ public class TableToken implements Sinkable {
      * @return table name
      */
     public @NotNull String getTableName() {
+        return tableName.toString();
+    }
+
+    /**
+     * @return UTF-8 buffer naming the table.
+     */
+    public @NotNull Utf8String getTableNameUtf8() {
         return tableName;
     }
 
@@ -88,6 +107,6 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.encodeUtf8(tableName);
+        sink.encodeUtf8(getTableName());
     }
 }
