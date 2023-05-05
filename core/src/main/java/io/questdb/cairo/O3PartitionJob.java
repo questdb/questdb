@@ -577,7 +577,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcOooHi,
                     srcOooMax,
                     o3TimestampMin,
-                    // <-- this is max of OOO and data chunk
                     o3TimestampLo,
                     partitionTimestamp,
                     oldPartitionTimestamp,

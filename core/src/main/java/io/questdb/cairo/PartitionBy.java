@@ -144,7 +144,7 @@ public final class PartitionBy {
             case HOUR:
                 return PARTITION_HOUR_FORMAT;
             case WEEK:
-                return PARTITION_WEEk_FORMAT;
+                return PARTITION_WEEK_FORMAT;
             case NONE:
                 return DEFAULT_FORMAT;
             default:
@@ -199,7 +199,7 @@ public final class PartitionBy {
                     fmtStr = HOUR_PATTERN;
                     break;
                 case WEEK:
-                    fmtMethod = PARTITION_WEEk_FORMAT;
+                    fmtMethod = PARTITION_WEEK_FORMAT;
                     fmtStr = WEEK_PATTERN;
                     break;
                 case NONE:

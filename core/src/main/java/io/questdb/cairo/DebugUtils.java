@@ -44,7 +44,7 @@ public class DebugUtils {
                 for (int i = 0; i < size; i++) {
                     long nextTs = Unsafe.getUnsafe().getLong(buffer + (long) i * Long.BYTES);
                     if (nextTs < ts) {
-                        return true;
+                        return false;
                     }
                     ts = nextTs;
                 }
