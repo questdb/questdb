@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
@@ -93,8 +94,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
-        String newTableNameStr = Chars.toString(newName);
-        TableToken newNameRecord = new TableToken(newTableNameStr, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
+        final String newTableNameStr = Chars.toString(newName);
+        final Utf8String newTableNameUtf8 = new Utf8String(newTableNameStr);
+        final TableToken newNameRecord = new TableToken(
+                newTableNameUtf8,
+                tableToken.getDirNameUtf8(),
+                tableToken.getTableId(),
+                tableToken.isWal());
 
         if (nameTableTokenMap.putIfAbsent(newTableNameStr, newNameRecord) == null) {
             if (nameTableTokenMap.remove(oldName, tableToken)) {
