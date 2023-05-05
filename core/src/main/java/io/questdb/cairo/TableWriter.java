@@ -1832,7 +1832,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoLog();
 
             // remove column files has to be done after _todo is removed
-            removeColumnFiles(index);
+            removeColumnFiles(index, type);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -4840,7 +4840,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", part2=").$(formatPartitionForTimestamp(newPartitionTimestamp, txWriter.txn))
                     .$(", part2Size=").$(newPartitionSize)
                     .I$();
-            this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, partitionTimestamp);
+            this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, newPartitionTimestamp);
             txWriter.bumpPartitionTableVersion();
             txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
             if (partitionTimestamp == lastPartitionTimestamp) {
@@ -6124,7 +6124,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeColumnFiles(int columnIndex) {
+    private void removeColumnFiles(int columnIndex, int columnType) {
         PurgingOperator purgingOperator = getPurgingOperator();
         long defaultNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
         if (PartitionBy.isPartitioned(partitionBy)) {
@@ -6137,9 +6137,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } else {
-            purgingOperator.add(columnIndex, -1L, txWriter.getLastPartitionTimestamp(), -1L);
+            purgingOperator.add(columnIndex, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1L);
         }
-        if (metadata.isColumnIndexed(columnIndex)) {
+        if (ColumnType.isSymbol(columnType)) {
             purgingOperator.add(columnIndex, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
         }
     }
